@@ -17,7 +17,9 @@
   "mcpServers": {
     "cc-slack": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/cc-slack",
-      "args": ["channel"],
+      "args": [
+        "channel"
+      ],
       "env": {
         "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
       }

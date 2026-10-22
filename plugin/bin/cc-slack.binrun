@@ -1,0 +1,29 @@
+#!/usr/bin/env binrun
+{
+  "schema": 1,
+  "name": "cc-slack",
+  "kind": "release-binary",
+  "version": {"static": "0.1.0"},
+  "platforms": {
+    "macos-aarch64": {
+      "size": 9402738,
+      "hash": "sha256",
+      "digest": "872bacee4def2c7c89b95009a508e820a3621c65e728be5f86a6a43544ee0706",
+      "format": "tar.gz",
+      "path": "cc-slack",
+      "providers": [
+        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.1.0", "name": "cc-slack_0.1.0_darwin_arm64.tar.gz"}
+      ]
+    },
+    "macos-x86_64": {
+      "size": 10217123,
+      "hash": "sha256",
+      "digest": "06bdf3eb06505040812ea442ec19d4cd581217101bfde4e4df4691dbcde27c0e",
+      "format": "tar.gz",
+      "path": "cc-slack",
+      "providers": [
+        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.1.0", "name": "cc-slack_0.1.0_darwin_amd64.tar.gz"}
+      ]
+    }
+  }
+}
