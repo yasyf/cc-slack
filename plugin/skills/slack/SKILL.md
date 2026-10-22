@@ -14,8 +14,8 @@ and no message prefix. Pass `agent` on `slack_send`, `slack_reply`, and
 `slack_dm_status`, or `--agent` on the CLI verbs, naming the agent writing:
 `claude` from Claude Code, `codex` from Codex, `cursor` from Cursor. A post
 without it reads `<display name> (agent)`. The user-level Slack Model Context Protocol (MCP) posts
-as the user. When the session's project has a permission hook, by default
-`.claude/hooks/slack_writes_need_permission.py`, protected writes on both
+as the user. When the session's project opts in with `[permissions]
+enabled = true` in its `.claude/cc-slack.toml`, protected writes on both
 surfaces need explicit user permission.
 
 ## Set up the session
@@ -69,12 +69,40 @@ it subscribes.
 ## Get permission before writing
 
 A post, reply, edit, delete, or channel create, archive, invite, topic, or
-join goes ahead only when a captain-hook ticket covers its place. The
-project's permission hook checks every such write on the cc-slack tools,
-the `cc-slack` CLI, and the user-level `mcp__slack__*` write tools, and
-mints a ticket when the user's words approve it. Reactions,
-`slack_dm_status`, reads, and `slack_revoke` need no ticket. A session whose
-project has no permission hook writes without a ticket.
+join goes ahead only when a captain-hook ticket covers its place. This
+plugin's permission hook checks every such write on the cc-slack tools,
+the `cc-slack` CLI, any posting CLI the project's config names, and the
+user-level `mcp__slack__*` write tools, and mints a ticket when the user's
+words approve it. Reactions, `slack_dm_status`, reads, and `slack_revoke`
+need no ticket. Sessions in any other project write without a ticket.
+
+### Opt a project in
+
+The hook ships in this plugin's capt-hook pack and checks nothing until the
+project turns it on in `.claude/cc-slack.toml`, the file `login` reads:
+
+```toml
+[permissions]
+enabled = true
+
+[[permissions.clis]]
+program = "team-post"
+verbs = { send = "post", edit = "edit" }
+options = ["channel", "thread", "text"]
+flags = ["broadcast"]
+```
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Turns on the permission hook and the plain-words warning on posts. Missing or `false` lets every write through. |
+| `clis` | Other posting CLIs the hook checks, one table each. They spend no ticket, so an approved write goes ahead as written. |
+| `clis.program` | The executable name, as typed in a Bash command. |
+| `clis.verbs` | Each subcommand that writes, mapped to `post`, `edit`, `delete`, `create`, `archive`, `invite`, `topic`, or `join`. |
+| `clis.options` | The long options that take a value, such as `channel`, `thread`, `ts`, `url`, and `text`. |
+| `clis.flags` | The long options that take no value, such as `broadcast`. |
+
+The hook reads the file on every event, and the daemon reads it from the
+writing session's directory on every write, so an edit applies at once.
 
 When the hook denies a write, it tells you to ask the user and prints the
 question to use, with the decline last:

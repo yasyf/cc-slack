@@ -1,0 +1,8 @@
+[permissions]
+enabled = true
+
+[[permissions.clis]]
+program = "slack-post"
+verbs = { send = "post", edit = "edit" }
+options = ["channel", "thread", "ts", "url", "text", "email", "qualifier", "icon-url", "icon-emoji"]
+flags = ["broadcast"]

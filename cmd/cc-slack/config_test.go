@@ -55,9 +55,7 @@ func TestLoadConfigTreatsAMissingDefaultAsEmptyAndAMissingNamedFileAsAnError(t *
 }
 
 func TestLoadConfigReadsEverySection(t *testing.T) {
-	path := writeConfig(t, t.TempDir(), `permission_hook = "slack_guard.py"
-
-[ssm]
+	path := writeConfig(t, t.TempDir(), `[ssm]
 region = "us-east-1"
 bot_token = "/slack/bot-token"
 socket_url = "/slack/socket-url"
@@ -72,17 +70,24 @@ public_base = "https://public.example.com/"
 [doc_cards]
 link = "https://docs.example.com/"
 url = "https://cards.example.com/doc-cards"
+
+[permissions]
+enabled = true
+
+[[permissions.clis]]
+program = "team-post"
+verbs = { send = "post" }
+options = ["channel", "text"]
+flags = ["broadcast"]
 `)
 	c, err := loadConfig(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.SSM == nil || c.SSM.Region != "us-east-1" || c.SSM.AvatarSecret != "/slack/avatar-secret" || c.Avatars.Bucket != "public" ||
-		c.DocCards.URL != "https://cards.example.com/doc-cards" || c.permissionHook() != "slack_guard.py" {
+		c.DocCards.URL != "https://cards.example.com/doc-cards" || !c.Permissions.Enabled ||
+		len(c.Permissions.CLIs) != 1 || c.Permissions.CLIs[0].Verbs["send"] != "post" {
 		t.Fatalf("config = %+v (ssm %+v)", c, c.SSM)
-	}
-	if hook := (config{}).permissionHook(); hook != defaultPermissionHook {
-		t.Fatalf("default permission hook = %q, want %q", hook, defaultPermissionHook)
 	}
 }
 
@@ -93,6 +98,8 @@ func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 		"unslashed base":    {"[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p\"\n", "must end in /"},
 		"partial cards":     {"[doc_cards]\nurl = \"https://c\"\n", "link and url together"},
 		"partial ssm":       {"[ssm]\nregion = \"us-west-2\"\n", "region, bot_token, and socket_url"},
+		"cli without verbs": {"[[permissions.clis]]\nprogram = \"team-post\"\n", "needs program and verbs"},
+		"unknown cli verb":  {"[[permissions.clis]]\nprogram = \"team-post\"\nverbs = { send = \"shout\" }\n", "not one of post"},
 		"ssm avatar creds":  {"[ssm]\nregion = \"r\"\nbot_token = \"/b\"\nsocket_url = \"/s\"\n[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p/\"\n", "avatar_key_id and avatar_secret"},
 		"two token sources": {"[github]\ntoken_env = \"GH_TOKEN\"\ntoken_command = [\"gh\", \"auth\", \"token\"]\n", "exactly one of token_env and token_command"},
 		"no token source":   {"[buildkite]\n", "[buildkite] needs exactly one"},
