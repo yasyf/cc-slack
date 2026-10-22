@@ -1,0 +1,32 @@
+{
+  "name": "cc-slack",
+  "description": "Post, reply, react, and read Slack threads through a shared Slack app as <display name> (<agent>), and receive thread replies and DM steering in the running session through the cc-slack channel.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Yasyf Mohamedali",
+    "email": "709645+yasyf@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/yasyf/cc-slack",
+  "dependencies": [
+    {
+      "name": "captain-hook",
+      "marketplace": "captain-hook",
+      "version": ">=12.77.0"
+    }
+  ],
+  "mcpServers": {
+    "cc-slack": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/cc-slack",
+      "args": ["channel"],
+      "env": {
+        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  },
+  "channels": [
+    {
+      "server": "cc-slack",
+      "displayName": "cc-slack"
+    }
+  ]
+}

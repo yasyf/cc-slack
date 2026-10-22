@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cc-slack",
+  "owner": {
+    "name": "Yasyf Mohamedali",
+    "email": "709645+yasyf@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "cc-slack",
+      "source": "./plugin",
+      "description": "Slack for Claude Code sessions: post as you, watch threads, and take steering from your DMs",
+      "category": "development",
+      "tags": ["slack", "agents", "channels"],
+      "author": {
+        "name": "yasyf"
+      }
+    }
+  ]
+}

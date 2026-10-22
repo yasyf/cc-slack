@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+SLACK_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
+
+
+@dataclass(frozen=True)
+class Rule:
+    kind: str
+    pattern: re.Pattern[str]
+    fix: str
+
+
+RULES = (
+    Rule(
+        "commit-sha",
+        re.compile(r"(?<![\w.])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b(?!\.\w)"),
+        "link the commit as <https://github.com/<org>/<repo>/commit/<sha>|<7-char sha>>, or name the release or PR instead",
+    ),
+    Rule(
+        "ruling-id",
+        re.compile(r"\b[GRL]\d{2,}\b"),
+        "inbox, ruling, and cursor ids mean nothing to the reader; say what was decided or done",
+    ),
+    Rule(
+        "codename",
+        re.compile(r"(?<![\w'’./@#&+-])[B-HJ-Z](?![\w'’/&+#-]|\.\w)"),
+        "a one-letter name for work in flight means nothing to the reader; name the thing, such as the new release pipeline",
+    ),
+    Rule(
+        "drive-term",
+        re.compile(r"(?i:\b(?:lanes?|desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)|\b(?:merge-)?walker\b"),
+        "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
+    ),
+    Rule(
+        "internal-id",
+        re.compile(r"\b(?:brw|run|exec|ctx)_[A-Za-z0-9]+"),
+        "link the run or browser page, or describe it in the reader's terms",
+    ),
+    Rule(
+        "zone-label",
+        re.compile(r"\b(?:UTC|GMT|PST|PDT|PT)\b|\b\d{1,2}:\d{2}(?::\d{2})?Z\b"),
+        "state the time in the team's local time with no zone label, such as 5:25pm",
+    ),
+    Rule(
+        "ulid",
+        re.compile(r"\b[0-9A-HJKMNP-TV-Z]{26}\b"),
+        "pod and object ULIDs mean nothing to the reader; link the dashboard or describe the object",
+    ),
+    Rule(
+        "bare-number",
+        re.compile(r"(?<![\w&])#\d+\b|\b(?:PR|pull|build|deploy|release)\s+#?\d{3,}\b(?!\.\d)", re.IGNORECASE),
+        "link it as <url|#N> or <url|deploy #N>",
+    ),
+    Rule(
+        "bare-url",
+        re.compile(r"https?://\S+"),
+        "wrap it as <url|short label>",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class Finding:
+    line: int
+    column: int
+    kind: str
+    token: str
+    fix: str
+
+    def __str__(self) -> str:
+        return f"{self.line}:{self.column} {self.kind} {self.token!r}: {self.fix}"
+
+
+def mask_slack_tokens(line: str) -> str:
+    return SLACK_TOKEN.sub(lambda match: " " * len(match.group()), line)
+
+
+def check(text: str) -> list[Finding]:
+    findings = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        masked = mask_slack_tokens(line)
+        for rule in RULES:
+            findings.extend(
+                Finding(number, match.start() + 1, rule.kind, match.group(), rule.fix)
+                for match in rule.pattern.finditer(masked)
+            )
+    return sorted(findings, key=lambda finding: (finding.line, finding.column))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Flag internal ids, raw shas, and unlinked references in a Slack post."
+    )
+    parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
+    args = parser.parse_args()
+    text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text()
+    findings = check(text)
+    for finding in findings:
+        print(finding)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

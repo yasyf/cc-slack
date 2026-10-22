@@ -1,0 +1,1 @@
+{"event_type":"cc_slack_shortcut","event_payload":{"user":"U0123ABCDE","channel":"C0123ABCDE","channel_name":"eng-help","ts":"1800000000.000200","permalink":"https://acme.slack.com/archives/C0123ABCDE/p1800000000000200","response_url":"https://hooks.slack.com/actions/T0123ABCDE/1/abc","invoked_at":1800000003}}
