@@ -18,7 +18,7 @@ from captain_hook import Allow, Ask, Block, Event, HookResult, Input, PostToolUs
 from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
 from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Touched, Undecided, UserAnswered, UserRuled, holds, store
-from captain_hook.tickets.context import ccn_answers, ruling_evidence, said_evidence, written_at
+from captain_hook.tickets.context import ccn_answers, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
 from captain_hook.util import reqenv
@@ -632,7 +632,7 @@ def fixture_cites(line: dict[str, Any]) -> str | None:
     cites = line.get("cites")
     if isinstance(cites, str) and cites.startswith("said:"):
         item = line["said"][int(cites.partition(":")[2])]
-        return said_evidence(item["text"], datetime.fromisoformat(item["at"]), "prompt").id
+        return said_evidence(instruction_words(item["text"])[0], datetime.fromisoformat(item["at"]), "prompt").id
     return cites
 
 
