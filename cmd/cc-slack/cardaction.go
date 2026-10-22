@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -37,19 +38,36 @@ type actionPayload struct {
 	TS        string `json:"ts"`
 	ActionTS  string `json:"action_ts"`
 	Label     string `json:"label"`
+	ID        string `json:"id,omitempty"`
 	Permalink string `json:"permalink"`
 }
 
-func (a cardActionPush) label() (string, bool) {
+type askTap struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Expires int64  `json:"exp,omitempty"`
+}
+
+func (k askTap) expired(now time.Time) bool {
+	return k.Expires != 0 && !now.Before(time.Unix(k.Expires, 0))
+}
+
+func (a cardActionPush) tap() (askTap, bool) {
 	switch {
 	case a.ActionID == cardAckAction:
-		return cardAckLabel, true
+		return askTap{Label: cardAckLabel}, true
 	case a.ActionID == cardPauseAction:
-		return cardPauseLabel, true
+		return askTap{Label: cardPauseLabel}, true
 	case strings.HasPrefix(a.ActionID, cardOptionAction) && a.Value != "":
-		return a.Value, true
+		return askTap{Label: a.Value}, true
+	case strings.HasPrefix(a.ActionID, cardAskAction):
+		var k askTap
+		if err := json.Unmarshal([]byte(a.Value), &k); err != nil || k.ID != strings.TrimPrefix(a.ActionID, cardAskAction) || k.Label == "" {
+			return askTap{}, false
+		}
+		return k, true
 	}
-	return "", false
+	return askTap{}, false
 }
 
 func (a cardActionPush) check(id identity) error {
@@ -73,9 +91,13 @@ func slackTime(ts string) time.Time {
 	return time.Unix(n, 0)
 }
 
-func tapLine(id identity, posted, permalink, label string) string {
+func tapLine(id identity, posted, permalink string, k askTap) string {
 	who := fmt.Sprintf("Slack tap from %s, your operator, on your status card posted %s (%s)", id.name(), posted, permalink)
-	switch label {
+	if k.ID != "" {
+		return fmt.Sprintf("%s: they answered your ask %q with %q. Act on it as operator steering; a later card may have superseded it.",
+			who, k.ID, k.Label)
+	}
+	switch label := k.Label; label {
 	case cardAckLabel:
 		return who + ": Ack. They have seen the card; no action is needed."
 	case cardPauseLabel:
@@ -83,7 +105,7 @@ func tapLine(id identity, posted, permalink, label string) string {
 			"naming what is paused and what resuming would start."
 	}
 	return fmt.Sprintf("%s: they chose %q. Act on it as operator steering; nothing waits on this tap, and a later card may have superseded it.",
-		who, label)
+		who, k.Label)
 }
 
 func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
@@ -112,9 +134,16 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
 	}
-	label, ok := a.label()
+	k, ok := a.tap()
 	if !ok {
 		p.log.Printf("card action %q: dropped: not a status-card button", a.ActionID)
+		return nil
+	}
+	if k.expired(slackTime(a.ActionTS)) {
+		p.log.Printf("card action %s on %s: dropped: the ask expired", a.ActionID, a.MessageTS)
+		if err := p.markAsk(ctx, id, a, k); err != nil {
+			p.log.Printf("card action %s on %s: the card still offers the expired ask: %v", a.ActionID, a.MessageTS, err)
+		}
 		return nil
 	}
 	db := p.plane.DB()
@@ -127,10 +156,10 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		return nil
 	}
 	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
-	line := tapLine(id, slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink, label)
+	line := tapLine(id, slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink, k)
 	for _, w := range watches {
 		msg := actionPayload{
-			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: label, Permalink: permalink,
+			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
@@ -145,13 +174,34 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 			return err
 		}
 	}
-	if err := p.confirmTap(ctx, id, a, label); err != nil {
+	if k.ID != "" {
+		err = p.markAsk(ctx, id, a, k)
+	} else {
+		err = p.confirmTap(ctx, id, a, cardActionsBlock, "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
+	}
+	if err != nil {
 		p.log.Printf("card action %s on %s: delivered, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	return nil
 }
 
-func (p *poller) confirmTap(ctx context.Context, id identity, a cardActionPush, label string) error {
+func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {
+	at := slackTime(a.ActionTS)
+	if !k.expired(at) {
+		p.cards.answer(a.Channel, a.ThreadTS, k.ID, at)
+	}
+	redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, p.now())
+	if err != nil || redrawn[a.MessageTS] {
+		return err
+	}
+	line := "✓ *" + mrkdwnEscapes.Replace(k.Label) + "* · answered " + clock(at, p.now())
+	if k.expired(at) {
+		line = "⌛ *" + mrkdwnEscapes.Replace(k.Label) + "* · expired " + clock(time.Unix(k.Expires, 0), p.now())
+	}
+	return p.confirmTap(ctx, id, a, cardAskBlock+k.ID, line)
+}
+
+func (p *poller) confirmTap(ctx context.Context, id identity, a cardActionPush, blockID, line string) error {
 	api := p.newAPI(id.Token)
 	msgs, _, _, err := api.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
 		ChannelID: a.Channel, Timestamp: a.ThreadTS, Oldest: a.MessageTS, Latest: a.MessageTS, Inclusive: true,
@@ -163,7 +213,7 @@ func (p *poller) confirmTap(ctx context.Context, id identity, a cardActionPush, 
 		if m.Timestamp != a.MessageTS {
 			continue
 		}
-		blocks := tappedBlocks(m.Blocks.BlockSet, label, p.now())
+		blocks := tappedBlocks(m.Blocks.BlockSet, blockID, line)
 		if blocks == nil {
 			return nil
 		}
@@ -172,17 +222,16 @@ func (p *poller) confirmTap(ctx context.Context, id identity, a cardActionPush, 
 	return fmt.Errorf("card %s is gone from its thread", a.MessageTS)
 }
 
-func tappedBlocks(blocks []slack.Block, label string, at time.Time) []slack.Block {
+func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
 	out := make([]slack.Block, 0, len(blocks))
 	tapped := false
 	for _, b := range blocks {
-		if b.ID() != cardActionsBlock {
+		if b.ID() != blockID {
 			out = append(out, b)
 			continue
 		}
 		tapped = true
-		out = append(out, slack.NewContextBlock(cardActionsBlock+"-tapped",
-			slack.NewTextBlockObject(slack.MarkdownType, "✓ *"+label+"* · "+at.In(pacific).Format(cardTimeLayout), false, false)))
+		out = append(out, mrkdwn(blockID+"-tapped", line))
 	}
 	if !tapped {
 		return nil

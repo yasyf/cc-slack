@@ -63,7 +63,20 @@ public_base = "https://assets.example.com/"
 [doc_cards]
 link = "https://docs.example.com/"
 url = "https://cards.example.com/doc-cards"
+
+[github]
+token_command = ["gh", "auth", "token"]
+
+[buildkite]
+token_env = "BUILDKITE_TOKEN"
 ```
+
+`[github]` and `[buildkite]` each take exactly one of `token_env` and
+`token_command`, and let status cards show the live state of the pull requests
+and builds they cite. `login` reads `token_env` from its own environment and
+stores the value, and resolves `token_command`'s program on its `PATH`; the
+daemon runs that command when it needs a token, keeps the output for 30
+minutes, and reruns it after a 401.
 
 ## Ops
 
@@ -88,7 +101,7 @@ surfaces cannot drift.
 | `channels` | `slack_channels` | Lists the unarchived public channels, and the private channels the bot is in, that `conversations.list` returns, sorted by name, each with `id`, `name`, and `created` in Unix seconds; `--prefix` keeps the names that start with it. |
 | `users` | `slack_users` | Lists the active users `users.list` returns whose handle, display name, real name, or email contains the query, ignoring case, sorted by handle, each with `id`, `name`, `display_name`, `real_name`, and `email`. Slack has no server-side user search, so every call pages the whole list. |
 | `follow`, `unfollow` | `slack_watch`, `slack_unwatch` | Starts or stops a watch. A watch with `thread_ts` covers that thread; one without covers the channel: every new top-level message and every new reply in any of its threads. A top-level watch also returns the window's `channel` route; an `owner` watch returns none. `watch` is the Monitor's stream of the session's `slack.message`, `slack.watch_error`, and `agent.relay` events from the moment it starts, so the CLI verbs differ; `--lifecycle` adds agent lifecycle events, and `--until-proven` exits once the window's channel is proven. |
-| `dm-status` | `slack_dm_status` | Posts to this session's thread in the engineer's direct message with the app. `thread_ts` posts under that message instead and binds the session's thread to it. With `--card` (`card`) in place of text, blocks, and files, a status card with `status`, `title`, `body`, `drive`, `phase`, up to 5 https `links`, and up to 4 `options`: the first card posts a root card and opens the thread under it, and each card posts a reply card carrying the options plus Ack and Pause buttons, then redraws the root with its state through `chat.update` when the daemon posted that root. Both cards carry a context line naming the drive, phase, repo, branch, worktree, the session id's first 8 characters, and the Pacific time, from `git -C` in the call's scope. The notification text is the status emoji, title, and body. Returns the window's `channel` route. |
+| `dm-status` | `slack_dm_status` | Posts to this session's thread in the engineer's direct message with the app. `thread_ts` posts under that message instead and binds the session's thread to it. With `--card` (`card`) in place of text, blocks, and files, a status card with `status`, `title`, `body`, `drive`, `phase`, up to 5 https `links`, up to 4 `options`, up to 10 `refs` (GitHub pull request or Buildkite build urls), a `progress` of `step` out of `total`, RFC 3339 `started_at` and `eta`, up to 5 `asks`, up to 10 `facts`, and a `rollup` of up to 50 `lanes` and 50 `prs`: the first card posts a root card and opens the thread under it, and each card posts a reply card carrying its asks, the options, and Ack and Pause buttons, then redraws the root through `chat.update` when the daemon posted that root. The root keeps the last progress, times, facts, refs, links, and rollup any card set, lists every open ask in the thread, and shows the last 5 titles as a timeline. `--root-only` (`root_only`) redraws only the root with the card, posting no reply, and needs the session's own root; its card may leave out `status` and `title`. An ask is a button with a stable `id`, a `label`, an optional `description`, `style` (`primary` or `danger`), `confirm` text that guards the tap with a dialog, and `expires_at`; its tap arrives as a `slack.action` carrying the id, redraws the thread's cards with the ask answered, and a tap after `expires_at` is dropped. Reusing an id updates that ask, and an answered ask stays answered. One poller in the daemon reads the state of every cited ref that has not landed, closed, or finished: GitHub pull requests in one GraphQL query per 25, Buildkite builds one request each, each host at most once a minute, backing off to 15 minutes on errors and waiting out a rate limit's reset. A changed state redraws the root and the latest reply that cite it. The daemon keeps each thread's cards in `live-cards.json` beside `state.db` for 48 hours after their last update. Both cards carry a context line naming the drive, phase, repo, branch, worktree, the session id's first 8 characters, and the Pacific time, from `git -C` in the call's scope. The notification text is the status emoji, title, and body. Returns the window's `channel` route. |
 
 A message's `text` in `thread`, `history`, and watch events is its own text followed by each
 attachment's pretext, title, text, and title link, or its fallback when the attachment has no

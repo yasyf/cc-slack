@@ -88,12 +88,14 @@ url = "https://cards.example.com/doc-cards"
 
 func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
-		"unknown key":      {"[avatars]\nbuckets = \"x\"\n", "unknown keys: avatars.buckets"},
-		"partial avatars":  {"[avatars]\nbucket = \"x\"\n", "endpoint, bucket, and public_base together"},
-		"unslashed base":   {"[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p\"\n", "must end in /"},
-		"partial cards":    {"[doc_cards]\nurl = \"https://c\"\n", "link and url together"},
-		"partial ssm":      {"[ssm]\nregion = \"us-west-2\"\n", "region, bot_token, and socket_url"},
-		"ssm avatar creds": {"[ssm]\nregion = \"r\"\nbot_token = \"/b\"\nsocket_url = \"/s\"\n[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p/\"\n", "avatar_key_id and avatar_secret"},
+		"unknown key":       {"[avatars]\nbuckets = \"x\"\n", "unknown keys: avatars.buckets"},
+		"partial avatars":   {"[avatars]\nbucket = \"x\"\n", "endpoint, bucket, and public_base together"},
+		"unslashed base":    {"[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p\"\n", "must end in /"},
+		"partial cards":     {"[doc_cards]\nurl = \"https://c\"\n", "link and url together"},
+		"partial ssm":       {"[ssm]\nregion = \"us-west-2\"\n", "region, bot_token, and socket_url"},
+		"ssm avatar creds":  {"[ssm]\nregion = \"r\"\nbot_token = \"/b\"\nsocket_url = \"/s\"\n[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p/\"\n", "avatar_key_id and avatar_secret"},
+		"two token sources": {"[github]\ntoken_env = \"GH_TOKEN\"\ntoken_command = [\"gh\", \"auth\", \"token\"]\n", "exactly one of token_env and token_command"},
+		"no token source":   {"[buildkite]\n", "[buildkite] needs exactly one"},
 	} {
 		_, err := loadConfig(writeConfig(t, t.TempDir(), tc.body), true)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -118,5 +120,27 @@ func TestEnvParametersNeedTheBotTokenAndSocketURL(t *testing.T) {
 	if _, err := envParameters(config{Avatars: avatarConfig{Endpoint: "https://s", Bucket: "b", PublicBase: "https://p/"}}); err == nil ||
 		!strings.Contains(err.Error(), avatarKeyIDEnv) {
 		t.Fatalf("envParameters with [avatars] and no avatar keys = %v, want it to name %s", err, avatarKeyIDEnv)
+	}
+}
+
+func TestTokenSourcesResolveAtLogin(t *testing.T) {
+	t.Setenv("CC_SLACK_TEST_GH", "ghp-test")
+	t.Setenv("CC_SLACK_TEST_EMPTY", "")
+	c, err := loadConfig(writeConfig(t, t.TempDir(), "[github]\ntoken_env = \"CC_SLACK_TEST_GH\"\n[buildkite]\ntoken_command = [\"sh\", \"-c\", \"echo bk\"]\n"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.resolveTokens(); err != nil {
+		t.Fatal(err)
+	}
+	if c.GitHub.Token != "ghp-test" || c.GitHub.Env != "" || !filepath.IsAbs(c.Buildkite.Command[0]) {
+		t.Fatalf("resolved sources = %+v, %+v; want the env value captured and the command made absolute", c.GitHub, c.Buildkite)
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("a resolved config fails validation: %v", err)
+	}
+	empty := config{GitHub: &tokenSource{Env: "CC_SLACK_TEST_EMPTY"}}
+	if err := empty.resolveTokens(); err == nil || !strings.Contains(err.Error(), "CC_SLACK_TEST_EMPTY") {
+		t.Fatalf("an empty token_env resolved: %v", err)
 	}
 }

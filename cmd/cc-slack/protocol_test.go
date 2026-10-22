@@ -86,6 +86,19 @@ func TestProtocolMessageNudgeDecodes(t *testing.T) {
 	}
 }
 
+func TestProtocolCardAskDecodes(t *testing.T) {
+	t.Parallel()
+	var a cardActionPush
+	decodePush(t, "action_ask.json", cardActionEventType, &a)
+	k, ok := a.tap()
+	if !ok || k.ID != "merge-41" || k.Label != "Merge #41" || k.Expires != 1800003600 {
+		t.Fatalf("ask tap = %+v, %v; want the ask's id, label, and expiry from its value", k, ok)
+	}
+	if !k.expired(time.Unix(1800003600, 0)) || k.expired(slackTime(a.ActionTS)) {
+		t.Fatalf("ask expiring at %d: expiry misread", k.Expires)
+	}
+}
+
 func TestProtocolCardActionDecodes(t *testing.T) {
 	t.Parallel()
 	var a cardActionPush
@@ -97,8 +110,8 @@ func TestProtocolCardActionDecodes(t *testing.T) {
 	if a != want {
 		t.Fatalf("card action = %+v, want %+v", a, want)
 	}
-	if label, ok := a.label(); !ok || label != "Ship it" {
-		t.Fatalf("label = %q, %v; want the option's value", label, ok)
+	if k, ok := a.tap(); !ok || k.Label != "Ship it" || k.ID != "" {
+		t.Fatalf("tap = %+v, %v; want the option's value", k, ok)
 	}
 	if err := a.check(identity{UserID: "U0123ABCDE", DMChannelID: "D0123ABCDE"}); err != nil {
 		t.Fatalf("check: %v", err)

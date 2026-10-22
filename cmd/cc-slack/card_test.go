@@ -13,9 +13,10 @@ import (
 )
 
 func TestStatusCardRefusesBadShapes(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
 	ok := statusCard{Status: "needs_you", Title: "Merge the stack?", Options: []string{"merge", "hold"},
 		Links: []cardLink{{Label: "PR", URL: "https://github.com/acme/app/pull/1"}}}
-	if err := ok.check(); err != nil {
+	if err := ok.check(time.Now(), false); err != nil {
 		t.Fatalf("a well-formed card: %v", err)
 	}
 	for name, card := range map[string]statusCard{
@@ -27,8 +28,18 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"long option":        {Status: "info", Title: "x", Options: []string{strings.Repeat("o", cardMaxOptionLen+1)}},
 		"option shadows ack": {Status: "info", Title: "x", Options: []string{cardAckLabel}},
 		"repeated option":    {Status: "info", Title: "x", Options: []string{"go", "go"}},
+		"ref off github":     {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://gitlab.com/acme/app/-/merge_requests/1"}}},
+		"ref to an issue":    {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://github.com/acme/app/issues/1"}}},
+		"repeated ask":       {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go"}, {ID: "a", Label: "Stop"}}},
+		"ask id with space":  {Status: "info", Title: "x", Asks: []cardAsk{{ID: "merge it", Label: "Go"}}},
+		"expired ask":        {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", ExpiresAt: &past}}},
+		"unknown ask style":  {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", Style: "warning"}}},
+		"step past total":    {Status: "info", Title: "x", Progress: &cardProgress{Step: 4, Total: 3}},
+		"eleven facts":       {Status: "info", Title: "x", Facts: slices.Repeat([]cardFact{{Label: "k", Value: "v"}}, 11)},
+		"unnamed lane":       {Status: "info", Title: "x", Rollup: &cardRollup{Lanes: []rollupLane{{Status: "green"}}}},
+		"http rollup pr":     {Status: "info", Title: "x", Rollup: &cardRollup{PRs: []rollupPR{{URL: "http://github.com/acme/app/pull/1"}}}},
 	} {
-		if err := card.check(); err == nil {
+		if err := card.check(time.Now(), false); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)
 		}
 	}
@@ -49,7 +60,7 @@ func TestReplyCardOffersOptionsThenAckAndPauseUnderTheSessionTag(t *testing.T) {
 		Links: []cardLink{{Label: "PR", URL: "https://github.com/acme/app/pull/1"}}}
 	tag := cardTag{Session: "0123abcd", Repo: "app", Branch: "dev", Worktree: "cf-alert"}
 	at := time.Date(2026, 10, 15, 8, 33, 0, 0, time.UTC)
-	blocks := card.replyBlocks(tag, at)
+	blocks := card.replyBlocks(cardView{tag: tag, at: at, now: at})
 	var actionIDs []string
 	for _, b := range blocks {
 		if a, ok := b.(*slack.ActionBlock); ok {
@@ -88,12 +99,12 @@ func TestRootCardNamesTheDriveElseTheBranchAndCarriesNoReplyButtons(t *testing.T
 		{statusCard{Status: "done", Title: "t"}, "✅ app@dev"},
 	} {
 		card, header := c.card, c.header
-		got := blocksJSON(t, card.rootBlocks(tag, at))
+		got := blocksJSON(t, card.rootBlocks(cardView{tag: tag, at: at, now: at}))
 		if !strings.Contains(got, header) || !strings.Contains(got, "updated 1:33am") || strings.Contains(got, cardActionsBlock) {
 			t.Fatalf("root card %s, want header %q, an update time, and no reply buttons", got, header)
 		}
 	}
-	if got := blocksJSON(t, (statusCard{Status: "info", Title: "t"}).rootBlocks(cardTag{Session: "0123abcd"}, at)); !strings.Contains(got, "Claude session 0123abcd") {
+	if got := blocksJSON(t, (statusCard{Status: "info", Title: "t"}).rootBlocks(cardView{tag: cardTag{Session: "0123abcd"}, at: at, now: at})); !strings.Contains(got, "Claude session 0123abcd") {
 		t.Fatalf("root card outside a repo = %s, want the session named", got)
 	}
 }

@@ -81,6 +81,7 @@ type opBody struct {
 	Files     []string          `json:"files"`
 	Blocks    []json.RawMessage `json:"blocks"`
 	Card      *statusCard       `json:"card"`
+	RootOnly  bool              `json:"root_only"`
 	Users     []string          `json:"users"`
 	Topic     string            `json:"topic"`
 	Prefix    string            `json:"prefix"`
@@ -1485,8 +1486,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Card == nil && b.Text == "" && len(b.Files) == 0 {
 		return fail("dm-status needs a card, text, or files")
 	}
+	if b.RootOnly && (b.Card == nil || b.ThreadTS != "") {
+		return fail("dm-status root_only redraws the session thread's root card; it takes a card and no thread_ts")
+	}
 	if b.Card != nil {
-		if err := b.Card.check(); err != nil {
+		if err := b.Card.check(a.now(), b.RootOnly); err != nil {
 			return fail(err.Error())
 		}
 	}
@@ -1506,9 +1510,14 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionWrite, err))
 	}
 	id.Agent = b.Agent
-	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files}
+	if b.RootOnly {
+		if err := ownStatusRoot(hc.Ctx, hc.DB, sub.ID, id.DMChannelID); err != nil {
+			return fail(err.Error())
+		}
+	}
+	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card != nil {
-		msg = a.cardMessage(*b.Card, gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope))
+		msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	}
 	thread, posted, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, b.ThreadTS, msg)
 	if err != nil && !posted {
@@ -1521,15 +1530,12 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 type dmMessage struct {
-	text   string
-	blocks []slack.Block
-	files  []string
-	root   []slack.Block
-}
-
-func (a *app) cardMessage(card statusCard, tag cardTag) dmMessage {
-	now := a.now()
-	return dmMessage{text: card.text(), blocks: card.replyBlocks(tag, now), root: card.rootBlocks(tag, now)}
+	text     string
+	blocks   []slack.Block
+	files    []string
+	card     *statusCard
+	tag      cardTag
+	rootOnly bool
 }
 
 func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, threadTS string, msg dmMessage) (string, bool, error) {
@@ -1540,20 +1546,8 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if threadTS != "" && threadTS != thread {
 		thread, found = threadTS, false
 	}
-	if thread == "" && msg.root != nil {
-		root, err := a.post(ctx, db, id, id.DMChannelID, "", msg.text, msg.root, nil)
-		if err != nil {
-			return "", false, err
-		}
-		thread = root.TS
-		if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
-			return "", true, err
-		}
-		found = true
-	} else if msg.root != nil {
-		if err := a.refreshRoot(ctx, db, id, thread, msg); err != nil {
-			a.poller.log.Printf("status card root %s/%s not refreshed: %v", id.DMChannelID, thread, err)
-		}
+	if msg.card != nil {
+		return a.cardStatus(ctx, db, sub, id, thread, found, msg)
 	}
 	res, err := a.post(ctx, db, id, id.DMChannelID, thread, msg.text, msg.blocks, msg.files)
 	if err != nil {
@@ -1571,20 +1565,88 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	return thread, true, nil
 }
 
+func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread string, found bool, msg dmMessage) (string, bool, error) {
+	cards := a.cards
+	cards.mu.Lock()
+	defer cards.mu.Unlock()
+	now := a.now()
+	t := cards.draft(id.DMChannelID, thread)
+	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
+	switch {
+	case thread == "":
+		text, blocks := t.rootMessage(now, cards.refs)
+		root, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
+		if err != nil {
+			return "", false, err
+		}
+		thread, t.Thread, t.Root.TS = root.TS, root.TS, root.TS
+		if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
+			cards.commit(t)
+			return "", true, err
+		}
+		found = true
+	default:
+		own, err := ownPost(ctx, db, id.DMChannelID, thread)
+		if err != nil {
+			return "", false, err
+		}
+		if !own {
+			t.Root = nil
+		}
+		if t.Root != nil {
+			text, blocks := t.rootMessage(now, cards.refs)
+			if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, thread, text, blocks); err != nil {
+				if msg.rootOnly {
+					return "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, thread, err)
+				}
+				a.poller.log.Printf("status card root %s/%s not refreshed: %v", id.DMChannelID, thread, err)
+			}
+		}
+	}
+	if msg.rootOnly {
+		cards.commit(t)
+		return thread, true, nil
+	}
+	text, blocks := t.replyMessage(now, cards.refs)
+	res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
+	if err != nil {
+		return "", false, err
+	}
+	t.Reply.TS = res.TS
+	cards.commit(t)
+	if found {
+		return thread, true, nil
+	}
+	if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
+		return "", true, err
+	}
+	return thread, true, nil
+}
+
+func ownStatusRoot(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) error {
+	thread, found, err := sessionThread(ctx, db, subjectID, dmChannelID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("dm-status root_only needs this session's status thread; post a card first")
+	}
+	own, err := ownPost(ctx, db, dmChannelID, thread)
+	if err != nil {
+		return err
+	}
+	if !own {
+		return fmt.Errorf("dm-status root_only: the status thread's root %s is not a card this daemon posted", thread)
+	}
+	return nil
+}
+
 func (a *app) bindSessionThread(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread string) error {
 	if err := a.openSessionThread(ctx, db, sub, id.DMChannelID, thread); err != nil {
 		return err
 	}
 	a.poller.nudge(cursorKey{id.DMChannelID, thread}, cursorKey{id.DMChannelID, ""})
 	return nil
-}
-
-func (a *app) refreshRoot(ctx context.Context, db *sql.DB, id identity, thread string, msg dmMessage) error {
-	own, err := ownPost(ctx, db, id.DMChannelID, thread)
-	if err != nil || !own {
-		return err
-	}
-	return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, thread, msg.text, msg.root)
 }
 
 func sessionThread(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) (string, bool, error) {

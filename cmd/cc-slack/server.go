@@ -29,6 +29,7 @@ type app struct {
 	cache     *readCache
 	replay    *replayCursor
 	poller    *poller
+	cards     *liveCards
 	shortcuts *shortcutHandler
 	socket    *socketClient
 	captHook  commandRunner
@@ -59,6 +60,17 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		log:           log.New(os.Stderr, "["+binaryName+" shortcut] ", log.LstdFlags),
 		inflight:      map[shortcutKey]bool{},
 	}
+	cards := &liveCards{
+		path:    liveCardsPath(),
+		client:  refClient{http: &http.Client{Timeout: 30 * time.Second}, githubURL: githubAPI, buildkiteURL: buildkiteAPI, now: time.Now},
+		log:     log.New(os.Stderr, "["+binaryName+" cards] ", log.LstdFlags),
+		now:     time.Now,
+		newAPI:  newAPI,
+		wakeCh:  make(chan struct{}, 1),
+		threads: map[string]*liveThread{},
+		refs:    map[string]refState{},
+		hosts:   map[string]*refHost{},
+	}
 	p := &poller{
 		newAPI:    newAPI,
 		alive:     alive,
@@ -66,6 +78,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		cache:     cache,
 		replay:    replay,
 		shortcuts: shortcuts,
+		cards:     cards,
 		wakeCh:    make(chan struct{}, 1),
 		paused:    map[string]time.Time{},
 		pending:   map[cursorKey]uint64{},
@@ -82,6 +95,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		avatar:    avatars.publish,
 		now:       time.Now,
 		poller:    p,
+		cards:     cards,
 		shortcuts: shortcuts,
 		socket: &socketClient{
 			onFrame:    socketFrames(shortcuts, p, replay),
@@ -132,11 +146,16 @@ func (a *app) buildServer() (*daemon.Server, error) {
 				return err
 			}
 			a.poller.plane = s
+			a.cards.plane = s
+			if err := a.cards.load(); err != nil {
+				return err
+			}
 			a.shortcuts.plane = s
 			a.shortcuts.spawn = s.Background
 			a.socket.plane = s
 			s.Background(a.poller.run)
 			s.Background(a.socket.run)
+			s.Background(a.cards.run)
 			return nil
 		},
 		AgentGreeting: agentGreeting,

@@ -1,0 +1,1 @@
+{"event_type":"cc_slack_action","event_payload":{"user":"U0123ABCDE","channel":"D0123ABCDE","message_ts":"1800000000.000300","thread_ts":"1800000000.000100","action_id":"cc-slack-card:ask:merge-41","value":"{\"id\":\"merge-41\",\"label\":\"Merge #41\",\"exp\":1800003600}","action_ts":"1800000002.123456","seq":"001800000002000-e5f6a7"}}

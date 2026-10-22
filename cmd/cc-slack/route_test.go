@@ -69,13 +69,13 @@ func projectWith(t *testing.T, hooks ...string) func(context.Context, int) (stri
 	}
 }
 
-func startDaemon(t *testing.T) *liveDaemon {
+func startDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	t.Helper()
 	shortHome(t)
-	return launchDaemon(t)
+	return launchDaemon(t, setup...)
 }
 
-func launchDaemon(t *testing.T) *liveDaemon {
+func launchDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	t.Helper()
 	fs := newFakeSlack()
 	a := newApp(func(string) slackAPI { return fs }, func(int) bool { return true }, openTestCache(t), openTestReplay(t))
@@ -86,6 +86,9 @@ func launchDaemon(t *testing.T) *liveDaemon {
 	a.shortcuts.avatar = agentAvatar
 	user := newFakeUserCredential()
 	a.user = user.session()
+	for _, f := range setup {
+		f(a)
+	}
 	srv, err := a.buildServer()
 	if err != nil {
 		t.Fatal(err)
