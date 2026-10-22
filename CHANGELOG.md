@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-22
+
+### Fixed
+- The tagged plugin now carries its binrun descriptor, so installing the plugin at a release tag provisions the binary.
+
 ## [0.1.0] - 2026-10-21
 
 ### Added
@@ -13,5 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/yasyf/cc-slack/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yasyf/cc-slack/releases/tag/v0.1.0
