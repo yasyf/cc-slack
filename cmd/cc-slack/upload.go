@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +87,70 @@ func checkAttachments(text string, blocks []slack.Block, paths []string, broadca
 		return fmt.Errorf("the message has %d blocks; Slack takes at most %d", len(blocks), maxBlocks)
 	}
 	return nil
+}
+
+// The launchd daemon has no TCC grant for folders like ~/Documents, where its open blocks forever, so it reads copies.
+func stageAttachments(body json.RawMessage) (json.RawMessage, func(), error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, nil, err
+	}
+	var paths []string
+	if raw, ok := fields["files"]; ok {
+		if err := json.Unmarshal(raw, &paths); err != nil {
+			return nil, nil, fmt.Errorf("files: %w", err)
+		}
+	}
+	if len(paths) == 0 {
+		return body, func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "cc-slack-files-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	staged := make([]string, len(paths))
+	for i, path := range paths {
+		if staged[i], err = stageAttachment(filepath.Join(dir, strconv.Itoa(i)), path); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("attachment %s: %w", path, err)
+		}
+	}
+	if fields["files"], err = json.Marshal(staged); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return out, cleanup, nil
+}
+
+func stageAttachment(dir, path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil || !filepath.IsAbs(path) || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxFileBytes {
+		return path, nil
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", err
+	}
+	src, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = src.Close() }()
+	staged := filepath.Join(dir, filepath.Base(path))
+	dst, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return "", err
+	}
+	return staged, dst.Close()
 }
 
 func allImages(paths []string) (bool, error) {

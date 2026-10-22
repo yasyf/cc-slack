@@ -23,7 +23,10 @@ const (
 	writePatience     = currentPatience + currentReserve + 10*time.Second
 )
 
-var threadCheckedWrites = []daemon.Op{opSend, opReply, opEdit, opDelete}
+var (
+	threadCheckedWrites = []daemon.Op{opSend, opReply, opEdit, opDelete}
+	attachmentWrites    = []daemon.Op{opSend, opReply, opDMStatus}
+)
 
 var (
 	awaitReconnectWindow = time.Minute
@@ -31,6 +34,14 @@ var (
 )
 
 func invoke(ctx context.Context, d cmd.Deps, session, scope string, op daemon.Op, body json.RawMessage) (daemon.Reply, error) {
+	if slices.Contains(attachmentWrites, op) {
+		staged, cleanup, err := stageAttachments(body)
+		if err != nil {
+			return daemon.Reply{}, err
+		}
+		defer cleanup()
+		body = staged
+	}
 	var reply daemon.Reply
 	err := acrossRestart(awaitRestart, func(ctx context.Context) error {
 		var err error
