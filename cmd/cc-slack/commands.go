@@ -147,6 +147,9 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := cfg.resolveTokens(); err != nil {
+				return err
+			}
 			params, err := readParameters(ctx, cfg)
 			if err != nil {
 				return err
@@ -744,13 +747,14 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		card      string
 		agentName string
 		files     []string
+		rootOnly  bool
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, in this session's thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -768,6 +772,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
 	c.Flags().StringVar(&card, "card", "", "status card as a JSON object, or @path to a file holding one, in place of text")
+	c.Flags().BoolVar(&rootOnly, "root-only", false, "redraw only the status thread's root card with --card, posting no reply")
 	bindAgent(c, &agentName)
 	return c
 }

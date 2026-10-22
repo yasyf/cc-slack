@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -26,7 +27,15 @@ type config struct {
 	SSM            *ssmSource     `toml:"ssm" json:"-"`
 	Avatars        avatarConfig   `toml:"avatars" json:"avatars"`
 	DocCards       docCardsConfig `toml:"doc_cards" json:"doc_cards"`
+	GitHub         *tokenSource   `toml:"github" json:"github,omitempty"`
+	Buildkite      *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
 	PermissionHook string         `toml:"permission_hook" json:"permission_hook,omitempty"`
+}
+
+type tokenSource struct {
+	Env     string   `toml:"token_env" json:"-"`
+	Command []string `toml:"token_command" json:"command,omitempty"`
+	Token   string   `toml:"-" json:"token,omitempty"`
 }
 
 type ssmSource struct {
@@ -51,6 +60,56 @@ type docCardsConfig struct {
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
 
 func (d docCardsConfig) enabled() bool { return d.URL != "" }
+
+func (t *tokenSource) validate(section string) error {
+	if t == nil {
+		return nil
+	}
+	set := 0
+	for _, on := range []bool{t.Env != "", len(t.Command) > 0, t.Token != ""} {
+		if on {
+			set++
+		}
+	}
+	if set != 1 {
+		return fmt.Errorf("[%s] needs exactly one of token_env and token_command", section)
+	}
+	return nil
+}
+
+func (t *tokenSource) redacted() *tokenSource {
+	if t == nil {
+		return nil
+	}
+	return &tokenSource{Command: t.Command}
+}
+
+func (t *tokenSource) resolve(section string) error {
+	switch {
+	case t == nil:
+		return nil
+	case t.Env != "":
+		t.Token = os.Getenv(t.Env)
+		if t.Token == "" {
+			return fmt.Errorf("[%s] token_env names $%s, which is empty", section, t.Env)
+		}
+		t.Env = ""
+	case len(t.Command) > 0:
+		bin, err := exec.LookPath(t.Command[0])
+		if err != nil {
+			return fmt.Errorf("[%s] token_command: %w", section, err)
+		}
+		t.Command[0] = bin
+	}
+	return nil
+}
+
+func (c *config) resolveTokens() error {
+	if err := c.GitHub.resolve("github"); err != nil {
+		return err
+	}
+	return c.Buildkite.resolve("buildkite")
+}
 
 func (c config) permissionHook() string { return cmp.Or(c.PermissionHook, defaultPermissionHook) }
 
@@ -107,6 +166,12 @@ func (c config) validate() error {
 	}
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
+	}
+	if err := c.GitHub.validate("github"); err != nil {
+		return err
+	}
+	if err := c.Buildkite.validate("buildkite"); err != nil {
+		return err
 	}
 	if s := c.SSM; s != nil {
 		if s.Region == "" || s.BotToken == "" || s.SocketURL == "" {

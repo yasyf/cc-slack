@@ -330,11 +330,26 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `drive`, `phase` | the long-running drive's name and phase, when there is one |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
 | `options` | up to 4 quick replies of 30 characters or fewer |
+| `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
+| `progress` | `{step, total, label}`, drawn as a progress bar |
+| `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
+| `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
+| `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
+| `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 
 The first card opens the thread with a root card. Every later card posts
-in the thread and redraws the root with its latest state. The daemon tags
-both with the session's short id, repo, branch, and worktree. A thread
-bound to a shortcut DM keeps that message as its root.
+in the thread and redraws the root with its latest state. The root keeps
+the last progress, times, facts, refs, links, and rollup any card set,
+lists every open ask in the thread, and shows a timeline of the last
+updates. `root_only` (`dm-status --root-only`) redraws the root without
+posting a reply, for a script that keeps a drive's rollup current. The
+daemon tags both cards with the session's short id, repo, branch, and
+worktree. A thread bound to a shortcut DM keeps that message as its root.
+
+An ask's `id` is stable: reusing it updates the same ask, and an answered
+ask stays answered, so a script can resend its asks every pass. `confirm`
+guards the tap with a dialog, and a tap after `expires_at` is dropped. The
+tap arrives as a `slack.action` whose payload carries the ask's `id`.
 
 Each reply card carries the `options` plus fixed Ack and Pause buttons. A
 tap arrives as a `slack.action` event and a directive, steering this
