@@ -82,4 +82,4 @@ jobs:
       - name: check-post
         run: python3 -m unittest discover -s plugin/skills/slack/scripts -p 'check_post_test.py'
       - name: capt-hook pack
-        run: uv run --script plugin/capt-hook/hooks/tests/test_pack.py
+        run: uv run --python 3.13 --script plugin/capt-hook/hooks/tests/test_pack.py

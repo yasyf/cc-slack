@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func fixture(t *testing.T, name string) []byte {
+func protocolFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "protocol", name))
 	if err != nil {
@@ -23,7 +23,7 @@ func fixture(t *testing.T, name string) []byte {
 func decodePush(t *testing.T, name, eventType string, payload any) socketPush {
 	t.Helper()
 	var push socketPush
-	if err := json.Unmarshal(fixture(t, name), &push); err != nil {
+	if err := json.Unmarshal(protocolFixture(t, name), &push); err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
 	if push.Type != "" || push.EventType != eventType {
@@ -45,7 +45,7 @@ func TestProtocolHelloMatchesTheSpec(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := fixture(t, name); !bytes.Equal(got, want) {
+		if want := protocolFixture(t, name); !bytes.Equal(got, want) {
 			t.Errorf("%s: the daemon sends %s, the spec says %s", name, got, want)
 		}
 	}
@@ -66,7 +66,7 @@ func TestProtocolHelloSendsSinceOnlyForARecentSeq(t *testing.T) {
 func TestProtocolCaughtUpIsATypedFrame(t *testing.T) {
 	t.Parallel()
 	var push socketPush
-	if err := json.Unmarshal(fixture(t, "caught_up.json"), &push); err != nil {
+	if err := json.Unmarshal(protocolFixture(t, "caught_up.json"), &push); err != nil {
 		t.Fatal(err)
 	}
 	if push.Type != caughtUpType || push.Seq != "001800000005000-0b12de" || push.EventType != "" {
@@ -128,7 +128,7 @@ func TestProtocolShortcutMetadataTakesItsDMTSFromTheMessage(t *testing.T) {
 		EventType    string          `json:"event_type"`
 		EventPayload shortcutPayload `json:"event_payload"`
 	}
-	if err := json.Unmarshal(fixture(t, "shortcut_metadata.json"), &meta); err != nil {
+	if err := json.Unmarshal(protocolFixture(t, "shortcut_metadata.json"), &meta); err != nil {
 		t.Fatal(err)
 	}
 	if meta.EventType != shortcutEventType || meta.EventPayload.DMTS != "" {
