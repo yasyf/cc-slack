@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -327,6 +328,67 @@ func TestPostsRefuseUnreadableAttachments(t *testing.T) {
 	}
 	if n := l.slack.callCount("files.getUploadURLExternal"); n != 0 {
 		t.Fatalf("getUploadURLExternal calls = %d after refused attachments", n)
+	}
+}
+
+func TestStageAttachmentsHandsTheDaemonCopies(t *testing.T) {
+	report := writeFile(t, "report.pdf", "%PDF-1.7 first")
+	again := writeFile(t, "report.pdf", "%PDF-1.7 second")
+	locked := writeFile(t, "locked.pdf", "%PDF-1.7 locked")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	untouched := []string{"relative.pdf", t.TempDir(), filepath.Join(t.TempDir(), "missing.pdf"), writeFile(t, "empty.txt", ""), locked}
+	body, err := json.Marshal(map[string]any{"channel_id": testChannel, "text": "the deck", "files": append([]string{report, again}, untouched...)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, cleanup, err := stageAttachments(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		ChannelID string   `json:"channel_id"`
+		Text      string   `json:"text"`
+		Files     []string `json:"files"`
+	}
+	if err := json.Unmarshal(staged, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ChannelID != testChannel || got.Text != "the deck" {
+		t.Fatalf("staged body = %s, want the other fields kept", staged)
+	}
+	for i, original := range []string{report, again} {
+		copied := got.Files[i]
+		if copied == original || filepath.Base(copied) != "report.pdf" {
+			t.Fatalf("files[%d] = %q, want a copy of %q under its own name", i, copied, original)
+		}
+		want, _ := os.ReadFile(original)
+		if have, err := os.ReadFile(copied); err != nil || !bytes.Equal(have, want) {
+			t.Fatalf("copy of %s = %q, %v; want %q", original, have, err, want)
+		}
+	}
+	if strings.Join(got.Files[2:], ",") != strings.Join(untouched, ",") {
+		t.Fatalf("files = %v, want %v passed through for the daemon to refuse", got.Files[2:], untouched)
+	}
+	cleanup()
+	if _, err := os.Stat(filepath.Dir(filepath.Dir(got.Files[0]))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging dir after cleanup: %v, want it gone", err)
+	}
+	if _, err := os.Stat(report); err != nil {
+		t.Fatalf("original after cleanup: %v", err)
+	}
+}
+
+func TestStageAttachmentsLeavesABodyWithoutFiles(t *testing.T) {
+	body := json.RawMessage(`{"channel_id":"C1","text":"hi","files":[]}`)
+	staged, cleanup, err := stageAttachments(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if string(staged) != string(body) {
+		t.Fatalf("staged = %s, want %s", staged, body)
 	}
 }
 
