@@ -1480,26 +1480,12 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || len(b.Files) > 0) {
-		return fail("dm-status takes a card or text, blocks, and files, never both")
-	}
-	if b.Card == nil && b.Text == "" && len(b.Files) == 0 {
-		return fail("dm-status needs a card, text, or files")
-	}
-	if b.RootOnly && (b.Card == nil || b.ThreadTS != "") {
-		return fail("dm-status root_only redraws the session thread's root card; it takes a card and no thread_ts")
-	}
-	if b.Card != nil {
-		if err := b.Card.check(a.now(), b.RootOnly); err != nil {
-			return fail(err.Error())
-		}
+	if err := checkDMStatus(b, a.now()); err != nil {
+		return fail(err.Error())
 	}
 	blocks, err := checkMessage(b)
 	if err != nil {
 		return fail(err.Error())
-	}
-	if b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS) {
-		return fail(fmt.Sprintf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS))
 	}
 	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
@@ -1527,6 +1513,22 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return ok(map[string]string{"channel_id": id.DMChannelID, "thread_ts": thread, "channel": string(a.channelState(hc, sub.ID))})
+}
+
+func checkDMStatus(b opBody, now time.Time) error {
+	switch {
+	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || len(b.Files) > 0):
+		return errors.New("dm-status takes a card or text, blocks, and files, never both")
+	case b.Card == nil && b.Text == "" && len(b.Files) == 0:
+		return errors.New("dm-status needs a card, text, or files")
+	case b.RootOnly && (b.Card == nil || b.ThreadTS != ""):
+		return errors.New("dm-status root_only redraws the session thread's root card; it takes a card and no thread_ts")
+	case b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS):
+		return fmt.Errorf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS)
+	case b.Card != nil:
+		return b.Card.check(now, b.RootOnly)
+	}
+	return nil
 }
 
 type dmMessage struct {
@@ -1572,8 +1574,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	now := a.now()
 	t := cards.draft(id.DMChannelID, thread)
 	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
-	switch {
-	case thread == "":
+	if thread == "" {
 		text, blocks := t.rootMessage(now, cards.refs)
 		root, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
 		if err != nil {
@@ -1585,7 +1586,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 			return "", true, err
 		}
 		found = true
-	default:
+	} else {
 		own, err := ownPost(ctx, db, id.DMChannelID, thread)
 		if err != nil {
 			return "", false, err

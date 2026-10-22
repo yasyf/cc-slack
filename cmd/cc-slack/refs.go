@@ -318,7 +318,7 @@ func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID
 
 func (c refClient) build(ctx context.Context, tok *refToken, r refID) (refState, error) {
 	u := fmt.Sprintf("%s/v2/organizations/%s/pipelines/%s/builds/%d", c.buildkiteURL, url.PathEscape(r.Owner), url.PathEscape(r.Repo), r.Number)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return refState{}, err
 	}

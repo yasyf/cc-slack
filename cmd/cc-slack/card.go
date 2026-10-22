@@ -143,6 +143,28 @@ func checkURL(raw string) bool {
 }
 
 func (c statusCard) check(now time.Time, rootOnly bool) error {
+	if err := c.checkHeading(rootOnly); err != nil {
+		return err
+	}
+	if err := c.checkLinks(); err != nil {
+		return err
+	}
+	if err := c.checkOptions(rootOnly); err != nil {
+		return err
+	}
+	if err := c.checkRefs(); err != nil {
+		return err
+	}
+	if err := c.checkAsks(now); err != nil {
+		return err
+	}
+	if err := c.checkFacts(); err != nil {
+		return err
+	}
+	return c.checkRollup()
+}
+
+func (c statusCard) checkHeading(rootOnly bool) error {
 	if rootOnly && c.Title == "" {
 		if c.Status != "" || c.Body != "" {
 			return errors.New("a root-only card without a title takes no status or body")
@@ -161,6 +183,10 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 	if runes(c.Body) > cardMaxBodyLen {
 		return fmt.Errorf("card body runs past %d characters", cardMaxBodyLen)
 	}
+	return nil
+}
+
+func (c statusCard) checkLinks() error {
 	if len(c.Links) > cardMaxLinks {
 		return fmt.Errorf("card carries %d links, at most %d", len(c.Links), cardMaxLinks)
 	}
@@ -169,6 +195,10 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 			return fmt.Errorf("card link %q needs a label of up to %d characters and an https url of up to %d", l.URL, cardMaxLabelLen, cardMaxURLLen)
 		}
 	}
+	return nil
+}
+
+func (c statusCard) checkOptions(rootOnly bool) error {
 	if rootOnly && len(c.Options) > 0 {
 		return errors.New("options ride reply cards; a root-only card carries none")
 	}
@@ -185,12 +215,10 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 		}
 		seen[o] = true
 	}
-	if err := c.checkRefs(); err != nil {
-		return err
-	}
-	if err := c.checkAsks(now); err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c statusCard) checkFacts() error {
 	if p := c.Progress; p != nil && (p.Total < 1 || p.Total > cardMaxSteps || p.Step < 0 || p.Step > p.Total || runes(p.Label) > cardMaxLabelLen) {
 		return fmt.Errorf("card progress needs 0 <= step <= total <= %d and a label of up to %d characters", cardMaxSteps, cardMaxLabelLen)
 	}
@@ -202,7 +230,7 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 			return fmt.Errorf("card fact %q needs a label of up to %d characters and a value of up to %d", f.Label, cardMaxNameLen, cardMaxDetailLen)
 		}
 	}
-	return c.checkRollup()
+	return nil
 }
 
 func (c statusCard) checkRefs() error {
@@ -400,7 +428,9 @@ func bulleted(head string, lines []string) string {
 	return out
 }
 
-func slackLink(url, label string) string { return "<" + url + "|" + mrkdwnEscapes.Replace(label) + ">" }
+func slackLink(target, label string) string {
+	return "<" + target + "|" + mrkdwnEscapes.Replace(label) + ">"
+}
 
 func (c statusCard) context(tag cardTag, now time.Time, stamp string) slack.Block {
 	var parts []string
@@ -492,8 +522,8 @@ func (c statusCard) facts() []slack.Block {
 	return []slack.Block{slack.NewSectionBlock(nil, fields, nil, slack.SectionBlockOptionBlockID("card-facts"))}
 }
 
-func refLine(url, label string, id refID, state refState, status string) string {
-	line := "• " + slackLink(url, cmp.Or(label, id.defaultLabel()))
+func refLine(target, label string, id refID, state refState, status string) string {
+	line := "• " + slackLink(target, cmp.Or(label, id.defaultLabel()))
 	if status != "" {
 		line += " · " + mrkdwnEscapes.Replace(status)
 	}

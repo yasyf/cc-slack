@@ -136,12 +136,11 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 	}
 }
 
-func seedLiveThread(l *liveCards, card statusCard, at time.Time) *liveThread {
+func seedLiveThread(l *liveCards, card statusCard, at time.Time) {
 	t := &liveThread{Channel: "D" + testUser, Thread: "1800000000.000100"}
 	t.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, false)
 	t.Reply.TS = "1800000000.000200"
 	l.threads[threadKey(t.Channel, t.Thread)] = t
-	return t
 }
 
 func editsOf(edits []fakeEdit, ts string) []string {
