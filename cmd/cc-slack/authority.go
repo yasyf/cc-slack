@@ -83,7 +83,7 @@ func execCommand(ctx context.Context, bin string, args ...string) ([]byte, error
 }
 
 func claudeCwd(ctx context.Context, pid int) (string, error) {
-	out, err := exec.CommandContext(ctx, "/usr/sbin/lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output() //nolint:gosec // G204: a fixed binary and a numeric pid, never a shell
 	if err != nil {
 		return "", fmt.Errorf("read the working directory of claude %d: %w", pid, err)
 	}

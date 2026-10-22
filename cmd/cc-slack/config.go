@@ -16,10 +16,10 @@ const (
 	configEnv             = "CC_SLACK_CONFIG"
 	repoConfig            = ".claude/cc-slack.toml"
 	defaultPermissionHook = "slack_writes_need_permission.py"
-	botTokenEnv           = "CC_SLACK_BOT_TOKEN"
+	botEnv                = "CC_SLACK_BOT_TOKEN"
 	socketURLEnv          = "CC_SLACK_SOCKET_URL"
 	avatarKeyIDEnv        = "CC_SLACK_AVATAR_KEY_ID"
-	avatarSecretEnv       = "CC_SLACK_AVATAR_SECRET"
+	avatarSigningEnv      = "CC_SLACK_AVATAR_SECRET"
 )
 
 type config struct {

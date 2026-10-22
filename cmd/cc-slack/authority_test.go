@@ -414,7 +414,7 @@ func TestTicketIsSpentOnceAtTheWritesOwnPlace(t *testing.T) {
 	approved := l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": "CI is green"})
 	reply := map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": "CI is green", "no_watch": true}
 	l.refused(opReply, l.spending(field(approved, "ticket_id"), reply), "does not include this action")
-	if calls := len(l.tickets.calls); calls != 1 || !slices.Contains(l.tickets.lastCall(), "thread="+testThread) {
+	if calls := l.tickets.callCount(); calls != 1 || !slices.Contains(l.tickets.lastCall(), "thread="+testThread) {
 		t.Fatalf("capt-hook calls = %q, want one spend at the reply's thread and no channel-wide retry", l.tickets.calls)
 	}
 	if posts := l.slack.sent(); len(posts) != 0 {

@@ -250,14 +250,14 @@ func readParameters(ctx context.Context, cfg config) (parameters, error) {
 
 func envParameters(cfg config) (parameters, error) {
 	p := parameters{
-		token: os.Getenv(botTokenEnv), socketURL: os.Getenv(socketURLEnv),
-		avatarKeyID: os.Getenv(avatarKeyIDEnv), avatarSecret: os.Getenv(avatarSecretEnv),
+		token: os.Getenv(botEnv), socketURL: os.Getenv(socketURLEnv),
+		avatarKeyID: os.Getenv(avatarKeyIDEnv), avatarSecret: os.Getenv(avatarSigningEnv),
 	}
 	if p.token == "" || p.socketURL == "" {
-		return parameters{}, fmt.Errorf("login needs %s and %s, or an [ssm] section in the cc-slack config", botTokenEnv, socketURLEnv)
+		return parameters{}, fmt.Errorf("login needs %s and %s, or an [ssm] section in the cc-slack config", botEnv, socketURLEnv)
 	}
 	if cfg.Avatars.enabled() && (p.avatarKeyID == "" || p.avatarSecret == "") {
-		return parameters{}, fmt.Errorf("[avatars] needs %s and %s, or an [ssm] section in the cc-slack config", avatarKeyIDEnv, avatarSecretEnv)
+		return parameters{}, fmt.Errorf("[avatars] needs %s and %s, or an [ssm] section in the cc-slack config", avatarKeyIDEnv, avatarSigningEnv)
 	}
 	return p, nil
 }

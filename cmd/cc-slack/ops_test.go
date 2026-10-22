@@ -290,7 +290,7 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), "channel_id") {
 		t.Fatalf("history without a channel: %v", err)
 	}
-	l.slack.fail(methodHistory, slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "not_in_channel"})
 	raw, _ = json.Marshal(map[string]string{"channel_id": "C9"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), mcpHistory) {
 		t.Fatalf("unreadable channel: %v", err)
@@ -521,7 +521,7 @@ func TestFollowRejectsUnknownOwnerAndUnreadableChannel(t *testing.T) {
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opFollow, raw); err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("unknown owner: %v", err)
 	}
-	l.slack.fail(methodHistory, slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.slack.fail(historyOf("G9"), slack.SlackErrorResponse{Err: "not_in_channel"})
 	raw, _ = json.Marshal(map[string]string{"channel_id": "G9"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opFollow, raw); err == nil || !strings.Contains(err.Error(), mcpHistory) {
 		t.Fatalf("unreadable channel: %v", err)

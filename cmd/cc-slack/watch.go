@@ -160,7 +160,7 @@ func eventType(data string) string {
 func streamHead(ctx context.Context, port int, subjectID string) (int64, error) {
 	u := fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&exclude_origin=%s",
 		port, url.QueryEscape(subjectID), url.QueryEscape(event.OriginAgent))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return 0, err
 	}
@@ -168,7 +168,7 @@ func streamHead(ctx context.Context, port int, subjectID string) (int64, error) 
 	if err != nil {
 		return 0, fmt.Errorf("read the event log head of %s: %w", subjectID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("read the event log head of %s: events endpoint returned %d", subjectID, resp.StatusCode)
 	}
@@ -191,5 +191,8 @@ func streamHead(ctx context.Context, port int, subjectID string) (int64, error) 
 			return marker.Seq, nil
 		}
 	}
-	return 0, fmt.Errorf("event stream of %s closed before it caught up: %v", subjectID, sc.Err())
+	if err := sc.Err(); err != nil {
+		return 0, fmt.Errorf("event stream of %s closed before it caught up: %w", subjectID, err)
+	}
+	return 0, fmt.Errorf("event stream of %s closed before it caught up", subjectID)
 }

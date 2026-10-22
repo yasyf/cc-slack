@@ -112,6 +112,8 @@ func (f *fakeSlack) DocCardsContext(_ context.Context, serviceURL, channelID, te
 	return f.cards, nil
 }
 
+func historyOf(channelID string) string { return methodHistory + " " + channelID }
+
 func (f *fakeSlack) fail(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -396,6 +398,9 @@ func (f *fakeSlack) GetConversationHistoryContext(_ context.Context, params *sla
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.call(methodHistory); err != nil {
+		return nil, err
+	}
+	if err := f.call(historyOf(params.ChannelID)); err != nil {
 		return nil, err
 	}
 	resp := &slack.GetConversationHistoryResponse{}

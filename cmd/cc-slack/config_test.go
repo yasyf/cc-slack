@@ -103,12 +103,12 @@ func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 }
 
 func TestEnvParametersNeedTheBotTokenAndSocketURL(t *testing.T) {
-	t.Setenv(botTokenEnv, "")
+	t.Setenv(botEnv, "")
 	t.Setenv(socketURLEnv, "")
-	if _, err := envParameters(config{}); err == nil || !strings.Contains(err.Error(), botTokenEnv) {
-		t.Fatalf("envParameters without env = %v, want it to name %s", err, botTokenEnv)
+	if _, err := envParameters(config{}); err == nil || !strings.Contains(err.Error(), botEnv) {
+		t.Fatalf("envParameters without env = %v, want it to name %s", err, botEnv)
 	}
-	t.Setenv(botTokenEnv, "xoxb-env")
+	t.Setenv(botEnv, "xoxb-env")
 	t.Setenv(socketURLEnv, "wss://socket.example.com")
 	p, err := envParameters(config{})
 	if err != nil || p.token != "xoxb-env" || p.socketURL != "wss://socket.example.com" {

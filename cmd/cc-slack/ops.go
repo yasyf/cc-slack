@@ -410,18 +410,9 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(err.Error())
 		}
-		if b.ChannelID == "" || (b.Text == "" && len(b.Files) == 0) {
-			return fail(fmt.Sprintf("%s needs channel_id and text or files (or a Slack url)", hc.Env.Op))
-		}
-		if requireThread && b.ThreadTS == "" {
-			return fail("reply needs thread_ts (or a Slack message url)")
-		}
-		var extra []slack.MsgOption
-		if b.Broadcast {
-			if b.ThreadTS == "" {
-				return fail("broadcast needs thread_ts (or a Slack message url)")
-			}
-			extra = append(extra, slack.MsgOptionBroadcast())
+		extra, err := checkPost(b, hc.Env.Op, requireThread)
+		if err != nil {
+			return fail(err.Error())
 		}
 		sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 		if err != nil {
@@ -490,6 +481,22 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		return ok(a.reportChannel(hc, sub.ID, res))
 	}
+}
+
+func checkPost(b opBody, op daemon.Op, requireThread bool) ([]slack.MsgOption, error) {
+	if b.ChannelID == "" || (b.Text == "" && len(b.Files) == 0) {
+		return nil, fmt.Errorf("%s needs channel_id and text or files (or a Slack url)", op)
+	}
+	if requireThread && b.ThreadTS == "" {
+		return nil, errors.New("reply needs thread_ts (or a Slack message url)")
+	}
+	if !b.Broadcast {
+		return nil, nil
+	}
+	if b.ThreadTS == "" {
+		return nil, errors.New("broadcast needs thread_ts (or a Slack message url)")
+	}
+	return []slack.MsgOption{slack.MsgOptionBroadcast()}, nil
 }
 
 func (a *app) reportChannel(hc daemon.HandlerCtx, subjectID string, res postResult) postResult {
@@ -1172,8 +1179,9 @@ type peerKey struct {
 
 func (a *app) dmPeer(ctx context.Context, api slackAPI, id identity, channelID string) (string, error) {
 	key := peerKey{id.UserID, channelID}
-	if peer, ok := a.peers.Load(key); ok {
-		return peer.(string), nil
+	if cached, ok := a.peers.Load(key); ok {
+		peer, _ := cached.(string)
+		return peer, nil
 	}
 	peer, err := lookupDMPeer(ctx, api, id, channelID)
 	if err == nil {

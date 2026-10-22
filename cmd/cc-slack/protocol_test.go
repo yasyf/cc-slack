@@ -20,7 +20,7 @@ func protocolFixture(t *testing.T, name string) []byte {
 	return bytes.TrimSpace(raw)
 }
 
-func decodePush(t *testing.T, name, eventType string, payload any) socketPush {
+func decodePush(t *testing.T, name, eventType string, payload any) {
 	t.Helper()
 	var push socketPush
 	if err := json.Unmarshal(protocolFixture(t, name), &push); err != nil {
@@ -32,7 +32,6 @@ func decodePush(t *testing.T, name, eventType string, payload any) socketPush {
 	if err := json.Unmarshal(push.EventPayload, payload); err != nil {
 		t.Fatalf("%s payload: %v", name, err)
 	}
-	return push
 }
 
 func TestProtocolHelloMatchesTheSpec(t *testing.T) {

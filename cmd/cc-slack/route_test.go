@@ -95,7 +95,9 @@ func launchDaemon(t *testing.T) *liveDaemon {
 	go func() { served <- srv.Serve(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		<-served
+		if err := <-served; err != nil {
+			t.Logf("daemon serve: %v", err)
+		}
 	})
 	d := deps()
 	d.EnsureCurrent = func(context.Context) error { return nil }

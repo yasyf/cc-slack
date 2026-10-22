@@ -89,7 +89,12 @@ func TestAwaitResumesTheSubscriptionAcrossADaemonRestart(t *testing.T) {
 			t.Errorf("poll %s, want subject subj and agent a1", r.URL.RawQuery)
 		}
 		if polls.Add(1) == 1 {
-			conn, _, err := w.(http.Hijacker).Hijack()
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("the test server's writer cannot hijack")
+				return
+			}
+			conn, _, err := hijacker.Hijack()
 			if err != nil {
 				t.Error(err)
 				return

@@ -201,7 +201,7 @@ func (h *shortcutHandler) accept(ctx context.Context, id identity, p shortcutPay
 		})
 	case claimAlreadyOpen:
 		h.spawn(func(ctx context.Context) {
-			h.report(ctx, id, p, fmt.Sprintf("Already open: orca workspace `%s` at `%s` has a Claude session on %s.",
+			h.report(ctx, id, p, fmt.Sprintf("Already open: orca workspace %#q at %#q has a Claude session on %s.",
 				row.worktreeID, row.worktreePath, p.permalink(id)))
 		})
 	}
@@ -324,11 +324,11 @@ func (h *shortcutHandler) open(ctx context.Context, id identity, p shortcutPaylo
 	h.log.Printf("shortcut %s/%s: %s %s at %s", p.Channel, p.TS, p.workspaceName(), outcome, wt.Path)
 	switch outcome {
 	case workspaceReused:
-		h.report(ctx, id, p, fmt.Sprintf("Reusing orca workspace `%s` at `%s`, already created for %s.", wt.ID, wt.Path, p.permalink(id)))
+		h.report(ctx, id, p, fmt.Sprintf("Reusing orca workspace %#q at %#q, already created for %s.", wt.ID, wt.Path, p.permalink(id)))
 	case workspaceSettled:
-		h.report(ctx, id, p, fmt.Sprintf("Orca created workspace `%s` at `%s` for %s after its runtime stalled; check that its Claude session started.", wt.ID, wt.Path, p.permalink(id)))
+		h.report(ctx, id, p, fmt.Sprintf("Orca created workspace %#q at %#q for %s after its runtime stalled; check that its Claude session started.", wt.ID, wt.Path, p.permalink(id)))
 	default:
-		h.report(ctx, id, p, fmt.Sprintf("Opened orca workspace `%s` at `%s` with a Claude session on %s.", wt.ID, wt.Path, p.permalink(id)))
+		h.report(ctx, id, p, fmt.Sprintf("Opened orca workspace %#q at %#q with a Claude session on %s.", wt.ID, wt.Path, p.permalink(id)))
 	}
 }
 

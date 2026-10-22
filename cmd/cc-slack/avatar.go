@@ -88,7 +88,7 @@ func (s *avatarStore) publish(ctx context.Context, id identity) (string, error) 
 }
 
 func (s *avatarStore) fetchPhoto(ctx context.Context, photoURL string) (image.Image, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, photoURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, photoURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("profile photo %s: %w", photoURL, err)
 	}

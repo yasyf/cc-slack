@@ -28,14 +28,14 @@ const (
 
 func newerIncumbent(health daemonkit.Health, floor string) (path, release string, err error) {
 	var detail daemon.HealthDetail
-	if json.Unmarshal(health.Detail, &detail) != nil || !version.Newer(detail.RuntimeBuild, floor) {
-		return "", "", nil
+	if json.Unmarshal(health.Detail, &detail) == nil && version.Newer(detail.RuntimeBuild, floor) {
+		path, err = executablePath(health.PID)
+		if err != nil {
+			return "", "", fmt.Errorf("%s: daemon release %s supersedes %s, and its executable is unreadable: %w", binaryName, detail.RuntimeBuild, floor, err)
+		}
+		return path, detail.RuntimeBuild, nil
 	}
-	path, err = executablePath(health.PID)
-	if err != nil {
-		return "", "", fmt.Errorf("%s: daemon release %s supersedes %s, and its executable is unreadable: %w", binaryName, detail.RuntimeBuild, floor, err)
-	}
-	return path, detail.RuntimeBuild, nil
+	return "", "", nil
 }
 
 func handoffFloor() string {
@@ -46,11 +46,10 @@ func handoffFloor() string {
 }
 
 func incumbentBinary(ctx context.Context) (path, release string, err error) {
-	health, err := probeIncumbent(ctx)
-	if err != nil {
-		return "", "", nil
+	if health, probeErr := probeIncumbent(ctx); probeErr == nil {
+		return newerIncumbent(health, handoffFloor())
 	}
-	return newerIncumbent(health, handoffFloor())
+	return "", "", nil
 }
 
 func execIncumbent(ctx context.Context) error {
