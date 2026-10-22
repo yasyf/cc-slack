@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact commit to validate
+        required: true
+        type: string
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race)
+        run: go test -race ./...
+      - name: Build
+        run: go build ./...
+
+  lint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+  vuln:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+      - uses: astral-sh/setup-uv@v7
+      - name: Plugin manifests parse and the descriptor template renders
+        run: |
+          jq -e .name plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
+          jq -e '.hooks.SessionStart | length == 1' plugin/hooks/hooks.json
+          test -L plugin/bin/cc-slack
+          tail -n +2 plugin/descriptor/cc-slack.binrun.tmpl | sed -E 's/__SIZE_[A-Z0-9_]+__/1/g' | jq -e '.platforms | length == 2'
+      - name: check-post
+        run: python3 -m unittest discover -s plugin/skills/slack/scripts -p 'check_post_test.py'
+      - name: capt-hook pack
+        run: uv run --script plugin/capt-hook/hooks/tests/test_pack.py
