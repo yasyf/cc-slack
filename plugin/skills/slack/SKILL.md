@@ -274,6 +274,11 @@ through its mailbox, never as a channel tag to the parent.
 On `agent.relay`, use `SendMessage` to give the named agent a wake only: identify yourself
 and say it has pending directives to collect on its next tool call or
 `await`. Include no directive content. Repeated relay wakes are safe.
+A stopped agent is no reason to skip the wake: `SendMessage` resumes it.
+`slack.owner_stopped` names a stopped agent and the watches it still owns.
+Resume it with `SendMessage`, or, when you stopped it on purpose, end each
+watch with `slack_unwatch(watch_id)` and arm it again with `slack_watch`
+under the agent that took over its work.
 On `slack.watch_error`, report the watch and error, then follow the named
 fallback. End a finished watch with `slack_unwatch(watch_id)`.
 
