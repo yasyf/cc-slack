@@ -1,0 +1,99 @@
+version: "2"
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+linters:
+  enable:
+  - errcheck
+  - govet
+  - ineffassign
+  - staticcheck
+  - unused
+  - misspell
+  - unconvert
+  - unparam
+  - revive
+  - gosec
+  - bidichk
+  - nilerr
+  - bodyclose
+  - gocritic
+  - durationcheck
+  - errorlint
+  - noctx
+  - cyclop
+  - funlen
+  - nestif
+  - prealloc
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    misspell:
+      locale: US
+    gosec:
+      excludes:
+      - G104
+      - G304
+    cyclop:
+      max-complexity: 20
+    funlen:
+      lines: 120
+      statements: 60
+    nestif:
+      min-complexity: 5
+    gocritic:
+      enabled-tags:
+      - diagnostic
+      - performance
+      - style
+      disabled-checks:
+      - hugeParam
+      - rangeValCopy
+      - appendAssign
+      - unnamedResult
+    revive:
+      rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+  exclusions:
+    rules:
+    - path: _test\.go
+      linters:
+      - funlen
+      - cyclop
+      - noctx
+      - gosec
+    - linters:
+      - revive
+      text: "package-comments"
+formatters:
+  enable:
+  - gofmt
+  - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+      - github.com/yasyf/cc-slack
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
