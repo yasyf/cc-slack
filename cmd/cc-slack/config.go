@@ -77,6 +77,13 @@ func (t *tokenSource) validate(section string) error {
 	return nil
 }
 
+func (t *tokenSource) redacted() *tokenSource {
+	if t == nil {
+		return nil
+	}
+	return &tokenSource{Command: t.Command}
+}
+
 func (t *tokenSource) resolve(section string) error {
 	switch {
 	case t == nil:

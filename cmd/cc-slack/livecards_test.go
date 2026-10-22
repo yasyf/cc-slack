@@ -421,6 +421,23 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 	}
 }
 
+func TestRedrawsKeepATappedOptionAndAWhoamiHidesRefTokens(t *testing.T) {
+	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
+	thread := &liveThread{Channel: "D1", Thread: "1.1"}
+	thread.apply(statusCard{Status: "needs_you", Title: "Ship?", Options: []string{"ship it"}}, cardTag{}, at, false)
+	thread.Reply.Tapped = "✓ *ship it* · 10:00am"
+	if _, reply := thread.replyMessage(at, nil); strings.Contains(blocksJSON(t, reply), cardOptionAction) || !strings.Contains(blocksJSON(t, reply), "✓ *ship it*") {
+		t.Fatalf("a redrawn reply reoffers its tapped option: %s", blocksJSON(t, reply))
+	}
+	id := identity{Config: config{GitHub: &tokenSource{Token: "ghp-secret"}, Buildkite: &tokenSource{Command: []string{"/bin/bk-token"}}}}
+	if got := string(mustJSON(newWhoami(id, ""))); strings.Contains(got, "ghp-secret") || !strings.Contains(got, "/bin/bk-token") {
+		t.Fatalf("whoami = %s, want the token hidden and the command shown", got)
+	}
+	if id.Config.GitHub.Token != "ghp-secret" {
+		t.Fatal("whoami redaction changed the stored identity")
+	}
+}
+
 func TestRootOnlyRedrawsTheRootWithoutAReply(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

@@ -179,32 +179,32 @@ type refClient struct {
 	now          func() time.Time
 }
 
-func (c refClient) do(ctx context.Context, tok *refToken, req *http.Request) ([]byte, error) {
+func (c refClient) do(ctx context.Context, tok *refToken, req *http.Request) ([]byte, http.Header, error) {
 	token, err := tok.get(ctx, c.now())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, refMaxResponseSize))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		tok.forget()
-		return nil, fmt.Errorf("%s answered 401", req.URL.Host)
+		return nil, nil, fmt.Errorf("%s answered 401", req.URL.Host)
 	case resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden && rateLimitHeaders(resp.Header)):
-		return nil, errRateLimited{until: c.retryAt(resp.Header)}
+		return nil, nil, errRateLimited{until: c.retryAt(resp.Header)}
 	case resp.StatusCode/100 != 2:
-		return nil, fmt.Errorf("%s answered %d: %s", req.URL.Host, resp.StatusCode, bytes.TrimSpace(body[:min(len(body), 200)]))
+		return nil, nil, fmt.Errorf("%s answered %d: %s", req.URL.Host, resp.StatusCode, bytes.TrimSpace(body[:min(len(body), 200)]))
 	}
-	return body, nil
+	return body, resp.Header, nil
 }
 
 func rateLimitHeaders(h http.Header) bool {
@@ -282,12 +282,12 @@ func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID
 		q.WriteString(" }")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.githubURL+"/graphql", bytes.NewReader(mustJSON(map[string]string{"query": q.String()})))
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		body, err := c.do(ctx, tok, req)
+		body, header, err := c.do(ctx, tok, req)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		var res struct {
 			Data   map[string]*struct{ PullRequest *githubPR } `json:"data"`
@@ -297,15 +297,15 @@ func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID
 			} `json:"errors"`
 		}
 		if err := json.Unmarshal(body, &res); err != nil {
-			return nil, fmt.Errorf("decode GitHub pull requests: %w", err)
+			return out, fmt.Errorf("decode GitHub pull requests: %w", err)
 		}
 		for _, e := range res.Errors {
 			if e.Type == "RATE_LIMITED" {
-				return nil, errRateLimited{until: c.now().Add(refMaxBackoff)}
+				return out, errRateLimited{until: c.retryAt(header)}
 			}
 		}
 		if res.Data == nil && len(res.Errors) > 0 {
-			return nil, fmt.Errorf("GitHub pull requests: %s", res.Errors[0].Message)
+			return out, fmt.Errorf("GitHub pull requests: %s", res.Errors[0].Message)
 		}
 		for i, r := range batch {
 			if repo := res.Data[fmt.Sprintf("p%d", i)]; repo != nil && repo.PullRequest != nil {
@@ -322,7 +322,7 @@ func (c refClient) build(ctx context.Context, tok *refToken, r refID) (refState,
 	if err != nil {
 		return refState{}, err
 	}
-	body, err := c.do(ctx, tok, req)
+	body, _, err := c.do(ctx, tok, req)
 	if err != nil {
 		return refState{}, err
 	}

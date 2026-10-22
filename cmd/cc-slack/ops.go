@@ -225,6 +225,11 @@ type whoami struct {
 	Socket   string `json:"socket"`
 }
 
+func newWhoami(id identity, socket string) whoami {
+	id.Config.GitHub, id.Config.Buildkite = id.Config.GitHub.redacted(), id.Config.Buildkite.redacted()
+	return whoami{identity: id, Username: id.username(), Socket: socket}
+}
+
 func (a *app) register(s *daemon.Server) {
 	a.channelState = func(hc daemon.HandlerCtx, subjectID string) daemon.ChannelState {
 		return s.ChannelState(hc, subjectID, channelConsumer)
@@ -394,7 +399,7 @@ func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	a.poller.reconcileAll()
 	a.socket.restart()
-	return ok(whoami{identity: id, Username: id.username(), Socket: a.socket.status()})
+	return ok(newWhoami(id, a.socket.status()))
 }
 
 func (a *app) handleWhoami(hc daemon.HandlerCtx) daemon.Reply {
@@ -402,7 +407,7 @@ func (a *app) handleWhoami(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
-	return ok(whoami{identity: id, Username: id.username(), Socket: a.socket.status()})
+	return ok(newWhoami(id, a.socket.status()))
 }
 
 func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
@@ -1573,6 +1578,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	defer cards.mu.Unlock()
 	now := a.now()
 	t := cards.draft(id.DMChannelID, thread)
+	previous := t.Reply
 	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
 	if thread == "" {
 		text, blocks := t.rootMessage(now, cards.refs)
@@ -1596,6 +1602,8 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	text, blocks := t.replyMessage(now, cards.refs)
 	res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
 	if err != nil {
+		t.Reply = previous
+		cards.commit(t)
 		return "", false, err
 	}
 	t.Reply.TS = res.TS

@@ -202,9 +202,9 @@ func TestCardTapSteersTheSessionOnceAndMarksTheCard(t *testing.T) {
 	if types := l.channelTypes(); !slices.Contains(types, eventAction) {
 		t.Fatalf("channel saw %v, want %s", types, eventAction)
 	}
-	edits := l.slack.edited()
-	if len(edits) != 1 || edits[0].ts != reply || !strings.Contains(edits[0].blocks, "✓ *merge it*") || strings.Contains(edits[0].blocks, cardAckAction) {
-		t.Fatalf("tap edits = %+v, want the reply's buttons replaced by the choice", edits)
+	edits := editsOf(l.slack.edited(), reply)
+	if len(edits) != 1 || !strings.Contains(edits[0], "✓ *merge it*") || strings.Contains(edits[0], cardAckAction) {
+		t.Fatalf("reply edits = %v, want the reply's buttons replaced by the choice", edits)
 	}
 	if l.app.replay.latest() != push.Seq {
 		t.Fatalf("replay cursor = %q, want it past the tap", l.app.replay.latest())

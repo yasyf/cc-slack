@@ -21,6 +21,7 @@ const (
 	cardActionsBlock  = "card-actions"
 	cardLinksBlock    = "card-links"
 	cardAskBlock      = "card-ask-"
+	cardTappedBlock   = "card-tapped-"
 	cardAckAction     = cardActionPrefix + ":ack"
 	cardPauseAction   = cardActionPrefix + ":pause"
 	cardOptionAction  = cardActionPrefix + ":opt:"
@@ -381,6 +382,7 @@ type cardView struct {
 	answers  map[string]askAnswer
 	asks     []cardAsk
 	timeline []timelineEntry
+	tapped   string
 }
 
 type timelineEntry struct {
@@ -637,9 +639,14 @@ func timelineBlock(entries []timelineEntry, now time.Time) []slack.Block {
 		return nil
 	}
 	lines := make([]string, 0, cardMaxTimeline)
+	size := 0
 	for i := len(entries) - 1; i >= 0 && len(lines) < cardMaxTimeline; i-- {
 		e := entries[i]
-		lines = append(lines, clock(e.At, now)+" "+e.Emoji+" "+mrkdwnEscapes.Replace(e.Title))
+		line := clock(e.At, now) + " " + e.Emoji + " " + mrkdwnEscapes.Replace(e.Title)
+		if size+runes(line)+1 > cardMaxSectionLen {
+			break
+		}
+		lines, size = append(lines, line), size+runes(line)+1
 	}
 	return []slack.Block{mrkdwn("card-timeline", strings.Join(lines, "\n"))}
 }
@@ -654,6 +661,9 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.refs(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
+	if v.tapped != "" {
+		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
+	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
 }
 

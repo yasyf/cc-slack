@@ -19,14 +19,15 @@ import (
 )
 
 const (
-	liveCardIdle     = 48 * time.Hour
-	liveMaxThreads   = 100
-	liveMaxTimeline  = 20
-	liveMaxAsks      = 20
-	refPollEvery     = time.Minute
-	refMaxBackoff    = 15 * time.Minute
-	refHostGitHub    = "github"
-	refHostBuildkite = "buildkite"
+	liveCardIdle      = 48 * time.Hour
+	liveMaxThreads    = 100
+	liveMaxTimeline   = 20
+	liveMaxAsks       = 20
+	refPollEvery      = time.Minute
+	refMaxBackoff     = 15 * time.Minute
+	refHostGitHub     = "github"
+	refHostBuildkite  = "buildkite"
+	liveUpdateTimeout = 30 * time.Second
 )
 
 var goneCardCodes = map[string]bool{"message_not_found": true, "cant_update_message": true, "channel_not_found": true}
@@ -34,10 +35,11 @@ var goneCardCodes = map[string]bool{"message_not_found": true, "cant_update_mess
 func liveCardsPath() string { return filepath.Join(appPaths().StateDir(), "live-cards.json") }
 
 type liveMessage struct {
-	TS   string     `json:"ts"`
-	Card statusCard `json:"card"`
-	Tag  cardTag    `json:"tag"`
-	At   time.Time  `json:"at"`
+	TS     string     `json:"ts"`
+	Card   statusCard `json:"card"`
+	Tag    cardTag    `json:"tag"`
+	At     time.Time  `json:"at"`
+	Tapped string     `json:"tapped,omitempty"`
 }
 
 type liveThread struct {
@@ -50,6 +52,7 @@ type liveThread struct {
 	Answers  map[string]askAnswer `json:"answers,omitempty"`
 	Updated  time.Time            `json:"updated"`
 	Drawn    time.Time            `json:"drawn"`
+	Stale    bool                 `json:"stale,omitempty"`
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -86,7 +89,7 @@ func (t *liveThread) openAsks(now time.Time) []cardAsk {
 }
 
 func (t *liveThread) view(m *liveMessage, now time.Time, refs map[string]refState) cardView {
-	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers}
+	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped}
 	if m == t.Root {
 		v.asks, v.timeline = t.openAsks(now), t.Timeline
 	}
@@ -248,6 +251,28 @@ func (l *liveCards) answer(channel, thread, askID string, at time.Time) {
 	l.save()
 }
 
+func (l *liveCards) answered(channel, thread, askID string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return false
+	}
+	_, done := t.Answers[askID]
+	return done
+}
+
+func (l *liveCards) tapOption(channel, thread, ts, line string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok || t.Reply == nil || t.Reply.TS != ts {
+		return false
+	}
+	t.Reply.Tapped = line
+	return true
+}
+
 func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread string, now time.Time) (map[string]bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -279,11 +304,13 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			redrawn[t.Reply.TS] = true
 		}
 	}
-	t.Drawn = now
+	t.Drawn, t.Stale = now, len(errs) > 0
 	return redrawn, errors.Join(errs...)
 }
 
 func (l *liveCards) update(ctx context.Context, api slackAPI, t *liveThread, m **liveMessage, text string, blocks []slack.Block) error {
+	ctx, cancel := context.WithTimeout(ctx, liveUpdateTimeout)
+	defer cancel()
 	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks)
 	if err != nil && goneCardCodes[errorCode(err)] {
 		l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, (*m).TS, errorCode(err))
@@ -299,6 +326,11 @@ func (l *liveCards) update(ctx context.Context, api slackAPI, t *liveThread, m *
 func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool, time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	tracked := len(l.threads)
+	l.prune()
+	if len(l.threads) != tracked {
+		l.save()
+	}
 	byHost := map[string][]refID{}
 	seen := map[string]bool{}
 	var unknown map[string]bool
@@ -366,14 +398,25 @@ func (l *liveCards) fetch(ctx context.Context, name string, h *refHost, refs []r
 		return l.client.pullRequests(ctx, h.token, refs)
 	}
 	out := map[string]refState{}
+	var errs []error
 	for _, r := range refs {
 		s, err := l.client.build(ctx, h.token, r)
-		if err != nil {
+		if _, limited := errors.AsType[errRateLimited](err); limited {
 			return out, err
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", r.key(), err))
+			continue
 		}
 		out[r.key()] = s
 	}
-	return out, nil
+	if len(out) > 0 {
+		for _, err := range errs {
+			l.log.Printf("poll buildkite ref %v", err)
+		}
+		return out, nil
+	}
+	return out, errors.Join(errs...)
 }
 
 func (l *liveCards) run(ctx context.Context) {
@@ -441,7 +484,7 @@ func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map
 	dirty := false
 	for _, k := range slices.Sorted(maps.Keys(l.threads)) {
 		t := l.threads[k]
-		if !t.cites(changed) && !t.expiredSinceDrawn(now) {
+		if !t.Stale && !t.cites(changed) && !t.expiredSinceDrawn(now) {
 			continue
 		}
 		dirty = true

@@ -146,6 +146,13 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		}
 		return nil
 	}
+	if k.ID != "" && p.cards.answered(a.Channel, a.ThreadTS, k.ID) {
+		p.log.Printf("card action %s on %s: dropped: the ask was already answered", a.ActionID, a.MessageTS)
+		if err := p.markAsk(ctx, id, a, k); err != nil {
+			p.log.Printf("card action %s on %s: the card still offers the answered ask: %v", a.ActionID, a.MessageTS, err)
+		}
+		return nil
+	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
@@ -177,12 +184,20 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	if k.ID != "" {
 		err = p.markAsk(ctx, id, a, k)
 	} else {
-		err = p.confirmTap(ctx, id, a, cardActionsBlock, "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
+		err = p.markOption(ctx, id, a, "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
 	}
 	if err != nil {
 		p.log.Printf("card action %s on %s: delivered, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	return nil
+}
+
+func (p *poller) markOption(ctx context.Context, id identity, a cardActionPush, line string) error {
+	if !p.cards.tapOption(a.Channel, a.ThreadTS, a.MessageTS, line) {
+		return p.confirmTap(ctx, id, a, cardActionsBlock, line)
+	}
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, p.now())
+	return err
 }
 
 func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {
@@ -231,7 +246,7 @@ func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
 			continue
 		}
 		tapped = true
-		out = append(out, mrkdwn(blockID+"-tapped", line))
+		out = append(out, mrkdwn(cardTappedBlock+blockID, line))
 	}
 	if !tapped {
 		return nil

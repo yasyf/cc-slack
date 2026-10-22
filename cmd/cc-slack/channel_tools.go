@@ -111,8 +111,7 @@ var (
 		"description": "A status card instead of text: the reply card carries your option buttons plus Ack and Pause, and the thread's root " +
 			"card is redrawn with the latest state. The root keeps the last progress, started_at, eta, facts, refs, links, and rollup any card set, lists " +
 			"every open ask in the thread, and shows a timeline of the last updates. Tagged with this session, repo, branch, and worktree. A tap arrives " +
-			"as a slack.action directive; nothing waits on it",
-		"required": []string{"status", "title"},
+			"as a slack.action directive; nothing waits on it. status and title are required unless root_only is set",
 		"properties": map[string]any{
 			"status": map[string]any{"type": "string", "enum": []string{"info", "progress", "needs_you", "incident", "done"}},
 			"title":  map[string]any{"type": "string", "description": "one line, shown as the card header and the phone notification"},
