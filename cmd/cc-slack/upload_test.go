@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -359,7 +360,7 @@ func TestStageAttachmentsHandsTheDaemonCopies(t *testing.T) {
 			t.Fatalf("files[%d] = %q, want a copy of %q under its own name", i, copied, original)
 		}
 		want, _ := os.ReadFile(original)
-		if have, err := os.ReadFile(copied); err != nil || string(have) != string(want) {
+		if have, err := os.ReadFile(copied); err != nil || !bytes.Equal(have, want) {
 			t.Fatalf("copy of %s = %q, %v; want %q", original, have, err, want)
 		}
 	}
