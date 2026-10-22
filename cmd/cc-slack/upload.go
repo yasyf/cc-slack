@@ -133,14 +133,14 @@ func stageAttachment(dir, path string) (string, error) {
 	if err != nil || !filepath.IsAbs(path) || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxFileBytes {
 		return path, nil
 	}
+	src, err := os.Open(path)
+	if err != nil {
+		return path, nil
+	}
+	defer func() { _ = src.Close() }()
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return "", err
 	}
-	src, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = src.Close() }()
 	staged := filepath.Join(dir, filepath.Base(path))
 	dst, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {

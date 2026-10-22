@@ -334,7 +334,11 @@ func TestPostsRefuseUnreadableAttachments(t *testing.T) {
 func TestStageAttachmentsHandsTheDaemonCopies(t *testing.T) {
 	report := writeFile(t, "report.pdf", "%PDF-1.7 first")
 	again := writeFile(t, "report.pdf", "%PDF-1.7 second")
-	untouched := []string{"relative.pdf", t.TempDir(), filepath.Join(t.TempDir(), "missing.pdf"), writeFile(t, "empty.txt", "")}
+	locked := writeFile(t, "locked.pdf", "%PDF-1.7 locked")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	untouched := []string{"relative.pdf", t.TempDir(), filepath.Join(t.TempDir(), "missing.pdf"), writeFile(t, "empty.txt", ""), locked}
 	body, err := json.Marshal(map[string]any{"channel_id": testChannel, "text": "the deck", "files": append([]string{report, again}, untouched...)})
 	if err != nil {
 		t.Fatal(err)
