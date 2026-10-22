@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -42,17 +42,24 @@ jobs:
           mv plugin/.claude-plugin/plugin.json.tmp plugin/.claude-plugin/plugin.json
       - name: Validate descriptor
         run: go run github.com/yasyf/binrun/cmd/binrun@v0.1.1 -- parse plugin/bin/cc-slack.binrun
-      - name: Commit refreshed descriptor and manifest to main
+      - name: Move the tag onto the synced descriptor and land it on main
         id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- plugin/bin/cc-slack.binrun plugin/.claude-plugin/plugin.json; then
-            echo "descriptor and manifest already current for ${GITHUB_REF_NAME}"
+          git add plugin/bin/cc-slack.binrun plugin/.claude-plugin/plugin.json
+          if git diff --cached --quiet; then
+            echo "${GITHUB_REF_NAME} already carries its descriptor and manifest"
           else
-            git add plugin/bin/cc-slack.binrun plugin/.claude-plugin/plugin.json
             git commit -m "chore: sync cc-slack.binrun + manifest to ${GITHUB_REF_NAME}"
-            git pull --rebase origin main
+            git tag -fa "${GITHUB_REF_NAME}" -m "${GITHUB_REF_NAME}"
+            git push --force origin "refs/tags/${GITHUB_REF_NAME}"
+          fi
+          git fetch origin main
+          if git merge-base --is-ancestor HEAD origin/main; then
+            echo "main already carries ${GITHUB_REF_NAME}'s descriptor and manifest"
+          else
+            git rebase origin/main
             git push origin HEAD:main
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
