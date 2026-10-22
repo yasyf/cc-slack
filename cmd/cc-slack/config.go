@@ -61,19 +61,18 @@ func configPath(flag, repo string) (path string, required bool, err error) {
 	if env := os.Getenv(configEnv); env != "" {
 		return env, true, nil
 	}
-	if checkout := filepath.Join(repo, repoConfig); exists(checkout) {
+	checkout := filepath.Join(repo, repoConfig)
+	switch _, err := os.Stat(checkout); {
+	case err == nil:
 		return checkout, true, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", false, fmt.Errorf("read the checkout's cc-slack config: %w", err)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false, fmt.Errorf("resolve the home directory for the cc-slack config: %w", err)
 	}
 	return filepath.Join(home, ".config", "cc-slack", "config.toml"), false, nil
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func loadConfig(path string, required bool) (config, error) {
