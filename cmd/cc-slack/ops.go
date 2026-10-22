@@ -1586,23 +1586,8 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 			return "", true, err
 		}
 		found = true
-	} else {
-		own, err := ownPost(ctx, db, id.DMChannelID, thread)
-		if err != nil {
-			return "", false, err
-		}
-		if !own {
-			t.Root = nil
-		}
-		if t.Root != nil {
-			text, blocks := t.rootMessage(now, cards.refs)
-			if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, thread, text, blocks); err != nil {
-				if msg.rootOnly {
-					return "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, thread, err)
-				}
-				a.poller.log.Printf("status card root %s/%s not refreshed: %v", id.DMChannelID, thread, err)
-			}
-		}
+	} else if err := a.redrawRoot(ctx, db, id, t, now, msg.rootOnly); err != nil {
+		return "", false, err
 	}
 	if msg.rootOnly {
 		cards.commit(t)
@@ -1622,6 +1607,26 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		return "", true, err
 	}
 	return thread, true, nil
+}
+
+func (a *app) redrawRoot(ctx context.Context, db *sql.DB, id identity, t *liveThread, now time.Time, rootOnly bool) error {
+	own, err := ownPost(ctx, db, id.DMChannelID, t.Thread)
+	if err != nil {
+		return err
+	}
+	if !own {
+		t.Root = nil
+		return nil
+	}
+	text, blocks := t.rootMessage(now, a.cards.refs)
+	err = updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks)
+	if err != nil && rootOnly {
+		return fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
+	}
+	if err != nil {
+		a.poller.log.Printf("status card root %s/%s not refreshed: %v", id.DMChannelID, t.Thread, err)
+	}
+	return nil
 }
 
 func ownStatusRoot(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) error {
