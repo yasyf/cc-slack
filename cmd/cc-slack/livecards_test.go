@@ -136,7 +136,7 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 	}
 }
 
-func seedThread(l *liveCards, card statusCard, at time.Time) *liveThread {
+func seedLiveThread(l *liveCards, card statusCard, at time.Time) *liveThread {
 	t := &liveThread{Channel: "D" + testUser, Thread: "1800000000.000100"}
 	t.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, false)
 	t.Reply.TS = "1800000000.000200"
@@ -161,7 +161,7 @@ func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 	clock := &testClock{}
 	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
 	cards := standaloneCards(t, l, srv, clock)
-	seedThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}, {URL: testBuildURL, Label: "deploy"}}}, clock.now())
+	seedLiveThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}, {URL: testBuildURL, Label: "deploy"}}}, clock.now())
 
 	cards.tick(l.ctx)
 	root := editsOf(l.slack.edited(), "1800000000.000100")
@@ -203,7 +203,7 @@ func TestLiveRefsBackOffUntilTheRateLimitResets(t *testing.T) {
 	clock := &testClock{}
 	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
 	cards := standaloneCards(t, l, srv, clock)
-	seedThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}}}, clock.now())
+	seedLiveThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}}}, clock.now())
 	refs.limit(http.StatusForbidden, http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {fmt.Sprint(clock.now().Add(10 * time.Minute).Unix())}})
 
 	if wait := cards.tick(l.ctx); wait < 9*time.Minute || len(l.slack.edited()) != 0 {
