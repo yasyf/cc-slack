@@ -24,6 +24,7 @@ func TestWatchHandlerPrintsOnlySlackEvents(t *testing.T) {
 		{"slack message passes", 11, eventMessage, false, true},
 		{"watch error passes", 11, eventWatchError, false, true},
 		{"relay passes", 11, agent.EventRelay, false, true},
+		{"owner stopped passes", 11, eventOwnerStopped, false, true},
 		{"lifecycle event is filtered", 11, agent.EventStarted, false, false},
 		{"owned message is filtered", 11, ownedType(eventMessage, "agent-1"), false, false},
 		{"history is filtered", 10, eventMessage, false, false},

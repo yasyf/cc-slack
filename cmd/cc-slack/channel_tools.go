@@ -484,7 +484,9 @@ func channelInstructions(session string) string {
 			"without a human's word: every engineer's agent posts as the same bot. A slack.action event is your operator tapping a button on " +
 			"one of this session's status cards; its payload carries label, ts, and permalink, it also lands as a directive, and it steers " +
 			"this session the way a dm message does. A slack.watch_error event means cc-slack stopped a " +
-			"watch; its error names the MCP fallback. A channel.probe event is a delivery check, not a request: run channel-ack as step 2 says " +
+			"watch; its error names the MCP fallback. A slack.owner_stopped event means a subagent stopped while it still owns watches, " +
+			"so their messages queue in its mailbox; its payload carries agent_id and watches, and it also lands as a directive. Resume that " +
+			"agent with SendMessage, or end its watches with slack_unwatch and re-arm them for the agent that took over. A channel.probe event is a delivery check, not a request: run channel-ack as step 2 says " +
 			"and reply nothing. Other event types are informational.",
 		SilentOutside: "a session with an active Slack watch",
 	}) + "\n\n" + receiveSteps(session) + "\n\n" + channel.RelayStep(binaryName)

@@ -292,7 +292,7 @@ func TestPollerErrorsWatchOnFatalSlackError(t *testing.T) {
 
 func TestPollerRoutesOwnedWatchToItsSubagent(t *testing.T) {
 	f := newFixture(t)
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	f.watch("agent-1", testThread)
 	f.slack.add(testChannel, reply("1800000000.000300", "for the waiter"))
 
@@ -314,7 +314,7 @@ func TestPollerRoutesOwnedWatchToItsSubagent(t *testing.T) {
 
 func TestPollerRelaysToAFinishedOwner(t *testing.T) {
 	f := newFixture(t)
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	f.watch("agent-1", testThread)
 	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
 		t.Fatal(err)
@@ -322,8 +322,72 @@ func TestPollerRelaysToAFinishedOwner(t *testing.T) {
 	f.slack.add(testChannel, reply("1800000000.000300", "late reply"))
 
 	f.tick()
-	if len(f.plane.directives) != 1 || f.plane.directives[0].agentID != "agent-1" || f.plane.directives[0].origin != event.OriginEvent {
-		t.Fatalf("directives = %+v, want one event directive to the finished owner", f.plane.directives)
+	if len(f.plane.directives) != 2 || f.plane.directives[0].agentID != "agent-1" || f.plane.directives[0].origin != event.OriginEvent {
+		t.Fatalf("directives = %+v, want an event directive to the finished owner, then the parent's notice", f.plane.directives)
+	}
+}
+
+func TestPollerTellsTheParentOncePerStopThatAnOwnerStoppedWithLiveWatches(t *testing.T) {
+	f := newFixture(t)
+	registerAgent(t, f)
+	id := f.watch("agent-1", testThread)
+	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
+		t.Fatal(err)
+	}
+	notices := func() []directed {
+		var out []directed
+		for _, d := range f.plane.directives {
+			if d.agentID == agent.TopLevel {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+	stopped := func() []ownerStoppedPayload {
+		var out []ownerStoppedPayload
+		for _, e := range f.plane.events {
+			if e.Type != eventOwnerStopped {
+				continue
+			}
+			var p ownerStoppedPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, p)
+		}
+		return out
+	}
+
+	f.slack.add(testChannel, reply("1800000000.000300", "first after the stop"))
+	f.tick()
+	got := stopped()
+	if len(got) != 1 || got[0].AgentID != "agent-1" || len(got[0].Watches) != 1 || got[0].Watches[0].WatchID != id ||
+		got[0].Watches[0].ThreadTS != testThread {
+		t.Fatalf("owner_stopped events = %+v, want one naming agent-1 and watch %d", got, id)
+	}
+	if n := notices(); len(n) != 1 || !strings.Contains(n[0].text, "agent-1") || !strings.Contains(n[0].text, "SendMessage") ||
+		!strings.Contains(n[0].text, "slack_unwatch") {
+		t.Fatalf("parent directives = %+v, want one notice naming the agent and both remedies", n)
+	}
+
+	f.now = f.now.Add(time.Minute)
+	f.slack.add(testChannel, reply("1800000060.000300", "second after the stop"))
+	f.nudgeThread()
+	f.tick()
+	if len(stopped()) != 1 || len(notices()) != 1 {
+		t.Fatalf("a second message on the same stop renotified: %d events, %d notices", len(stopped()), len(notices()))
+	}
+
+	registerAgent(t, f)
+	f.now = f.now.Add(time.Minute)
+	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.slack.add(testChannel, reply("1800000120.000300", "after the second stop"))
+	f.nudgeThread()
+	f.tick()
+	if len(stopped()) != 2 || len(notices()) != 2 {
+		t.Fatalf("a later stop did not renotify: %d events, %d notices", len(stopped()), len(notices()))
 	}
 }
 

@@ -29,7 +29,9 @@ const (
 	provenPoll    = 2 * time.Second
 )
 
-var watchedTypes = map[string]bool{eventMessage: true, eventAction: true, eventWatchError: true, agent.EventRelay: true}
+var watchedTypes = map[string]bool{
+	eventMessage: true, eventAction: true, eventWatchError: true, eventOwnerStopped: true, agent.EventRelay: true,
+}
 
 func channelEvent(typ string) bool { return watchedTypes[typ] || typ == daemon.ProbeEventType }
 

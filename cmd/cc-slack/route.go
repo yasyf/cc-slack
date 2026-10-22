@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	eventMessage    = "slack.message"
-	eventWatchError = "slack.watch_error"
+	eventMessage      = "slack.message"
+	eventWatchError   = "slack.watch_error"
+	eventOwnerStopped = "slack.owner_stopped"
 )
 
 func ownedType(base, agentID string) string { return base + "@" + agentID }
@@ -42,6 +43,19 @@ type watchErrorPayload struct {
 	ChannelID string `json:"channel_id"`
 	ThreadTS  string `json:"thread_ts"`
 	Error     string `json:"error"`
+}
+
+type ownedWatch struct {
+	WatchID   int64  `json:"watch_id"`
+	Kind      string `json:"kind"`
+	ChannelID string `json:"channel_id"`
+	ThreadTS  string `json:"thread_ts"`
+}
+
+type ownerStoppedPayload struct {
+	Type    string       `json:"type"`
+	AgentID string       `json:"agent_id"`
+	Watches []ownedWatch `json:"watches"`
 }
 
 type delivery struct {
@@ -135,19 +149,72 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 	}
 	typ := ownedType(d.base, w.Owner)
 	payload := d.payload(typ)
-	done, err := agentDone(ctx, db, w.SubjectID, w.Owner)
+	endedAt, done, err := agentEnded(ctx, db, w.SubjectID, w.Owner)
 	if err != nil {
 		return err
 	}
 	if err := p.appendEvent(ctx, w.SubjectID, d.origin, typ, payload, d.dedup); err != nil {
 		return err
 	}
-	if done {
-		if _, err := p.plane.Direct(ctx, w.SubjectID, w.Owner, event.OriginEvent, string(payload)); err != nil {
-			return fmt.Errorf("direct finished owner %s: %w", w.Owner, err)
-		}
+	if !done {
+		return nil
+	}
+	if _, err := p.plane.Direct(ctx, w.SubjectID, w.Owner, event.OriginEvent, string(payload)); err != nil {
+		return fmt.Errorf("direct finished owner %s: %w", w.Owner, err)
+	}
+	return p.ownerStopped(ctx, db, w.SubjectID, w.Owner, endedAt)
+}
+
+func (p *poller) ownerStopped(ctx context.Context, db *sql.DB, subjectID, agentID string, endedAt int64) error {
+	dedup := fmt.Sprintf("slack-owner-stopped:%s:%d", agentID, endedAt)
+	seen, err := delivered(ctx, db, subjectID, dedup)
+	if err != nil || seen {
+		return err
+	}
+	watches, err := ownedWatches(ctx, db, subjectID, agentID)
+	if err != nil {
+		return err
+	}
+	payload := mustJSON(ownerStoppedPayload{Type: eventOwnerStopped, AgentID: agentID, Watches: watches})
+	if err := p.appendEvent(ctx, subjectID, event.OriginSystem, eventOwnerStopped, payload, dedup); err != nil {
+		return err
+	}
+	if _, err := p.plane.Direct(ctx, subjectID, agent.TopLevel, event.OriginSystem, ownerStoppedLine(agentID, watches)); err != nil {
+		return fmt.Errorf("direct top level: %w", err)
 	}
 	return nil
+}
+
+func ownerStoppedLine(agentID string, watches []ownedWatch) string {
+	names := make([]string, len(watches))
+	for i, w := range watches {
+		names[i] = fmt.Sprintf("%d (%s %s %s)", w.WatchID, w.Kind, w.ChannelID, w.ThreadTS)
+	}
+	return fmt.Sprintf("Agent %s has stopped, but it still owns cc-slack watches %s, and Slack messages on them queue in its mailbox "+
+		"until it runs again. SendMessage resumes it, and it receives the queue on its next tool call. If you stopped it on purpose, "+
+		"end each watch with slack_unwatch(watch_id), and slack_watch the same threads with owner set to the agent that took over its work.",
+		agentID, strings.Join(names, ", "))
+}
+
+func ownedWatches(ctx context.Context, db *sql.DB, subjectID, agentID string) ([]ownedWatch, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, kind, channel_id, thread_ts FROM watches
+		WHERE subject_id = ? AND owner_agent_id = ? AND status = 'active' ORDER BY id`, subjectID, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("load watches of %s: %w", agentID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ownedWatch
+	for rows.Next() {
+		var w ownedWatch
+		if err := rows.Scan(&w.WatchID, &w.Kind, &w.ChannelID, &w.ThreadTS); err != nil {
+			return nil, fmt.Errorf("scan watch of %s: %w", agentID, err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate watches of %s: %w", agentID, err)
+	}
+	return out, nil
 }
 
 func (p *poller) appendEvent(ctx context.Context, subjectID, origin, typ string, payload []byte, dedup string) error {
@@ -171,12 +238,16 @@ func delivered(ctx context.Context, db *sql.DB, subjectID, dedup string) (bool, 
 	return true, nil
 }
 
-func agentDone(ctx context.Context, db *sql.DB, subjectID, agentID string) (bool, error) {
-	var status string
-	if err := db.QueryRowContext(ctx, `SELECT status FROM agents WHERE subject_id = ? AND agent_id = ?`, subjectID, agentID).Scan(&status); err != nil {
-		return false, fmt.Errorf("owner %s status: %w", agentID, err)
+func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int64, bool, error) {
+	var (
+		status  string
+		endedAt sql.NullInt64
+	)
+	if err := db.QueryRowContext(ctx, `SELECT status, ended_at FROM agents WHERE subject_id = ? AND agent_id = ?`, subjectID, agentID).
+		Scan(&status, &endedAt); err != nil {
+		return 0, false, fmt.Errorf("owner %s status: %w", agentID, err)
 	}
-	return status == agent.StatusDone, nil
+	return endedAt.Int64, status == agent.StatusDone, nil
 }
 
 func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message) error {

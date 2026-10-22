@@ -813,10 +813,10 @@ func subjectFor(t *testing.T, f *fixture) subject.Subject {
 	return sub
 }
 
-func registerAgent(t *testing.T, f *fixture, agentID string) {
+func registerAgent(t *testing.T, f *fixture) {
 	t.Helper()
 	if _, err := f.plane.st.RegisterAgent(f.ctx, agent.Info{
-		SubjectID: testSubject, AgentID: agentID, AgentType: waiterAgentType, SessionID: testSession,
+		SubjectID: testSubject, AgentID: "agent-1", AgentType: waiterAgentType, SessionID: testSession,
 		Status: agent.StatusRunning, StartedAt: f.now,
 	}); err != nil {
 		t.Fatal(err)
