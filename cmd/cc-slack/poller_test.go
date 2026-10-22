@@ -292,7 +292,7 @@ func TestPollerErrorsWatchOnFatalSlackError(t *testing.T) {
 
 func TestPollerRoutesOwnedWatchToItsSubagent(t *testing.T) {
 	f := newFixture(t)
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	f.watch("agent-1", testThread)
 	f.slack.add(testChannel, reply("1800000000.000300", "for the waiter"))
 
@@ -314,7 +314,7 @@ func TestPollerRoutesOwnedWatchToItsSubagent(t *testing.T) {
 
 func TestPollerRelaysToAFinishedOwner(t *testing.T) {
 	f := newFixture(t)
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	f.watch("agent-1", testThread)
 	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
 		t.Fatal(err)
@@ -329,7 +329,7 @@ func TestPollerRelaysToAFinishedOwner(t *testing.T) {
 
 func TestPollerTellsTheParentOncePerStopThatAnOwnerStoppedWithLiveWatches(t *testing.T) {
 	f := newFixture(t)
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	id := f.watch("agent-1", testThread)
 	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
 		t.Fatal(err)
@@ -378,7 +378,7 @@ func TestPollerTellsTheParentOncePerStopThatAnOwnerStoppedWithLiveWatches(t *tes
 		t.Fatalf("a second message on the same stop renotified: %d events, %d notices", len(stopped()), len(notices()))
 	}
 
-	registerAgent(t, f, "agent-1")
+	registerAgent(t, f)
 	f.now = f.now.Add(time.Minute)
 	if _, err := f.plane.st.CloseAgent(f.ctx, testSubject, "agent-1", f.now); err != nil {
 		t.Fatal(err)
