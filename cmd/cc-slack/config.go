@@ -72,6 +72,20 @@ type docCardsConfig struct {
 
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
 
+func (p permissions) validate() error {
+	for _, cli := range p.CLIs {
+		if cli.Program == "" || len(cli.Verbs) == 0 {
+			return errors.New("[[permissions.clis]] needs program and verbs")
+		}
+		for verb, write := range cli.Verbs {
+			if !slices.Contains(writeVerbs, write) {
+				return fmt.Errorf("[[permissions.clis]] %s maps %s to %q, which is not one of %s", cli.Program, verb, write, strings.Join(writeVerbs, ", "))
+			}
+		}
+	}
+	return nil
+}
+
 func (d docCardsConfig) enabled() bool { return d.URL != "" }
 
 func (t *tokenSource) validate(section string) error {
@@ -178,15 +192,8 @@ func (c config) validate() error {
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
-	for _, cli := range c.Permissions.CLIs {
-		if cli.Program == "" || len(cli.Verbs) == 0 {
-			return errors.New("[[permissions.clis]] needs program and verbs")
-		}
-		for verb, write := range cli.Verbs {
-			if !slices.Contains(writeVerbs, write) {
-				return fmt.Errorf("[[permissions.clis]] %s maps %s to %q, which is not one of %s", cli.Program, verb, write, strings.Join(writeVerbs, ", "))
-			}
-		}
+	if err := c.Permissions.validate(); err != nil {
+		return err
 	}
 	if err := c.GitHub.validate("github"); err != nil {
 		return err
