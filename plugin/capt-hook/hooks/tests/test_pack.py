@@ -90,8 +90,8 @@ class PackTest(unittest.TestCase):
 
     def test_discover_pack_loads_every_module_and_hook(self) -> None:
         self.assertEqual(app._state.load_errors, [])
-        self.assertEqual(len(app._state.hooks), 8)
-        for module in ("agent_plane", "common", "session", "permission", "plain_words", "writes"):
+        self.assertEqual(len(app._state.hooks), 10)
+        for module in ("agent_plane", "common", "slack_comms_need_proof", "session", "permission", "plain_words", "writes"):
             self.assertIn(f"{self.package}.{module}", sys.modules)
 
         expected = {
@@ -103,6 +103,8 @@ class PackTest(unittest.TestCase):
             "slack_writes_need_permission": (Event.PreToolUse, False, True),
             "slack_posts_carry_their_thread": (Event.PostToolUse, False, True),
             "slack_posts_use_plain_words": (Event.PreToolUse, False, True),
+            "comms_never_asks_for_evidence": (Event.PreToolUse, False, True),
+            "fixed_lines_name_the_proven_user": (Event.PreToolUse, False, True),
         }
         actual = {
             hook.name: (hook.spec.events, hook.spec.async_, hook.spec.skip_planning_agents)
