@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/agent"
 )
 
@@ -228,6 +229,16 @@ func TestAReplyAboutAWaitingCardOpensWithALinkBackToIt(t *testing.T) {
 	want := "<" + c.id.permalink(c.id.DMChannelID, c.ts, c.thread) + "|this card> Merging lands #41"
 	if got := posts[len(posts)-1].text; !strings.HasPrefix(got, want) {
 		t.Fatalf("reply = %q, want it to open with %q", got, want)
+	}
+	explain := slack.NewButtonBlockElement(cardExplainAction+"merge:41:abc1234", "{}", slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, false, false))
+	prCard := slack.Message{Msg: slack.Msg{Timestamp: "1800000003.000100", ThreadTimestamp: c.thread, Text: "Merge PR 41?",
+		Blocks: slack.Blocks{BlockSet: []slack.Block{slack.NewActionBlock("card-actions", explain)}}}}
+	l.slack.add(c.id.DMChannelID, prCard)
+	l.do(opDMStatus, map[string]any{"text": "The PR card asks whether to land PR 41.", "about": "merge:41:abc1234"})
+	posts = l.slack.sent()
+	want = "<" + c.id.permalink(c.id.DMChannelID, prCard.Timestamp, c.thread) + "|this card> The PR card"
+	if got := posts[len(posts)-1].text; !strings.HasPrefix(got, want) {
+		t.Fatalf("reply about a card another app posted = %q, want it to open with %q", got, want)
 	}
 	raw := mustJSON(map[string]any{"text": "and one more thing", "about": "step-9:nothing"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `no waiting card "step-9:nothing"`) {

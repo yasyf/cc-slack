@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cc-slack card-answer --waits <id> --card <permalink>` answers a waiting card from another surface, such as a cc-present board. It fires the same `slack.action` capture a tap fires, naming the surface in `via`, and refuses a late answer by naming the one that won and whether it was written in.
 - With `cc-present` on PATH, a posted `waits` card is added to the session's cc-present board, with each GitHub pull request in its `refs` as a live PR card, and an answer on Slack is sent there too. `dm-status --mirrored` posts a card the board already holds without telling the board again.
 - `dm-status` returns the posted card's `ts` and `permalink`.
-- `slack_dm_status` and `dm-status --about <waits id>` open a text reply with a Slack link back to that waiting card.
+- `slack_dm_status` and `dm-status --about <waits id>` open a text reply with a Slack link back to that waiting card, including one another app posted in the session's status thread with an Explain more button for that id.
 
 ### Changed
 - A `waits` card without `recommended`, with "(Recommended)" in a label, or with an Other option is refused.

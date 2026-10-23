@@ -1523,11 +1523,17 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		if err != nil {
 			return fail(err.Error())
 		}
-		thread, m, found := a.cards.waiting(id.DMChannelID, b.About, func(thread, _ string) bool { return thread == own })
+		_, m, found := a.cards.waiting(id.DMChannelID, b.About, func(thread, _ string) bool { return thread == own })
+		ts := m.TS
+		if !found && own != "" {
+			if ts, found, err = threadCardTS(hc.Ctx, a.newAPI(id.Token), id.DMChannelID, own, b.About); err != nil {
+				return fail(err.Error())
+			}
+		}
 		if !found {
 			return fail(fmt.Sprintf("no waiting card %q in your DM to link back to", b.About))
 		}
-		msg.text = slackLink(id.permalink(id.DMChannelID, m.TS, thread), "this card") + " " + msg.text
+		msg.text = slackLink(id.permalink(id.DMChannelID, ts, own), "this card") + " " + msg.text
 	}
 	if b.Card != nil {
 		msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
@@ -1746,6 +1752,24 @@ func (a *app) bindSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 	}
 	a.poller.nudge(cursorKey{id.DMChannelID, thread}, cursorKey{id.DMChannelID, ""})
 	return nil
+}
+
+func threadCardTS(ctx context.Context, api slackAPI, channelID, threadTS, waits string) (string, bool, error) {
+	msgs, err := fetchReplies(ctx, api, channelID, threadTS, "")
+	if err != nil {
+		return "", false, fmt.Errorf("find waiting card %q in thread %s: %w", waits, threadTS, err)
+	}
+	for _, m := range slices.Backward(msgs) {
+		for _, b := range m.Blocks.BlockSet {
+			if ab, ok := b.(*slack.ActionBlock); ok && ab.Elements != nil && slices.ContainsFunc(ab.Elements.ElementSet, func(e slack.BlockElement) bool {
+				btn, ok := e.(*slack.ButtonBlockElement)
+				return ok && btn.ActionID == cardExplainAction+waits
+			}) {
+				return m.Timestamp, true, nil
+			}
+		}
+	}
+	return "", false, nil
 }
 
 func sessionThread(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) (string, bool, error) {
