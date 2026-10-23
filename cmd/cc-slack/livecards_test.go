@@ -426,17 +426,32 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	loggedIn(t, l)
 	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Waits: "step-3:merge"}
 	l.do(opDMStatus, map[string]any{"card": card})
-	reply := l.slack.sent()[1]
-	if !strings.Contains(reply.blocks, cardWaitAction+"0:step-3:merge") || strings.Contains(reply.blocks, cardAckAction) {
-		t.Fatalf("reply %s, want the answers as buttons and no Ack", reply.blocks)
+	root, reply := l.slack.sent()[0], l.slack.sent()[1]
+	if !strings.Contains(reply.blocks, cardWaitAction+"0:step-3:merge") || !strings.Contains(reply.blocks, cardExplainAction+"step-3:merge") ||
+		strings.Contains(reply.blocks, cardAckAction) {
+		t.Fatalf("reply %s, want the answers and Explain more as buttons and no Ack", reply.blocks)
 	}
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
-	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: l.slack.sent()[0].ts,
-		ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title})),
-		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0126"}
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: root.ts,
+		ActionID: cardExplainAction + "step-3:merge", Value: string(mustJSON(askTap{ID: card.Waits, Label: cardExplainLabel, Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0125"}
+	l.tap(id, push)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `explain the waiting ask "step-3:merge" more`) || !strings.Contains(got, "stays stopped") {
+		t.Fatalf("directive = %q, want an explain request that keeps the lane stopped", got)
+	}
+	edits := l.slack.edited()
+	if len(edits) == 0 || edits[0].ts != reply.ts || !strings.Contains(edits[0].blocks, "You asked for more") || !strings.Contains(edits[0].blocks, cardWaitAction) {
+		t.Fatalf("edits %+v, want the tapped reply redrawn first, still offering its answers", edits)
+	}
+	if l.app.cards.answered(id.DMChannelID, root.ts, card.Waits) {
+		t.Fatal("Explain more answered the waiting ask")
+	}
+
+	push.ActionID, push.Value = cardWaitAction+"0:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title}))
+	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", time.Now().Unix()), "001800000100000-abcd0126"
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") {
 		t.Fatalf("directive = %q, want the waiting ask's id, answer, and the hand-off", got)
@@ -447,8 +462,8 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 			t.Fatalf("channel payloads %s lack %s", payloads, part)
 		}
 	}
-	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 1 || !strings.Contains(edits[0], "✓ *Merge* · answered") ||
-		strings.Contains(edits[0], cardWaitAction) || strings.Contains(edits[0], "stopped until you answer") {
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 2 || !strings.Contains(edits[1], "✓ *Merge* · answered") ||
+		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "still stopped") {
 		t.Fatalf("reply edits %v, want the answer in place of the hint and buttons", edits)
 	}
 

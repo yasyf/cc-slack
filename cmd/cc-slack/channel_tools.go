@@ -132,12 +132,13 @@ var (
 			"links":  map[string]any{"type": "array", "maxItems": cardMaxLinks, "items": schemaLink("label", "url")},
 			"options": map[string]any{
 				"type": "array", "maxItems": cardMaxOptions, "items": map[string]any{"type": "string", "maxLength": cardMaxOptionLen},
-				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, alone",
+				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside Explain more",
 			},
 			"waits": map[string]any{
 				"type": "string", "pattern": askIDPattern.String(),
-				"description": "makes this an ask card the asking lane stops on: the title is the question, the options are its only buttons, " +
+				"description": "makes this an ask card the asking lane stops on: the title is the question, the options and a fixed Explain more are its buttons, " +
 					"the card says the lane waits on the tap, and the tap's slack.action carries this id, the question, the label, and a capture line. " +
+					"Explain more answers nothing; reply in the thread with a fuller explanation. " +
 					"Needs options; takes no asks",
 			},
 			"refs": map[string]any{

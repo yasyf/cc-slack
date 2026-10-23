@@ -365,9 +365,9 @@ a `needs_you` card naming what is paused and what resuming would start.
 An ask card is how a lane asks the user a question during execution. Set
 `waits` to a question id that leads with the asking lane's name, such as
 `step-3:merge-41`. Write the question verbatim as the `title`, the context
-in `body`, and the answers as `options`. The card carries only those
-answers as buttons, no Ack or Pause, and tells the user the lane is
-stopped until they answer. It takes no `asks`, and the user may reply in
+in `body`, and the answers as `options`. The card carries those answers
+plus a fixed Explain more button, no Ack or Pause, and tells the user the
+lane is stopped until they answer. It takes no `asks`, and the user may reply in
 the thread to write in an answer.
 
 The lane that asks stops on the card. It starts no dependent work, takes
@@ -382,6 +382,11 @@ A Claude lane parks on its mailbox wait until that message
 arrives. A write-in reply reaches the top-level session as a DM directive
 and goes to the lane the same way. Only the first tap answers the
 question; a later tap is dropped.
+
+An Explain more tap arrives as a `slack.action` with the label `Explain
+more` and the question id. It answers nothing, and the lane stays
+stopped. Reply in the card's thread with the question in plain words and
+what each answer would do, then keep waiting for the tap.
 
 `slack_dm_status` and CLI `dm-status` posts to the user's own DM are
 unprotected. This exception does not extend to `slack_send`, `slack_reply`,

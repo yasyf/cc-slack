@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,6 +30,8 @@ const (
 	cardLinkAction    = cardActionPrefix + ":link:"
 	cardAskAction     = cardActionPrefix + ":ask:"
 	cardWaitAction    = cardActionPrefix + ":wait:"
+	cardExplainAction = cardActionPrefix + ":explain:"
+	cardExplainLabel  = "Explain more"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
 	cardMaxOptions    = 4
@@ -238,6 +241,8 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 		return errors.New("a waiting card needs its answers as options")
 	case len(c.Asks) > 0:
 		return errors.New("a waiting card asks one question; its answers go in options, not asks")
+	case slices.Contains(c.Options, cardExplainLabel):
+		return fmt.Errorf("a waiting card carries its own %s button; no option may repeat it", cardExplainLabel)
 	}
 	return nil
 }
@@ -406,6 +411,7 @@ type cardView struct {
 	asks     []cardAsk
 	timeline []timelineEntry
 	tapped   string
+	hint     string
 }
 
 type timelineEntry struct {
@@ -521,6 +527,9 @@ func (c statusCard) waitActions() slack.Block {
 		buttons = append(buttons, slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
 			slack.NewTextBlockObject(slack.PlainTextType, o, true, false)))
 	}
+	explain := string(mustJSON(askTap{ID: c.Waits, Label: cardExplainLabel, Question: c.Title}))
+	buttons = append(buttons, slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain,
+		slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
 	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 
@@ -698,7 +707,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
 	}
 	if c.Waits != "" {
-		return append(blocks, mrkdwn(cardWaitBlock, cardWaitHint), c.waitActions(), c.context(v.tag, v.at, ""))
+		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, cardWaitHint)), c.waitActions(), c.context(v.tag, v.at, ""))
 	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
 }
