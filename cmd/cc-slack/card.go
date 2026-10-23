@@ -169,7 +169,8 @@ func (c *statusCard) fill(text string) {
 		c.Title = string([]rune(first)[:min(runes(first), cardMaxTitleLen)])
 	}
 	for i, o := range c.Options {
-		if label := strings.TrimSpace(strings.Replace(o, cardRecommended, "", 1)); label != o {
+		if strings.Contains(o, cardRecommended) {
+			label := strings.TrimSpace(strings.Replace(o, cardRecommended, "", 1))
 			c.Options[i] = label
 			if c.Recommended == "" || c.Recommended == o {
 				c.Recommended = label

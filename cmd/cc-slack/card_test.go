@@ -334,3 +334,11 @@ func TestCheckNamesEveryProblemAtOnce(t *testing.T) {
 		t.Fatalf("check = %v, want both the status and the repeated option named", err)
 	}
 }
+
+func TestFillLeavesAnUnmarkedOptionAlone(t *testing.T) {
+	c := statusCard{Status: "info", Title: "Ship?", Options: []string{" Ship "}}
+	c.fill("")
+	if c.Recommended != "" || c.Options[0] != " Ship " {
+		t.Fatalf("filled options %q recommended %q, want them untouched", c.Options, c.Recommended)
+	}
+}
