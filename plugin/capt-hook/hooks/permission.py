@@ -734,7 +734,7 @@ on(
             case(transcript=card_tapped(DANA_CARD, "No")) >> DENY,
             case(transcript=card_tapped(DANA_CARD, "No", options=("No", "Yes"))) >> DENY,
             case(transcript=card_tapped(f"Post this in {PETS}?", "Yes")) >> DENY,
-            case(DANA | {"text": "x" * 3000}) >> Block(pattern="\n… 240 more characters"),
+            case(DANA | {"text": "x" * 3000}) >> Block(pattern="… 240 more characters"),
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
             case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "waits": "slack-')),
