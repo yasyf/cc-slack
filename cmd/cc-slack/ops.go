@@ -1542,14 +1542,18 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	res := map[string]string{"channel_id": id.DMChannelID, "thread_ts": thread, "channel": string(a.channelState(hc, sub.ID))}
+	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+}
+
+func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity, thread, ts string, b opBody) map[string]string {
+	res := map[string]string{"channel_id": id.DMChannelID, "thread_ts": thread, "channel": string(a.channelState(hc, subjectID))}
 	if ts != "" {
 		res["ts"], res["permalink"] = ts, id.permalink(id.DMChannelID, ts, thread)
 	}
 	if handPostedQuestion(b) {
 		res["warning"] = questionOnBoard
 	}
-	return ok(res)
+	return res
 }
 
 func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
