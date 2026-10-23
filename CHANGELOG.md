@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-23
+
 ### Changed
 - The permission hook asks about a Slack write the user did not request on an ask card in the DM status thread, never through `AskUserQuestion`. Its refusal prints the `slack_dm_status` card: the title names the place, the body carries the draft, and the answers are Yes and No. A tap on Yes approves the write.
 - The plugin requires captain-hook 12.104.0 or later, which reads a tap on a cc-slack question card as the user's answer.
@@ -80,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/yasyf/cc-slack/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/yasyf/cc-slack/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/yasyf/cc-slack/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/yasyf/cc-slack/compare/v0.1.6...v0.1.7
