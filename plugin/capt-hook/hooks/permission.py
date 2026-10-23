@@ -266,6 +266,8 @@ def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
         return False
     if thread and f"{GRANT_LABEL}{channel}/{thread}" in tags:
         return True
+    if any(tag.startswith((f"{GRANT_LABEL}{channel}/", f"{REVOKE_LABEL}{channel}/")) for tag in tags):
+        return None
     if f"{REVOKE_LABEL}{channel}" in tags:
         return False
     if f"{GRANT_LABEL}{channel}" in tags:
@@ -796,6 +798,12 @@ on(
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
+            case(
+                LANDED,
+                tool="slack_send",
+                **said("status?"),
+                commands=ruled(THREAD_GRANT | {"body": f"Yes, post and keep posting (Recommended)\n{KEEP_POSTING_OPTIONS}", "tags": [*ASKED, f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"]}),
+            ) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't continue posting\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
             case(env=DISABLED) >> Allow(),
