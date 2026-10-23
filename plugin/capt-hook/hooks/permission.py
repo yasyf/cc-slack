@@ -315,6 +315,12 @@ class NotRevoked(CustomTicketCondition):
         return None if found.answer is not None and not found.grants else []
 
 
+@dataclass(frozen=True, slots=True)
+class TopLevel(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        return None if ctx.place["thread"] else []
+
+
 def channel_name(channel: dict[str, Any]) -> str:
     formerly = ", ".join(f"#{name}" for name in channel.get("previous_names", []))
     return f"#{channel['name']} ({channel['id']})" + (f", formerly {formerly}" if formerly else "")
@@ -351,7 +357,7 @@ SLACK = Tickets(
     rules=(
         Rule("standing-grant", StandingGrant()),
         Rule("user-linked", UserSaid(Linked())),
-        Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(NotRevoked(), UserRuled("channel")))),
+        Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(TopLevel(), NotRevoked(), UserRuled("channel")))),
         Rule("owed-update", And(AwaitsReply(), Touched(Named()))),
         Rule("decide", Judged(Decide(RULES, contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
@@ -551,6 +557,7 @@ THREAD_GRANT = LABELED_GRANT | {
     "title": f"May the drive reply in {FOLLOWERS} thread {DANA_THREAD}, where a user reported the outage?",
     "tags": ["owner-ruling", "scope:durable", f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"],
 }
+KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 
 
@@ -840,6 +847,8 @@ on(
             ) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't continue posting\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
             case(env=DISABLED) >> Allow(),
             case(env={}) >> Allow(),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a post'", env=DISABLED) >> Allow(),
