@@ -21,12 +21,14 @@ const (
 	cardActionsBlock  = "card-actions"
 	cardLinksBlock    = "card-links"
 	cardAskBlock      = "card-ask-"
+	cardWaitBlock     = "card-wait"
 	cardTappedBlock   = "card-tapped-"
 	cardAckAction     = cardActionPrefix + ":ack"
 	cardPauseAction   = cardActionPrefix + ":pause"
 	cardOptionAction  = cardActionPrefix + ":opt:"
 	cardLinkAction    = cardActionPrefix + ":link:"
 	cardAskAction     = cardActionPrefix + ":ask:"
+	cardWaitAction    = cardActionPrefix + ":wait:"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
 	cardMaxOptions    = 4
@@ -51,6 +53,7 @@ const (
 	cardProgressCells = 10
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
+	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or reply in this thread to write in your own."
 )
 
 var (
@@ -81,6 +84,7 @@ type statusCard struct {
 	Asks      []cardAsk     `json:"asks,omitempty"`
 	Facts     []cardFact    `json:"facts,omitempty"`
 	Rollup    *cardRollup   `json:"rollup,omitempty"`
+	Waits     string        `json:"waits,omitempty"`
 }
 
 type cardLink struct {
@@ -153,6 +157,9 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 	if err := c.checkOptions(rootOnly); err != nil {
 		return err
 	}
+	if err := c.checkWaits(rootOnly); err != nil {
+		return err
+	}
 	if err := c.checkRefs(); err != nil {
 		return err
 	}
@@ -215,6 +222,22 @@ func (c statusCard) checkOptions(rootOnly bool) error {
 			return fmt.Errorf("card option %q repeats a button", o)
 		}
 		seen[o] = true
+	}
+	return nil
+}
+
+func (c statusCard) checkWaits(rootOnly bool) error {
+	switch {
+	case c.Waits == "":
+		return nil
+	case !askIDPattern.MatchString(c.Waits):
+		return fmt.Errorf("card waits id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", c.Waits)
+	case rootOnly:
+		return errors.New("a waiting card is a reply card; a root-only card takes no waits")
+	case len(c.Options) == 0:
+		return errors.New("a waiting card needs its answers as options")
+	case len(c.Asks) > 0:
+		return errors.New("a waiting card asks one question; its answers go in options, not asks")
 	}
 	return nil
 }
@@ -338,7 +361,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 	if next.Rollup != nil {
 		c.Rollup = next.Rollup
 	}
-	c.Options, c.Asks = nil, nil
+	c.Options, c.Asks, c.Waits = nil, nil, ""
 	return c
 }
 
@@ -488,6 +511,16 @@ func (c statusCard) actions() slack.Block {
 	pause := button(cardPauseAction, cardPauseLabel)
 	pause.Style = slack.StyleDanger
 	buttons = append(buttons, button(cardAckAction, cardAckLabel), pause)
+	return slack.NewActionBlock(cardActionsBlock, buttons...)
+}
+
+func (c statusCard) waitActions() slack.Block {
+	buttons := make([]slack.BlockElement, 0, len(c.Options))
+	for i, o := range c.Options {
+		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title}))
+		buttons = append(buttons, slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
+			slack.NewTextBlockObject(slack.PlainTextType, o, true, false)))
+	}
 	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 
@@ -663,6 +696,9 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.links()...)
 	if v.tapped != "" {
 		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
+	}
+	if c.Waits != "" {
+		return append(blocks, mrkdwn(cardWaitBlock, cardWaitHint), c.waitActions(), c.context(v.tag, v.at, ""))
 	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
 }

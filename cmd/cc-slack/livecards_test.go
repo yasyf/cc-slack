@@ -421,6 +421,45 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 	}
 }
 
+func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Waits: "step-3:merge"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[1]
+	if !strings.Contains(reply.blocks, cardWaitAction+"0:step-3:merge") || strings.Contains(reply.blocks, cardAckAction) {
+		t.Fatalf("reply %s, want the answers as buttons and no Ack", reply.blocks)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: l.slack.sent()[0].ts,
+		ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0126"}
+	l.tap(id, push)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") {
+		t.Fatalf("directive = %q, want the waiting ask's id, answer, and the hand-off", got)
+	}
+	payloads := strings.Join(l.channelPayloads(), "\n")
+	for _, part := range []string{`"id":"step-3:merge"`, `"waits":true`, `"question":"Merge #41 now?"`, `answered \"Merge #41 now?\" with \"Merge\" at `} {
+		if !strings.Contains(payloads, part) {
+			t.Fatalf("channel payloads %s lack %s", payloads, part)
+		}
+	}
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 1 || !strings.Contains(edits[0], "✓ *Merge* · answered") ||
+		strings.Contains(edits[0], cardWaitAction) || strings.Contains(edits[0], "stopped until you answer") {
+		t.Fatalf("reply edits %v, want the answer in place of the hint and buttons", edits)
+	}
+
+	push.ActionID, push.Value = cardWaitAction+"1:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Hold", Question: card.Title}))
+	push.ActionTS, push.Seq = fmt.Sprintf("%d.000200", time.Now().Unix()), "001800000100000-abcd0127"
+	l.tap(id, push)
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("a second tap on an answered waiting ask steered %q", got)
+	}
+}
+
 func TestRedrawsKeepATappedOptionAndAWhoamiHidesRefTokens(t *testing.T) {
 	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
 	thread := &liveThread{Channel: "D1", Thread: "1.1"}

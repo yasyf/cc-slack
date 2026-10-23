@@ -99,6 +99,16 @@ func TestProtocolCardAskDecodes(t *testing.T) {
 	}
 }
 
+func TestProtocolCardWaitDecodes(t *testing.T) {
+	t.Parallel()
+	var a cardActionPush
+	decodePush(t, "action_wait.json", cardActionEventType, &a)
+	k, ok := a.tap()
+	if !ok || !k.Waits || k.ID != "step-3:merge" || k.Label != "Hold" || k.Question != "Merge #41 now?" {
+		t.Fatalf("wait tap = %+v, %v; want the waiting ask's id, answer, and question from its value", k, ok)
+	}
+}
+
 func TestProtocolCardActionDecodes(t *testing.T) {
 	t.Parallel()
 	var a cardActionPush

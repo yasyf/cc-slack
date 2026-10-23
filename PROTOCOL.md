@@ -114,14 +114,15 @@ and forwards the tap.
 | `channel` | yes | The DM the card is in |
 | `message_ts` | yes | The card's timestamp |
 | `thread_ts` | yes | The status thread's root timestamp |
-| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, or `cc-slack-card:ask:<id>` |
-| `value` | for options and asks | The option's label, or for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent |
+| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, `cc-slack-card:ask:<id>`, or `cc-slack-card:wait:<n>:<id>` |
+| `value` | for options, asks, and waiting cards | The option's label; for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent; for a waiting card's answer the JSON `{"id", "label", "q"}`, `q` being the card's title, the question verbatim |
 | `action_ts` | yes | Slack's action timestamp, used to deduplicate taps |
 | `seq` | yes | The frame's sequence number |
 
 The daemon drops a tap by anyone but the logged-in engineer, or outside their
 DM with the app, and a tap on an ask whose `exp` is not after `action_ts`.
-Fixtures: `action.json`, `action_ask.json`.
+A second tap on a waiting card whose question is already answered is dropped.
+Fixtures: `action.json`, `action_ask.json`, `action_wait.json`.
 
 #### `cc_slack_shortcut`
 
