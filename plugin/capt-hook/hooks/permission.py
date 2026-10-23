@@ -437,7 +437,7 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     if isinstance(verdict, Deny):
         return evt.block(refused(write, conv), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
     if not write.daemon:
-        return evt.allow(system_message=f"{GATE}: allowed by ticket `{verdict.id}` ({verdict.rule}).")
+        return evt.allow()
     return named_ticket(evt, ctx, verdict)
 
 
@@ -478,7 +478,7 @@ def slack_posts_carry_their_thread(evt: PostToolUseEvent) -> HookResult | None:
     if store.covering(KIND, ctx.trees, place, ctx.action.fingerprint) is not None:
         return None
     carried = SLACK.mint(ctx, CARRY, ticket.evidence)
-    return evt.context(f"{GATE}: ticket `{carried.id}` carries ticket `{ticket.id}` to the thread this post opened.", system_message=f"{GATE}: ticket {carried.id} covers {place['channel']}, thread {place['thread']}")
+    return evt.context(f"{GATE}: ticket `{carried.id}` carries ticket `{ticket.id}` to the thread this post opened.")
 
 
 class WritesSlack:
@@ -857,7 +857,7 @@ on(
             tool_input={"channel_id": FOLLOWERS, "text": "a top-level post"},
             output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000100", "thread_ts": "1791950000.000100", "ticket_id": "0123456789ab"}),
             tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened", system_message=f"covers {FOLLOWERS}, thread 1791950000.000100"),
+        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
         Input(
             env=ENABLED,
             tool=P + "slack_reply",
@@ -870,7 +870,7 @@ on(
             command=f"{CLI} send --channel {FOLLOWERS} --text 'a top-level post' --ticket 0123456789ab",
             output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000300", "thread_ts": "1791950000.000300", "ticket_id": "0123456789ab"}),
             tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened", system_message=f"covers {FOLLOWERS}, thread 1791950000.000300"),
+        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
         Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": FOLLOWERS, "text": "a post"}, output="rate limited; nothing was sent", tickets=[covering({"channel": FOLLOWERS, "thread": ""})]): Allow(),
         Input(
             env=ENABLED,
@@ -884,14 +884,14 @@ on(
             command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a top-level post'",
             output=json.dumps({"channel_id": FOLLOWERS, "ts": "1791950000.000400", "thread_ts": "1791950000.000400", "permalink": f"https://acme.slack.com/archives/{FOLLOWERS}/p1791950000000400", "username": "Alex (claude)"}),
             tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened", system_message=f"covers {FOLLOWERS}, thread 1791950000.000400"),
+        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
         Input(
             env=ENABLED,
             tool="mcp__slack__slack_send_message",
             tool_input={"channel_id": FOLLOWERS, "text": "_(Alex's Claude)_ a top-level post"},
             output=json.dumps({"ok": True, "channel": FOLLOWERS, "ts": "1791950000.000500"}),
             tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened", system_message=f"covers {FOLLOWERS}, thread 1791950000.000500"),
+        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
         Input(env=ENABLED, tool="mcp__slack__slack_send_message", tool_input={"channel_id": FOLLOWERS, "text": "_(Alex's Claude)_ a top-level post"}, output=json.dumps({"ok": True, "channel": FOLLOWERS, "ts": "1791950000.000600"})): Allow(),
         Input(
             env=DISABLED,
