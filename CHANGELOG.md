@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-23
+
+### Added
+- A `slack-grant:<channel>/<thread>` answer label grants writes in that one thread only, and `slack-revoke:<channel>/<thread>` withdraws it; an answer carrying a thread label for a channel no longer covers the rest of that channel.
+- Two comms checks in the capt-hook pack run on every send, reply and edit wherever `[permissions]` is on: a post never asks a person for logs, versions, screenshots or recordings, and each line telling a person their problem is fixed cites the record of their case succeeding on the live build, their `usr_` id, and the thread owner.
+
 ## [0.1.8] - 2026-10-22
 
 ### Added
@@ -65,7 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/yasyf/cc-slack/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/yasyf/cc-slack/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/yasyf/cc-slack/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/yasyf/cc-slack/compare/v0.1.5...v0.1.6
