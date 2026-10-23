@@ -260,8 +260,12 @@ class Judged(CustomTicketCondition):
             raise TimeoutError(exc.cause) from exc
 
 
-def standing(answer: dict[str, Any], channel: str) -> bool | None:
+def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
     tags = set(answer.get("tags", ()))
+    if thread and f"{REVOKE_LABEL}{channel}/{thread}" in tags:
+        return False
+    if thread and f"{GRANT_LABEL}{channel}/{thread}" in tags:
+        return True
     if f"{REVOKE_LABEL}{channel}" in tags:
         return False
     if f"{GRANT_LABEL}{channel}" in tags:
@@ -282,9 +286,9 @@ class Standing:
 
 def standing_of(ctx: Context) -> Standing:
     def newest(ctx: Context) -> Standing:
-        channel = ctx.place["channel"]
+        channel, thread = ctx.place["channel"], ctx.place["thread"]
         live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
-        decided = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel)) is not None]
+        decided = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel, thread)) is not None]
         return decided[-1] if decided else Standing()
 
     return ctx.fact(Standing, newest)
@@ -522,6 +526,11 @@ LABELED_GRANT = {
     "updated_at": "2026-10-16T20:16:11Z",
     "tags": ["owner-ruling", "scope:durable", f"slack-grant:{FOLLOWERS}"],
     "superseded_by": None,
+}
+THREAD_GRANT = LABELED_GRANT | {
+    "id": "e1e1e1e1e1e1e1e1",
+    "title": f"May the drive reply in {FOLLOWERS} thread {DANA_THREAD}, where a user reported the outage?",
+    "tags": ["owner-ruling", "scope:durable", f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"],
 }
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 
@@ -784,6 +793,9 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"tags": ["scope:ephemeral"]})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't continue posting\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
             case(env=DISABLED) >> Allow(),
