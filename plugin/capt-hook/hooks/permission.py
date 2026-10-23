@@ -65,10 +65,9 @@ UNREAD = (
     " with literal `--text`, `--file`, and `--blocks` values and no `--ticket` flags."
 )
 REFUSED = (
-    "No permission covers this Slack write. Ask the user, and retry the same call once they tap Yes. With cc-present"
-    " installed, put the question on your board and send it to Slack in one step: run `cc-present ask -` with this card"
-    " on stdin.\n```json\n{board}\n```\nWithout cc-present, call `slack_dm_status` with this card in your DM status"
-    " thread.\n```json\n{ask}\n```"
+    "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
+    " `slack_dm_status` and the second card when cc-present is missing, then retry once they tap Yes."
+    "\n```json\n{board}\n```\n```json\n{ask}\n```"
 )
 RULES = """
     The agent is about to make one Slack write, sent to <destination>. Allow it when the user's own words or
@@ -740,7 +739,7 @@ on(
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
             case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "slack-')),
-            case() >> Block(pattern=re.escape(f'`cc-present ask -` with this card on stdin.\n```json\n{{\n  "id": "slack-') + r'[0-9a-f]{12}' + re.escape(f'",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "slack-')),
+            case() >> Block(pattern=re.escape(f'then retry once they tap Yes.\n```json\n{{\n  "id": "slack-') + r'[0-9a-f]{12}' + re.escape(f'",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "slack-')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_join", **said(f"join this and read it {DANA_URL}")) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_archive", **said(f"this one is done {DANA_URL}")) >> DENY,
