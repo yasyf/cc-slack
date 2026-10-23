@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-23
+
 ### Changed
 
 - With cc-present installed, a `dm-status` card that waits on an answer and did not come from cc-present is still posted, and the reply carries a `warning`: a question goes on the cc-present board first and reaches Slack through `cc-present send`.
