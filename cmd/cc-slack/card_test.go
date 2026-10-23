@@ -62,7 +62,11 @@ func TestWaitingCardOffersOnlyItsAnswersAndSaysTheLaneWaits(t *testing.T) {
 	for _, b := range blocks {
 		if a, ok := b.(*slack.ActionBlock); ok {
 			for _, e := range a.Elements.ElementSet {
-				buttons = append(buttons, e.(*slack.ButtonBlockElement))
+				button, ok := e.(*slack.ButtonBlockElement)
+				if !ok {
+					t.Fatalf("action element %T is not a button", e)
+				}
+				buttons = append(buttons, button)
 			}
 		}
 	}
