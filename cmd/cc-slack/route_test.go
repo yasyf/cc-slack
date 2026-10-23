@@ -50,16 +50,14 @@ func shortHome(t *testing.T) {
 	t.Setenv("DAEMONKIT_HOME", resolved)
 }
 
-func projectWith(t *testing.T, hooks ...string) func(context.Context, int) (string, error) {
+func projectWith(t *testing.T, enabled bool) func(context.Context, int) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".claude", "hooks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, hook := range hooks {
-		if err := os.WriteFile(filepath.Join(dir, ".claude", "hooks", hook), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, repoConfig), fmt.Appendf(nil, "[permissions]\nenabled = %t\n", enabled), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	return func(_ context.Context, pid int) (string, error) {
 		if pid != testPID {
@@ -81,7 +79,7 @@ func launchDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	a := newApp(func(string) slackAPI { return fs }, func(int) bool { return true }, openTestCache(t), openTestReplay(t))
 	tickets := newFakeCaptHook()
 	a.captHook = tickets.run
-	a.claudeCwd = projectWith(t, defaultPermissionHook)
+	a.claudeCwd = projectWith(t, true)
 	a.avatar = agentAvatar
 	a.shortcuts.avatar = agentAvatar
 	user := newFakeUserCredential()

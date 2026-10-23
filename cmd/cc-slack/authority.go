@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,7 +94,7 @@ func claudeCwd(ctx context.Context, pid int) (string, error) {
 	return "", fmt.Errorf("lsof named no working directory for claude %d", pid)
 }
 
-func (a *app) mintsTickets(ctx context.Context, pid int, hook string) bool {
+func (a *app) mintsTickets(ctx context.Context, pid int) bool {
 	if pid == 0 {
 		return true
 	}
@@ -103,8 +102,8 @@ func (a *app) mintsTickets(ctx context.Context, pid int, hook string) bool {
 	if err != nil {
 		return true
 	}
-	_, err = os.Stat(filepath.Join(dir, ".claude", "hooks", hook))
-	return !errors.Is(err, fs.ErrNotExist)
+	c, err := loadConfig(filepath.Join(dir, repoConfig), false)
+	return err != nil || c.Permissions.Enabled
 }
 
 func (t hookTicket) once() bool { return t.Reach == reachOnce }
@@ -167,7 +166,7 @@ func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, sessio
 
 func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticketSpend, w write) (hookTicket, *receipt, error) {
 	ctx, db := hc.Ctx, hc.DB
-	if s.TicketID == "" && !a.mintsTickets(ctx, hc.Env.ClaudePID, id.Config.permissionHook()) {
+	if s.TicketID == "" && !a.mintsTickets(ctx, hc.Env.ClaudePID) {
 		return hookTicket{}, nil, nil
 	}
 	t, err := a.spendTicket(ctx, api, id, hc.Env.Session, s, w)

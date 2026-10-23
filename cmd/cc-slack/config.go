@@ -1,36 +1,49 @@
 package main
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
 const (
-	configEnv             = "CC_SLACK_CONFIG"
-	repoConfig            = ".claude/cc-slack.toml"
-	defaultPermissionHook = "slack_writes_need_permission.py"
-	botEnv                = "CC_SLACK_BOT_TOKEN"
-	socketURLEnv          = "CC_SLACK_SOCKET_URL"
-	avatarKeyIDEnv        = "CC_SLACK_AVATAR_KEY_ID"
-	avatarSigningEnv      = "CC_SLACK_AVATAR_SECRET"
+	configEnv        = "CC_SLACK_CONFIG"
+	repoConfig       = ".claude/cc-slack.toml"
+	botEnv           = "CC_SLACK_BOT_TOKEN"
+	socketURLEnv     = "CC_SLACK_SOCKET_URL"
+	avatarKeyIDEnv   = "CC_SLACK_AVATAR_KEY_ID"
+	avatarSigningEnv = "CC_SLACK_AVATAR_SECRET"
 )
 
 type config struct {
-	SSM            *ssmSource     `toml:"ssm" json:"-"`
-	Avatars        avatarConfig   `toml:"avatars" json:"avatars"`
-	DocCards       docCardsConfig `toml:"doc_cards" json:"doc_cards"`
-	GitHub         *tokenSource   `toml:"github" json:"github,omitempty"`
-	Buildkite      *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
-	PermissionHook string         `toml:"permission_hook" json:"permission_hook,omitempty"`
+	SSM         *ssmSource     `toml:"ssm" json:"-"`
+	Avatars     avatarConfig   `toml:"avatars" json:"avatars"`
+	DocCards    docCardsConfig `toml:"doc_cards" json:"doc_cards"`
+	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
+	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
+	Permissions permissions    `toml:"permissions" json:"-"`
 }
+
+type permissions struct {
+	Enabled bool       `toml:"enabled"`
+	CLIs    []extraCLI `toml:"clis"`
+}
+
+type extraCLI struct {
+	Program string            `toml:"program"`
+	Verbs   map[string]string `toml:"verbs"`
+	Options []string          `toml:"options"`
+	Flags   []string          `toml:"flags"`
+}
+
+var writeVerbs = []string{"post", "edit", "delete", "create", "archive", "invite", "topic", "join"}
 
 type tokenSource struct {
 	Env     string   `toml:"token_env" json:"-"`
@@ -58,6 +71,20 @@ type docCardsConfig struct {
 }
 
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
+
+func (p permissions) validate() error {
+	for _, cli := range p.CLIs {
+		if cli.Program == "" || len(cli.Verbs) == 0 {
+			return errors.New("[[permissions.clis]] needs program and verbs")
+		}
+		for verb, write := range cli.Verbs {
+			if !slices.Contains(writeVerbs, write) {
+				return fmt.Errorf("[[permissions.clis]] %s maps %s to %q, which is not one of %s", cli.Program, verb, write, strings.Join(writeVerbs, ", "))
+			}
+		}
+	}
+	return nil
+}
 
 func (d docCardsConfig) enabled() bool { return d.URL != "" }
 
@@ -110,8 +137,6 @@ func (c *config) resolveTokens() error {
 	}
 	return c.Buildkite.resolve("buildkite")
 }
-
-func (c config) permissionHook() string { return cmp.Or(c.PermissionHook, defaultPermissionHook) }
 
 func configPath(flag, repo string) (path string, required bool, err error) {
 	if flag != "" {
@@ -166,6 +191,9 @@ func (c config) validate() error {
 	}
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
+	}
+	if err := c.Permissions.validate(); err != nil {
+		return err
 	}
 	if err := c.GitHub.validate("github"); err != nil {
 		return err
