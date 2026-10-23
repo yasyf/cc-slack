@@ -20,12 +20,10 @@ const (
 	notifyMethod      = "notifications/claude/channel"
 	awaitTimeout      = time.Minute
 	awaitReconnecting = "await: the cc-slack daemon is restarting; reconnecting to the steering channel"
-	writePatience     = currentPatience + currentReserve + 10*time.Second
 )
 
 var (
-	threadCheckedWrites = []daemon.Op{opSend, opReply, opEdit, opDelete}
-	attachmentWrites    = []daemon.Op{opSend, opReply, opDMStatus}
+	attachmentWrites = []daemon.Op{opSend, opReply, opDMStatus}
 )
 
 var (
@@ -67,11 +65,6 @@ func invokeOnce(ctx context.Context, d cmd.Deps, session, scope string, op daemo
 		return daemon.Reply{}, err
 	}
 	defer func() { _ = client.Close() }()
-	if slices.Contains(threadCheckedWrites, op) {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, writePatience)
-		defer cancel()
-	}
 	reply, err := client.Do(ctx, daemon.Envelope{Op: op, Session: session, ClaudePID: d.ClaudePID(), Scope: scope, Body: body})
 	if err != nil {
 		return daemon.Reply{}, err

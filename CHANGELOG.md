@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The permission hook asks about a Slack write the user did not request on an ask card in the DM status thread, never through `AskUserQuestion`. Its refusal prints the `slack_dm_status` card: the title names the place, the body carries the draft, and the answers are Yes and No. A tap on Yes approves the write.
 - The plugin requires captain-hook 12.104.0 or later, which reads a tap on a cc-slack question card as the user's answer.
-
 - A bare `slack-grant:<channel>` answer, or an asked answer to keep posting in a channel, now covers top-level posts there only. A reply in one of the channel's threads needs that thread's own `slack-grant:<channel>/<thread ts>` grant or another permission.
+- The permission hook's owed-update rule is gone. A thread whose latest message is a person's, in a channel the session touched, no longer permits a reply there; a reply needs that thread's grant, a ticket, or the user's word. The daemon's thread read before an owed-update reply goes with it, and sends, replies, edits, and deletes no longer get the longer timeout that read needed.
 
 ### Added
 - Each answer button on a `waits` card carries the card's options, and its `slack.action` payload carries them as `options`, so a reader can tell which answer the label is.

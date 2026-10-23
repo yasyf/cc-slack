@@ -243,10 +243,6 @@ func (l *liveDaemon) standing(threadTS string) string {
 	return l.placeTicket("owner-said-reply-there", threadTS)
 }
 
-func (l *liveDaemon) owedUpdate(threadTS string) string {
-	return l.placeTicket(owedUpdateRule, threadTS)
-}
-
 func (l *liveDaemon) placeTicket(rule, threadTS string) string {
 	return l.tickets.mint(fakeTicket{tree: testTree, place: map[string]string{"channel": testChannel, "thread": threadTS}, reach: reachPlace, rule: rule})
 }

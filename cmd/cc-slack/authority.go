@@ -28,7 +28,6 @@ const (
 	approveInvite  = "invite"
 	approveTopic   = "topic"
 	approveJoin    = "join"
-	owedUpdateRule = "owed-update"
 	reachOnce      = "once"
 )
 
@@ -185,9 +184,6 @@ func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticke
 			return t, &r, nil
 		}
 	}
-	if err := a.checkOwedUpdate(ctx, db, api, id, t, w); err != nil {
-		return t, nil, errors.New(a.handBack(ctx, db, id, s, t, false, err.Error()))
-	}
 	return t, nil, nil
 }
 
@@ -272,30 +268,4 @@ func (a *app) attachWatchReceipt(ctx context.Context, db *sql.DB, r receipt) err
 		return fmt.Errorf("record watch on receipt %s: %w", r.TicketID, err)
 	}
 	return nil
-}
-
-func (a *app) checkOwedUpdate(ctx context.Context, db *sql.DB, api slackAPI, id identity, t hookTicket, w write) error {
-	if t.Rule != owedUpdateRule || w.action != approvePost || w.threadTS == "" {
-		return nil
-	}
-	var read threadRead
-	err := a.writeAndRetry(ctx, api, id, w.channelID, func() (err error) {
-		read, err = a.cache.current(ctx, api, w.channelID, w.threadTS)
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("read thread %s/%s before a ticketed reply: %w", w.channelID, w.threadTS, err)
-	}
-	if len(read.msgs) == 0 {
-		return nil
-	}
-	last := read.msgs[len(read.msgs)-1]
-	if !id.fromClaude(last) || id.authored(last) {
-		return nil
-	}
-	own, err := ownPost(ctx, db, w.channelID, last.Timestamp)
-	if err != nil || own {
-		return err
-	}
-	return fmt.Errorf("the latest message in %s/%s is from another Claude agent: ticket %s is an owed update, which never answers one, so get the owner's word to reply", w.channelID, w.threadTS, t.ID)
 }

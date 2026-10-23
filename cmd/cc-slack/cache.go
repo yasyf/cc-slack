@@ -21,9 +21,6 @@ import (
 
 const (
 	cacheFresh       = 15 * time.Second
-	currentFallback  = 30 * time.Second
-	currentPatience  = 60 * time.Second
-	currentReserve   = 30 * time.Second
 	cacheFullRefresh = 10 * time.Minute
 	cacheMaxBytes    = 64 << 20
 	nameTTL          = 24 * time.Hour
@@ -57,7 +54,6 @@ type readCache struct {
 	st       *store.Store
 	maxBytes int64
 	now      func() time.Time
-	sleep    func(context.Context, time.Duration) error
 	log      *log.Logger
 }
 
@@ -84,7 +80,7 @@ func openReadCache(ctx context.Context, path string) (*readCache, error) {
 		return nil, fmt.Errorf("open read cache %s: %w", path, err)
 	}
 	return &readCache{
-		st: st, maxBytes: cacheMaxBytes, now: time.Now, sleep: sleepFor,
+		st: st, maxBytes: cacheMaxBytes, now: time.Now,
 		log: log.New(os.Stderr, "["+binaryName+" cache] ", log.LstdFlags),
 	}, nil
 }
@@ -93,49 +89,6 @@ func (c *readCache) Close() error { return c.st.Close() }
 
 func (c *readCache) replies(ctx context.Context, api slackAPI, channelID, threadTS string) (threadRead, error) {
 	return c.read(ctx, api, channelID, threadTS, cacheFresh)
-}
-
-func (c *readCache) current(ctx context.Context, api slackAPI, channelID, threadTS string) (threadRead, error) {
-	patience := currentPatience
-	if deadline, ok := ctx.Deadline(); ok {
-		patience = min(patience, time.Until(deadline)-currentReserve)
-	}
-	giveUp := c.now().Add(patience)
-	for {
-		read, err := c.read(ctx, api, channelID, threadTS, 0)
-		if err == nil && !read.stale {
-			return read, nil
-		}
-		if err == nil && c.now().Sub(read.syncedAt) < currentFallback {
-			return threadRead{msgs: read.msgs}, nil
-		}
-		wait := read.retryAfter
-		if err != nil {
-			var rate *slack.RateLimitedError
-			if !errors.As(err, &rate) {
-				return threadRead{}, err
-			}
-			wait = rate.RetryAfter
-		}
-		if c.now().Add(wait).After(giveUp) {
-			return threadRead{}, &slack.RateLimitedError{RetryAfter: wait}
-		}
-		c.log.Printf("thread %s/%s is rate limited; reading it again in %s", channelID, threadTS, wait)
-		if err := c.sleep(ctx, wait); err != nil {
-			return threadRead{}, err
-		}
-	}
-}
-
-func sleepFor(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS string, freshFor time.Duration) (threadRead, error) {

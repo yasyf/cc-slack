@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -605,48 +604,6 @@ func TestReplyBroadcastsToTheChannelOnlyWhenAsked(t *testing.T) {
 	}
 }
 
-func TestOwedUpdateTicketRefusesAThreadItCannotReadToTheEnd(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]string{"channel_id": testChannel, "text": "PR is up"}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	ticketID := l.owedUpdate(sent.TS)
-	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.500000", ThreadTimestamp: sent.TS, User: "UOTHER", Text: "any update?"}})
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI is green"}))
-	if posts := l.slack.sent(); len(posts) != 2 || posts[1].threadTS != sent.TS {
-		t.Fatalf("posts = %+v, want the ticketed reply in the thread", posts)
-	}
-	for i := range maxPages * pageLimit {
-		l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: fmt.Sprintf("1800000005.%06d", i), ThreadTimestamp: sent.TS, User: "UOTHER", Text: "chatter"}})
-	}
-	l.refused(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "late"}), "cannot be verified")
-	if posts := l.slack.sent(); len(posts) != 2 {
-		t.Fatalf("a reply reached Slack on an unverifiable thread: %+v", posts)
-	}
-}
-
-func TestOwedUpdateTicketJoinsAPublicChannelBeforeReadingItsThread(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up", "no_watch": true}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	ticketID := l.owedUpdate(sent.TS)
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "not_in_channel"})
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI is green", "no_watch": true}))
-	if joined := l.slack.joinedChannels(); len(joined) != 1 || joined[0] != testChannel {
-		t.Fatalf("joined = %v, want one join of %s before the thread read", joined, testChannel)
-	}
-	if posts := l.slack.sent(); len(posts) != 2 || posts[1].threadTS != sent.TS {
-		t.Fatalf("posts = %+v, want the ticketed reply in the thread", posts)
-	}
-}
-
 func TestPostAndReactJoinAPublicChannelAndRetryOnce(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -819,20 +776,6 @@ func TestUserSessionFailureOtherThanExpiryKeepsTheStoredSession(t *testing.T) {
 		"the user's Slack session credential failed auth.test: account_inactive")
 	if saved := l.user.savedCredentials(); len(saved) != 0 {
 		t.Fatalf("saved = %+v, want the stored session kept", saved)
-	}
-}
-
-func TestOwedUpdateReplyInAPrivateChannelRefusesWithoutAnAsk(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	ticketID := l.owedUpdate(testThread)
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
-	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "channel_not_found"})
-	l.refused(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": "CI is green"}),
-		"<#"+testChannel+"> is private and the bot is not in it, and inviting it as the user failed ("+errNoUserCredential.Error()+")")
-	if asks := l.slack.sentTo("D" + testUser); len(asks) != 0 {
-		t.Fatalf("DM posts = %+v, want no /invite ask", asks)
 	}
 }
 

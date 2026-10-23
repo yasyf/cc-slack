@@ -18,7 +18,7 @@ from spawnllm import LabelAnswer
 from captain_hook import Allow, Ask, Block, Event, HookResult, Input, PostToolUseEvent, PreToolUseEvent, Rewrite, T, Warn, on
 from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
-from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Touched, Undecided, UserAnswered, UserRuled, holds, store
+from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, UserRuled, holds, store
 from captain_hook.tickets.context import ccn_answers, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
@@ -115,10 +115,6 @@ class Thread:
     messages: tuple[Message, ...] = ()
     readable: bool = True
     stale: bool = False
-
-    @property
-    def latest(self) -> Message | None:
-        return self.messages[-1] if self.messages else None
 
 
 def holds_name(text: str, name: str) -> bool:
@@ -245,16 +241,6 @@ class Named:
 
 
 @dataclass(frozen=True, slots=True)
-class AwaitsReply(CustomTicketCondition):
-    def evidence(self, ctx: Context) -> list[Evidence] | None:
-        thread = thread_of(ctx)
-        latest = thread.latest
-        if thread.stale or latest is None or not latest.human:
-            return None
-        return [Evidence(id=f"slack:{latest.ts}", source="slack", quote=latest.text[:SHOWN], detail=f"the thread's latest message, from {latest.user_name}, unanswered by the bot")]
-
-
-@dataclass(frozen=True, slots=True)
 class Judged(CustomTicketCondition):
     judge: Decide
 
@@ -358,7 +344,6 @@ SLACK = Tickets(
         Rule("standing-grant", StandingGrant()),
         Rule("user-linked", UserSaid(Linked())),
         Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(TopLevel(), NotRevoked(), UserRuled("channel")))),
-        Rule("owed-update", And(AwaitsReply(), Touched(Named()))),
         Rule("decide", Judged(Decide(RULES, contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
@@ -504,9 +489,7 @@ DANA_ASKED = f'Post this in {FOLLOWERS}, thread {DANA_THREAD}? "{DANA_TEXT}"'
 DANA_CARD = f"Post this in {FOLLOWERS}, thread {DANA_THREAD}?"
 DANA_OPENED = {"ts": DANA_THREAD, "user": "U0DANA00001", "user_name": "Dana", "text": "the SQL viewer ran a delete with no soft-delete filter"}
 DANA_FOLLOWED_UP = {"ts": "1791900000.000100", "user": "U0DANA00001", "user_name": "Dana", "text": "any update on this?"}
-BUILDKITE_FAILED = {"ts": "1791900000.000150", "user": "U0BUILDKITE", "user_name": "Buildkite", "text": "build #4812 failed", "from_bot": True}
 BOT_ANSWERED = {"ts": "1791900000.000200", "user": "U0BOT000001", "user_name": "Alex (claude)", "text": "fix is out", "from_claude": True}
-OWNER_ANSWERED = {"ts": "1791900000.000300", "user": "U0OWNER0001", "user_name": "Alex", "text": "looking", "from_user": True}
 PRIYA_USER = "U0PRIYA0001"
 PRIYA_ASKED = "Should I DM priya to ask her to try posting the doc link again, or will you paste it yourself?"
 PRIYA_DM_TEXT = "Hey Priya, could you try posting the design-doc link in #docs-test again?"
@@ -759,15 +742,9 @@ on(
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", **said(f"fix the wording here {DANA_URL.replace(DANA_THREAD.replace('.', ''), BOT_ANSWERED['ts'].replace('.', ''))}")) >> ALLOW,
             case(commands=NOT_DM | {"ccn answer search": json.dumps([{"id": "0207568abcdef", "title": "Reply in app-followers?", "body": f"Reply in {FOLLOWERS} whenever asked.", "updated_at": "2026-10-01T00:00:00+00:00", "tags": []}])}) >> DENY,
             case(DANA | {"text": "a different reply, later"}, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana")) >> ALLOW,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
-            case(transcript=touched("slack_thread", channel_id=FOLLOWERS, thread_ts=DANA_THREAD), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP, BOT_ANSWERED)) >> DENY,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, BUILDKITE_FAILED)) >> DENY,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP, stale=True)) >> DENY,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, OWNER_ANSWERED)) >> DENY,
-            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts="1791866612.381629", text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
-            case(transcript=touched("slack_reply", channel_id=PETS, thread_ts="1791866612.381629", text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
-            case(transcript=[T.user("status?")], commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
+            case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
+            case(transcript=touched("slack_thread", channel_id=FOLLOWERS, thread_ts=DANA_THREAD), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
+            case(transcript=[T.user("post the milestone"), *touched("slack_send", channel_id=FOLLOWERS, text="milestone")], root_transcript=[T.user("status?")], agent_id="a-lane", commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
             case(
                 {"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT},
                 tool="slack_send",
