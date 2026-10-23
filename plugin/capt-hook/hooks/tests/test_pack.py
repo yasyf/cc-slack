@@ -91,7 +91,7 @@ class PackTest(unittest.TestCase):
     def test_discover_pack_loads_every_module_and_hook(self) -> None:
         self.assertEqual(app._state.load_errors, [])
         self.assertEqual(len(app._state.hooks), 10)
-        for module in ("agent_plane", "common", "comms_send_needs_proof", "session", "permission", "plain_words", "writes"):
+        for module in ("agent_plane", "common", "slack_comms_need_proof", "session", "permission", "plain_words", "writes"):
             self.assertIn(f"{self.package}.{module}", sys.modules)
 
         expected = {

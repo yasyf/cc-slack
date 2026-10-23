@@ -91,7 +91,7 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
     Event.PreToolUse,
     only_if=[WritesSlack()],
     tests={
-        reply("Dana, this is fixed now.", decide=CONFIRMED): Block(pattern=r"^A fixed line names the user id"),
+        reply("Dana, this is fixed now.", decide=CONFIRMED): Block(pattern=r"^A fixed line cites the record"),
         reply(f"<@{OWNER}> your uploads are fixed: usr_8f2k1 now succeeds on the live build (#500310).", decide=CONFIRMED): Allow(),
         reply(f"<@{OWNER}> your uploads are fixed: usr_8f2k1 now succeeds on the live build.", decide=CONFIRMED): Block(),
         reply("Your uploads are fixed: usr_8f2k1 now succeeds on the live build (#500310).", decide=CONFIRMED): Block(),
