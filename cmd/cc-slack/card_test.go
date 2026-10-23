@@ -236,12 +236,12 @@ func TestDMStatusCardLeavesAShortcutRootAlone(t *testing.T) {
 	}
 }
 
-func TestDMStatusRefusesACardWithText(t *testing.T) {
+func TestDMStatusRefusesACardWithBlocksOrABadStatus(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	raw := mustJSON(map[string]any{"text": "x", "card": statusCard{Status: "info", Title: "t"}})
+	raw := mustJSON(map[string]any{"blocks": []map[string]any{{"type": "divider"}}, "text": "x", "card": statusCard{Status: "info", Title: "t"}})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "never both") {
-		t.Fatalf("card with text: %v", err)
+		t.Fatalf("card with blocks: %v", err)
 	}
 	raw = mustJSON(map[string]any{"card": statusCard{Status: "urgent", Title: "t"}})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "needs_you") {
@@ -309,5 +309,37 @@ func TestCardTapPauseAndStrangersAreHandled(t *testing.T) {
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, "Start no new lanes") {
 		t.Fatalf("pause directive = %q", got)
+	}
+}
+
+func TestFillCompletesACardPostedWithTextAndAMarkedLabel(t *testing.T) {
+	c := statusCard{Waits: "step-3:merge", Options: []string{"Merge (Recommended)", "Hold"}}
+	c.fill("Merge #41 now?\nCI is green.")
+	want := statusCard{Status: "needs_you", Title: "Merge #41 now?", Body: "Merge #41 now?\nCI is green.", Waits: "step-3:merge", Options: []string{"Merge", "Hold"}, Recommended: "Merge"}
+	if g, w := string(mustJSON(c)), string(mustJSON(want)); g != w {
+		t.Fatalf("filled card = %s\nwant %s", g, w)
+	}
+	if err := c.check(time.Now(), false); err != nil {
+		t.Fatalf("a filled card: %v", err)
+	}
+	info := statusCard{Title: "Batch 3 landed"}
+	info.fill("")
+	if info.Status != "info" {
+		t.Fatalf("a card with no waits filled status %q, want info", info.Status)
+	}
+}
+
+func TestCheckNamesEveryProblemAtOnce(t *testing.T) {
+	err := statusCard{Status: "urgent", Title: "x", Options: []string{"go", "go"}}.check(time.Now(), false)
+	if err == nil || !strings.Contains(err.Error(), "urgent") || !strings.Contains(err.Error(), "repeats a button") {
+		t.Fatalf("check = %v, want both the status and the repeated option named", err)
+	}
+}
+
+func TestFillLeavesAnUnmarkedOptionAlone(t *testing.T) {
+	c := statusCard{Status: "info", Title: "Ship?", Options: []string{" Ship "}}
+	c.fill("")
+	if c.Recommended != "" || c.Options[0] != " Ship " {
+		t.Fatalf("filled options %q recommended %q, want them untouched", c.Options, c.Recommended)
 	}
 }

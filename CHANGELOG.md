@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- One `dm-status` call posts a card from whatever it is given: text beside a card becomes its body, a missing status becomes `needs_you` on a waiting card and `info` otherwise, a missing title becomes the body's first line, and an option marked "(Recommended)" becomes the recommended answer. A card that still fails names every problem at once.
+- An option label runs to 61 characters, so it fits a 75-character Slack button with "(Recommended)" after it.
+
 ## [0.2.0] - 2026-10-23
 
 ### Added

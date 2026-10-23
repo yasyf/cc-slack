@@ -62,6 +62,7 @@ func mirrorPosted(ctx context.Context, session string, op daemon.Op, body, reply
 	}
 	var req struct {
 		Card     *statusCard `json:"card"`
+		Text     string      `json:"text"`
 		Mirrored bool        `json:"mirrored"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -70,6 +71,7 @@ func mirrorPosted(ctx context.Context, session string, op daemon.Op, body, reply
 	if req.Card == nil || req.Card.Waits == "" || req.Mirrored {
 		return nil
 	}
+	req.Card.fill(req.Text)
 	var posted struct {
 		Permalink string `json:"permalink"`
 	}

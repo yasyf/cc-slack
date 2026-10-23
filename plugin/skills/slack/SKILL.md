@@ -362,12 +362,12 @@ a short conversational answer to the user's DM reply. The CLI takes
 
 | Field | Rule |
 |---|---|
-| `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji |
-| `title` | one line; the card header and the phone notification |
+| `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji; defaults to `needs_you` on a waiting card and `info` otherwise |
+| `title` | one line; the card header and the phone notification; defaults to the body's first line |
 | `body` | 1-3 sentences of mrkdwn, under the post rules below |
 | `drive`, `phase` | the long-running drive's name and phase, when there is one |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
-| `options` | up to 4 quick replies of 30 characters or fewer |
+| `options` | up to 4 quick replies of 61 characters or fewer; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
 | `progress` | `{step, total, label}`, drawn as a progress bar |
 | `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
