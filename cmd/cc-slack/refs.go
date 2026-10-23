@@ -41,7 +41,7 @@ func (r refID) key() string { return fmt.Sprintf("%s:%s/%s#%d", r.Kind, r.Owner,
 
 func (r refID) defaultLabel() string {
 	if r.Kind == refPR {
-		return fmt.Sprintf("%s#%d", r.Repo, r.Number)
+		return fmt.Sprintf("%s PR %d", r.Repo, r.Number)
 	}
 	return fmt.Sprintf("%s #%d", r.Repo, r.Number)
 }

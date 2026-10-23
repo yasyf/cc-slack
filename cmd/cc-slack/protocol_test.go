@@ -111,6 +111,10 @@ func TestProtocolCardWaitDecodes(t *testing.T) {
 	if k, ok := a.tap(); !ok || !k.Explain || k.ID != "step-3:merge" || k.Label != cardExplainLabel {
 		t.Fatalf("explain tap = %+v, %v; want Explain more on the waiting ask", k, ok)
 	}
+	decodePush(t, "action_wrote.json", cardActionEventType, &a)
+	if k, ok := a.tap(); !ok || !k.Other || !k.Waits || k.ID != "step-3:merge" || k.Label != "Merge after the freeze" || len(k.Options) != 2 {
+		t.Fatalf("written answer = %+v, %v; want the Other modal's text as the waiting ask's answer", k, ok)
+	}
 }
 
 func TestProtocolCardActionDecodes(t *testing.T) {

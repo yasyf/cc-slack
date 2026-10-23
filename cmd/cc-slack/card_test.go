@@ -39,9 +39,14 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"unnamed lane":           {Status: "info", Title: "x", Rollup: &cardRollup{Lanes: []rollupLane{{Status: "green"}}}},
 		"http rollup pr":         {Status: "info", Title: "x", Rollup: &cardRollup{PRs: []rollupPR{{URL: "http://github.com/acme/app/pull/1"}}}},
 		"waits, no options":      {Status: "needs_you", Title: "x", Waits: "step-3:merge"},
-		"waits id with space":    {Status: "needs_you", Title: "x", Waits: "merge it", Options: []string{"go"}},
-		"waits with asks":        {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go"}, Asks: []cardAsk{{ID: "a", Label: "Go"}}},
-		"option shadows explain": {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{cardExplainLabel}},
+		"waits id with space":    {Status: "needs_you", Title: "x", Waits: "merge it", Options: []string{"go"}, Recommended: "go"},
+		"waits with asks":        {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go"}, Recommended: "go", Asks: []cardAsk{{ID: "a", Label: "Go"}}},
+		"option shadows explain": {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go", cardExplainLabel}, Recommended: "go"},
+		"option shadows other":   {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go", cardOtherLabel}, Recommended: "go"},
+		"waits, no recommended":  {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go", "stop"}},
+		"recommends a stranger":  {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go", "stop"}, Recommended: "wait"},
+		"marks it in a label":    {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go (Recommended)", "stop"}, Recommended: "go (Recommended)"},
+		"recommends, no waits":   {Status: "needs_you", Title: "x", Options: []string{"go", "stop"}, Recommended: "go"},
 	} {
 		if err := card.check(time.Now(), false); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)
@@ -52,13 +57,8 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 	}
 }
 
-func TestWaitingCardOffersItsAnswersAndExplainMoreAndSaysTheLaneWaits(t *testing.T) {
-	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Waits: "step-3:merge"}
-	if err := card.check(time.Now(), false); err != nil {
-		t.Fatalf("a well-formed waiting card: %v", err)
-	}
-	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
-	blocks := card.replyBlocks(cardView{at: at, now: at})
+func cardButtons(t *testing.T, blocks []slack.Block) []*slack.ButtonBlockElement {
+	t.Helper()
 	var buttons []*slack.ButtonBlockElement
 	for _, b := range blocks {
 		if a, ok := b.(*slack.ActionBlock); ok {
@@ -71,23 +71,52 @@ func TestWaitingCardOffersItsAnswersAndExplainMoreAndSaysTheLaneWaits(t *testing
 			}
 		}
 	}
-	if len(buttons) != 3 || buttons[0].ActionID != cardWaitAction+"0:step-3:merge" || buttons[1].ActionID != cardWaitAction+"1:step-3:merge" ||
-		buttons[2].ActionID != cardExplainAction+"step-3:merge" {
-		t.Fatalf("buttons = %+v, want the two answers then Explain more", buttons)
+	return buttons
+}
+
+func TestWaitingCardLeadsWithItsRecommendationThenOtherAndExplainMore(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Recommended: "Hold", Waits: "step-3:merge"}
+	if err := card.check(time.Now(), false); err != nil {
+		t.Fatalf("a well-formed waiting card: %v", err)
 	}
-	explain := cardActionPush{ActionID: buttons[2].ActionID, Value: buttons[2].Value}
+	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
+	blocks := card.replyBlocks(cardView{at: at, now: at})
+	buttons := cardButtons(t, blocks)
+	var got []string
+	for _, b := range buttons {
+		got = append(got, b.ActionID+"="+b.Text.Text)
+	}
+	want := []string{
+		cardWaitAction + "0:step-3:merge=Hold (Recommended)", cardWaitAction + "1:step-3:merge=Merge",
+		cardOtherAction + "step-3:merge=Other", cardExplainAction + "step-3:merge=Explain more",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("buttons = %q, want the recommendation first, then the other answer, Other, and Explain more", got)
+	}
+	if buttons[0].Style != slack.StylePrimary || buttons[1].Style != "" {
+		t.Fatalf("styles = %q, %q; want only the recommendation primary", buttons[0].Style, buttons[1].Style)
+	}
+	recommended := cardActionPush{ActionID: buttons[0].ActionID, Value: buttons[0].Value}
+	if k, ok := recommended.tap(); !ok || !k.Waits || k.Label != "Hold" || !slices.Equal(k.Options, []string{"Hold", "Merge"}) {
+		t.Fatalf("recommended tap = %+v, %v; want the bare label and the answers in card order", k, ok)
+	}
+	var modal askTap
+	if err := json.Unmarshal([]byte(buttons[2].Value), &modal); err != nil || modal.ID != "step-3:merge" || modal.Question != "Merge #41 now?" ||
+		!slices.Equal(modal.Options, []string{"Hold", "Merge"}) {
+		t.Fatalf("Other button value %q, want the id, question, and answers the backend's modal shows (%v)", buttons[2].Value, err)
+	}
+	if _, ok := (cardActionPush{ActionID: buttons[2].ActionID, Value: buttons[2].Value}).tap(); ok {
+		t.Fatal("a bare Other tap parsed as an answer; only the modal's written answer answers")
+	}
+	explain := cardActionPush{ActionID: buttons[3].ActionID, Value: buttons[3].Value}
 	if k, ok := explain.tap(); !ok || !k.Explain || !k.Waits || k.ID != "step-3:merge" || k.Label != cardExplainLabel || k.Question != "Merge #41 now?" {
 		t.Fatalf("explain tap = %+v, %v; want Explain more on the waiting ask", k, ok)
-	}
-	push := cardActionPush{ActionID: buttons[1].ActionID, Value: buttons[1].Value}
-	if k, ok := push.tap(); !ok || !k.Waits || k.ID != "step-3:merge" || k.Label != "Hold" || k.Question != "Merge #41 now?" {
-		t.Fatalf("tap = %+v, %v; want the waiting ask's id, answer, and question", k, ok)
 	}
 	if got := blocksJSON(t, blocks); !strings.Contains(got, "stopped until you answer") || strings.Contains(got, cardAckAction) {
 		t.Fatalf("waiting card %s, want the wait hint and no Ack or Pause", got)
 	}
-	if card.merged(card).Waits != "" {
-		t.Fatal("the root card kept the reply's waits")
+	if merged := card.merged(card); merged.Waits != "" || merged.Recommended != "" {
+		t.Fatal("the root card kept the reply's waits or recommendation")
 	}
 }
 

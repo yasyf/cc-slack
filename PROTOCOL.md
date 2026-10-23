@@ -114,15 +114,21 @@ and forwards the tap.
 | `channel` | yes | The DM the card is in |
 | `message_ts` | yes | The card's timestamp |
 | `thread_ts` | yes | The status thread's root timestamp |
-| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, `cc-slack-card:ask:<id>`, `cc-slack-card:wait:<n>:<id>`, or `cc-slack-card:explain:<id>` |
-| `value` | for options, asks, and waiting cards | The option's label; for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent; for a waiting card's answer the JSON `{"id", "label", "q", "o"}`, `q` being the card's title, the question verbatim, and `o` every answer the card offers; for its Explain more button the same JSON without `o` |
+| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, `cc-slack-card:ask:<id>`, `cc-slack-card:wait:<n>:<id>`, `cc-slack-card:wrote:<id>`, or `cc-slack-card:explain:<id>` |
+| `value` | for options, asks, and waiting cards | The option's label; for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent; for a waiting card's answer the JSON `{"id", "label", "q", "o"}`, `q` being the card's title, the question verbatim, and `o` every answer the card offers, the recommended one first; for an answer written in the Other modal the same JSON with the typed text as `label`; for its Explain more button the same JSON without `o` |
 | `action_ts` | yes | Slack's action timestamp, used to deduplicate taps |
 | `seq` | yes | The frame's sequence number |
 
 The daemon drops a tap by anyone but the logged-in engineer, or outside their
 DM with the app, and a tap on an ask whose `exp` is not after `action_ts`.
 A second tap on a waiting card whose question is already answered is dropped.
-Fixtures: `action.json`, `action_ask.json`, `action_wait.json`, `action_explain.json`.
+A waiting card's Other button, `cc-slack-card:other:<id>`, is the backend's
+to handle: it opens a modal with one text box, using the button's `{"id", "label",
+"q", "o"}` value for the question, and pushes nothing for the tap itself. The
+modal's submission is pushed as `cc-slack-card:wrote:<id>`, with the typed text
+as the value's `label`, on the card's own channel, `message_ts`, and `thread_ts`.
+The daemon drops an empty written answer.
+Fixtures: `action.json`, `action_ask.json`, `action_wait.json`, `action_wrote.json`, `action_explain.json`.
 
 #### `cc_slack_shortcut`
 

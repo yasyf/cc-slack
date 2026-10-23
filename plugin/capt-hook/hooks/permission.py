@@ -371,7 +371,7 @@ def ask(write: Write, conv: Conversation) -> str:
         title = f"{OTHER_VERBS[write.verb]} ({conv.where})?" if conv.where else f"{OTHER_VERBS[write.verb]}?"
         body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
     waits = "slack-" + hashlib.sha256(json.dumps([write.verb, write.fields, write.users], sort_keys=True, default=str).encode()).hexdigest()[:12]
-    card = {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "waits": waits}
+    card = {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "recommended": "Yes", "waits": waits}
     return json.dumps(card, ensure_ascii=False, indent=2)
 
 
@@ -727,7 +727,7 @@ on(
             case(DANA | {"text": "x" * 3000}) >> Block(pattern="… 240 more characters"),
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
-            case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "waits": "slack-')),
+            case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "slack-')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_join", **said(f"join this and read it {DANA_URL}")) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_archive", **said(f"this one is done {DANA_URL}")) >> DENY,

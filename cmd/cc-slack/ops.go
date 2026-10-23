@@ -40,6 +40,7 @@ const (
 	opFollow       daemon.Op = "follow"
 	opUnfollow     daemon.Op = "unfollow"
 	opDMStatus     daemon.Op = "dm-status"
+	opCardAnswer   daemon.Op = "card-answer"
 	opRevoke       daemon.Op = "revoke"
 	opAgentSubject daemon.Op = "agent-subject"
 
@@ -91,6 +92,12 @@ type opBody struct {
 	Broadcast bool              `json:"broadcast"`
 	NoWatch   bool              `json:"no_watch"`
 	Agent     string            `json:"agent"`
+	Mirrored  bool              `json:"mirrored"`
+	Waits     string            `json:"waits"`
+	Label     string            `json:"label"`
+	Other     bool              `json:"other"`
+	Via       string            `json:"via"`
+	About     string            `json:"about"`
 	ticketSpend
 }
 
@@ -252,6 +259,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opFollow, a.handleFollow)
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opDMStatus, a.handleDMStatus)
+	s.Register(opCardAnswer, a.handleCardAnswer)
 	s.Register(opRevoke, a.handleRevoke)
 	s.Register(opAgentSubject, a.handleAgentSubject)
 	s.Register(opChannelCreate, a.handleChannel(approveCreate, createChannel))
@@ -1507,17 +1515,58 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		}
 	}
 	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
+	if b.About != "" {
+		if b.Card != nil || b.Text == "" {
+			return fail("about links a text reply back to a waiting card; send text, not a card")
+		}
+		thread, m, found := a.cards.waiting(id.DMChannelID, b.About)
+		if !found {
+			return fail(fmt.Sprintf("no waiting card %q in your DM to link back to", b.About))
+		}
+		msg.text = slackLink(id.permalink(id.DMChannelID, m.TS, thread), "this card") + " " + msg.text
+	}
 	if b.Card != nil {
 		msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	}
-	thread, posted, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, b.ThreadTS, msg)
+	thread, ts, posted, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, b.ThreadTS, msg)
+	if errors.Is(err, errAskedAgain) {
+		return fail(err.Error())
+	}
 	if err != nil && !posted {
 		return fail(fallback(actionWrite, err))
 	}
 	if err != nil {
 		return fail(err.Error())
 	}
-	return ok(map[string]string{"channel_id": id.DMChannelID, "thread_ts": thread, "channel": string(a.channelState(hc, sub.ID))})
+	res := map[string]string{"channel_id": id.DMChannelID, "thread_ts": thread, "channel": string(a.channelState(hc, sub.ID))}
+	if ts != "" {
+		res["ts"], res["permalink"] = ts, id.permalink(id.DMChannelID, ts, thread)
+	}
+	return ok(res)
+}
+
+func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	switch {
+	case !askIDPattern.MatchString(b.Waits):
+		return fail(fmt.Sprintf("card-answer waits id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", b.Waits))
+	case strings.TrimSpace(b.Label) == "":
+		return fail("card-answer needs the answer's label, or a write-in with other")
+	case b.Via == "":
+		return fail("card-answer needs via, the url of the surface the answer came from")
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, strings.TrimSpace(b.Label), b.Other, b.Via)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(res)
 }
 
 func checkDMStatus(b opBody, now time.Time) error {
@@ -1536,6 +1585,8 @@ func checkDMStatus(b opBody, now time.Time) error {
 	return nil
 }
 
+var errAskedAgain = errors.New("ask again under a new waits id")
+
 type dmMessage struct {
 	text     string
 	blocks   []slack.Block
@@ -1545,10 +1596,10 @@ type dmMessage struct {
 	rootOnly bool
 }
 
-func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, threadTS string, msg dmMessage) (string, bool, error) {
+func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, threadTS string, msg dmMessage) (string, string, bool, error) {
 	thread, found, err := sessionThread(ctx, db, sub.ID, id.DMChannelID)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if threadTS != "" && threadTS != thread {
 		thread, found = threadTS, false
@@ -1558,63 +1609,86 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	}
 	res, err := a.post(ctx, db, id, id.DMChannelID, thread, msg.text, msg.blocks, msg.files)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if found {
-		return thread, true, nil
+		return thread, res.TS, true, nil
 	}
 	if thread == "" {
 		thread = res.TS
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
-		return "", true, err
+		return "", res.TS, true, err
 	}
-	return thread, true, nil
+	return thread, res.TS, true, nil
 }
 
-func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread string, found bool, msg dmMessage) (string, bool, error) {
+func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread string, found bool, msg dmMessage) (string, string, bool, error) {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	now := a.now()
 	t := cards.draft(id.DMChannelID, thread)
 	previous := t.Reply
+	waits := msg.card.Waits
+	asked := t.Waiting[waits]
+	if prior, done := t.Answers[waits]; asked != nil && done {
+		return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
+			waits, prior.Label, prior.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
+	}
 	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
 	if thread == "" {
 		text, blocks := t.rootMessage(now, cards.refs)
 		root, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
 		if err != nil {
-			return "", false, err
+			return "", "", false, err
 		}
 		thread, t.Thread, t.Root.TS = root.TS, root.TS, root.TS
 		if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
 			cards.commit(t)
-			return "", true, err
+			return "", "", true, err
 		}
 		found = true
 	} else if err := a.redrawRoot(ctx, db, id, t, now, msg.rootOnly); err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if msg.rootOnly {
 		cards.commit(t)
-		return thread, true, nil
+		return thread, "", true, nil
 	}
 	text, blocks := t.replyMessage(now, cards.refs)
+	if asked != nil {
+		edited := t.Reply
+		edited.TS = asked.TS
+		if previous != nil && previous.TS != asked.TS {
+			t.Reply = previous
+		}
+		if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
+			cards.commit(t)
+			return "", "", false, fmt.Errorf("edit waiting card %q in place: %w", waits, err)
+		}
+		t.remember(waits, edited)
+		cards.commit(t)
+		return thread, asked.TS, true, nil
+	}
 	res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
 	if err != nil {
 		t.Reply = previous
 		cards.commit(t)
-		return "", false, err
+		return "", "", false, err
 	}
 	t.Reply.TS = res.TS
+	if waits != "" {
+		t.remember(waits, t.Reply)
+	}
 	cards.commit(t)
 	if found {
-		return thread, true, nil
+		return thread, res.TS, true, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
-		return "", true, err
+		return "", res.TS, true, err
 	}
-	return thread, true, nil
+	return thread, res.TS, true, nil
 }
 
 func (a *app) redrawRoot(ctx context.Context, db *sql.DB, id identity, t *liveThread, now time.Time, rootOnly bool) error {

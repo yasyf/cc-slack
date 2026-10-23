@@ -44,16 +44,17 @@ type liveMessage struct {
 }
 
 type liveThread struct {
-	Channel  string               `json:"channel"`
-	Thread   string               `json:"thread"`
-	Root     *liveMessage         `json:"root,omitempty"`
-	Reply    *liveMessage         `json:"reply,omitempty"`
-	Timeline []timelineEntry      `json:"timeline,omitempty"`
-	Asks     []cardAsk            `json:"asks,omitempty"`
-	Answers  map[string]askAnswer `json:"answers,omitempty"`
-	Updated  time.Time            `json:"updated"`
-	Drawn    time.Time            `json:"drawn"`
-	Stale    bool                 `json:"stale,omitempty"`
+	Channel  string                  `json:"channel"`
+	Thread   string                  `json:"thread"`
+	Root     *liveMessage            `json:"root,omitempty"`
+	Reply    *liveMessage            `json:"reply,omitempty"`
+	Waiting  map[string]*liveMessage `json:"waiting,omitempty"`
+	Timeline []timelineEntry         `json:"timeline,omitempty"`
+	Asks     []cardAsk               `json:"asks,omitempty"`
+	Answers  map[string]askAnswer    `json:"answers,omitempty"`
+	Updated  time.Time               `json:"updated"`
+	Drawn    time.Time               `json:"drawn"`
+	Stale    bool                    `json:"stale,omitempty"`
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -77,6 +78,26 @@ func (t *liveThread) apply(card statusCard, tag cardTag, at time.Time, rootOnly 
 		t.Reply = &liveMessage{Card: card, Tag: tag, At: at}
 	}
 	t.Updated = at
+}
+
+func (t *liveThread) remember(waits string, m *liveMessage) {
+	if t.Waiting == nil {
+		t.Waiting = map[string]*liveMessage{}
+	}
+	t.Waiting[waits] = m
+	for len(t.Waiting) > liveMaxAsks {
+		oldest := ""
+		for k, w := range t.Waiting {
+			if oldest == "" || w.At.Before(t.Waiting[oldest].At) {
+				oldest = k
+			}
+		}
+		delete(t.Waiting, oldest)
+	}
+}
+
+func (t *liveThread) messages() []*liveMessage {
+	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)))
 }
 
 func (t *liveThread) openAsks(now time.Time) []cardAsk {
@@ -215,7 +236,7 @@ func (l *liveCards) save() {
 func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
-		c.Timeline, c.Asks, c.Answers = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers)
+		c.Timeline, c.Asks, c.Answers, c.Waiting = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
@@ -236,20 +257,53 @@ func (l *liveCards) wake() {
 	}
 }
 
-func (l *liveCards) answer(channel, thread, askID string, at time.Time) {
+func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, askAnswer) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
-		return
+		return true, ans
+	}
+	if prior, done := t.Answers[askID]; done {
+		return false, prior
 	}
 	if t.Answers == nil {
 		t.Answers = map[string]askAnswer{}
 	}
-	if _, done := t.Answers[askID]; !done {
-		t.Answers[askID] = askAnswer{At: at}
-	}
+	t.Answers[askID] = ans
 	l.save()
+	return true, ans
+}
+
+func (l *liveCards) release(channel, thread, askID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if t, ok := l.threads[threadKey(channel, thread)]; ok {
+		delete(t.Answers, askID)
+		l.save()
+	}
+}
+
+func (l *liveCards) waiting(channel, waits string) (string, liveMessage, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var (
+		thread string
+		found  *liveMessage
+	)
+	for _, t := range l.threads {
+		m := t.Waiting[waits]
+		if t.Channel != channel || m == nil {
+			continue
+		}
+		if _, done := t.Answers[waits]; found == nil || !done {
+			thread, found = t.Thread, m
+		}
+	}
+	if found == nil {
+		return "", liveMessage{}, false
+	}
+	return thread, *found, true
 }
 
 func (l *liveCards) answered(channel, thread, askID string) bool {
@@ -267,11 +321,17 @@ func (l *liveCards) markReply(channel, thread, ts string, mark func(*liveMessage
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
-	if !ok || t.Reply == nil || t.Reply.TS != ts {
+	if !ok {
 		return false
 	}
-	mark(t.Reply)
-	return true
+	marked := false
+	for _, m := range t.messages() {
+		if m != nil && m.TS == ts {
+			mark(m)
+			marked = true
+		}
+	}
+	return marked
 }
 
 func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread, first string, now time.Time) (map[string]bool, error) {
@@ -309,6 +369,19 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			errs = append(errs, err)
 		} else if t.Reply != nil {
 			redrawn[t.Reply.TS] = true
+		}
+	}
+	for waits, m := range t.Waiting {
+		if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
+			continue
+		}
+		text, blocks := m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs))
+		if err := l.update(ctx, api, t, &m, text, blocks); err != nil {
+			errs = append(errs, err)
+		} else if m == nil {
+			delete(t.Waiting, waits)
+		} else {
+			redrawn[m.TS] = true
 		}
 	}
 	if t.Reply != nil && t.Reply.TS == first {
