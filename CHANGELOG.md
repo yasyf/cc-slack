@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-22
+
 ### Added
 - `waits` on status cards: an ask card whose options are its only buttons, which says the asking lane is stopped until the tap, and whose `slack.action` carries the question id, the question, the answer, and a capture line for cc-notes.
 
@@ -46,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/yasyf/cc-slack/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/yasyf/cc-slack/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/yasyf/cc-slack/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/yasyf/cc-slack/compare/v0.1.2...v0.1.3
