@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-23
+
 ### Added
 - A `waits` card names its recommended answer in `recommended`. The card shows that answer first as "<label> (Recommended)" in the primary style.
 - Every `waits` card carries a built-in Other button beside Explain more. The backend opens a modal on the tap and pushes the typed text as a `cc-slack-card:wrote:<id>` action, which answers the card; the `slack.action` carries `other: true`. A bare Other tap answers nothing.
@@ -97,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yasyf/cc-slack/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/yasyf/cc-slack/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/yasyf/cc-slack/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/yasyf/cc-slack/compare/v0.1.7...v0.1.8
