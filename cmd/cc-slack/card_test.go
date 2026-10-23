@@ -323,7 +323,8 @@ func TestFillCompletesACardPostedWithTextAndAMarkedLabel(t *testing.T) {
 		t.Fatalf("a filled card: %v", err)
 	}
 	info := statusCard{Title: "Batch 3 landed"}
-	if info.fill(""); info.Status != "info" {
+	info.fill("")
+	if info.Status != "info" {
 		t.Fatalf("a card with no waits filled status %q, want info", info.Status)
 	}
 }
