@@ -116,40 +116,6 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	}
 }
 
-func TestCurrentReadWaitsOutARateLimitInsideItsPatience(t *testing.T) {
-	f := newFixture(t)
-	seedThread(f)
-	var slept []time.Duration
-	f.cache.sleep = func(_ context.Context, d time.Duration) error {
-		slept = append(slept, d)
-		f.now = f.now.Add(d)
-		return nil
-	}
-
-	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 10 * time.Second})
-	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 10 * time.Second})
-	read, err := f.cache.current(f.ctx, f.slack, testChannel, testThread)
-	if err != nil || !slices.Equal(texts(read.msgs), []string{"root", "first"}) || !slices.Equal(slept, []time.Duration{10 * time.Second, 10 * time.Second}) {
-		t.Fatalf("current = %+v, %v after sleeping %v, want the thread after two 10s waits", read, err, slept)
-	}
-
-	slept = nil
-	f.slack.add(testChannel, reply(secondReply, "second"))
-	f.now = f.now.Add(currentFallback / 2)
-	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 10 * time.Second})
-	read, err = f.cache.current(f.ctx, f.slack, testChannel, testThread)
-	if err != nil || read.stale || !slices.Equal(texts(read.msgs), []string{"root", "first"}) || len(slept) != 0 {
-		t.Fatalf("current = %+v, %v after sleeping %v, want the copy synced %v ago without waiting", read, err, slept, currentFallback/2)
-	}
-
-	f.now = f.now.Add(currentFallback)
-	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: currentPatience + time.Second})
-	_, err = f.cache.current(f.ctx, f.slack, testChannel, testThread)
-	if !errors.As(err, new(*slack.RateLimitedError)) || len(slept) != 0 {
-		t.Fatalf("current = %v after sleeping %v, want the rate limit when its wait outlasts the patience", err, slept)
-	}
-}
-
 func TestPollerKeepsAWatchedThreadsCacheCurrent(t *testing.T) {
 	f := newFixture(t)
 	seedThread(f)

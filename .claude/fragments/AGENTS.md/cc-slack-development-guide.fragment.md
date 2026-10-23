@@ -128,9 +128,8 @@ attachment's pretext, title, text, and title link, or its fallback when the atta
 title or text, one per line, so a Datadog or Sentry alert reads in full.
 
 `send`, `reply`, `edit`, `delete`, `react` and `unreact`, channel archive, invite and topic
-changes, and the thread read before an owed-update reply join a
-public channel and retry once on `not_in_channel` or `channel_not_found`. The
-daemon logs `joined <channel> to write there` after joining.
+changes join a public channel and retry once on `not_in_channel` or
+`channel_not_found`. The daemon logs `joined <channel> to write there` after joining.
 
 If the join fails with `channel_not_found` or `method_not_supported_for_channel_type`
 during a ticketed write, which is any op above but `react` and `unreact`, the daemon
@@ -292,13 +291,7 @@ read before fails with the fallback below. A fetch that runs past 1,000
 messages fails instead of caching only the oldest of them.
 
 The poller merges each poll of a watched thread into its cached copy, so
-reading a watched thread costs no Slack call. The thread read before an
-owed-update reply always asks Slack.
-When Slack rate-limits it, a cached copy synced within 30 s answers;
-otherwise the daemon waits out `Retry-After` and reads again, for up to
-60 s and never into the last 30 s of the request's deadline, before it
-refuses the write rather than judge it on a stale copy. These writes give
-the daemon 100 s instead of the usual 36 s. A post, reply, edit, or delete by the
+reading a watched thread costs no Slack call. A post, reply, edit, or delete by the
 bot marks its thread for a fresh read. Threads are evicted least recently
 read first once the cache passes 64 MiB. Display names from `users.info` are
 kept for 24 hours, and an expired name still answers while Slack refuses the

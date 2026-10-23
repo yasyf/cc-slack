@@ -422,74 +422,6 @@ func TestTicketIsSpentOnceAtTheWritesOwnPlace(t *testing.T) {
 	}
 }
 
-func TestOwedUpdateTicketAnswersAfterThisDaemonsOwnPostButNotAnotherAgents(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up"}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	ticketID := l.owedUpdate(sent.TS)
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI started"}))
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI started"}))
-	if posts := l.slack.sent(); len(posts) != 3 || posts[2].threadTS != sent.TS {
-		t.Fatalf("posts = %+v, want consecutive ticketed replies after this daemon's own posts", posts)
-	}
-
-	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000009.000000", ThreadTimestamp: sent.TS, User: "UBOT", BotID: "BBOT", Username: "alice", Text: "on it"}})
-	l.refused(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "answering alice"}), "another Claude agent")
-	if posts := l.slack.sent(); len(posts) != 3 {
-		t.Fatalf("a ticketed reply answered another agent: %+v", posts)
-	}
-}
-
-func TestOwedUpdateTicketAnswersAfterThisDaemonsOwnPostOnceItsStateIsWiped(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up", "no_watch": true}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	ticketID := l.owedUpdate(sent.TS)
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI started", "no_watch": true}))
-	if _, err := l.srv.DB().ExecContext(l.ctx, `DELETE FROM posts`); err != nil {
-		t.Fatal(err)
-	}
-	l.do(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI is green", "no_watch": true}))
-	if posts := l.slack.sent(); len(posts) != 3 || posts[2].threadTS != sent.TS {
-		t.Fatalf("posts = %+v, want a ticketed reply after this daemon's own post once its posts table is gone", posts)
-	}
-
-	other := `{"event_type":"` + postEventType + `","event_payload":{"user_id":"U0ALICE01"}}`
-	var metadata slack.SlackMetadata
-	if err := json.Unmarshal([]byte(other), &metadata); err != nil {
-		t.Fatal(err)
-	}
-	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
-		Timestamp: "1800000009.000000", ThreadTimestamp: sent.TS, User: "UBOT", BotID: "BBOT", Username: "alice", Text: "on it", Metadata: metadata,
-	}})
-	l.refused(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "answering alice", "no_watch": true}), "another Claude agent")
-	if posts := l.slack.sent(); len(posts) != 3 {
-		t.Fatalf("a ticketed reply answered another engineer's agent: %+v", posts)
-	}
-}
-
-func TestOwedUpdateTicketSeesAnotherAgentsReplyInsideTheCacheWindow(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up", "no_watch": true}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	ticketID := l.owedUpdate(sent.TS)
-	l.do(opThread, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS})
-	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000009.000000", ThreadTimestamp: sent.TS, User: "UBOT", BotID: "BBOT", Username: "alice", Text: "on it"}})
-	l.refused(opReply, l.spending(ticketID, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "answering alice", "no_watch": true}), "another Claude agent")
-}
-
 func TestOwnerTicketsAnswerAnotherAgentWithoutReadingTheThread(t *testing.T) {
 	for _, rule := range []string{"owner-linked", "judged", "asked-owner", "pasted", "request", "exact", "conversation"} {
 		t.Run(rule, func(t *testing.T) {
@@ -510,26 +442,6 @@ func TestOwnerTicketsAnswerAnotherAgentWithoutReadingTheThread(t *testing.T) {
 				t.Fatalf("conversations.replies calls = %d, want %d: only an owed update reads the thread first", n, reads)
 			}
 		})
-	}
-}
-
-func TestOnceOwedUpdateNeverAnswersAnotherAgent(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up", "no_watch": true}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000009.000000", ThreadTimestamp: sent.TS, User: "UBOT", BotID: "BBOT", Username: "alice", Text: "on it"}})
-	update := asBody(map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "CI is green", "no_watch": true})
-	ticketID := l.tickets.mint(fakeTicket{tree: testTree, place: placeOf(opReply, update), reach: reachOnce, rule: owedUpdateRule, fingerprint: fingerprintOf(update)})
-	l.refused(opReply, l.spending(ticketID, update), "is an owed update")
-	if spends := l.tickets.committed(ticketID); len(spends) != 0 {
-		t.Fatalf("committed spends = %+v, want the refused update's use handed back", spends)
-	}
-	if posts := l.slack.sent(); len(posts) != 1 {
-		t.Fatalf("an owed update answered another agent: %+v", posts)
 	}
 }
 

@@ -225,7 +225,3 @@ func loadIdentity(ctx context.Context, db *sql.DB) (identity, error) {
 func (id identity) authorMetadata() slack.MsgOption {
 	return slack.MsgOptionMetadata(slack.SlackMetadata{EventType: postEventType, EventPayload: map[string]any{"user_id": id.UserID}})
 }
-
-func (id identity) authored(m slack.Message) bool {
-	return id.fromClaude(m) && m.Metadata.EventType == postEventType && m.Metadata.EventPayload["user_id"] == id.UserID
-}
