@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Ask cards carry a fixed Explain more button. Its tap reaches the session as `slack.action` with that label and the question id, asks for a fuller explanation in the thread, and leaves the question open.
+
+### Changed
+- A tap redraws the tapped card before the thread's root card.
+
 ## [0.1.6] - 2026-10-22
 
 ### Added

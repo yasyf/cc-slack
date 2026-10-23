@@ -40,6 +40,7 @@ type liveMessage struct {
 	Tag    cardTag    `json:"tag"`
 	At     time.Time  `json:"at"`
 	Tapped string     `json:"tapped,omitempty"`
+	Hint   string     `json:"hint,omitempty"`
 }
 
 type liveThread struct {
@@ -89,7 +90,7 @@ func (t *liveThread) openAsks(now time.Time) []cardAsk {
 }
 
 func (t *liveThread) view(m *liveMessage, now time.Time, refs map[string]refState) cardView {
-	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped}
+	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint}
 	if m == t.Root {
 		v.asks, v.timeline = t.openAsks(now), t.Timeline
 	}
@@ -262,33 +263,36 @@ func (l *liveCards) answered(channel, thread, askID string) bool {
 	return done
 }
 
-func (l *liveCards) tapOption(channel, thread, ts, line string) bool {
+func (l *liveCards) markReply(channel, thread, ts string, mark func(*liveMessage)) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok || t.Reply == nil || t.Reply.TS != ts {
 		return false
 	}
-	t.Reply.Tapped = line
+	mark(t.Reply)
 	return true
 }
 
-func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread string, now time.Time) (map[string]bool, error) {
+func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread, first string, now time.Time) (map[string]bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
 		return nil, nil
 	}
-	redrawn, err := l.draw(ctx, api, t, now)
+	redrawn, err := l.draw(ctx, api, t, now, first)
 	l.save()
 	return redrawn, err
 }
 
-func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now time.Time) (map[string]bool, error) {
+func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now time.Time, first string) (map[string]bool, error) {
 	redrawn := map[string]bool{}
 	var errs []error
-	if t.Root != nil {
+	drawRoot := func() {
+		if t.Root == nil {
+			return
+		}
 		text, blocks := t.rootMessage(now, l.refs)
 		if err := l.update(ctx, api, t, &t.Root, text, blocks); err != nil {
 			errs = append(errs, err)
@@ -296,13 +300,23 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			redrawn[t.Root.TS] = true
 		}
 	}
-	if t.Reply != nil {
+	drawReply := func() {
+		if t.Reply == nil {
+			return
+		}
 		text, blocks := t.replyMessage(now, l.refs)
 		if err := l.update(ctx, api, t, &t.Reply, text, blocks); err != nil {
 			errs = append(errs, err)
 		} else if t.Reply != nil {
 			redrawn[t.Reply.TS] = true
 		}
+	}
+	if t.Reply != nil && t.Reply.TS == first {
+		drawReply()
+		drawRoot()
+	} else {
+		drawRoot()
+		drawReply()
 	}
 	t.Drawn, t.Stale = now, len(errs) > 0
 	return redrawn, errors.Join(errs...)
@@ -488,7 +502,7 @@ func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map
 			continue
 		}
 		dirty = true
-		if _, err := l.draw(ctx, api, t, now); err != nil {
+		if _, err := l.draw(ctx, api, t, now, ""); err != nil {
 			l.log.Printf("live card %s: %v", k, err)
 		}
 	}

@@ -51,6 +51,7 @@ type askTap struct {
 	Expires  int64  `json:"exp,omitempty"`
 	Question string `json:"q,omitempty"`
 	Waits    bool   `json:"-"`
+	Explain  bool   `json:"-"`
 }
 
 func (k askTap) expired(now time.Time) bool {
@@ -78,6 +79,13 @@ func (a cardActionPush) tap() (askTap, bool) {
 			return askTap{}, false
 		}
 		k.Waits = true
+		return k, true
+	case strings.HasPrefix(a.ActionID, cardExplainAction):
+		var k askTap
+		if err := json.Unmarshal([]byte(a.Value), &k); err != nil || k.ID != strings.TrimPrefix(a.ActionID, cardExplainAction) || k.Label != cardExplainLabel {
+			return askTap{}, false
+		}
+		k.Waits, k.Explain = true, true
 		return k, true
 	}
 	return askTap{}, false
@@ -110,6 +118,10 @@ func captureLine(id identity, k askTap, at time.Time, permalink string) string {
 
 func tapLine(id identity, posted, permalink string, k askTap, capture string) string {
 	who := fmt.Sprintf("Slack tap from %s, your operator, on your status card posted %s (%s)", id.name(), posted, permalink)
+	if k.Explain {
+		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply in that card's thread with the question in plain words "+
+			"and what each answer would do. The lane that asked stays stopped until they tap an answer.", who, k.ID)
+	}
 	if k.Waits {
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. The lane that asked is stopped on this answer: hand it to that lane now, "+
 			"and record the capture in cc-notes: %s", who, k.ID, k.Label, capture)
@@ -189,7 +201,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
 	tappedAt := slackTime(a.ActionTS)
 	var capture string
-	if k.Waits {
+	if k.Waits && !k.Explain {
 		capture = captureLine(id, k, tappedAt, permalink)
 	}
 	line := tapLine(id, slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink, k, capture)
@@ -212,6 +224,9 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		}
 	}
 	switch {
+	case k.Explain:
+		err = p.markHint(ctx, id, a, "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread. "+
+			"The lane that asked is still stopped until you tap an answer.")
 	case k.Waits:
 		p.cards.answer(a.Channel, a.ThreadTS, k.ID, tappedAt)
 		err = p.markOption(ctx, id, a, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(tappedAt, p.now()))
@@ -227,10 +242,18 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 }
 
 func (p *poller) markOption(ctx context.Context, id identity, a cardActionPush, line string) error {
-	if !p.cards.tapOption(a.Channel, a.ThreadTS, a.MessageTS, line) {
+	if !p.cards.markReply(a.Channel, a.ThreadTS, a.MessageTS, func(m *liveMessage) { m.Tapped = line }) {
 		return p.confirmTap(ctx, id, a, cardActionsBlock, line)
 	}
-	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, p.now())
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
+	return err
+}
+
+func (p *poller) markHint(ctx context.Context, id identity, a cardActionPush, line string) error {
+	if !p.cards.markReply(a.Channel, a.ThreadTS, a.MessageTS, func(m *liveMessage) { m.Hint = line }) {
+		return p.confirmTap(ctx, id, a, cardWaitBlock, line)
+	}
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
 	return err
 }
 
@@ -239,7 +262,7 @@ func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k a
 	if !k.expired(at) {
 		p.cards.answer(a.Channel, a.ThreadTS, k.ID, at)
 	}
-	redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, p.now())
+	redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
 	if err != nil || redrawn[a.MessageTS] {
 		return err
 	}
@@ -275,7 +298,7 @@ func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
 	out := make([]slack.Block, 0, len(blocks))
 	tapped := false
 	for _, b := range blocks {
-		if b.ID() == cardWaitBlock {
+		if blockID != cardWaitBlock && strings.HasSuffix(b.ID(), cardWaitBlock) {
 			continue
 		}
 		if b.ID() != blockID {
