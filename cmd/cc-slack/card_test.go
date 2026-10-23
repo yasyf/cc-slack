@@ -20,28 +20,68 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		t.Fatalf("a well-formed card: %v", err)
 	}
 	for name, card := range map[string]statusCard{
-		"unknown status":     {Status: "urgent", Title: "x"},
-		"no title":           {Status: "info", Title: " "},
-		"http link":          {Status: "info", Title: "x", Links: []cardLink{{Label: "PR", URL: "http://example.com"}}},
-		"unlabeled link":     {Status: "info", Title: "x", Links: []cardLink{{URL: "https://example.com"}}},
-		"five options":       {Status: "info", Title: "x", Options: []string{"a", "b", "c", "d", "e"}},
-		"long option":        {Status: "info", Title: "x", Options: []string{strings.Repeat("o", cardMaxOptionLen+1)}},
-		"option shadows ack": {Status: "info", Title: "x", Options: []string{cardAckLabel}},
-		"repeated option":    {Status: "info", Title: "x", Options: []string{"go", "go"}},
-		"ref off github":     {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://gitlab.com/acme/app/-/merge_requests/1"}}},
-		"ref to an issue":    {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://github.com/acme/app/issues/1"}}},
-		"repeated ask":       {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go"}, {ID: "a", Label: "Stop"}}},
-		"ask id with space":  {Status: "info", Title: "x", Asks: []cardAsk{{ID: "merge it", Label: "Go"}}},
-		"expired ask":        {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", ExpiresAt: &past}}},
-		"unknown ask style":  {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", Style: "warning"}}},
-		"step past total":    {Status: "info", Title: "x", Progress: &cardProgress{Step: 4, Total: 3}},
-		"eleven facts":       {Status: "info", Title: "x", Facts: slices.Repeat([]cardFact{{Label: "k", Value: "v"}}, 11)},
-		"unnamed lane":       {Status: "info", Title: "x", Rollup: &cardRollup{Lanes: []rollupLane{{Status: "green"}}}},
-		"http rollup pr":     {Status: "info", Title: "x", Rollup: &cardRollup{PRs: []rollupPR{{URL: "http://github.com/acme/app/pull/1"}}}},
+		"unknown status":      {Status: "urgent", Title: "x"},
+		"no title":            {Status: "info", Title: " "},
+		"http link":           {Status: "info", Title: "x", Links: []cardLink{{Label: "PR", URL: "http://example.com"}}},
+		"unlabeled link":      {Status: "info", Title: "x", Links: []cardLink{{URL: "https://example.com"}}},
+		"five options":        {Status: "info", Title: "x", Options: []string{"a", "b", "c", "d", "e"}},
+		"long option":         {Status: "info", Title: "x", Options: []string{strings.Repeat("o", cardMaxOptionLen+1)}},
+		"option shadows ack":  {Status: "info", Title: "x", Options: []string{cardAckLabel}},
+		"repeated option":     {Status: "info", Title: "x", Options: []string{"go", "go"}},
+		"ref off github":      {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://gitlab.com/acme/app/-/merge_requests/1"}}},
+		"ref to an issue":     {Status: "info", Title: "x", Refs: []cardLink{{URL: "https://github.com/acme/app/issues/1"}}},
+		"repeated ask":        {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go"}, {ID: "a", Label: "Stop"}}},
+		"ask id with space":   {Status: "info", Title: "x", Asks: []cardAsk{{ID: "merge it", Label: "Go"}}},
+		"expired ask":         {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", ExpiresAt: &past}}},
+		"unknown ask style":   {Status: "info", Title: "x", Asks: []cardAsk{{ID: "a", Label: "Go", Style: "warning"}}},
+		"step past total":     {Status: "info", Title: "x", Progress: &cardProgress{Step: 4, Total: 3}},
+		"eleven facts":        {Status: "info", Title: "x", Facts: slices.Repeat([]cardFact{{Label: "k", Value: "v"}}, 11)},
+		"unnamed lane":        {Status: "info", Title: "x", Rollup: &cardRollup{Lanes: []rollupLane{{Status: "green"}}}},
+		"http rollup pr":      {Status: "info", Title: "x", Rollup: &cardRollup{PRs: []rollupPR{{URL: "http://github.com/acme/app/pull/1"}}}},
+		"waits, no options":   {Status: "needs_you", Title: "x", Waits: "step-3:merge"},
+		"waits id with space": {Status: "needs_you", Title: "x", Waits: "merge it", Options: []string{"go"}},
+		"waits with asks":     {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go"}, Asks: []cardAsk{{ID: "a", Label: "Go"}}},
 	} {
 		if err := card.check(time.Now(), false); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)
 		}
+	}
+	if err := (statusCard{Status: "needs_you", Title: "x", Waits: "step-3:merge"}).check(time.Now(), true); err == nil {
+		t.Error("a root-only waiting card passed check, want a refusal")
+	}
+}
+
+func TestWaitingCardOffersOnlyItsAnswersAndSaysTheLaneWaits(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Waits: "step-3:merge"}
+	if err := card.check(time.Now(), false); err != nil {
+		t.Fatalf("a well-formed waiting card: %v", err)
+	}
+	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
+	blocks := card.replyBlocks(cardView{at: at, now: at})
+	var buttons []*slack.ButtonBlockElement
+	for _, b := range blocks {
+		if a, ok := b.(*slack.ActionBlock); ok {
+			for _, e := range a.Elements.ElementSet {
+				button, ok := e.(*slack.ButtonBlockElement)
+				if !ok {
+					t.Fatalf("action element %T is not a button", e)
+				}
+				buttons = append(buttons, button)
+			}
+		}
+	}
+	if len(buttons) != 2 || buttons[0].ActionID != cardWaitAction+"0:step-3:merge" || buttons[1].ActionID != cardWaitAction+"1:step-3:merge" {
+		t.Fatalf("buttons = %+v, want the two answers alone", buttons)
+	}
+	push := cardActionPush{ActionID: buttons[1].ActionID, Value: buttons[1].Value}
+	if k, ok := push.tap(); !ok || !k.Waits || k.ID != "step-3:merge" || k.Label != "Hold" || k.Question != "Merge #41 now?" {
+		t.Fatalf("tap = %+v, %v; want the waiting ask's id, answer, and question", k, ok)
+	}
+	if got := blocksJSON(t, blocks); !strings.Contains(got, "stopped until you answer") || strings.Contains(got, cardAckAction) {
+		t.Fatalf("waiting card %s, want the wait hint and no Ack or Pause", got)
+	}
+	if card.merged(card).Waits != "" {
+		t.Fatal("the root card kept the reply's waits")
 	}
 }
 

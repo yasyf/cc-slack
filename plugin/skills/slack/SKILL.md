@@ -336,6 +336,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
+| `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 
 The first card opens the thread with a root card. Every later card posts
 in the thread and redraws the root with its latest state. The root keeps
@@ -353,12 +354,34 @@ tap arrives as a `slack.action` whose payload carries the ask's `id`.
 
 Each reply card carries the `options` plus fixed Ack and Pause buttons. A
 tap arrives as a `slack.action` event and a directive, steering this
-session the way a DM reply does. Never wait for a tap. The user may never
-tap, and a blocking decision still goes through `AskUserQuestion`. A tap on
+session the way a DM reply does. Nothing waits on these taps. A tap on
 an older card may be stale, since the directive names when that card was
 posted. Ack means the user saw the card and needs nothing. Pause means start
 no new lanes, applies, deploys, or PRs. Let in-flight work settle, then post
 a `needs_you` card naming what is paused and what resuming would start.
+
+### Ask the user with an ask card
+
+An ask card is how a lane asks the user a question during execution. Set
+`waits` to a question id that leads with the asking lane's name, such as
+`step-3:merge-41`. Write the question verbatim as the `title`, the context
+in `body`, and the answers as `options`. The card carries only those
+answers as buttons, no Ack or Pause, and tells the user the lane is
+stopped until they answer. It takes no `asks`, and the user may reply in
+the thread to write in an answer.
+
+The lane that asks stops on the card. It starts no dependent work, takes
+no default, and never proceeds on a provisional pick. The tap reaches the
+top-level session as a `slack.action` whose payload carries the `id`,
+`waits: true`, the `question`, the chosen `label`, and a `capture` line.
+The top-level session hands the answer to the lane the id names, by
+`SendMessage`, and records the capture line in cc-notes as the user's
+answer.
+
+A Claude lane parks on its mailbox wait until that message
+arrives. A write-in reply reaches the top-level session as a DM directive
+and goes to the lane the same way. Only the first tap answers the
+question; a later tap is dropped.
 
 `slack_dm_status` and CLI `dm-status` posts to the user's own DM are
 unprotected. This exception does not extend to `slack_send`, `slack_reply`,
