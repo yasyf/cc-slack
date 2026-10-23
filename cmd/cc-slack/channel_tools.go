@@ -137,7 +137,8 @@ var (
 					"the card says the lane waits on the answer, and the answer's slack.action carries this id, the question, the label, and a capture line. " +
 					"Other opens a Slack modal, and the text typed there answers the card with other: true. " +
 					"Explain more answers nothing; reply with text and about set to this id, which opens the reply with a link back to the card. " +
-					"With cc-present installed the card also lands on this session's board, and the first answer on either surface wins. " +
+					"With cc-present installed, ask on the board instead: cc-present update-block the card, then cc-present send; a waits card posted here still lands on the board, " +
+					"its reply carries a warning, and the first answer on either surface wins. " +
 					"Needs options and recommended; takes no asks. Reusing an open waits id edits that card in place",
 			},
 			"recommended": map[string]any{

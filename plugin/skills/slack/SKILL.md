@@ -104,8 +104,10 @@ flags = ["broadcast"]
 The hook reads the file on every event, and the daemon reads it from the
 writing session's directory on every write, so an edit applies at once.
 
-When the hook denies a write, it tells you to ask the user on an ask card
-in your DM status thread and prints the card to pass to `slack_dm_status`:
+When the hook denies a write, it tells you to ask the user and prints the
+question twice: as a cc-present board card to pipe into `cc-present ask -`
+when cc-present is installed, and as the Slack card to pass to
+`slack_dm_status` when it is not:
 
 ```json
 {
@@ -401,7 +403,14 @@ a `needs_you` card naming what is paused and what resuming would start.
 
 ### Ask the user with an ask card
 
-An ask card is how a lane asks the user a question during execution. Set
+An ask card is how a lane asks the user a question during execution. With
+cc-present installed, every question starts on the cc-present board: put
+each question card there with `cc-present update-block` or `push`, then run
+`cc-present send` once to post the board's open questions here as ask cards,
+or `cc-present ask <card>` for a single card. A `waits` card posted with
+`slack_dm_status` or `dm-status` is still posted, but its reply carries a
+`warning` saying so. The rest of this section describes the Slack card those
+calls post, and how to post one directly when cc-present is not installed. Set
 `waits` to a question id that leads with the asking lane's name, such as
 `step-3:merge`. Write the question verbatim as the `title`, the context
 in `body`, the answers as `options`, and the answer you recommend as
@@ -433,8 +442,11 @@ tap is dropped.
 
 An Explain more tap arrives as a `slack.action` with the label `Explain
 more` and the question id. It answers nothing, and the lane stays
-stopped. Reply with `slack_dm_status` text and `about` set to the
-question id: cc-slack opens the reply with a Slack link back to the card,
+stopped. For a card on a cc-present board, reply with
+`cc-present reply --block <question id> --body <answer>`, which answers on
+the board and under the card. Otherwise reply with `slack_dm_status` text
+and `about` set to the question id. Either way cc-slack opens the reply with
+a Slack link back to the card,
 `<permalink|this card>`, so nobody scrolls to find it. Pass `about` on any
 other reply about a waiting card too. Give the question in plain words and
 what each answer does, and keep waiting for the answer.
@@ -444,9 +456,11 @@ A card about a pull request lists it in `refs`. The card links each one as
 
 #### On a cc-present board too
 
-With `cc-present` on PATH, every ask card also lands on this session's
+With `cc-present` on PATH, `cc-present send` posts a board's open
+question cards here, and a card already posted in the thread is edited in
+place. An ask card posted here directly also lands on this session's
 cc-present board as a card with the same question, answers, and
-recommendation, and `cc-present ask` posts a board card here the same way.
+recommendation.
 The user answers on whichever surface is in front of them. Whichever
 answer lands first wins. The other surface shows it, and the session gets
 one `slack.action` capture either way. A board answer's capture names the
