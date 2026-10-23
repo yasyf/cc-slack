@@ -31,7 +31,11 @@ const (
 	cardAskAction     = cardActionPrefix + ":ask:"
 	cardWaitAction    = cardActionPrefix + ":wait:"
 	cardExplainAction = cardActionPrefix + ":explain:"
+	cardOtherAction   = cardActionPrefix + ":other:"
+	cardWroteAction   = cardActionPrefix + ":wrote:"
 	cardExplainLabel  = "Explain more"
+	cardOtherLabel    = "Other"
+	cardRecommended   = "(Recommended)"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
 	cardMaxOptions    = 4
@@ -56,7 +60,7 @@ const (
 	cardProgressCells = 10
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
-	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or reply in this thread to write in your own."
+	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or tap Other to write your own answer."
 )
 
 var (
@@ -73,21 +77,22 @@ var (
 )
 
 type statusCard struct {
-	Status    string        `json:"status"`
-	Title     string        `json:"title"`
-	Body      string        `json:"body"`
-	Drive     string        `json:"drive"`
-	Phase     string        `json:"phase"`
-	Links     []cardLink    `json:"links"`
-	Options   []string      `json:"options"`
-	Refs      []cardLink    `json:"refs,omitempty"`
-	Progress  *cardProgress `json:"progress,omitempty"`
-	StartedAt *time.Time    `json:"started_at,omitempty"`
-	ETA       *time.Time    `json:"eta,omitempty"`
-	Asks      []cardAsk     `json:"asks,omitempty"`
-	Facts     []cardFact    `json:"facts,omitempty"`
-	Rollup    *cardRollup   `json:"rollup,omitempty"`
-	Waits     string        `json:"waits,omitempty"`
+	Status      string        `json:"status"`
+	Title       string        `json:"title"`
+	Body        string        `json:"body"`
+	Drive       string        `json:"drive"`
+	Phase       string        `json:"phase"`
+	Links       []cardLink    `json:"links"`
+	Options     []string      `json:"options"`
+	Refs        []cardLink    `json:"refs,omitempty"`
+	Progress    *cardProgress `json:"progress,omitempty"`
+	StartedAt   *time.Time    `json:"started_at,omitempty"`
+	ETA         *time.Time    `json:"eta,omitempty"`
+	Asks        []cardAsk     `json:"asks,omitempty"`
+	Facts       []cardFact    `json:"facts,omitempty"`
+	Rollup      *cardRollup   `json:"rollup,omitempty"`
+	Waits       string        `json:"waits,omitempty"`
+	Recommended string        `json:"recommended,omitempty"`
 }
 
 type cardLink struct {
@@ -140,7 +145,9 @@ type cardTag struct {
 }
 
 type askAnswer struct {
-	At time.Time `json:"at"`
+	At    time.Time `json:"at"`
+	Label string    `json:"label,omitempty"`
+	Other bool      `json:"other,omitempty"`
 }
 
 func runes(s string) int { return utf8.RuneCountInString(s) }
@@ -231,6 +238,8 @@ func (c statusCard) checkOptions(rootOnly bool) error {
 
 func (c statusCard) checkWaits(rootOnly bool) error {
 	switch {
+	case c.Waits == "" && c.Recommended != "":
+		return errors.New("recommended marks a waiting card's answer; set waits too")
 	case c.Waits == "":
 		return nil
 	case !askIDPattern.MatchString(c.Waits):
@@ -241,8 +250,12 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 		return errors.New("a waiting card needs its answers as options")
 	case len(c.Asks) > 0:
 		return errors.New("a waiting card asks one question; its answers go in options, not asks")
-	case slices.Contains(c.Options, cardExplainLabel):
-		return fmt.Errorf("a waiting card carries its own %s button; no option may repeat it", cardExplainLabel)
+	case slices.Contains(c.Options, cardExplainLabel), slices.Contains(c.Options, cardOtherLabel):
+		return fmt.Errorf("a waiting card carries its own %s and %s buttons; no option may repeat them", cardOtherLabel, cardExplainLabel)
+	case slices.ContainsFunc(c.Options, func(o string) bool { return strings.Contains(o, cardRecommended) }):
+		return fmt.Errorf("name the recommended answer in recommended, never as %s in an option", cardRecommended)
+	case !slices.Contains(c.Options, c.Recommended):
+		return fmt.Errorf("a waiting card recommends one of its options: recommended %q is not among them", c.Recommended)
 	}
 	return nil
 }
@@ -366,7 +379,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 	if next.Rollup != nil {
 		c.Rollup = next.Rollup
 	}
-	c.Options, c.Asks, c.Waits = nil, nil, ""
+	c.Options, c.Asks, c.Waits, c.Recommended = nil, nil, "", ""
 	return c
 }
 
@@ -484,12 +497,15 @@ func (c statusCard) context(tag cardTag, now time.Time, stamp string) slack.Bloc
 	return mrkdwn("card-tag", strings.Join(parts, " · "))
 }
 
-func header(text string) slack.Block {
-	text = strings.TrimSpace(text)
-	if runes(text) > cardMaxHeaderLen {
-		text = string([]rune(text)[:cardMaxHeaderLen-1]) + "…"
+func clipRunes(text string, limit int) string {
+	if runes(text) <= limit {
+		return text
 	}
-	return slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, text, true, false))
+	return string([]rune(text)[:limit-1]) + "…"
+}
+
+func header(text string) slack.Block {
+	return slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, clipRunes(strings.TrimSpace(text), cardMaxHeaderLen), true, false))
 }
 
 func (c statusCard) links() []slack.Block {
@@ -520,16 +536,32 @@ func (c statusCard) actions() slack.Block {
 	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 
+func (c statusCard) answers() []string {
+	rest := slices.DeleteFunc(slices.Clone(c.Options), func(o string) bool { return o == c.Recommended })
+	return append([]string{c.Recommended}, rest...)
+}
+
 func (c statusCard) waitActions() slack.Block {
-	buttons := make([]slack.BlockElement, 0, len(c.Options))
-	for i, o := range c.Options {
-		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: c.Options}))
-		buttons = append(buttons, slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
-			slack.NewTextBlockObject(slack.PlainTextType, o, true, false)))
+	answers := c.answers()
+	buttons := make([]slack.BlockElement, 0, len(answers)+2)
+	for i, o := range answers {
+		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: answers}))
+		text := o
+		if o == c.Recommended {
+			text = o + " " + cardRecommended
+		}
+		b := slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
+			slack.NewTextBlockObject(slack.PlainTextType, text, true, false))
+		if o == c.Recommended {
+			b.Style = slack.StylePrimary
+		}
+		buttons = append(buttons, b)
 	}
+	other := string(mustJSON(askTap{ID: c.Waits, Label: cardOtherLabel, Question: c.Title, Options: answers}))
 	explain := string(mustJSON(askTap{ID: c.Waits, Label: cardExplainLabel, Question: c.Title}))
-	buttons = append(buttons, slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain,
-		slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
+	buttons = append(buttons,
+		slack.NewButtonBlockElement(cardOtherAction+c.Waits, other, slack.NewTextBlockObject(slack.PlainTextType, cardOtherLabel, true, false)),
+		slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain, slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
 	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 

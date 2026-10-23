@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,9 +42,11 @@ type actionPayload struct {
 	Label     string   `json:"label"`
 	ID        string   `json:"id,omitempty"`
 	Waits     bool     `json:"waits,omitempty"`
+	Other     bool     `json:"other,omitempty"`
 	Question  string   `json:"question,omitempty"`
 	Options   []string `json:"options,omitempty"`
 	Capture   string   `json:"capture,omitempty"`
+	Via       string   `json:"via,omitempty"`
 	Permalink string   `json:"permalink"`
 }
 
@@ -54,6 +58,32 @@ type askTap struct {
 	Options  []string `json:"o,omitempty"`
 	Waits    bool     `json:"-"`
 	Explain  bool     `json:"-"`
+	Other    bool     `json:"-"`
+}
+
+type cardRef struct {
+	channel, thread, ts string
+}
+
+type waitsAnswer struct {
+	card     cardRef
+	tap      askTap
+	other    bool
+	at       time.Time
+	actionTS string
+	source   string
+	where    string
+	via      string
+	dedup    string
+}
+
+var errNoStatusSession = errors.New("no session holds that status thread")
+
+type cardAnswerResult struct {
+	Answered bool      `json:"answered"`
+	Label    string    `json:"label"`
+	Other    bool      `json:"other,omitempty"`
+	At       time.Time `json:"at"`
 }
 
 func (k askTap) expired(now time.Time) bool {
@@ -69,29 +99,34 @@ func (a cardActionPush) tap() (askTap, bool) {
 	case strings.HasPrefix(a.ActionID, cardOptionAction) && a.Value != "":
 		return askTap{Label: a.Value}, true
 	case strings.HasPrefix(a.ActionID, cardAskAction):
-		var k askTap
-		if err := json.Unmarshal([]byte(a.Value), &k); err != nil || k.ID != strings.TrimPrefix(a.ActionID, cardAskAction) || k.Label == "" {
-			return askTap{}, false
-		}
-		return k, true
+		k, ok := decodeTap(a.Value, strings.TrimPrefix(a.ActionID, cardAskAction))
+		return k, ok && k.Label != ""
 	case strings.HasPrefix(a.ActionID, cardWaitAction):
 		_, waits, _ := strings.Cut(strings.TrimPrefix(a.ActionID, cardWaitAction), ":")
-		var k askTap
-		if err := json.Unmarshal([]byte(a.Value), &k); err != nil || k.ID != waits || k.Label == "" {
-			return askTap{}, false
-		}
+		k, ok := decodeTap(a.Value, waits)
 		k.Waits = true
-		return k, true
+		return k, ok && k.Label != ""
+	case strings.HasPrefix(a.ActionID, cardWroteAction):
+		k, ok := decodeTap(a.Value, strings.TrimPrefix(a.ActionID, cardWroteAction))
+		k.Label, k.Waits, k.Other = strings.TrimSpace(k.Label), true, true
+		return k, ok && k.Label != ""
 	case strings.HasPrefix(a.ActionID, cardExplainAction):
-		var k askTap
-		if err := json.Unmarshal([]byte(a.Value), &k); err != nil || k.ID != strings.TrimPrefix(a.ActionID, cardExplainAction) || k.Label != cardExplainLabel {
-			return askTap{}, false
-		}
+		k, ok := decodeTap(a.Value, strings.TrimPrefix(a.ActionID, cardExplainAction))
 		k.Waits, k.Explain = true, true
-		return k, true
+		return k, ok && k.Label == cardExplainLabel
 	}
 	return askTap{}, false
 }
+
+func decodeTap(value, id string) (askTap, bool) {
+	var k askTap
+	if err := json.Unmarshal([]byte(value), &k); err != nil || k.ID != id {
+		return askTap{}, false
+	}
+	return k, true
+}
+
+func (a cardActionPush) ref() cardRef { return cardRef{a.Channel, a.ThreadTS, a.MessageTS} }
 
 func (a cardActionPush) check(id identity) error {
 	if a.User != id.UserID || a.Channel != id.DMChannelID {
@@ -114,15 +149,19 @@ func slackTime(ts string) time.Time {
 	return time.Unix(n, 0)
 }
 
-func captureLine(id identity, k askTap, at time.Time, permalink string) string {
-	return fmt.Sprintf("%s answered %q with %q at %s on Slack card %s", id.name(), k.Question, k.Label, at.UTC().Format(time.RFC3339), permalink)
+func captureLine(id identity, k askTap, at time.Time, where string) string {
+	return fmt.Sprintf("%s answered %q with %q at %s on %s", id.name(), k.Question, k.Label, at.UTC().Format(time.RFC3339), where)
 }
 
-func tapLine(id identity, posted, permalink string, k askTap, capture string) string {
-	who := fmt.Sprintf("Slack tap from %s, your operator, on your status card posted %s (%s)", id.name(), posted, permalink)
+func cardSource(id identity, how, posted, permalink string) string {
+	return fmt.Sprintf("%s from %s, your operator, on your status card posted %s (%s)", how, id.name(), posted, permalink)
+}
+
+func tapLine(who, permalink string, k askTap, capture string) string {
 	if k.Explain {
-		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply in that card's thread with the question in plain words "+
-			"and what each answer would do. The lane that asked stays stopped until they tap an answer.", who, k.ID)
+		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply with slack_dm_status text and about %q, so the reply opens "+
+			"with a link back to <%s|this card>; say the question in plain words and what each answer would do. The lane that asked stays stopped until they tap an answer.",
+			who, k.ID, k.ID, permalink)
 	}
 	if k.Waits {
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. The lane that asked is stopped on this answer: hand it to that lane now, "+
@@ -164,6 +203,29 @@ func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]w
 	return watches, rows.Err()
 }
 
+func tapHow(k askTap) string {
+	if k.Other {
+		return "Slack answer written in"
+	}
+	return "Slack tap"
+}
+
+func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, who, permalink string) error {
+	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
+		p.log.Printf("card action %s on %s: dropped: the card was redrawn with another question after this answer was drawn", a.ActionID, a.MessageTS)
+		return nil
+	}
+	_, err := p.answerWaits(ctx, id, waitsAnswer{
+		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
+		dedup: fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
+	})
+	if errors.Is(err, errNoStatusSession) {
+		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
+		return nil
+	}
+	return err
+}
+
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
@@ -191,6 +253,12 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		}
 		return nil
 	}
+	tappedAt := slackTime(a.ActionTS)
+	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
+	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
+	if k.Waits && !k.Explain {
+		return p.tapWaits(ctx, id, a, k, tappedAt, who, permalink)
+	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
@@ -200,17 +268,11 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s on %s/%s: dropped: no session holds that status thread", a.ActionID, a.Channel, a.ThreadTS)
 		return nil
 	}
-	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
-	tappedAt := slackTime(a.ActionTS)
-	var capture string
-	if k.Waits && !k.Explain {
-		capture = captureLine(id, k, tappedAt, permalink)
-	}
-	line := tapLine(id, slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink, k, capture)
+	line := tapLine(who, permalink, k, "")
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
-			Waits: k.Waits, Question: k.Question, Options: k.Options, Capture: capture, Permalink: permalink,
+			Waits: k.Waits, Question: k.Question, Options: k.Options, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
@@ -227,15 +289,12 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	}
 	switch {
 	case k.Explain:
-		err = p.markHint(ctx, id, a, "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread. "+
+		err = p.markHint(ctx, id, a.ref(), "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread. "+
 			"The lane that asked is still stopped until you tap an answer.")
-	case k.Waits:
-		p.cards.answer(a.Channel, a.ThreadTS, k.ID, tappedAt)
-		err = p.markOption(ctx, id, a, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(tappedAt, p.now()))
 	case k.ID != "":
 		err = p.markAsk(ctx, id, a, k)
 	default:
-		err = p.markOption(ctx, id, a, "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
+		err = p.markOption(ctx, id, a.ref(), "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
 	}
 	if err != nil {
 		p.log.Printf("card action %s on %s: delivered, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
@@ -243,26 +302,101 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	return nil
 }
 
-func (p *poller) markOption(ctx context.Context, id identity, a cardActionPush, line string) error {
-	if !p.cards.markReply(a.Channel, a.ThreadTS, a.MessageTS, func(m *liveMessage) { m.Tapped = line }) {
-		return p.confirmTap(ctx, id, a, cardActionsBlock, line)
+func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
+	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label, Other: w.other})
+	if !won {
+		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
+		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
-	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
+	db := p.plane.DB()
+	watches, err := dmWatches(ctx, db, w.card.channel, w.card.thread)
+	if err == nil && len(watches) == 0 {
+		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
+	}
+	if err != nil {
+		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+		return cardAnswerResult{}, err
+	}
+	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
+	capture := captureLine(id, w.tap, w.at, w.where)
+	line := tapLine(w.source, permalink, w.tap, capture)
+	for _, watch := range watches {
+		msg := actionPayload{
+			WatchID: watch.ID, ChannelID: w.card.channel, ThreadTS: w.card.thread, TS: w.card.ts, ActionTS: w.actionTS, Label: w.tap.Label, ID: w.tap.ID,
+			Waits: true, Other: w.other, Question: w.tap.Question, Options: w.tap.Options, Capture: capture, Via: w.via, Permalink: permalink,
+		}
+		if err := p.deliver(ctx, db, watch, delivery{
+			base:   eventAction,
+			origin: event.OriginHuman,
+			dedup:  w.dedup,
+			line:   line,
+			payload: func(typ string) []byte {
+				msg.Type = typ
+				return mustJSON(msg)
+			},
+		}); err != nil {
+			return cardAnswerResult{}, fmt.Errorf("waiting ask %s keeps its answer %q, but delivering it to watch %d failed: %w", w.tap.ID, w.tap.Label, watch.ID, err)
+		}
+	}
+	answer := "✓ *" + mrkdwnEscapes.Replace(w.tap.Label) + "* · answered "
+	if w.other {
+		answer = "✓ *Other:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · answered "
+	}
+	if w.via != "" {
+		answer += "on " + slackLink(w.via, "the board") + " "
+	}
+	if err := p.markOption(ctx, id, w.card, answer+clock(w.at, p.now())); err != nil {
+		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
+	}
+	if w.via == "" {
+		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
+	}
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other bool, via string) (cardAnswerResult, error) {
+	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
+	if !ok {
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your status threads", waits, card)
+	}
+	answers := m.Card.answers()
+	if !other && !slices.Contains(answers, label) {
+		return cardAnswerResult{}, fmt.Errorf("%q is not one of waiting card %q's answers %q; pass other for a write-in", label, waits, answers)
+	}
+	at := p.now()
+	permalink := id.permalink(id.DMChannelID, m.TS, thread)
+	return p.answerWaits(ctx, id, waitsAnswer{
+		card:   cardRef{id.DMChannelID, thread, m.TS},
+		tap:    askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
+		other:  other,
+		at:     at,
+		source: fmt.Sprintf("Board answer from %s, your operator, on %s for your status card posted %s (%s)", id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
+		where:  "the cc-present board " + via + ", which answers Slack card " + permalink,
+		via:    via,
+		dedup:  fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
+	})
+}
+
+func (p *poller) markOption(ctx context.Context, id identity, r cardRef, line string) error {
+	if !p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) { m.Tapped = line }) {
+		return p.confirmTap(ctx, id, r, cardActionsBlock, line)
+	}
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now())
 	return err
 }
 
-func (p *poller) markHint(ctx context.Context, id identity, a cardActionPush, line string) error {
-	if !p.cards.markReply(a.Channel, a.ThreadTS, a.MessageTS, func(m *liveMessage) { m.Hint = line }) {
-		return p.confirmTap(ctx, id, a, cardWaitBlock, line)
+func (p *poller) markHint(ctx context.Context, id identity, r cardRef, line string) error {
+	if !p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) { m.Hint = line }) {
+		return p.confirmTap(ctx, id, r, cardWaitBlock, line)
 	}
-	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now())
 	return err
 }
 
 func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {
 	at := slackTime(a.ActionTS)
 	if !k.expired(at) {
-		p.cards.answer(a.Channel, a.ThreadTS, k.ID, at)
+		p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
 	}
 	redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
 	if err != nil || redrawn[a.MessageTS] {
@@ -272,28 +406,28 @@ func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k a
 	if k.expired(at) {
 		line = "⌛ *" + mrkdwnEscapes.Replace(k.Label) + "* · expired " + clock(time.Unix(k.Expires, 0), p.now())
 	}
-	return p.confirmTap(ctx, id, a, cardAskBlock+k.ID, line)
+	return p.confirmTap(ctx, id, a.ref(), cardAskBlock+k.ID, line)
 }
 
-func (p *poller) confirmTap(ctx context.Context, id identity, a cardActionPush, blockID, line string) error {
+func (p *poller) confirmTap(ctx context.Context, id identity, r cardRef, blockID, line string) error {
 	api := p.newAPI(id.Token)
 	msgs, _, _, err := api.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
-		ChannelID: a.Channel, Timestamp: a.ThreadTS, Oldest: a.MessageTS, Latest: a.MessageTS, Inclusive: true,
+		ChannelID: r.channel, Timestamp: r.thread, Oldest: r.ts, Latest: r.ts, Inclusive: true,
 	})
 	if err != nil {
 		return fmt.Errorf("read the tapped card: %w", err)
 	}
 	for _, m := range msgs {
-		if m.Timestamp != a.MessageTS {
+		if m.Timestamp != r.ts {
 			continue
 		}
 		blocks := tappedBlocks(m.Blocks.BlockSet, blockID, line)
 		if blocks == nil {
 			return nil
 		}
-		return updateMessage(ctx, api, a.Channel, a.MessageTS, m.Text, blocks)
+		return updateMessage(ctx, api, r.channel, r.ts, m.Text, blocks)
 	}
-	return fmt.Errorf("card %s is gone from its thread", a.MessageTS)
+	return fmt.Errorf("card %s is gone from its thread", r.ts)
 }
 
 func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {

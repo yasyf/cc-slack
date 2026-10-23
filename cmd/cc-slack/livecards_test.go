@@ -425,7 +425,7 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Waits: "step-3:merge"}
+	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: "step-3:merge"}
 	l.do(opDMStatus, map[string]any{"card": card})
 	root, reply := l.slack.sent()[0], l.slack.sent()[1]
 	if !strings.Contains(reply.blocks, cardWaitAction+"0:step-3:merge") || !strings.Contains(reply.blocks, cardExplainAction+"step-3:merge") ||

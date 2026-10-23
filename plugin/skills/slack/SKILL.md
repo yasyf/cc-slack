@@ -113,6 +113,7 @@ in your DM status thread and prints the card to pass to `slack_dm_status`:
   "title": "Post this in C0123ABCDE, thread 1791866612.381629?",
   "body": "found it, thanks for flagging! …",
   "options": ["Yes", "No"],
+  "recommended": "Yes",
   "waits": "slack-3f9a2c41d0b7"
 }
 ```
@@ -374,6 +375,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
+| `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
 
 The first card opens the thread with a root card. Every later card posts
 in the thread and redraws the root with its latest state. The root keeps
@@ -401,29 +403,55 @@ a `needs_you` card naming what is paused and what resuming would start.
 
 An ask card is how a lane asks the user a question during execution. Set
 `waits` to a question id that leads with the asking lane's name, such as
-`step-3:merge-41`. Write the question verbatim as the `title`, the context
-in `body`, and the answers as `options`. The card carries those answers
-plus a fixed Explain more button, no Ack or Pause, and tells the user the
-lane is stopped until they answer. It takes no `asks`, and the user may reply in
-the thread to write in an answer.
+`step-3:merge`. Write the question verbatim as the `title`, the context
+in `body`, the answers as `options`, and the answer you recommend as
+`recommended`. The card shows the recommended answer first, marked
+(Recommended), then the other answers, then fixed Other and Explain more
+buttons, with no Ack or Pause. It tells the user the lane is stopped until
+they answer, and it takes no `asks`.
+
+Every ask card has a recommendation and an Other. A card without
+`recommended` is refused. Never write (Recommended) into a label or add
+an Other option: the card draws both.
+
+Other is the user's own answer. A tap on Other opens a Slack modal with the
+question and a text box, and what they type there answers the card.
+
+A card that reuses the `waits` id of a card still waiting edits that card
+in place, so a lane can redraw an open question without posting it twice.
+Reusing the id of an answered card is refused; ask again under a new id.
 
 The lane that asks stops on the card. It starts no dependent work, takes
-no default, and never proceeds on a provisional pick. The tap reaches the
-top-level session as a `slack.action` whose payload carries the `id`,
-`waits: true`, the `question`, the chosen `label`, and a `capture` line.
-The top-level session hands the answer to the lane the id names, by
-`SendMessage`, and records the capture line in cc-notes as the user's
-answer.
-
-A Claude lane parks on its mailbox wait until that message
-arrives. A write-in reply reaches the top-level session as a DM directive
-and goes to the lane the same way. Only the first tap answers the
-question; a later tap is dropped.
+no default, and never proceeds on a provisional pick. The answer reaches
+the top-level session as a `slack.action` whose payload carries the `id`,
+`waits: true`, the `question`, the chosen `label`, `other: true` for a
+written-in answer, and a `capture` line. The top-level session hands the
+answer to the lane the id names, by `SendMessage`, and records the capture
+line in cc-notes as the user's answer. A Claude lane parks on its mailbox
+wait until that message arrives. Only the first answer counts; a later
+tap is dropped.
 
 An Explain more tap arrives as a `slack.action` with the label `Explain
 more` and the question id. It answers nothing, and the lane stays
-stopped. Reply in the card's thread with the question in plain words and
-what each answer would do, then keep waiting for the tap.
+stopped. Reply with `slack_dm_status` text and `about` set to the
+question id: cc-slack opens the reply with a Slack link back to the card,
+`<permalink|this card>`, so nobody scrolls to find it. Pass `about` on any
+other reply about a waiting card too. Give the question in plain words and
+what each answer does, and keep waiting for the answer.
+
+A card about a pull request lists it in `refs`. The card links each one as
+`<url|repo PR N>` with its live state.
+
+#### On a cc-present board too
+
+With `cc-present` on PATH, every ask card also lands on this session's
+cc-present board as a card with the same question, answers, and
+recommendation, and `cc-present ask` posts a board card here the same way.
+The user answers on whichever surface is in front of them. Whichever
+answer lands first wins. The other surface shows it, and the session gets
+one `slack.action` capture either way. A board answer's capture names the
+board, and its `via` carries the board's URL. `cc-slack card-answer` is
+the verb cc-present runs for a board answer; a session never needs it.
 
 `slack_dm_status` and CLI `dm-status` posts to the user's own DM are
 unprotected. This exception does not extend to `slack_send`, `slack_reply`,

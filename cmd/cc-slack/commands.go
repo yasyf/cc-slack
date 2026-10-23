@@ -748,13 +748,15 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		agentName string
 		files     []string
 		rootOnly  bool
+		mirrored  bool
+		about     string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, in this session's thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -773,7 +775,32 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	bindBlocks(c, &blocks)
 	c.Flags().StringVar(&card, "card", "", "status card as a JSON object, or @path to a file holding one, in place of text")
 	c.Flags().BoolVar(&rootOnly, "root-only", false, "redraw only the status thread's root card with --card, posting no reply")
+	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board")
+	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply opens with a link back to it")
 	bindAgent(c, &agentName)
+	return c
+}
+
+func cardAnswerCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f                       sessionFlags
+		waits, card, label, via string
+		other                   bool
+	)
+	c := &cobra.Command{
+		Use:   "card-answer",
+		Short: "Answer a waiting status card from another surface, such as a cc-present board",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opCardAnswer, map[string]any{"waits": waits, "url": card, "label": label, "other": other, "via": via})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&waits, "waits", "", "the waiting card's waits id")
+	c.Flags().StringVar(&card, "card", "", "the waiting card's Slack permalink, which tells it from another session's card with the same waits id")
+	c.Flags().StringVar(&label, "label", "", "the answer: one of the card's options, or the written-in text with --other")
+	c.Flags().BoolVar(&other, "other", false, "the label is a written-in answer, not one of the card's options")
+	c.Flags().StringVar(&via, "via", "", "url of the surface the answer came from; the card and the capture name it")
 	return c
 }
 

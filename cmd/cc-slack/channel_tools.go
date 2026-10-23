@@ -75,6 +75,9 @@ func invokeOnce(ctx context.Context, d cmd.Deps, session, scope string, op daemo
 	if err := claimPostedThread(ctx, session, op, reply.Body); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: posted, but %v\n", binaryName, err)
 	}
+	if err := mirrorPosted(ctx, session, op, body, reply.Body); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: posted, but the cc-present board was not told: %v\n", binaryName, err)
+	}
 	return reply, nil
 }
 
@@ -125,14 +128,20 @@ var (
 			"links":  map[string]any{"type": "array", "maxItems": cardMaxLinks, "items": schemaLink("label", "url")},
 			"options": map[string]any{
 				"type": "array", "maxItems": cardMaxOptions, "items": map[string]any{"type": "string", "maxLength": cardMaxOptionLen},
-				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside Explain more",
+				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside the fixed Other and Explain more",
 			},
 			"waits": map[string]any{
 				"type": "string", "pattern": askIDPattern.String(),
-				"description": "makes this an ask card the asking lane stops on: the title is the question, the options and a fixed Explain more are its buttons, " +
-					"the card says the lane waits on the tap, and the tap's slack.action carries this id, the question, the label, and a capture line. " +
-					"Explain more answers nothing; reply in the thread with a fuller explanation. " +
-					"Needs options; takes no asks",
+				"description": "makes this an ask card the asking lane stops on: the title is the question, the options plus a fixed Other and Explain more are its buttons, " +
+					"the card says the lane waits on the answer, and the answer's slack.action carries this id, the question, the label, and a capture line. " +
+					"Other opens a Slack modal, and the text typed there answers the card with other: true. " +
+					"Explain more answers nothing; reply with text and about set to this id, which opens the reply with a link back to the card. " +
+					"With cc-present installed the card also lands on this session's board, and the first answer on either surface wins. " +
+					"Needs options and recommended; takes no asks. Reusing an open waits id edits that card in place",
+			},
+			"recommended": map[string]any{
+				"type": "string", "maxLength": cardMaxOptionLen,
+				"description": "with waits, the option you recommend; the card shows it first, marked (Recommended). Never put (Recommended) or an Other option in options",
 			},
 			"refs": map[string]any{
 				"type": "array", "maxItems": cardMaxRefs, "items": schemaLink("url"),
@@ -393,7 +402,9 @@ var (
 				"blocks":    blocksProp,
 				"card":      cardProp,
 				"root_only": map[string]any{"type": "boolean", "description": "redraw only the thread's root card with this card, posting no reply"},
-				"agent":     agentProp,
+				"about": map[string]any{"type": "string", "pattern": askIDPattern.String(),
+					"description": "waits id of a waiting card this text reply is about, such as an Explain more answer; the reply opens with a link back to that card"},
+				"agent": agentProp,
 			},
 		},
 	}
