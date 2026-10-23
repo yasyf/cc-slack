@@ -1493,6 +1493,10 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if b.Card != nil && !b.RootOnly {
+		b.Card.fill(b.Text)
+		b.Text = ""
+	}
 	if err := checkDMStatus(b, a.now()); err != nil {
 		return fail(err.Error())
 	}
@@ -1578,7 +1582,7 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 func checkDMStatus(b opBody, now time.Time) error {
 	switch {
 	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || len(b.Files) > 0):
-		return errors.New("dm-status takes a card or text, blocks, and files, never both")
+		return errors.New("dm-status takes a card, or blocks and files, never both")
 	case b.Card == nil && b.Text == "" && len(b.Files) == 0:
 		return errors.New("dm-status needs a card, text, or files")
 	case b.RootOnly && (b.Card == nil || b.ThreadTS != ""):

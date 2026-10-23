@@ -39,7 +39,7 @@ const (
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
 	cardMaxOptions    = 4
-	cardMaxOptionLen  = 30
+	cardMaxOptionLen  = cardMaxLabelLen - len(" "+cardRecommended)
 	cardMaxLinks      = 5
 	cardMaxRefs       = 10
 	cardMaxAsks       = 5
@@ -157,29 +157,38 @@ func checkURL(raw string) bool {
 	return err == nil && u.Scheme == "https" && u.Host != "" && len(raw) <= cardMaxURLLen
 }
 
+func (c *statusCard) fill(text string) {
+	c.Body = strings.Join(slices.DeleteFunc([]string{text, c.Body}, func(s string) bool { return s == "" }), "\n")
+	if c.Status == "" && c.Waits != "" {
+		c.Status = "needs_you"
+	} else if c.Status == "" {
+		c.Status = "info"
+	}
+	if strings.TrimSpace(c.Title) == "" {
+		first, _, _ := strings.Cut(strings.TrimSpace(c.Body), "\n")
+		c.Title = string([]rune(first)[:min(runes(first), cardMaxTitleLen)])
+	}
+	for i, o := range c.Options {
+		if label := strings.TrimSpace(strings.Replace(o, cardRecommended, "", 1)); label != o {
+			c.Options[i] = label
+			if c.Recommended == "" || c.Recommended == o {
+				c.Recommended = label
+			}
+		}
+	}
+}
+
 func (c statusCard) check(now time.Time, rootOnly bool) error {
-	if err := c.checkHeading(rootOnly); err != nil {
-		return err
-	}
-	if err := c.checkLinks(); err != nil {
-		return err
-	}
-	if err := c.checkOptions(rootOnly); err != nil {
-		return err
-	}
-	if err := c.checkWaits(rootOnly); err != nil {
-		return err
-	}
-	if err := c.checkRefs(); err != nil {
-		return err
-	}
-	if err := c.checkAsks(now); err != nil {
-		return err
-	}
-	if err := c.checkFacts(); err != nil {
-		return err
-	}
-	return c.checkRollup()
+	return errors.Join(
+		c.checkHeading(rootOnly),
+		c.checkLinks(),
+		c.checkOptions(rootOnly),
+		c.checkWaits(rootOnly),
+		c.checkRefs(),
+		c.checkAsks(now),
+		c.checkFacts(),
+		c.checkRollup(),
+	)
 }
 
 func (c statusCard) checkHeading(rootOnly bool) error {

@@ -275,3 +275,14 @@ func TestALosingBoardAnswerLearnsTheWinnerWasWrittenIn(t *testing.T) {
 		t.Fatalf("losing board answer = %+v, want the written-in Hold that won", res)
 	}
 }
+
+func TestOneDMStatusCallPostsACardGivenTextBesideIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	before := len(l.slack.sent())
+	l.do(opDMStatus, map[string]any{"text": "Merge #41 now?", "card": map[string]any{"waits": "step-3:merge", "options": []string{"Merge (Recommended)", "Hold"}}})
+	posts := l.slack.sent()[before:]
+	if len(posts) == 0 || !strings.Contains(posts[len(posts)-1].text, "Merge #41 now?") {
+		t.Fatalf("posts = %+v, want the card titled by its text", posts)
+	}
+}
