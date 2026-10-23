@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,8 +41,11 @@ type boardAnswer struct {
 
 func presentSync(ctx context.Context, session, event string, payload any) error {
 	bin, err := exec.LookPath(presentBinary)
-	if err != nil {
+	if errors.Is(err, exec.ErrNotFound) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	c := exec.CommandContext(ctx, bin, "slack-sync", event, "--session", session) //nolint:gosec // G204: argv to the cc-present binary on PATH, never a shell
 	c.Stdin = bytes.NewReader(mustJSON(payload))
