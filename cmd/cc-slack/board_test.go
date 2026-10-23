@@ -62,10 +62,12 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 	return postedCard{id: id, thread: res["thread_ts"], ts: res["ts"]}
 }
 
-func answerOnBoard(t *testing.T, l *liveDaemon, label string, other bool) cardAnswerResult {
+func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
+
+func answerOnBoard(t *testing.T, l *liveDaemon, c postedCard, label string, other bool) cardAnswerResult {
 	t.Helper()
 	var res cardAnswerResult
-	body := map[string]any{"waits": "step-3:merge", "label": label, "other": other, "via": "http://127.0.0.1:7000/p/asks--ab12"}
+	body := map[string]any{"waits": "step-3:merge", "url": c.url(), "label": label, "other": other, "via": "http://127.0.0.1:7000/p/asks--ab12"}
 	if err := json.Unmarshal(l.do(opCardAnswer, body).Body, &res); err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +80,11 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	c := postWaiting(t, l, mergeCard())
 
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{
-		"waits": "step-3:merge", "label": "Ship", "via": "http://127.0.0.1:7000/p/asks--ab12",
+		"waits": "step-3:merge", "url": c.url(), "label": "Ship", "via": "http://127.0.0.1:7000/p/asks--ab12",
 	})); err == nil || !strings.Contains(err.Error(), "not one of waiting card") {
 		t.Fatalf("a board answer outside the options: %v", err)
 	}
-	if res := answerOnBoard(t, l, "Hold", false); !res.Answered || res.Label != "Hold" {
+	if res := answerOnBoard(t, l, c, "Hold", false); !res.Answered || res.Label != "Hold" {
 		t.Fatalf("first board answer = %+v, want it to win", res)
 	}
 	got := l.inject(agent.TopLevel)
@@ -108,7 +110,7 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	if got := l.inject(agent.TopLevel); got != "" {
 		t.Fatalf("a Slack tap after the board answered steered %q", got)
 	}
-	if res := answerOnBoard(t, l, "Merge", false); res.Answered || res.Label != "Hold" {
+	if res := answerOnBoard(t, l, c, "Merge", false); res.Answered || res.Label != "Hold" {
 		t.Fatalf("a second board answer = %+v, want a refusal naming the winner", res)
 	}
 	if got := l.inject(agent.TopLevel); got != "" {
@@ -166,7 +168,7 @@ func TestReusedOpenWaitsIDEditsTheCardInPlace(t *testing.T) {
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") {
 		t.Fatalf("card edits %v, want the new question drawn over the old card", edits)
 	}
-	answerOnBoard(t, l, "Merge", false)
+	answerOnBoard(t, l, c2, "Merge", false)
 	raw := mustJSON(map[string]any{"card": redrawn})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `was answered with "Merge"`) {
 		t.Fatalf("re-asking an answered card: %v", err)
@@ -209,9 +211,9 @@ func TestWaitingCardsTellTheBoardOnPostAndOnASlackAnswer(t *testing.T) {
 		t.Fatalf("cc-present calls after the tap %q, want the answer sent to the board", got)
 	}
 	card.Waits, card.Refs = "step-5:release", nil
-	postWaiting(t, l, card)
+	c5 := postWaiting(t, l, card)
 	before := presentCalls(t, calls)
-	l.do(opCardAnswer, map[string]any{"waits": "step-5:release", "label": "Merge", "via": "http://127.0.0.1:7000/p/asks--ab12"})
+	l.do(opCardAnswer, map[string]any{"waits": "step-5:release", "url": c5.url(), "label": "Merge", "via": "http://127.0.0.1:7000/p/asks--ab12"})
 	if after := presentCalls(t, calls); after != before {
 		t.Fatalf("a board answer echoed back to the board: %q", strings.TrimPrefix(after, before))
 	}
@@ -230,5 +232,35 @@ func TestAReplyAboutAWaitingCardOpensWithALinkBackToIt(t *testing.T) {
 	raw := mustJSON(map[string]any{"text": "and one more thing", "about": "step-9:nothing"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `no waiting card "step-9:nothing"`) {
 		t.Fatalf("a reply about an unknown card: %v", err)
+	}
+}
+
+func TestAnAnswerDrawnForAnEarlierQuestionDoesNotAnswerTheRedrawnCard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	redrawn := mergeCard()
+	redrawn.Title = "Merge #41 before the freeze?"
+	postWaiting(t, l, redrawn)
+	stale := askTap{ID: "step-3:merge", Label: "Merge after lunch", Question: "Merge #41 now?"}
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardWroteAction + "step-3:merge", Value: string(mustJSON(stale)), ActionTS: fmt.Sprintf("%d.000500", time.Now().Unix()), Seq: "001800000100000-abcd0500"})
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("an answer to the old question steered %q", got)
+	}
+	if res := answerOnBoard(t, l, c, "Hold", false); !res.Answered {
+		t.Fatalf("the redrawn card's board answer = %+v, want it to win", res)
+	}
+}
+
+func TestALosingBoardAnswerLearnsTheWinnerWasWrittenIn(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	written := askTap{ID: "step-3:merge", Label: "Hold", Question: "Merge #41 now?"}
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardWroteAction + "step-3:merge", Value: string(mustJSON(written)), ActionTS: fmt.Sprintf("%d.000600", time.Now().Unix()), Seq: "001800000100000-abcd0600"})
+	if res := answerOnBoard(t, l, c, "Merge", false); res.Answered || res.Label != "Hold" || !res.Other {
+		t.Fatalf("losing board answer = %+v, want the written-in Hold that won", res)
 	}
 }

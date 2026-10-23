@@ -82,6 +82,7 @@ var errNoStatusSession = errors.New("no session holds that status thread")
 type cardAnswerResult struct {
 	Answered bool      `json:"answered"`
 	Label    string    `json:"label"`
+	Other    bool      `json:"other,omitempty"`
 	At       time.Time `json:"at"`
 }
 
@@ -210,6 +211,10 @@ func tapHow(k askTap) string {
 }
 
 func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, who, permalink string) error {
+	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
+		p.log.Printf("card action %s on %s: dropped: the card was redrawn with another question after this answer was drawn", a.ActionID, a.MessageTS)
+		return nil
+	}
 	_, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
 		dedup: fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
@@ -298,10 +303,10 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label})
+	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label, Other: w.other})
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
-		return cardAnswerResult{Label: prior.Label, At: prior.At}, nil
+		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, w.card.channel, w.card.thread)
@@ -330,8 +335,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 				return mustJSON(msg)
 			},
 		}); err != nil {
-			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
-			return cardAnswerResult{}, err
+			return cardAnswerResult{}, fmt.Errorf("waiting ask %s keeps its answer %q, but delivering it to watch %d failed: %w", w.tap.ID, w.tap.Label, watch.ID, err)
 		}
 	}
 	answer := "✓ *" + mrkdwnEscapes.Replace(w.tap.Label) + "* · answered "
@@ -347,13 +351,13 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.via == "" {
 		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
 	}
-	return cardAnswerResult{Answered: true, Label: w.tap.Label, At: w.at}, nil
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, label string, other bool, via string) (cardAnswerResult, error) {
-	thread, m, ok := p.cards.waiting(id.DMChannelID, waits)
+func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other bool, via string) (cardAnswerResult, error) {
+	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
 	if !ok {
-		return cardAnswerResult{}, fmt.Errorf("no waiting card %q in your status threads", waits)
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your status threads", waits, card)
 	}
 	answers := m.Card.answers()
 	if !other && !slices.Contains(answers, label) {

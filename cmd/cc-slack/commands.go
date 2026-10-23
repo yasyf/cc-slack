@@ -783,20 +783,21 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 
 func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f                 sessionFlags
-		waits, label, via string
-		other             bool
+		f                       sessionFlags
+		waits, card, label, via string
+		other                   bool
 	)
 	c := &cobra.Command{
 		Use:   "card-answer",
 		Short: "Answer a waiting status card from another surface, such as a cc-present board",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opCardAnswer, map[string]any{"waits": waits, "label": label, "other": other, "via": via})
+			return runOp(c, d, f, opCardAnswer, map[string]any{"waits": waits, "url": card, "label": label, "other": other, "via": via})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&waits, "waits", "", "the waiting card's waits id")
+	c.Flags().StringVar(&card, "card", "", "the waiting card's Slack permalink, which tells it from another session's card with the same waits id")
 	c.Flags().StringVar(&label, "label", "", "the answer: one of the card's options, or the written-in text with --other")
 	c.Flags().BoolVar(&other, "other", false, "the label is a written-in answer, not one of the card's options")
 	c.Flags().StringVar(&via, "via", "", "url of the surface the answer came from; the card and the capture name it")

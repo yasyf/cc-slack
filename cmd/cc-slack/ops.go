@@ -1519,7 +1519,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		if b.Card != nil || b.Text == "" {
 			return fail("about links a text reply back to a waiting card; send text, not a card")
 		}
-		thread, m, found := a.cards.waiting(id.DMChannelID, b.About)
+		own, _, err := sessionThread(hc.Ctx, hc.DB, sub.ID, id.DMChannelID)
+		if err != nil {
+			return fail(err.Error())
+		}
+		thread, m, found := a.cards.waiting(id.DMChannelID, b.About, func(thread, _ string) bool { return thread == own })
 		if !found {
 			return fail(fmt.Sprintf("no waiting card %q in your DM to link back to", b.About))
 		}
@@ -1555,14 +1559,20 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fmt.Sprintf("card-answer waits id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", b.Waits))
 	case strings.TrimSpace(b.Label) == "":
 		return fail("card-answer needs the answer's label, or a write-in with other")
+	case b.URL == "":
+		return fail("card-answer needs url, the Slack card's permalink")
 	case b.Via == "":
 		return fail("card-answer needs via, the url of the surface the answer came from")
+	}
+	label := b.Label
+	if b.Other {
+		label = strings.TrimSpace(label)
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, strings.TrimSpace(b.Label), b.Other, b.Via)
+	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Via)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -1632,7 +1642,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	previous := t.Reply
 	waits := msg.card.Waits
 	asked := t.Waiting[waits]
-	if prior, done := t.Answers[waits]; asked != nil && done {
+	if prior, done := t.Answers[waits]; waits != "" && done {
 		return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
 			waits, prior.Label, prior.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
 	}
@@ -1664,6 +1674,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 			t.Reply = previous
 		}
 		if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
+			t.Reply = previous
 			cards.commit(t)
 			return "", "", false, fmt.Errorf("edit waiting card %q in place: %w", waits, err)
 		}

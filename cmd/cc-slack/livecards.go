@@ -284,26 +284,25 @@ func (l *liveCards) release(channel, thread, askID string) {
 	}
 }
 
-func (l *liveCards) waiting(channel, waits string) (string, liveMessage, bool) {
+func (l *liveCards) waiting(channel, waits string, at func(thread, ts string) bool) (string, liveMessage, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var (
-		thread string
-		found  *liveMessage
-	)
 	for _, t := range l.threads {
-		m := t.Waiting[waits]
-		if t.Channel != channel || m == nil {
-			continue
-		}
-		if _, done := t.Answers[waits]; found == nil || !done {
-			thread, found = t.Thread, m
+		if m := t.Waiting[waits]; t.Channel == channel && m != nil && at(t.Thread, m.TS) {
+			return t.Thread, *m, true
 		}
 	}
-	if found == nil {
-		return "", liveMessage{}, false
+	return "", liveMessage{}, false
+}
+
+func (l *liveCards) asks(channel, thread, waits, question string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok || t.Waiting[waits] == nil {
+		return true
 	}
-	return thread, *found, true
+	return t.Waiting[waits].Card.Title == question
 }
 
 func (l *liveCards) answered(channel, thread, askID string) bool {
