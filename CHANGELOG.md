@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The plain-words hook warns at most once per agent, in one line, and no longer tells the agent to run `check-post` first.
+- An allowed Slack write, and the ticket a top-level post carries to its own thread, no longer print a system message. The permission decision is unchanged.
+
 ## [0.2.2] - 2026-10-23
 
 ### Changed

@@ -24,10 +24,7 @@ PLAIN_WORDS = {
     "bare-number": "unlinked numbers",
     "bare-url": "bare URLs",
 }
-PLAIN_WORDS_WARNING = (
-    "Slack readers outside this session cannot decode {found}."
-    " Write the next post from the facts and check it with the cc-slack `check-post` script first."
-)
+PLAIN_WORDS_WARNING = "Slack readers outside this session cannot decode {found}; write the next post from the facts."
 LINK_KINDS = frozenset({"bare-number", "bare-url"})
 LINK_WARNING = "Slack readers cannot follow {found}; link them as <url|label> in the next post."
 BLOCK_STRUCTURE = frozenset({"type", "block_id", "action_id", "style", "value", "id"})
@@ -79,11 +76,12 @@ class WritesSlack:
 @on(
     Event.PreToolUse,
     only_if=[WritesSlack()],
+    max_fires=1,
     tests={
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=JARGON): Warn(pattern="decode codenames, drive terms, zone labels"),
         Input(env=ENABLED, tool="mcp__slack__slack_send_message", tool_input=THREAD | {"text": "R885 is lifted at 17:35Z."}): Warn(pattern="decode inbox ids, zone labels"),
         Input(env=ENABLED, tool=P + "slack_edit", tool_input=JARGON | {"ts": THREAD["thread_ts"]}): Warn(pattern="zone labels"),
-        Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms\\."),
+        Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms;"),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=PLAIN): Allow(),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=PLAIN | {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": JARGON["text"]}}]}): Warn(
             pattern="decode codenames, drive terms, zone labels"
@@ -91,7 +89,7 @@ class WritesSlack:
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=PLAIN | {"blocks": CARD_BLOCKS}): Allow(),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Fixed in #31364, see https://example.com/run"}): Warn(pattern="cannot follow unlinked numbers, bare URLs"),
         Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text '{PLAIN['text']}'"): Allow(),
-        Input(env=ENABLED, command=f"slack-post send --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms\\."),
+        Input(env=ENABLED, command=f"slack-post send --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms;"),
         Input(env=ENABLED, tool=P + "slack_dm_status", tool_input={"text": "D is queued behind the walker"}): Allow(),
         Input(env=DISABLED, tool=P + "slack_reply", tool_input=JARGON): Allow(),
     },
