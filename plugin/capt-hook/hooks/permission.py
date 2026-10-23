@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -54,6 +55,7 @@ OTHER_VERBS = {
     "mark": "Mark the Slack conversation read",
     "workflow": "Save this Slack workflow",
 }
+CARD_BODY = 2800
 LINKED_VERBS = {"post", "edit", "delete", "join"}
 SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
@@ -62,7 +64,10 @@ UNREAD = (
     "A Slack write is checked on its literal values, one write per command. Run one `cc-slack` call per Bash command"
     " with literal `--text`, `--file`, and `--blocks` values and no `--ticket` flags."
 )
-REFUSED = "No permission covers this Slack write. Ask the user with `AskUserQuestion` or on their cc-present board, as below, then retry the same call.\n```\n{ask}\n```"
+REFUSED = (
+    "No permission covers this Slack write. Ask the user on a card in your DM status thread: call `slack_dm_status` with"
+    " this card, and retry the same call once they tap Yes.\n```json\n{ask}\n```"
+)
 RULES = """
     The agent is about to make one Slack write, sent to <destination>. Allow it when the user's own words or
     answers permit a write there, explicitly or by implication: telling the agent to reply, answer, update,
@@ -361,11 +366,22 @@ def shown(write: Write) -> str:
     return "\n".join([write.text, *(f"attached: {path}" for path in write.files)])
 
 
+def card_body(text: str) -> str:
+    if len(text) <= CARD_BODY:
+        return text
+    kept = CARD_BODY - 40
+    return f"{text[:kept]}\n… {len(text) - kept} more characters"
+
+
 def ask(write: Write, conv: Conversation) -> str:
     if write.verb in TEXT_VERBS:
-        return f'question: {TEXT_VERBS[write.verb]} in {conv.where}? "{shown(write)}"\noptions: Yes | No'
-    targets = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
-    return f"question: {OTHER_VERBS[write.verb]} ({targets})?\noptions: Yes | No"
+        title, body = f"{TEXT_VERBS[write.verb]} in {conv.where}?", shown(write)
+    else:
+        title = f"{OTHER_VERBS[write.verb]} ({conv.where})?" if conv.where else f"{OTHER_VERBS[write.verb]}?"
+        body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
+    waits = "slack-" + hashlib.sha256(json.dumps([write.verb, write.fields, write.users], sort_keys=True, default=str).encode()).hexdigest()[:12]
+    card = {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "waits": waits}
+    return json.dumps(card, ensure_ascii=False, indent=2)
 
 
 def context_of(evt: ToolHookEvent, write: Write, conv: Conversation) -> Context:
@@ -479,6 +495,7 @@ DANA = {"channel_id": FOLLOWERS, "thread_ts": DANA_THREAD, "no_watch": True}
 DANA_TEXT = "Good catch Dana! The SQL viewer now stops this before it runs and tells you why, plus the deleted_at soft-delete fix: https://github.com/acme/app/pull/36126"
 DANA_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p{DANA_THREAD.replace('.', '')}"
 DANA_ASKED = f'Post this in {FOLLOWERS}, thread {DANA_THREAD}? "{DANA_TEXT}"'
+DANA_CARD = f"Post this in {FOLLOWERS}, thread {DANA_THREAD}?"
 DANA_OPENED = {"ts": DANA_THREAD, "user": "U0DANA00001", "user_name": "Dana", "text": "the SQL viewer ran a delete with no soft-delete filter"}
 DANA_FOLLOWED_UP = {"ts": "1791900000.000100", "user": "U0DANA00001", "user_name": "Dana", "text": "any update on this?"}
 BUILDKITE_FAILED = {"ts": "1791900000.000150", "user": "U0BUILDKITE", "user_name": "Buildkite", "text": "build #4812 failed", "from_bot": True}
@@ -558,6 +575,12 @@ def owner_answered(question: str, options: list[str] | dict[str, str], label: st
     annotations = {question: annotation} if annotation else {}
     result = T.result(f'User has answered your questions: "{question}"="{label}".', of=call)
     return [T.assistant(call), T.user(result, toolUseResult={"questions": questions, "answers": {question: label}, "annotations": annotations})]
+
+
+def card_tapped(question: str, label: str, options: tuple[str, ...] = ("Yes", "No"), action_ts: str = "1791950000.000900") -> list[dict[str, Any]]:
+    payload = {"type": "slack.action", "watch_id": 7, "ts": "1791950000.000800", "action_ts": action_ts, "label": label, "id": "slack-0a1b2c3d4e5f", "waits": True, "question": question, "options": list(options)}
+    tap = f'<channel source="plugin:cc-slack:cc-slack" subject_id="s1" type="slack.action">\n{json.dumps(payload)}\n</channel>'
+    return [T.assistant("asked on the card"), T.user(tap, isMeta=True, origin={"kind": "channel", "server": "plugin:cc-slack:cc-slack"})]
 
 
 def touched(tool: str, **fields: Any) -> list[dict[str, Any]]:
@@ -707,6 +730,14 @@ on(
             case(transcript=owner_answered(DANA_ASKED.replace(DANA_THREAD, "1791866612.381629"), ["Yes", "No"], "Yes", id="other")) >> ALLOW,
             case(transcript=owner_answered(f'Post this in {PETS}? "another reply"', ["Yes", "No"], "Yes", id="other")) >> DENY,
             case(transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "No", id="dana"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> DENY,
+            case(transcript=card_tapped(DANA_CARD, "Yes")) >> ALLOW,
+            case(transcript=card_tapped(DANA_CARD, "No")) >> DENY,
+            case(transcript=card_tapped(DANA_CARD, "No", options=("No", "Yes"))) >> DENY,
+            case(transcript=card_tapped(f"Post this in {PETS}?", "Yes")) >> DENY,
+            case(DANA | {"text": "x" * 3000}) >> Block(pattern="… 240 more characters"),
+            case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
+            case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
+            case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "waits": "slack-')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_join", **said(f"join this and read it {DANA_URL}")) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_archive", **said(f"this one is done {DANA_URL}")) >> DENY,

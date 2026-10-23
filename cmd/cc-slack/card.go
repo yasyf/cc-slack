@@ -523,7 +523,7 @@ func (c statusCard) actions() slack.Block {
 func (c statusCard) waitActions() slack.Block {
 	buttons := make([]slack.BlockElement, 0, len(c.Options))
 	for i, o := range c.Options {
-		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title}))
+		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: c.Options}))
 		buttons = append(buttons, slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
 			slack.NewTextBlockObject(slack.PlainTextType, o, true, false)))
 	}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -325,7 +326,7 @@ func TestAskButtonsCarryTheirIDConfirmAndExpiry(t *testing.T) {
 		t.Fatalf("ask button = %+v, want the stable id, danger style, and a confirm dialog", b)
 	}
 	var k askTap
-	if err := json.Unmarshal([]byte(b.Value), &k); err != nil || k != (askTap{ID: "merge-41", Label: "Merge #41", Expires: expires.Unix()}) {
+	if err := json.Unmarshal([]byte(b.Value), &k); err != nil || !reflect.DeepEqual(k, askTap{ID: "merge-41", Label: "Merge #41", Expires: expires.Unix()}) {
 		t.Fatalf("button value %q decodes to %+v, %v", b.Value, k, err)
 	}
 	answered := blocksJSON(t, card.replyBlocks(cardView{at: at, now: at, answers: map[string]askAnswer{"merge-41": {At: at}}}))
@@ -450,14 +451,17 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 		t.Fatal("Explain more answered the waiting ask")
 	}
 
-	push.ActionID, push.Value = cardWaitAction+"0:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title}))
+	if !strings.Contains(reply.blocks, `\"o\":[\"Merge\",\"Hold\"]`) {
+		t.Fatalf("reply %s, want each answer button to carry the card's options", reply.blocks)
+	}
+	push.ActionID, push.Value = cardWaitAction+"0:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title, Options: card.Options}))
 	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", time.Now().Unix()), "001800000100000-abcd0126"
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") {
 		t.Fatalf("directive = %q, want the waiting ask's id, answer, and the hand-off", got)
 	}
 	payloads := strings.Join(l.channelPayloads(), "\n")
-	for _, part := range []string{`"id":"step-3:merge"`, `"waits":true`, `"question":"Merge #41 now?"`, `answered \"Merge #41 now?\" with \"Merge\" at `} {
+	for _, part := range []string{`"id":"step-3:merge"`, `"waits":true`, `"question":"Merge #41 now?"`, `"options":["Merge","Hold"]`, `answered \"Merge #41 now?\" with \"Merge\" at `} {
 		if !strings.Contains(payloads, part) {
 			t.Fatalf("channel payloads %s lack %s", payloads, part)
 		}

@@ -31,27 +31,29 @@ type cardActionPush struct {
 }
 
 type actionPayload struct {
-	Type      string `json:"type"`
-	WatchID   int64  `json:"watch_id"`
-	ChannelID string `json:"channel_id"`
-	ThreadTS  string `json:"thread_ts"`
-	TS        string `json:"ts"`
-	ActionTS  string `json:"action_ts"`
-	Label     string `json:"label"`
-	ID        string `json:"id,omitempty"`
-	Waits     bool   `json:"waits,omitempty"`
-	Question  string `json:"question,omitempty"`
-	Capture   string `json:"capture,omitempty"`
-	Permalink string `json:"permalink"`
+	Type      string   `json:"type"`
+	WatchID   int64    `json:"watch_id"`
+	ChannelID string   `json:"channel_id"`
+	ThreadTS  string   `json:"thread_ts"`
+	TS        string   `json:"ts"`
+	ActionTS  string   `json:"action_ts"`
+	Label     string   `json:"label"`
+	ID        string   `json:"id,omitempty"`
+	Waits     bool     `json:"waits,omitempty"`
+	Question  string   `json:"question,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	Capture   string   `json:"capture,omitempty"`
+	Permalink string   `json:"permalink"`
 }
 
 type askTap struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Expires  int64  `json:"exp,omitempty"`
-	Question string `json:"q,omitempty"`
-	Waits    bool   `json:"-"`
-	Explain  bool   `json:"-"`
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	Expires  int64    `json:"exp,omitempty"`
+	Question string   `json:"q,omitempty"`
+	Options  []string `json:"o,omitempty"`
+	Waits    bool     `json:"-"`
+	Explain  bool     `json:"-"`
 }
 
 func (k askTap) expired(now time.Time) bool {
@@ -208,7 +210,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
-			Waits: k.Waits, Question: k.Question, Capture: capture, Permalink: permalink,
+			Waits: k.Waits, Question: k.Question, Options: k.Options, Capture: capture, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
