@@ -276,13 +276,13 @@ def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
     if f"{REVOKE_LABEL}{channel}" in tags:
         return False
     if f"{GRANT_LABEL}{channel}" in tags:
-        return True
+        return None if thread else True
     if not ASKED <= tags or not holds(f"{answer['title']}\n{answer['body']}", channel):
         return None
     picked = answer["body"].partition("\nOptions:")[0]
     if STOP_POSTING.search(picked):
         return False
-    return True if KEEP_POSTING.search(picked) else None
+    return True if KEEP_POSTING.search(picked) and not thread else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -826,6 +826,9 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"tags": ["scope:ephemeral"]})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
