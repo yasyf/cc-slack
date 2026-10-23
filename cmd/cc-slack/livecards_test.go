@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -325,7 +326,7 @@ func TestAskButtonsCarryTheirIDConfirmAndExpiry(t *testing.T) {
 		t.Fatalf("ask button = %+v, want the stable id, danger style, and a confirm dialog", b)
 	}
 	var k askTap
-	if err := json.Unmarshal([]byte(b.Value), &k); err != nil || k != (askTap{ID: "merge-41", Label: "Merge #41", Expires: expires.Unix()}) {
+	if err := json.Unmarshal([]byte(b.Value), &k); err != nil || !reflect.DeepEqual(k, askTap{ID: "merge-41", Label: "Merge #41", Expires: expires.Unix()}) {
 		t.Fatalf("button value %q decodes to %+v, %v", b.Value, k, err)
 	}
 	answered := blocksJSON(t, card.replyBlocks(cardView{at: at, now: at, answers: map[string]askAnswer{"merge-41": {At: at}}}))

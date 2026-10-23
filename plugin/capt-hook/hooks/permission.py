@@ -55,6 +55,7 @@ OTHER_VERBS = {
     "mark": "Mark the Slack conversation read",
     "workflow": "Save this Slack workflow",
 }
+CARD_BODY = 2800
 LINKED_VERBS = {"post", "edit", "delete", "join"}
 SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
@@ -365,14 +366,22 @@ def shown(write: Write) -> str:
     return "\n".join([write.text, *(f"attached: {path}" for path in write.files)])
 
 
+def card_body(text: str) -> str:
+    if len(text) <= CARD_BODY:
+        return text
+    kept = CARD_BODY - 40
+    return f"{text[:kept]}\n… {len(text) - kept} more characters"
+
+
 def ask(write: Write, conv: Conversation) -> str:
     if write.verb in TEXT_VERBS:
         title, body = f"{TEXT_VERBS[write.verb]} in {conv.where}?", shown(write)
     else:
-        targets = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
-        title, body = f"{OTHER_VERBS[write.verb]} ({targets})?", ""
-    waits = "slack-" + hashlib.sha256(f"{title}\n{body}".encode()).hexdigest()[:12]
-    return json.dumps({"status": "needs_you", "title": title, "body": body, "options": ["Yes", "No"], "waits": waits}, ensure_ascii=False, indent=2)
+        title = f"{OTHER_VERBS[write.verb]} ({conv.where})?" if conv.where else f"{OTHER_VERBS[write.verb]}?"
+        body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
+    waits = "slack-" + hashlib.sha256(json.dumps([write.verb, write.fields, write.users], sort_keys=True, default=str).encode()).hexdigest()[:12]
+    card = {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "waits": waits}
+    return json.dumps(card, ensure_ascii=False, indent=2)
 
 
 def context_of(evt: ToolHookEvent, write: Write, conv: Conversation) -> Context:
@@ -725,6 +734,7 @@ on(
             case(transcript=card_tapped(DANA_CARD, "No")) >> DENY,
             case(transcript=card_tapped(DANA_CARD, "No", options=("No", "Yes"))) >> DENY,
             case(transcript=card_tapped(f"Post this in {PETS}?", "Yes")) >> DENY,
+            case(DANA | {"text": "x" * 3000}) >> Block(pattern="\n… 240 more characters"),
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
             case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "waits": "slack-')),
