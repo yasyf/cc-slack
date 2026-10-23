@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- With cc-present installed, a `dm-status` card that waits on an answer and did not come from cc-present is still posted, and the reply carries a `warning`: a question goes on the cc-present board first and reaches Slack through `cc-present send`.
+- The permission hook's refusal prints the approval question as a cc-present board card for `cc-present ask -`, beside the Slack card for sessions without cc-present.
+- An Explain more tap tells the session to answer with `cc-present reply` when the card is on a cc-present board, so the answer lands on both surfaces.
+
 ## [0.2.1] - 2026-10-23
 
 ### Changed

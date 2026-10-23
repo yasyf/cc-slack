@@ -65,8 +65,10 @@ UNREAD = (
     " with literal `--text`, `--file`, and `--blocks` values and no `--ticket` flags."
 )
 REFUSED = (
-    "No permission covers this Slack write. Ask the user on a card in your DM status thread: call `slack_dm_status` with"
-    " this card, and retry the same call once they tap Yes.\n```json\n{ask}\n```"
+    "No permission covers this Slack write. Ask the user, and retry the same call once they tap Yes. With cc-present"
+    " installed, put the question on your board and send it to Slack in one step: run `cc-present ask -` with this card"
+    " on stdin.\n```json\n{board}\n```\nWithout cc-present, call `slack_dm_status` with this card in your DM status"
+    " thread.\n```json\n{ask}\n```"
 )
 RULES = """
     The agent is about to make one Slack write, sent to <destination>. Allow it when the user's own words or
@@ -364,15 +366,25 @@ def card_body(text: str) -> str:
     return f"{text[:kept]}\n… {len(text) - kept} more characters"
 
 
-def ask(write: Write, conv: Conversation) -> str:
+def ask(write: Write, conv: Conversation) -> dict[str, Any]:
     if write.verb in TEXT_VERBS:
         title, body = f"{TEXT_VERBS[write.verb]} in {conv.where}?", shown(write)
     else:
         title = f"{OTHER_VERBS[write.verb]} ({conv.where})?" if conv.where else f"{OTHER_VERBS[write.verb]}?"
         body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
     waits = "slack-" + hashlib.sha256(json.dumps([write.verb, write.fields, write.users], sort_keys=True, default=str).encode()).hexdigest()[:12]
-    card = {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "recommended": "Yes", "waits": waits}
-    return json.dumps(card, ensure_ascii=False, indent=2)
+    return {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "recommended": "Yes", "waits": waits}
+
+
+def board_card(card: dict[str, Any]) -> dict[str, Any]:
+    context = [{"id": f"{card['waits']}-context", "type": "markdown", "md": card["body"]}] if card["body"] else []
+    answers = {"id": f"{card['waits']}-answer", "type": "choice", "options": [{"id": "yes", "label": "Yes", "recommended": True}, {"id": "no", "label": "No"}]}
+    return {"id": card["waits"], "type": "card", "title": card["title"], "children": [*context, answers]}
+
+
+def refused(write: Write, conv: Conversation) -> str:
+    card = ask(write, conv)
+    return REFUSED.format(board=json.dumps(board_card(card), ensure_ascii=False, indent=2), ask=json.dumps(card, ensure_ascii=False, indent=2))
 
 
 def context_of(evt: ToolHookEvent, write: Write, conv: Conversation) -> Context:
@@ -424,7 +436,7 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     verdict = decided if isinstance(decided, Deny) else decided.ticket
     logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=isinstance(verdict, Ticket), detail=verdict.detail if isinstance(verdict, Deny) else f"{verdict.id} ({verdict.rule})").info("slack write checked")
     if isinstance(verdict, Deny):
-        return evt.block(REFUSED.format(ask=ask(write, conv)), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
+        return evt.block(refused(write, conv), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
     if not write.daemon:
         return evt.allow(system_message=f"{GATE}: allowed by ticket `{verdict.id}` ({verdict.rule}).")
     return named_ticket(evt, ctx, verdict)
@@ -728,6 +740,7 @@ on(
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
             case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "slack-')),
+            case() >> Block(pattern=re.escape(f'`cc-present ask -` with this card on stdin.\n```json\n{{\n  "id": "slack-') + r'[0-9a-f]{12}' + re.escape(f'",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "slack-')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_join", **said(f"join this and read it {DANA_URL}")) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_archive", **said(f"this one is done {DANA_URL}")) >> DENY,

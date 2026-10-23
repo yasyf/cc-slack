@@ -159,9 +159,10 @@ func cardSource(id identity, how, posted, permalink string) string {
 
 func tapLine(who, permalink string, k askTap, capture string) string {
 	if k.Explain {
-		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply with slack_dm_status text and about %q, so the reply opens "+
-			"with a link back to <%s|this card>; say the question in plain words and what each answer would do. The lane that asked stays stopped until they tap an answer.",
-			who, k.ID, k.ID, permalink)
+		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply with `cc-present reply --block %q --body <answer>` when the card is on a cc-present board, "+
+			"otherwise with slack_dm_status text and about %q; either way the reply opens with a link back to <%s|this card>. "+
+			"Say the question in plain words and what each answer would do. The lane that asked stays stopped until they tap an answer.",
+			who, k.ID, k.ID, k.ID, permalink)
 	}
 	if k.Waits {
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. The lane that asked is stopped on this answer: hand it to that lane now, "+

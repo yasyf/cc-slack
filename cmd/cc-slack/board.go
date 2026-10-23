@@ -16,6 +16,8 @@ import (
 
 const presentBinary = "cc-present"
 
+const questionOnBoard = "a question goes on the cc-present board first: put the card there with cc-present update-block, then run cc-present send. This card was posted anyway."
+
 type boardCard struct {
 	Waits       string    `json:"waits"`
 	Title       string    `json:"title"`
@@ -104,4 +106,12 @@ func (p *poller) forwardAnswer(ctx context.Context, db *sql.DB, watches []watch,
 			p.log.Printf("waiting ask %s: the board was not told: %v", ans.Waits, err)
 		}
 	}
+}
+
+func handPostedQuestion(b opBody) bool {
+	if b.Card == nil || b.Card.Waits == "" || b.Mirrored || b.RootOnly {
+		return false
+	}
+	_, err := exec.LookPath(presentBinary)
+	return err == nil
 }

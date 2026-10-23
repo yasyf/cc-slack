@@ -1546,6 +1546,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if ts != "" {
 		res["ts"], res["permalink"] = ts, id.permalink(id.DMChannelID, ts, thread)
 	}
+	if handPostedQuestion(b) {
+		res["warning"] = questionOnBoard
+	}
 	return ok(res)
 }
 

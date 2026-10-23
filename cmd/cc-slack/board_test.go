@@ -286,3 +286,29 @@ func TestOneDMStatusCallPostsACardGivenTextBesideIt(t *testing.T) {
 		t.Fatalf("posts = %+v, want the card titled by its text", posts)
 	}
 }
+
+func TestAHandPostedQuestionCardIsPostedWithAWarningNamingCcPresentSend(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	post := func(body map[string]any) map[string]string {
+		t.Helper()
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, body).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := post(map[string]any{"card": mergeCard()})
+	if res["ts"] == "" || !strings.Contains(res["warning"], "cc-present send") {
+		t.Fatalf("a hand-posted question card got %v, want it posted with a warning naming cc-present send", res)
+	}
+	mirrored := mergeCard()
+	mirrored.Waits = "step-4:deploy"
+	if res := post(map[string]any{"card": mirrored, "mirrored": true}); res["warning"] != "" {
+		t.Fatalf("a card cc-present sent got the warning %q", res["warning"])
+	}
+	if res := post(map[string]any{"card": statusCard{Status: "info", Title: "Landed"}}); res["warning"] != "" {
+		t.Fatalf("a status card that asks nothing got the warning %q", res["warning"])
+	}
+}
