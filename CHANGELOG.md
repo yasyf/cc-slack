@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-22
+
 ### Added
 - The capt-hook pack carries the Slack write permission hook, its thread carry, and the plain-words warning, with scrubbed replay fixtures. A project opts in with `[permissions] enabled = true` in `.claude/cc-slack.toml`; `[[permissions.clis]]` names other posting CLIs the hook checks.
 
@@ -63,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/yasyf/cc-slack/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/yasyf/cc-slack/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/yasyf/cc-slack/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/yasyf/cc-slack/compare/v0.1.4...v0.1.5
