@@ -276,13 +276,13 @@ def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
     if f"{REVOKE_LABEL}{channel}" in tags:
         return False
     if f"{GRANT_LABEL}{channel}" in tags:
-        return True
+        return None if thread else True
     if not ASKED <= tags or not holds(f"{answer['title']}\n{answer['body']}", channel):
         return None
     picked = answer["body"].partition("\nOptions:")[0]
     if STOP_POSTING.search(picked):
         return False
-    return True if KEEP_POSTING.search(picked) else None
+    return True if KEEP_POSTING.search(picked) and not thread else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +313,12 @@ class NotRevoked(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         found = standing_of(ctx)
         return None if found.answer is not None and not found.grants else []
+
+
+@dataclass(frozen=True, slots=True)
+class TopLevel(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        return None if ctx.place["thread"] else []
 
 
 def channel_name(channel: dict[str, Any]) -> str:
@@ -351,7 +357,7 @@ SLACK = Tickets(
     rules=(
         Rule("standing-grant", StandingGrant()),
         Rule("user-linked", UserSaid(Linked())),
-        Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(NotRevoked(), UserRuled("channel")))),
+        Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(TopLevel(), NotRevoked(), UserRuled("channel")))),
         Rule("owed-update", And(AwaitsReply(), Touched(Named()))),
         Rule("decide", Judged(Decide(RULES, contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
@@ -551,6 +557,7 @@ THREAD_GRANT = LABELED_GRANT | {
     "title": f"May the drive reply in {FOLLOWERS} thread {DANA_THREAD}, where a user reported the outage?",
     "tags": ["owner-ruling", "scope:durable", f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"],
 }
+KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 
 
@@ -750,7 +757,7 @@ on(
             case({"channel_id": SAM_USER, "text": "Hi Sam, could you grant the app Actions: Read?"}, tool="slack_send", transcript=owner_answered("Ask Sam about the app permission?", ["Yes", "No"], "Yes", id="sam"), commands=SAM_DM) >> ALLOW,
             case({"channel_id": SAM_USER, "text": "_(Alex's Claude)_ Hi Sam, could you grant the app Actions: Read?"}, tool="mcp__slack__slack_send_message", transcript=owner_answered("Ask Sam about the app permission?", ["Yes", "No"], "Yes", id="sam"), commands=SAM_DM) >> Allow(explicit=True),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", **said(f"fix the wording here {DANA_URL.replace(DANA_THREAD.replace('.', ''), BOT_ANSWERED['ts'].replace('.', ''))}")) >> ALLOW,
-            case(commands=NOT_DM | {"ccn answer search": json.dumps([{"id": "0207568abcdef", "title": "Reply in app-followers?", "body": f"Reply in {FOLLOWERS} whenever asked.", "updated_at": "2026-10-01T00:00:00+00:00", "tags": []}])}) >> ALLOW,
+            case(commands=NOT_DM | {"ccn answer search": json.dumps([{"id": "0207568abcdef", "title": "Reply in app-followers?", "body": f"Reply in {FOLLOWERS} whenever asked.", "updated_at": "2026-10-01T00:00:00+00:00", "tags": []}])}) >> DENY,
             case(DANA | {"text": "a different reply, later"}, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana")) >> ALLOW,
             case(transcript=touched("slack_reply", channel_id=FOLLOWERS, thread_ts=DANA_THREAD, text="fix is out"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case(transcript=touched("slack_thread", channel_id=FOLLOWERS, thread_ts=DANA_THREAD), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
@@ -826,6 +833,9 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"tags": ["scope:ephemeral"]})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
@@ -837,6 +847,8 @@ on(
             ) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't continue posting\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
             case(env=DISABLED) >> Allow(),
             case(env={}) >> Allow(),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a post'", env=DISABLED) >> Allow(),
