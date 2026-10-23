@@ -1519,21 +1519,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		if b.Card != nil || b.Text == "" {
 			return fail("about links a text reply back to a waiting card; send text, not a card")
 		}
-		own, _, err := sessionThread(hc.Ctx, hc.DB, sub.ID, id.DMChannelID)
+		link, err := a.cardLink(hc.Ctx, hc.DB, sub.ID, id, b.About)
 		if err != nil {
 			return fail(err.Error())
 		}
-		_, m, found := a.cards.waiting(id.DMChannelID, b.About, func(thread, _ string) bool { return thread == own })
-		ts := m.TS
-		if !found && own != "" {
-			if ts, found, err = threadCardTS(hc.Ctx, a.newAPI(id.Token), id.DMChannelID, own, b.About); err != nil {
-				return fail(err.Error())
-			}
-		}
-		if !found {
-			return fail(fmt.Sprintf("no waiting card %q in your DM to link back to", b.About))
-		}
-		msg.text = slackLink(id.permalink(id.DMChannelID, ts, own), "this card") + " " + msg.text
+		msg.text = link + " " + msg.text
 	}
 	if b.Card != nil {
 		msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
@@ -1752,6 +1742,24 @@ func (a *app) bindSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 	}
 	a.poller.nudge(cursorKey{id.DMChannelID, thread}, cursorKey{id.DMChannelID, ""})
 	return nil
+}
+
+func (a *app) cardLink(ctx context.Context, db *sql.DB, subjectID string, id identity, waits string) (string, error) {
+	own, _, err := sessionThread(ctx, db, subjectID, id.DMChannelID)
+	if err != nil {
+		return "", err
+	}
+	_, m, found := a.cards.waiting(id.DMChannelID, waits, func(thread, _ string) bool { return thread == own })
+	ts := m.TS
+	if !found && own != "" {
+		if ts, found, err = threadCardTS(ctx, a.newAPI(id.Token), id.DMChannelID, own, waits); err != nil {
+			return "", err
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("no waiting card %q in your DM to link back to", waits)
+	}
+	return slackLink(id.permalink(id.DMChannelID, ts, own), "this card"), nil
 }
 
 func threadCardTS(ctx context.Context, api slackAPI, channelID, threadTS, waits string) (string, bool, error) {
