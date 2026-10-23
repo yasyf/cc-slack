@@ -134,7 +134,8 @@ var (
 				"type": "string", "pattern": askIDPattern.String(),
 				"description": "makes this an ask card the asking lane stops on: the title is the question, the options plus a fixed Other and Explain more are its buttons, " +
 					"the card says the lane waits on the answer, and the answer's slack.action carries this id, the question, the label, and a capture line. " +
-					"Other takes the operator's next reply in the thread as a written-in answer. Explain more answers nothing; reply in the thread with a fuller explanation. " +
+					"Other opens a Slack modal, and the text typed there answers the card with other: true. " +
+					"Explain more answers nothing; reply with text and about set to this id, which opens the reply with a link back to the card. " +
 					"With cc-present installed the card also lands on this session's board, and the first answer on either surface wins. " +
 					"Needs options and recommended; takes no asks. Reusing an open waits id edits that card in place",
 			},
