@@ -1,5 +1,5 @@
 # /// script
-# dependencies = ["capt-hook>=12.101.15"]
+# dependencies = ["capt-hook>=12.104.0"]
 # ///
 
 from __future__ import annotations
