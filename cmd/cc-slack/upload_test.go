@@ -464,6 +464,45 @@ func TestUpdateMessageSendsTheTextWithItsLineBreaksAndClearsBlocks(t *testing.T)
 	}
 }
 
+func TestUpdateMessageRendersTextPastTheUpdateLimitAsSections(t *testing.T) {
+	var form url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form = r.Form
+		if len([]rune(form.Get("text"))) > 4000 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "msg_too_long"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": testChannel, "ts": "1800000000.000100"})
+	}))
+	t.Cleanup(srv.Close)
+	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
+
+	text := strings.Repeat("batch post line with a correction\n", 140)
+	if err := updateMessage(context.Background(), api, testChannel, "1800000000.000100", text, nil); err != nil {
+		t.Fatalf("edit of a %d-character text: %v", len(text), err)
+	}
+	var sections []struct {
+		Type string `json:"type"`
+		Text struct {
+			Text string `json:"text"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(form.Get("blocks")), &sections); err != nil {
+		t.Fatal(err)
+	}
+	var rendered strings.Builder
+	for _, s := range sections {
+		if s.Type != "section" {
+			t.Fatalf("block type = %q, want section", s.Type)
+		}
+		rendered.WriteString(s.Text.Text)
+	}
+	if rendered.String() != text {
+		t.Fatalf("sections render %d characters, want the whole %d-character text", rendered.Len(), len(text))
+	}
+}
+
 func TestBlocksCombineWithImagesOnly(t *testing.T) {
 	blocks, err := parseBlocks([]json.RawMessage{json.RawMessage(`{"type":"section","text":{"type":"mrkdwn","text":"the map"}}`)})
 	if err != nil {
