@@ -595,6 +595,7 @@ func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error
 
 func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
 	if len(files) == 0 {
+		text, blocks = fitText(text, blocks)
 		opts := id.postOptions(text, threadTS, extra...)
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
@@ -845,10 +846,7 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block) error {
-	if runes := []rune(text); len(runes) > maxUpdateTextChars {
-		blocks = messageBlocks(text, blocks)
-		text = string(runes[:maxUpdateTextChars-1]) + "…"
-	}
+	text, blocks = fitText(text, blocks)
 	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts,
 		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl())
 	return err
@@ -995,7 +993,7 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 }
 
 func messageText(m slack.Message) string {
-	parts := []string{m.Text}
+	parts := []string{sectionedText(m)}
 	for _, at := range m.Attachments {
 		fields := []string{at.Pretext, at.Title, at.Text, at.TitleLink}
 		if at.Title == "" && at.Text == "" {
@@ -1005,6 +1003,23 @@ func messageText(m slack.Message) string {
 	}
 	parts = slices.DeleteFunc(parts, func(p string) bool { return strings.TrimSpace(p) == "" })
 	return strings.Join(parts, "\n")
+}
+
+func sectionedText(m slack.Message) string {
+	prefix, short := strings.CutSuffix(m.Text, "…")
+	if !short {
+		return m.Text
+	}
+	var full strings.Builder
+	for _, block := range m.Blocks.BlockSet {
+		if section, ok := block.(*slack.SectionBlock); ok && section.Text != nil {
+			full.WriteString(section.Text.Text)
+		}
+	}
+	if full.Len() <= len(prefix) || !strings.HasPrefix(full.String(), prefix) {
+		return m.Text
+	}
+	return full.String()
 }
 
 func (a *app) handleChannels(hc daemon.HandlerCtx) daemon.Reply {
