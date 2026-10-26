@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-26
+
 ### Fixed
 
 - `send` and `reply` post text past 4,000 characters as one message. Slack split such a post into several messages and returned only the last one's `ts`, so an edit of the post hit the wrong message. The text now goes out as section blocks with a short notification text, and `thread` and `history` read the whole text back.
@@ -131,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/yasyf/cc-slack/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/yasyf/cc-slack/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/yasyf/cc-slack/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/yasyf/cc-slack/compare/v0.2.1...v0.2.2
