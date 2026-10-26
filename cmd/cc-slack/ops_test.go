@@ -807,6 +807,30 @@ func TestEditReplacesTheTextOfABotPost(t *testing.T) {
 	}
 }
 
+func TestSendAndEditOfTextPastTheTextLimitStayOneMessage(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+
+	text := strings.Repeat("• *What's risky:* a batch line with a <https://github.com/acme/app/pull/42829|PR link>\n", 60)
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": text})
+	posts := l.slack.sent()
+	if len(posts) != 1 || len([]rune(posts[0].text)) > maxTextChars {
+		t.Fatalf("posts = %d, text = %d runes, want one post whose text Slack will not split", len(posts), len([]rune(posts[0].text)))
+	}
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(posts[0].blocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if got := messageText(slack.Message{Msg: slack.Msg{Text: posts[0].text, Blocks: blocks}}); got != text {
+		t.Fatalf("read back %d runes, want the whole %d-rune text", len([]rune(got)), len([]rune(text)))
+	}
+
+	l.post(opEdit, map[string]any{"channel_id": testChannel, "ts": posts[0].ts, "text": text + "edited\n"})
+	if edits := l.slack.edited(); len(edits) != 1 || len([]rune(edits[0].text)) > maxTextChars || edits[0].blocks == "[]" {
+		t.Fatalf("edits = %+v, want one chat.update under the text limit carrying the text as blocks", edits)
+	}
+}
+
 func TestEditOfAMessageTheBotDidNotPostNamesNoMCPTool(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1123,6 +1147,21 @@ func TestMessageTextAppendsAttachments(t *testing.T) {
 			"[Triggered] SandSQL replica lane stale\nlane out of routing table\nhttps://app.datadoghq.com/monitors/315028131",
 		},
 		{"fallback only", slack.Msg{Text: "see below", Attachments: []slack.Attachment{{Fallback: "Sentry: TypeError"}}}, "see below\nSentry: TypeError"},
+		{
+			"long text as sections",
+			slack.Msg{Text: "first half…", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "first half, ", false, false), nil, nil),
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "second half", false, false), nil, nil),
+			}}},
+			"first half, second half",
+		},
+		{
+			"card whose text ends in an ellipsis",
+			slack.Msg{Text: "Deploying…", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "api is rolling out", false, false), nil, nil),
+			}}},
+			"Deploying…",
+		},
 	} {
 		if got := messageText(slack.Message{Msg: tc.msg}); got != tc.want {
 			t.Errorf("%s: messageText = %q, want %q", tc.name, got, tc.want)

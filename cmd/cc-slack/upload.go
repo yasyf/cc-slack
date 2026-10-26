@@ -20,12 +20,12 @@ import (
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true}
 
 const (
-	readyTries         = 40
-	readyWait          = 250 * time.Millisecond
-	maxBlocks          = 50
-	maxBlockChars      = 3000
-	maxUpdateTextChars = 4000
-	maxFileBytes       = 1 << 30
+	readyTries    = 40
+	readyWait     = 250 * time.Millisecond
+	maxBlocks     = 50
+	maxBlockChars = 3000
+	maxTextChars  = 4000
+	maxFileBytes  = 1 << 30
 )
 
 type rawBlock struct {
@@ -245,7 +245,7 @@ func postImages(ctx context.Context, api slackAPI, id identity, channelID, threa
 	if _, err := api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{Files: files}); err != nil {
 		return "", "", err
 	}
-	opts := append(id.postOptions(fallbackText(text, files), threadTS, extra...), slack.MsgOptionBlocks(imageMessage(text, blocks, files)...))
+	opts := append(id.postOptions(shortText(fallbackText(text, files)), threadTS, extra...), slack.MsgOptionBlocks(imageMessage(text, blocks, files)...))
 	for attempt := 1; ; attempt++ {
 		if err := awaitProcessed(ctx, api, files); err != nil {
 			return "", "", err
@@ -325,6 +325,22 @@ func messageBlocks(text string, blocks []slack.Block) []slack.Block {
 		return slices.Clone(blocks)
 	}
 	return textBlocks(text)
+}
+
+func fitText(text string, blocks []slack.Block) (string, []slack.Block) {
+	short := shortText(text)
+	if short == text {
+		return text, blocks
+	}
+	return short, messageBlocks(text, blocks)
+}
+
+func shortText(text string) string {
+	runes := []rune(text)
+	if len(runes) <= maxTextChars {
+		return text
+	}
+	return string(runes[:maxBlockChars]) + "…"
 }
 
 func textBlocks(text string) []slack.Block {
