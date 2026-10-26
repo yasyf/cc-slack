@@ -20,11 +20,12 @@ import (
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true}
 
 const (
-	readyTries    = 40
-	readyWait     = 250 * time.Millisecond
-	maxBlocks     = 50
-	maxBlockChars = 3000
-	maxFileBytes  = 1 << 30
+	readyTries         = 40
+	readyWait          = 250 * time.Millisecond
+	maxBlocks          = 50
+	maxBlockChars      = 3000
+	maxUpdateTextChars = 4000
+	maxFileBytes       = 1 << 30
 )
 
 type rawBlock struct {

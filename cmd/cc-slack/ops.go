@@ -845,6 +845,10 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block) error {
+	if runes := []rune(text); len(runes) > maxUpdateTextChars {
+		blocks = messageBlocks(text, blocks)
+		text = string(runes[:maxUpdateTextChars-1]) + "…"
+	}
 	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts,
 		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl())
 	return err
