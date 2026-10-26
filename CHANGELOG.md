@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-26
+
 ### Fixed
 
 - `edit` replaces a message with text past 4,000 characters, the most `chat.update` takes, by rendering the text as section blocks and sending the first 4,000 characters as its notification text. A replacement as long as a `send` posted no longer fails with `msg_too_long`.
@@ -125,7 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A TOML config for credentials (SSM or environment), badged avatars, doc-card previews, and the permission hook name.
 - PROTOCOL.md, the backend wire contract, with fixtures the daemon's types are tested against.
 
-[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/yasyf/cc-slack/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/yasyf/cc-slack/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/yasyf/cc-slack/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/yasyf/cc-slack/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/yasyf/cc-slack/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/yasyf/cc-slack/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/yasyf/cc-slack/compare/v0.1.9...v0.1.10
