@@ -400,7 +400,7 @@ again edits its card in place, and a group with no rows is posted only to
 edit an earlier card. A tap on a row's button goes to the board as that
 row's verdict through `cc-present slack-sync decided`, not to the session,
 and the row shows its answer. When the board refuses the tap, the row says
-why and keeps its buttons.
+why, and the next push asks it again.
 
 Each reply card carries the `options` plus fixed Ack and Pause buttons. A
 tap arrives as a `slack.action` event and a directive, steering this

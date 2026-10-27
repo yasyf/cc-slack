@@ -132,6 +132,9 @@ func (p *poller) decideOnBoard(ctx context.Context, db *sql.DB, watches []watch,
 	if len(sessions) == 0 {
 		return errNoStatusSession
 	}
+	if _, err := exec.LookPath(presentBinary); err != nil {
+		return err
+	}
 	var errs []error
 	for _, session := range sessions {
 		err := presentSync(ctx, session, "decided", d)

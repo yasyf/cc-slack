@@ -758,8 +758,8 @@ func (k cardAsk) block(v cardView) slack.Block {
 func (r cardRow) blocks(v cardView) []slack.Block {
 	text := slack.NewTextBlockObject(slack.MarkdownType, r.Text, false, false)
 	if ans, ok := v.answers[r.ID]; ok {
-		answered := r.Text + "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now)
-		return []slack.Block{section(cardRowBlock+r.ID, clipRunes(answered, cardMaxSectionLen))}
+		answer := "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now)
+		return []slack.Block{section(cardRowBlock+r.ID, clipRunes(r.Text, cardMaxSectionLen-runes(answer))+answer)}
 	}
 	buttons := make([]slack.BlockElement, 0, len(r.Buttons))
 	for i, label := range r.Buttons {

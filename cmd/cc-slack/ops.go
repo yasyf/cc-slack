@@ -1716,7 +1716,10 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 			t.remember(waits, edited)
 		}
 		cards.commit(t)
-		return thread, asked.TS, true, nil
+		if found {
+			return thread, asked.TS, true, nil
+		}
+		return thread, asked.TS, true, a.bindSessionThread(ctx, db, sub, id, thread)
 	}
 	res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
 	if err != nil {

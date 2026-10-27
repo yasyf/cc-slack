@@ -32,7 +32,11 @@ func groupCard(rows ...cardRow) statusCard {
 func failingPresent(t *testing.T, reason string) {
 	t.Helper()
 	bin := t.TempDir()
-	body := "#!/bin/sh\ncat > /dev/null\necho '" + reason + "' >&2\nexit 1\n"
+	message := filepath.Join(bin, "reason")
+	if err := os.WriteFile(message, []byte(reason), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := "#!/bin/sh\ncat > /dev/null\ncat '" + message + "' >&2\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(bin, presentBinary), []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +56,9 @@ func TestGroupCardRowsCarryTheirOwnButtonsAndShowTheirAnswer(t *testing.T) {
 	}
 	at := time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC)
 	blocks := card.replyBlocks(cardView{at: at, now: at, answers: map[string]askAnswer{"pg:42:abc1234": {At: at, Label: "Hold"}}})
-	var got []string
-	for _, b := range cardButtons(t, blocks) {
+	buttons := cardButtons(t, blocks)
+	got := make([]string, 0, len(buttons))
+	for _, b := range buttons {
 		got = append(got, b.ActionID+"="+b.Text.Text)
 		if k, ok := (cardActionPush{ActionID: b.ActionID, Value: b.Value}).tap(); !ok || !k.Row || k.ID != "pg:41:abc1234" || k.Label != b.Text.Text {
 			t.Fatalf("tap on %s = %+v, %v; want a row tap naming the row and its button", b.ActionID, k, ok)
