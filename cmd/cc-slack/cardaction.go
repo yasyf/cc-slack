@@ -338,6 +338,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.settled {
 		line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
 		if err := p.markOption(ctx, id, w.card, line); err != nil {
+			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
 		}
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
