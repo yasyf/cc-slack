@@ -59,6 +59,7 @@ type askTap struct {
 	Waits    bool     `json:"-"`
 	Explain  bool     `json:"-"`
 	Other    bool     `json:"-"`
+	Row      bool     `json:"-"`
 }
 
 type cardRef struct {
@@ -105,6 +106,11 @@ func (a cardActionPush) tap() (askTap, bool) {
 		_, waits, _ := strings.Cut(strings.TrimPrefix(a.ActionID, cardWaitAction), ":")
 		k, ok := decodeTap(a.Value, waits)
 		k.Waits = true
+		return k, ok && k.Label != ""
+	case strings.HasPrefix(a.ActionID, cardRowAction):
+		_, row, _ := strings.Cut(strings.TrimPrefix(a.ActionID, cardRowAction), ":")
+		k, ok := decodeTap(a.Value, row)
+		k.Row = true
 		return k, ok && k.Label != ""
 	case strings.HasPrefix(a.ActionID, cardWroteAction):
 		k, ok := decodeTap(a.Value, strings.TrimPrefix(a.ActionID, cardWroteAction))
@@ -260,6 +266,9 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	if k.Waits && !k.Explain {
 		return p.tapWaits(ctx, id, a, k, tappedAt, who, permalink)
 	}
+	if k.Row {
+		return p.tapRow(ctx, id, a, k, tappedAt, permalink)
+	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
@@ -301,6 +310,22 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s on %s: delivered, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	return nil
+}
+
+func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, permalink string) error {
+	db := p.plane.DB()
+	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
+	if err != nil {
+		return err
+	}
+	if err := p.decideOnBoard(ctx, db, watches, boardDecision{Row: k.ID, Label: k.Label, At: at, Permalink: permalink}); err != nil {
+		p.log.Printf("row %s on %s: %q did not reach the board: %v", k.ID, a.MessageTS, k.Label, err)
+		return p.confirmTap(ctx, id, a.ref(), cardRowBlock+k.ID,
+			"⚠️ *"+mrkdwnEscapes.Replace(k.Label)+"* did not reach the board: "+mrkdwnEscapes.Replace(clipRunes(err.Error(), cardMaxDetailLen)))
+	}
+	p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	_, err = p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
+	return err
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {

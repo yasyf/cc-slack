@@ -114,8 +114,8 @@ and forwards the tap.
 | `channel` | yes | The DM the card is in |
 | `message_ts` | yes | The card's timestamp |
 | `thread_ts` | yes | The status thread's root timestamp |
-| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, `cc-slack-card:ask:<id>`, `cc-slack-card:wait:<n>:<id>`, `cc-slack-card:wrote:<id>`, or `cc-slack-card:explain:<id>` |
-| `value` | for options, asks, and waiting cards | The option's label; for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent; for a waiting card's answer the JSON `{"id", "label", "q", "o"}`, `q` being the card's title, the question verbatim, and `o` every answer the card offers, the recommended one first; for an answer written in the Other modal the same JSON with the typed text as `label`; for its Explain more button the same JSON without `o` |
+| `action_id` | yes | `cc-slack-card:ack`, `cc-slack-card:pause`, `cc-slack-card:opt:<n>`, `cc-slack-card:ask:<id>`, `cc-slack-card:wait:<n>:<id>`, `cc-slack-card:wrote:<id>`, `cc-slack-card:explain:<id>`, or `cc-slack-card:row:<n>:<id>` |
+| `value` | for options, asks, waiting cards, and rows | The option's label; for a group card's row the JSON `{"id", "label"}`, `id` being the row's id and `label` the button tapped; for an ask the JSON `{"id", "label", "exp"}` the daemon put on the button, `exp` being the ask's expiry in Unix seconds or absent; for a waiting card's answer the JSON `{"id", "label", "q", "o"}`, `q` being the card's title, the question verbatim, and `o` every answer the card offers, the recommended one first; for an answer written in the Other modal the same JSON with the typed text as `label`; for its Explain more button the same JSON without `o` |
 | `action_ts` | yes | Slack's action timestamp, used to deduplicate taps |
 | `seq` | yes | The frame's sequence number |
 

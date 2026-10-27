@@ -378,6 +378,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
+| `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, each with up to 4 buttons |
 
 The first card opens the thread with a root card. Every later card posts
 in the thread and redraws the root with its latest state. The root keeps
@@ -392,6 +393,14 @@ An ask's `id` is stable: reusing it updates the same ask, and an answered
 ask stays answered, so a script can resend its asks every pass. `confirm`
 guards the tap with a dialog, and a tap after `expires_at` is dropped. The
 tap arrives as a `slack.action` whose payload carries the ask's `id`.
+
+A card with a `group` id is one group of rows on a cc-present board.
+cc-present posts it; you never write one by hand. Posting the same `group`
+again edits its card in place, and a group with no rows is posted only to
+edit an earlier card. A tap on a row's button goes to the board as that
+row's verdict through `cc-present slack-sync decided`, not to the session,
+and the row shows its answer. When the board refuses the tap, the row says
+why and keeps its buttons.
 
 Each reply card carries the `options` plus fixed Ack and Pause buttons. A
 tap arrives as a `slack.action` event and a directive, steering this

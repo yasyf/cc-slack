@@ -1666,11 +1666,17 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	now := a.now()
 	t := cards.draft(id.DMChannelID, thread)
 	previous := t.Reply
-	waits := msg.card.Waits
+	waits, group := msg.card.Waits, msg.card.Group
 	asked := t.Waiting[waits]
+	if group != "" {
+		asked = t.Groups[group]
+	}
 	if prior, done := t.Answers[waits]; waits != "" && done {
 		return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
 			waits, prior.Label, prior.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
+	}
+	if group != "" && asked == nil && len(msg.card.Rows) == 0 {
+		return thread, "", false, nil
 	}
 	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
 	if thread == "" {
@@ -1702,9 +1708,13 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
 			t.Reply = previous
 			cards.commit(t)
-			return "", "", false, fmt.Errorf("edit waiting card %q in place: %w", waits, err)
+			return "", "", false, fmt.Errorf("edit card %q in place: %w", cmp.Or(waits, group), err)
 		}
-		t.remember(waits, edited)
+		if group != "" {
+			t.rememberGroup(group, edited)
+		} else {
+			t.remember(waits, edited)
+		}
 		cards.commit(t)
 		return thread, asked.TS, true, nil
 	}
@@ -1715,7 +1725,10 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		return "", "", false, err
 	}
 	t.Reply.TS = res.TS
-	if waits != "" {
+	switch {
+	case group != "":
+		t.rememberGroup(group, t.Reply)
+	case waits != "":
 		t.remember(waits, t.Reply)
 	}
 	cards.commit(t)

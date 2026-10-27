@@ -49,6 +49,7 @@ type liveThread struct {
 	Root     *liveMessage            `json:"root,omitempty"`
 	Reply    *liveMessage            `json:"reply,omitempty"`
 	Waiting  map[string]*liveMessage `json:"waiting,omitempty"`
+	Groups   map[string]*liveMessage `json:"groups,omitempty"`
 	Timeline []timelineEntry         `json:"timeline,omitempty"`
 	Asks     []cardAsk               `json:"asks,omitempty"`
 	Answers  map[string]askAnswer    `json:"answers,omitempty"`
@@ -96,8 +97,15 @@ func (t *liveThread) remember(waits string, m *liveMessage) {
 	}
 }
 
+func (t *liveThread) rememberGroup(group string, m *liveMessage) {
+	if t.Groups == nil {
+		t.Groups = map[string]*liveMessage{}
+	}
+	t.Groups[group] = m
+}
+
 func (t *liveThread) messages() []*liveMessage {
-	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)))
+	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)))
 }
 
 func (t *liveThread) openAsks(now time.Time) []cardAsk {
@@ -236,7 +244,7 @@ func (l *liveCards) save() {
 func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
-		c.Timeline, c.Asks, c.Answers, c.Waiting = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting)
+		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
@@ -370,17 +378,19 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			redrawn[t.Reply.TS] = true
 		}
 	}
-	for waits, m := range t.Waiting {
-		if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
-			continue
-		}
-		text, blocks := m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs))
-		if err := l.update(ctx, api, t, &m, text, blocks); err != nil {
-			errs = append(errs, err)
-		} else if m == nil {
-			delete(t.Waiting, waits)
-		} else {
-			redrawn[m.TS] = true
+	for _, kept := range []map[string]*liveMessage{t.Waiting, t.Groups} {
+		for key, m := range kept {
+			if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
+				continue
+			}
+			text, blocks := m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs))
+			if err := l.update(ctx, api, t, &m, text, blocks); err != nil {
+				errs = append(errs, err)
+			} else if m == nil {
+				delete(kept, key)
+			} else {
+				redrawn[m.TS] = true
+			}
 		}
 	}
 	if t.Reply != nil && t.Reply.TS == first {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	"github.com/yasyf/cc-interact/daemon"
@@ -37,6 +38,13 @@ type boardAnswer struct {
 	Waits     string    `json:"waits"`
 	Label     string    `json:"label"`
 	Other     bool      `json:"other,omitempty"`
+	At        time.Time `json:"at"`
+	Permalink string    `json:"permalink"`
+}
+
+type boardDecision struct {
+	Row       string    `json:"row"`
+	Label     string    `json:"label"`
 	At        time.Time `json:"at"`
 	Permalink string    `json:"permalink"`
 }
@@ -90,22 +98,49 @@ func mirrorPosted(ctx context.Context, session string, op daemon.Op, body, reply
 	return presentSync(ctx, session, "posted", card)
 }
 
-func (p *poller) forwardAnswer(ctx context.Context, db *sql.DB, watches []watch, ans boardAnswer) {
-	told := map[string]bool{}
+func watchSessions(ctx context.Context, db *sql.DB, watches []watch) ([]string, error) {
+	var sessions []string
 	for _, w := range watches {
 		var session sql.NullString
 		if err := db.QueryRowContext(ctx, `SELECT session_id FROM subjects WHERE id = ?`, w.SubjectID).Scan(&session); err != nil {
-			p.log.Printf("waiting ask %s: the board was not told: find the session of subject %s: %v", ans.Waits, w.SubjectID, err)
-			continue
+			return sessions, fmt.Errorf("find the session of subject %s: %w", w.SubjectID, err)
 		}
-		if !session.Valid || told[session.String] {
-			continue
+		if session.Valid && !slices.Contains(sessions, session.String) {
+			sessions = append(sessions, session.String)
 		}
-		told[session.String] = true
-		if err := presentSync(ctx, session.String, "answered", ans); err != nil {
+	}
+	return sessions, nil
+}
+
+func (p *poller) forwardAnswer(ctx context.Context, db *sql.DB, watches []watch, ans boardAnswer) {
+	sessions, err := watchSessions(ctx, db, watches)
+	if err != nil {
+		p.log.Printf("waiting ask %s: the board was not told: %v", ans.Waits, err)
+	}
+	for _, session := range sessions {
+		if err := presentSync(ctx, session, "answered", ans); err != nil {
 			p.log.Printf("waiting ask %s: the board was not told: %v", ans.Waits, err)
 		}
 	}
+}
+
+func (p *poller) decideOnBoard(ctx context.Context, db *sql.DB, watches []watch, d boardDecision) error {
+	sessions, err := watchSessions(ctx, db, watches)
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return errNoStatusSession
+	}
+	var errs []error
+	for _, session := range sessions {
+		err := presentSync(ctx, session, "decided", d)
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func handPostedQuestion(b opBody) bool {
