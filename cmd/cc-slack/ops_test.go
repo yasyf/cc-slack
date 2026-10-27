@@ -1131,7 +1131,7 @@ func TestUpdateMessageDropsLinkPreviews(t *testing.T) {
 	}
 }
 
-func TestMessageTextAppendsAttachments(t *testing.T) {
+func TestMessageTextAppendsAttachmentsAndBlocks(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		msg  slack.Msg
@@ -1160,7 +1160,30 @@ func TestMessageTextAppendsAttachments(t *testing.T) {
 			slack.Msg{Text: "Deploying…", Blocks: slack.Blocks{BlockSet: []slack.Block{
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "api is rolling out", false, false), nil, nil),
 			}}},
-			"Deploying…",
+			"Deploying…\napi is rolling out",
+		},
+		{
+			"sentry alert in blocks",
+			slack.Msg{Text: "[api] Error: Not authorized", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "<https://acme.sentry.io/issues/7815544165/|*Error*>", false, false), nil, nil),
+				slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, "Short ID: API-1NH9", false, false)),
+				slack.NewActionBlock("", slack.NewButtonBlockElement("resolve", "resolve", slack.NewTextBlockObject(slack.PlainTextType, "Resolve", false, false)),
+					slack.NewButtonBlockElement("", "", slack.NewTextBlockObject(slack.PlainTextType, "View", false, false)).WithURL("https://acme.sentry.io/issues/7815544165/")),
+			}}},
+			"[api] Error: Not authorized\n<https://acme.sentry.io/issues/7815544165/|*Error*>\nShort ID: API-1NH9",
+		},
+		{
+			"attachment fields and blocks",
+			slack.Msg{Attachments: []slack.Attachment{{
+				Fallback: "[Triggered] lane stale",
+				Fields:   []slack.AttachmentField{{Title: "Env", Value: "prod"}},
+				Blocks: slack.Blocks{BlockSet: []slack.Block{
+					slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, "lane stale", false, false)),
+					slack.NewSectionBlock(nil, []*slack.TextBlockObject{slack.NewTextBlockObject(slack.MarkdownType, "*Team* aig", false, false)},
+						slack.NewAccessory(slack.NewButtonBlockElement("", "", slack.NewTextBlockObject(slack.PlainTextType, "Open", false, false)).WithURL("https://app.datadoghq.com/monitors/1"))),
+				}},
+			}}},
+			"[Triggered] lane stale\nEnv: prod\n*Team* aig\nhttps://app.datadoghq.com/monitors/1",
 		},
 	} {
 		if got := messageText(slack.Message{Msg: tc.msg}); got != tc.want {

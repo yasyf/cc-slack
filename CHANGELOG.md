@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `thread`, `history`, and watched messages print the text and link buttons a message carries in its blocks, and each attachment's fields and blocks. An alert app such as Sentry that posts its issue link only in blocks now shows that link in place of its one-line summary.
+
 ### Added
 
 - `cc-slack card-answer --settled --other --label "<outcome>"` closes a waiting card that events already settled, such as a merge card whose pull request landed. The card shows the outcome, linked to `--via`, in place of its buttons. No session receives a tap or capture, and later answers are refused.
