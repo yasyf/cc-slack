@@ -96,6 +96,7 @@ type opBody struct {
 	Waits     string            `json:"waits"`
 	Label     string            `json:"label"`
 	Other     bool              `json:"other"`
+	Settled   bool              `json:"settled"`
 	Via       string            `json:"via"`
 	About     string            `json:"about"`
 	ticketSpend
@@ -1589,6 +1590,8 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail("card-answer needs url, the Slack card's permalink")
 	case b.Via == "":
 		return fail("card-answer needs via, the url of the surface the answer came from")
+	case b.Settled && !b.Other:
+		return fail("card-answer settled takes a written-in outcome with other")
 	}
 	label := b.Label
 	if b.Other {
@@ -1598,7 +1601,7 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Via)
+	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Settled, b.Via)
 	if err != nil {
 		return fail(err.Error())
 	}
