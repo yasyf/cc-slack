@@ -994,16 +994,69 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 }
 
 func messageText(m slack.Message) string {
-	parts := []string{sectionedText(m)}
+	parts := append([]string{sectionedText(m)}, blockTexts(m.Blocks)...)
 	for _, at := range m.Attachments {
-		fields := []string{at.Pretext, at.Title, at.Text, at.TitleLink}
+		parts = append(parts, at.Pretext, at.Title, at.Text, at.TitleLink)
 		if at.Title == "" && at.Text == "" {
-			fields = []string{at.Pretext, at.Fallback}
+			parts = append(parts, at.Fallback)
 		}
-		parts = append(parts, fields...)
+		for _, f := range at.Fields {
+			parts = append(parts, strings.TrimPrefix(f.Title+": "+f.Value, ": "))
+		}
+		parts = append(parts, blockTexts(at.Blocks)...)
+		for _, action := range at.Actions {
+			parts = append(parts, action.URL)
+		}
 	}
-	parts = slices.DeleteFunc(parts, func(p string) bool { return strings.TrimSpace(p) == "" })
-	return strings.Join(parts, "\n")
+	var out []string
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" || slices.ContainsFunc(out, func(o string) bool { return strings.Contains(o, p) }) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, "\n")
+}
+
+func blockTexts(blocks slack.Blocks) []string {
+	var out []string
+	text := func(t *slack.TextBlockObject) {
+		if t != nil {
+			out = append(out, t.Text)
+		}
+	}
+	button := func(e slack.BlockElement) {
+		if b, ok := e.(*slack.ButtonBlockElement); ok && b.URL != "" {
+			out = append(out, b.URL)
+		}
+	}
+	for _, block := range blocks.BlockSet {
+		switch b := block.(type) {
+		case *slack.HeaderBlock:
+			text(b.Text)
+		case *slack.SectionBlock:
+			text(b.Text)
+			for _, f := range b.Fields {
+				text(f)
+			}
+			if b.Accessory != nil && b.Accessory.ButtonElement != nil {
+				button(b.Accessory.ButtonElement)
+			}
+		case *slack.ContextBlock:
+			for _, e := range b.ContextElements.Elements {
+				if t, ok := e.(*slack.TextBlockObject); ok {
+					text(t)
+				}
+			}
+		case *slack.ActionBlock:
+			if b.Elements != nil {
+				for _, e := range b.Elements.ElementSet {
+					button(e)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func sectionedText(m slack.Message) string {
