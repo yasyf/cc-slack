@@ -351,23 +351,33 @@ func (c statusCard) checkRows(rootOnly bool) error {
 	}
 	ids := map[string]bool{}
 	for _, r := range c.Rows {
-		if !askIDPattern.MatchString(r.ID) || ids[r.ID] {
-			return fmt.Errorf("card row id %q must be unique and 1 to 64 letters, digits, dots, colons, underscores, or hyphens", r.ID)
+		if ids[r.ID] {
+			return fmt.Errorf("card row id %q repeats", r.ID)
 		}
 		ids[r.ID] = true
-		if strings.TrimSpace(r.Text) == "" || runes(r.Text) > cardMaxSectionLen {
-			return fmt.Errorf("card row %q needs text of 1 to %d characters", r.ID, cardMaxSectionLen)
+		if err := r.check(); err != nil {
+			return err
 		}
-		if len(r.Buttons) == 0 || len(r.Buttons) > cardMaxRowButtons {
-			return fmt.Errorf("card row %q carries %d buttons, 1 to %d", r.ID, len(r.Buttons), cardMaxRowButtons)
+	}
+	return nil
+}
+
+func (r cardRow) check() error {
+	if !askIDPattern.MatchString(r.ID) {
+		return fmt.Errorf("card row id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", r.ID)
+	}
+	if strings.TrimSpace(r.Text) == "" || runes(r.Text) > cardMaxSectionLen {
+		return fmt.Errorf("card row %q needs text of 1 to %d characters", r.ID, cardMaxSectionLen)
+	}
+	if len(r.Buttons) == 0 || len(r.Buttons) > cardMaxRowButtons {
+		return fmt.Errorf("card row %q carries %d buttons, 1 to %d", r.ID, len(r.Buttons), cardMaxRowButtons)
+	}
+	seen := map[string]bool{}
+	for _, b := range r.Buttons {
+		if b == "" || runes(b) > cardMaxLabelLen || seen[b] {
+			return fmt.Errorf("card row %q button %q must be unique and 1 to %d characters", r.ID, b, cardMaxLabelLen)
 		}
-		seen := map[string]bool{}
-		for _, b := range r.Buttons {
-			if b == "" || runes(b) > cardMaxLabelLen || seen[b] {
-				return fmt.Errorf("card row %q button %q must be unique and 1 to %d characters", r.ID, b, cardMaxLabelLen)
-			}
-			seen[b] = true
-		}
+		seen[b] = true
 	}
 	return nil
 }

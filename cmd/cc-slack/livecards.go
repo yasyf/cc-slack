@@ -104,6 +104,22 @@ func (t *liveThread) rememberGroup(group string, m *liveMessage) {
 	t.Groups[group] = m
 }
 
+func (t *liveThread) kept(card statusCard) *liveMessage {
+	if card.Group != "" {
+		return t.Groups[card.Group]
+	}
+	return t.Waiting[card.Waits]
+}
+
+func (t *liveThread) keep(card statusCard, m *liveMessage) {
+	switch {
+	case card.Group != "":
+		t.rememberGroup(card.Group, m)
+	case card.Waits != "":
+		t.remember(card.Waits, m)
+	}
+}
+
 func (t *liveThread) messages() []*liveMessage {
 	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)))
 }
