@@ -119,6 +119,36 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	}
 }
 
+func TestASettledCardShowsItsOutcomeAndTellsNoSession(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	settle := map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "Landed on dev as 5480445", "other": true, "settled": true, "via": "https://github.com/acme/app/pull/41"}
+
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{
+		"waits": "step-3:merge", "url": c.url(), "label": "Merge", "settled": true, "via": "https://github.com/acme/app/pull/41",
+	})); err == nil || !strings.Contains(err.Error(), "settled takes a written-in outcome") {
+		t.Fatalf("a settled answer naming an option: %v", err)
+	}
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, settle).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("settle = %+v, %v; want it answered", res, err)
+	}
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("a settled card steered the session: %q", got)
+	}
+	if payloads := strings.Join(l.channelPayloads(), "\n"); strings.Contains(payloads, "Landed on dev") {
+		t.Fatalf("a settled card reached the channel: %s", payloads)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ <https://github.com/acme/app/pull/41|Landed on dev as 5480445>") ||
+		strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the outcome linked in place of the buttons", edits)
+	}
+	if res := answerOnBoard(t, l, c, "Merge"); res.Answered {
+		t.Fatalf("an answer after the card settled = %+v, want it refused", res)
+	}
+}
+
 func TestWrittenInAnswerFromTheOtherModalAnswersTheCardOnce(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

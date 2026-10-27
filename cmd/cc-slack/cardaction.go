@@ -76,6 +76,7 @@ type waitsAnswer struct {
 	where    string
 	via      string
 	dedup    string
+	settled  bool
 }
 
 var errNoStatusSession = errors.New("no session holds that status thread")
@@ -334,6 +335,13 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
+	if w.settled {
+		line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
+		if err := p.markOption(ctx, id, w.card, line); err != nil {
+			return cardAnswerResult{}, err
+		}
+		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, w.card.channel, w.card.thread)
 	if err == nil && len(watches) == 0 {
@@ -380,7 +388,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other bool, via string) (cardAnswerResult, error) {
+func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled bool, via string) (cardAnswerResult, error) {
 	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
 	if !ok {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your status threads", waits, card)
@@ -392,14 +400,15 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 	at := p.now()
 	permalink := id.permalink(id.DMChannelID, m.TS, thread)
 	return p.answerWaits(ctx, id, waitsAnswer{
-		card:   cardRef{id.DMChannelID, thread, m.TS},
-		tap:    askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
-		other:  other,
-		at:     at,
-		source: fmt.Sprintf("Board answer from %s, your operator, on %s for your status card posted %s (%s)", id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
-		where:  "the cc-present board " + via + ", which answers Slack card " + permalink,
-		via:    via,
-		dedup:  fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
+		card:    cardRef{id.DMChannelID, thread, m.TS},
+		tap:     askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
+		other:   other,
+		at:      at,
+		source:  fmt.Sprintf("Board answer from %s, your operator, on %s for your status card posted %s (%s)", id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
+		where:   "the cc-present board " + via + ", which answers Slack card " + permalink,
+		via:     via,
+		dedup:   fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
+		settled: settled,
 	})
 }
 
