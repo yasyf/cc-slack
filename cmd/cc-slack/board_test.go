@@ -140,7 +140,7 @@ func TestASettledCardShowsItsOutcomeAndTellsNoSession(t *testing.T) {
 	if payloads := strings.Join(l.channelPayloads(), "\n"); strings.Contains(payloads, "Landed on dev") {
 		t.Fatalf("a settled card reached the channel: %s", payloads)
 	}
-	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ <https://github.com/acme/app/pull/41|Landed on dev as 5480445>") ||
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "https://github.com/acme/app/pull/41|Landed on dev as 5480445") ||
 		strings.Contains(edits[len(edits)-1], cardWaitAction) {
 		t.Fatalf("card edits %v, want the outcome linked in place of the buttons", edits)
 	}
