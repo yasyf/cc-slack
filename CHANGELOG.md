@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A dm-status card with a `group` id and `rows` asks a cc-present board's rows on Slack, each row with its own buttons. Posting the same `group` again edits its card in place, and an empty group is posted only to edit an earlier card. A tap on a row is sent to the board with `cc-present slack-sync decided` and recorded there as the row's verdict, not sent to the session. The row then shows its answer, or why the board refused it, and a refused row asks again on the next push.
+
 ## [0.2.5] - 2026-10-26
 
 ### Fixed

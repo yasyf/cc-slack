@@ -47,6 +47,12 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"recommends a stranger":  {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go", "stop"}, Recommended: "wait"},
 		"marks it in a label":    {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go (Recommended)", "stop"}, Recommended: "go (Recommended)"},
 		"recommends, no waits":   {Status: "needs_you", Title: "x", Options: []string{"go", "stop"}, Recommended: "go"},
+		"rows, no group":         {Status: "needs_you", Title: "x", Rows: []cardRow{prRow(41)}},
+		"group with options":     {Status: "needs_you", Title: "x", Group: "pg:login", Options: []string{"go"}, Rows: []cardRow{prRow(41)}},
+		"repeated row":           {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{prRow(41), prRow(41)}},
+		"row repeats a button":   {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{{ID: "r", Text: "t", Buttons: []string{"Hold", "Hold"}}}},
+		"row without buttons":    {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{{ID: "r", Text: "t"}}},
+		"twenty-one rows":        {Status: "needs_you", Title: "x", Group: "pg:login", Rows: prRows(21)},
 	} {
 		if err := card.check(time.Now(), false); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)

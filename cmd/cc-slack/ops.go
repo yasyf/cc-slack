@@ -1667,10 +1667,13 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	t := cards.draft(id.DMChannelID, thread)
 	previous := t.Reply
 	waits := msg.card.Waits
-	asked := t.Waiting[waits]
+	asked := t.kept(*msg.card)
 	if prior, done := t.Answers[waits]; waits != "" && done {
 		return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
 			waits, prior.Label, prior.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
+	}
+	if msg.card.Group != "" && asked == nil && len(msg.card.Rows) == 0 {
+		return thread, "", false, nil
 	}
 	t.apply(*msg.card, msg.tag, now, msg.rootOnly)
 	if thread == "" {
@@ -1692,40 +1695,42 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		cards.commit(t)
 		return thread, "", true, nil
 	}
-	text, blocks := t.replyMessage(now, cards.refs)
-	if asked != nil {
-		edited := t.Reply
-		edited.TS = asked.TS
-		if previous != nil && previous.TS != asked.TS {
-			t.Reply = previous
-		}
-		if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
-			t.Reply = previous
-			cards.commit(t)
-			return "", "", false, fmt.Errorf("edit waiting card %q in place: %w", waits, err)
-		}
-		t.remember(waits, edited)
-		cards.commit(t)
-		return thread, asked.TS, true, nil
-	}
-	res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
+	reply, err := a.placeReply(ctx, db, id, t, thread, previous, asked)
 	if err != nil {
 		t.Reply = previous
 		cards.commit(t)
 		return "", "", false, err
 	}
-	t.Reply.TS = res.TS
-	if waits != "" {
-		t.remember(waits, t.Reply)
-	}
+	t.keep(*msg.card, reply)
 	cards.commit(t)
 	if found {
-		return thread, res.TS, true, nil
+		return thread, reply.TS, true, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, thread); err != nil {
-		return "", res.TS, true, err
+		return "", reply.TS, true, err
 	}
-	return thread, res.TS, true, nil
+	return thread, reply.TS, true, nil
+}
+
+func (a *app) placeReply(ctx context.Context, db *sql.DB, id identity, t *liveThread, thread string, previous, asked *liveMessage) (*liveMessage, error) {
+	reply := t.Reply
+	text, blocks := t.replyMessage(a.now(), a.cards.refs)
+	if asked == nil {
+		res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
+		if err != nil {
+			return nil, err
+		}
+		reply.TS = res.TS
+		return reply, nil
+	}
+	reply.TS = asked.TS
+	if previous != nil && previous.TS != asked.TS {
+		t.Reply = previous
+	}
+	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
+		return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(reply.Card.Waits, reply.Card.Group), err)
+	}
+	return reply, nil
 }
 
 func (a *app) redrawRoot(ctx context.Context, db *sql.DB, id identity, t *liveThread, now time.Time, rootOnly bool) error {

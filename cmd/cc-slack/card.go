@@ -24,6 +24,7 @@ const (
 	cardAskBlock      = "card-ask-"
 	cardWaitBlock     = "card-wait"
 	cardTappedBlock   = "card-tapped-"
+	cardRowBlock      = "card-row-"
 	cardAckAction     = cardActionPrefix + ":ack"
 	cardPauseAction   = cardActionPrefix + ":pause"
 	cardOptionAction  = cardActionPrefix + ":opt:"
@@ -33,6 +34,7 @@ const (
 	cardExplainAction = cardActionPrefix + ":explain:"
 	cardOtherAction   = cardActionPrefix + ":other:"
 	cardWroteAction   = cardActionPrefix + ":wrote:"
+	cardRowAction     = cardActionPrefix + ":row:"
 	cardExplainLabel  = "Explain more"
 	cardOtherLabel    = "Other"
 	cardRecommended   = "(Recommended)"
@@ -43,6 +45,8 @@ const (
 	cardMaxLinks      = 5
 	cardMaxRefs       = 10
 	cardMaxAsks       = 5
+	cardMaxRows       = 20
+	cardMaxRowButtons = 4
 	cardMaxFacts      = 10
 	cardMaxRollup     = 50
 	cardMaxTimeline   = 5
@@ -93,6 +97,14 @@ type statusCard struct {
 	Rollup      *cardRollup   `json:"rollup,omitempty"`
 	Waits       string        `json:"waits,omitempty"`
 	Recommended string        `json:"recommended,omitempty"`
+	Group       string        `json:"group,omitempty"`
+	Rows        []cardRow     `json:"rows,omitempty"`
+}
+
+type cardRow struct {
+	ID      string   `json:"id"`
+	Text    string   `json:"text"`
+	Buttons []string `json:"buttons"`
 }
 
 type cardLink struct {
@@ -189,6 +201,7 @@ func (c statusCard) check(now time.Time, rootOnly bool) error {
 		c.checkAsks(now),
 		c.checkFacts(),
 		c.checkRollup(),
+		c.checkRows(rootOnly),
 	)
 }
 
@@ -323,6 +336,52 @@ func (c statusCard) checkAsks(now time.Time) error {
 	return nil
 }
 
+func (c statusCard) checkRows(rootOnly bool) error {
+	switch {
+	case c.Group == "" && len(c.Rows) > 0:
+		return errors.New("rows ride a group card; set group too")
+	case c.Group == "":
+		return nil
+	case !askIDPattern.MatchString(c.Group):
+		return fmt.Errorf("card group id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", c.Group)
+	case rootOnly || c.Waits != "" || len(c.Options) > 0 || len(c.Asks) > 0:
+		return errors.New("a group card is a reply card whose rows carry its buttons; it takes no root_only, waits, options, or asks")
+	case len(c.Rows) > cardMaxRows:
+		return fmt.Errorf("group card carries %d rows, at most %d", len(c.Rows), cardMaxRows)
+	}
+	ids := map[string]bool{}
+	for _, r := range c.Rows {
+		if ids[r.ID] {
+			return fmt.Errorf("card row id %q repeats", r.ID)
+		}
+		ids[r.ID] = true
+		if err := r.check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r cardRow) check() error {
+	if !askIDPattern.MatchString(r.ID) {
+		return fmt.Errorf("card row id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", r.ID)
+	}
+	if strings.TrimSpace(r.Text) == "" || runes(r.Text) > cardMaxSectionLen {
+		return fmt.Errorf("card row %q needs text of 1 to %d characters", r.ID, cardMaxSectionLen)
+	}
+	if len(r.Buttons) == 0 || len(r.Buttons) > cardMaxRowButtons {
+		return fmt.Errorf("card row %q carries %d buttons, 1 to %d", r.ID, len(r.Buttons), cardMaxRowButtons)
+	}
+	seen := map[string]bool{}
+	for _, b := range r.Buttons {
+		if b == "" || runes(b) > cardMaxLabelLen || seen[b] {
+			return fmt.Errorf("card row %q button %q must be unique and 1 to %d characters", r.ID, b, cardMaxLabelLen)
+		}
+		seen[b] = true
+	}
+	return nil
+}
+
 func (c statusCard) checkRollup() error {
 	r := c.Rollup
 	if r == nil {
@@ -389,7 +448,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 	if next.Rollup != nil {
 		c.Rollup = next.Rollup
 	}
-	c.Options, c.Asks, c.Waits, c.Recommended = nil, nil, "", ""
+	c.Options, c.Asks, c.Waits, c.Recommended, c.Group, c.Rows = nil, nil, "", "", "", nil
 	return c
 }
 
@@ -706,6 +765,24 @@ func (k cardAsk) block(v cardView) slack.Block {
 	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, slack.NewAccessory(b), slack.SectionBlockOptionBlockID(id))
 }
 
+func (r cardRow) blocks(v cardView) []slack.Block {
+	text := slack.NewTextBlockObject(slack.MarkdownType, r.Text, false, false)
+	if ans, ok := v.answers[r.ID]; ok {
+		answer := "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now)
+		return []slack.Block{section(cardRowBlock+r.ID, clipRunes(r.Text, cardMaxSectionLen-runes(answer))+answer)}
+	}
+	buttons := make([]slack.BlockElement, 0, len(r.Buttons))
+	for i, label := range r.Buttons {
+		b := slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardRowAction, i, r.ID), string(mustJSON(askTap{ID: r.ID, Label: label})),
+			slack.NewTextBlockObject(slack.PlainTextType, label, true, false))
+		if i == 0 {
+			b.Style = slack.StylePrimary
+		}
+		buttons = append(buttons, b)
+	}
+	return []slack.Block{slack.NewSectionBlock(text, nil, nil), slack.NewActionBlock(cardRowBlock+r.ID, buttons...)}
+}
+
 func askBlocks(asks []cardAsk, v cardView) []slack.Block {
 	blocks := make([]slack.Block, 0, min(len(asks), cardMaxAsks)+1)
 	for i, k := range asks {
@@ -745,6 +822,12 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.refs(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
+	if c.Group != "" {
+		for _, r := range c.Rows {
+			blocks = append(blocks, r.blocks(v)...)
+		}
+		return append(blocks, c.context(v.tag, v.at, ""))
+	}
 	if v.tapped != "" {
 		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
 	}
