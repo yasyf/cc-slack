@@ -13,7 +13,7 @@ require (
 	github.com/slack-go/slack v0.29.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yasyf/cc-interact v0.39.0
-	github.com/yasyf/daemonkit v0.35.1
+	github.com/yasyf/daemonkit v0.35.2
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 )
