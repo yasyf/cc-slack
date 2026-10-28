@@ -12,8 +12,8 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/slack-go/slack v0.29.0
 	github.com/spf13/cobra v1.10.2
-	github.com/yasyf/cc-interact v0.38.1-0.20261028042730-4062b9bc5703
-	github.com/yasyf/daemonkit v0.34.1-0.20261028043144-de26bfed792d
+	github.com/yasyf/cc-interact v0.39.0
+	github.com/yasyf/daemonkit v0.35.1
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 )
