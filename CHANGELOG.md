@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Any process running as your user can now connect to the cc-slack daemon's socket. The daemon no longer checks a caller's code signature or user ID. Each command names its build by the version string instead of SHA-256-hashing the executable, and it does not run `launchctl print` when the daemon already serves this release. A dirty `task build` stamps its version with the build time, so each local build replaces the running daemon. The first command after upgrading stops the old daemon with SIGTERM, because the old daemon speaks an older wire protocol.
+
+### Removed
+
+- `--rebuild`. The daemon is now replaced exactly when its version differs, and a dirty local build always gets a new version, so the flag has nothing left to force.
+
 ### Fixed
 
 - `thread`, `history`, and watched messages print the text and link buttons a message carries in its blocks, and each attachment's fields and blocks. An alert app such as Sentry that posts its issue link only in blocks now shows that link in place of its one-line summary.

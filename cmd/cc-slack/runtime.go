@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,10 +12,7 @@ import (
 	"github.com/yasyf/daemonkit/paths"
 )
 
-var (
-	appVersion = "0.0.0"
-	rebuild    bool
-)
+var appVersion = "0.0.0"
 
 const (
 	binaryName   = "cc-slack"
@@ -30,7 +26,7 @@ const (
 func appPaths() paths.Paths { return paths.Paths{App: appDir} }
 
 func appSpec() (daemonkit.Daemon, error) {
-	program, err := daemonkit.Stable()
+	program, err := daemonkit.Stable(appVersion)
 	if err != nil {
 		return daemonkit.Daemon{}, fmt.Errorf("build stable daemon program: %w", err)
 	}
@@ -40,7 +36,6 @@ func appSpec() (daemonkit.Daemon, error) {
 		Args:    []string{"daemon"},
 		Log:     appPaths().LogPath(),
 		Restart: daemonkit.RestartOnFailure,
-		Trust:   daemonkit.Trust{Serving: daemonkit.ServingSameUser()},
 	}), nil
 }
 
@@ -55,8 +50,7 @@ var launcher = sync.OnceValue(func() daemon.Launcher {
 func restarting(err error) bool {
 	return daemonkit.Undispatched(err) && (errors.Is(err, daemonkit.ErrAbsent) ||
 		errors.Is(err, daemonkit.ErrDraining) ||
-		errors.Is(err, daemonkit.ErrNotReady) ||
-		errors.Is(err, daemonkit.ErrPeerGone))
+		errors.Is(err, daemonkit.ErrNotReady))
 }
 
 func awaitRestart(ctx context.Context) error {
@@ -90,31 +84,8 @@ func probeIncumbent(ctx context.Context) (daemonkit.Health, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, daemon.UpgradeTimeout)
 	defer cancel()
-	control, err := client.Control(ctx)
-	if err != nil {
-		return daemonkit.Health{}, err
-	}
-	defer func() { _ = control.Close(ctx) }()
-	return control.Health(ctx)
-}
-
-func servesRelease(health daemonkit.Health, build string) bool {
-	var detail daemon.HealthDetail
-	if health.Phase != daemonkit.PhaseReady || json.Unmarshal(health.Detail, &detail) != nil {
-		return false
-	}
-	return detail.RuntimeBuild == build
-}
-
-func unlessServingRelease(probe func(context.Context) (daemonkit.Health, error), ensure func(context.Context) error) func(context.Context) error {
-	return func(ctx context.Context) error {
-		if !rebuild {
-			if health, err := probe(ctx); err == nil && servesRelease(health, appVersion) {
-				return nil
-			}
-		}
-		return ensure(ctx)
-	}
+	defer func() { _ = client.Close(ctx) }()
+	return client.Health(ctx)
 }
 
 func newClient(context.Context) (*daemon.Client, error) { return launcher().NewClient() }
