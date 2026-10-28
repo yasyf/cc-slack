@@ -30,9 +30,9 @@ func TestWritesWithoutACoveringTicketNeverReachSlack(t *testing.T) {
 }
 
 func TestSessionsWithoutPermissionsEnabledWriteWithoutATicket(t *testing.T) {
-	l := startDaemon(t)
+	unpermitted := projectWith(t, false)
+	l := startDaemon(t, func(a *app) { a.claudeCwd = unpermitted })
 	loggedIn(t, l)
-	l.app.claudeCwd = projectWith(t, false)
 
 	var res postResult
 	if err := json.Unmarshal(l.do(opSend, map[string]any{"channel_id": testChannel, "text": "PR is up"}).Body, &res); err != nil {
