@@ -22,8 +22,8 @@ func deps() cmd.Deps {
 		Paths:                  appPaths(),
 		Version:                appVersion,
 		NewClient:              newClient,
-		EnsureCurrent:          nameReconnect(requireCurrentState(unlessServingRelease(probeIncumbent, func(ctx context.Context) error { return launcher().EnsureCurrent(ctx, daemon.UpgradeTimeout) }))),
-		EnsureCurrentIfRunning: nameReconnect(requireCurrentState(unlessServingRelease(probeIncumbent, func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) }))),
+		EnsureCurrent:          nameReconnect(requireCurrentState(func(ctx context.Context) error { return launcher().EnsureCurrent(ctx, daemon.UpgradeTimeout) })),
+		EnsureCurrentIfRunning: nameReconnect(requireCurrentState(func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) })),
 		Stop:                   func(ctx context.Context) error { return launcher().Stop(ctx, daemon.UpgradeTimeout) },
 		ClaudePID:              procs.ClaudePID,
 		WindowAlive:            procs.LiveClaude,
@@ -56,7 +56,6 @@ func root() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	r.PersistentFlags().BoolVar(&rebuild, "rebuild", false, "restart the daemon onto this build even when it already serves the same release")
 	r.AddCommand(
 		cmd.DaemonCmd(d),
 		cmd.StopCmd(d),

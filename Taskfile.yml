@@ -2,7 +2,7 @@ version: '3'
 
 vars:
   VERSION:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    sh: git describe --tags --always --dirty=-dirty.$(date +%s) 2>/dev/null || echo dev
   LDFLAGS: >-
     -s -w
     -X main.appVersion={{.VERSION}}
