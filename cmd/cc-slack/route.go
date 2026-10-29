@@ -92,7 +92,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		base:   eventMessage,
 		origin: origin,
 		dedup:  fmt.Sprintf("slack:%d:%s", w.ID, m.Timestamp),
-		line:   messageLine(msg, !msg.FromClaude && m.User == id.UserID),
+		line:   messageLine(msg, id.fromOperator(m)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)

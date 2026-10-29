@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -1161,8 +1162,14 @@ func peerNames(ctx context.Context, api slackAPI, peer, name string) []string {
 	return slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(names, func(n string) bool { return n == "" }))))
 }
 
+var fallbackMarker = regexp.MustCompile(`^\s*_\([^)\n]+['’]s Claude\)_`)
+
 func (id identity) fromClaude(m slack.Message) bool {
-	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID)
+	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID) || fallbackMarker.MatchString(m.Text)
+}
+
+func (id identity) fromOperator(m slack.Message) bool {
+	return m.User == id.UserID && !id.fromClaude(m)
 }
 
 func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {

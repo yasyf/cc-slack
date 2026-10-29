@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -265,6 +266,39 @@ func TestPollerFlagsAnotherSessionsPostAsFromClaude(t *testing.T) {
 	}
 }
 
+var fallbackEchoes = []string{
+	"_(Yasyf's Claude)_ *10:10 PM status*\n\n*Done since 8 PM*",
+	"_(Yasyf's Claude)_ *11:33 PM, one tap when you can*\n\nThe new code stopped compiling on dev at 10:02 PM",
+	"_(Yasyf's Claude)_ *11:54 PM, alert change live*\n\nYour 11:28 PM platform release passed and is healthy",
+}
+
+func TestPollerFlagsTheOperatorsFallbackPostsAsFromClaude(t *testing.T) {
+	f := newFixture(t)
+	f.watch(agent.TopLevel, testThread)
+	for i, text := range fallbackEchoes {
+		f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: fmt.Sprintf("180000000%d.000300", i), ThreadTimestamp: testThread, User: testUser, Text: text}})
+	}
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000009.000300", ThreadTimestamp: testThread, User: testUser, Text: "_(not a marker)_ ship it"}})
+
+	f.tick()
+	if len(f.plane.events) != 4 || len(f.plane.directives) != 4 {
+		t.Fatalf("events = %d, directives = %d, want 4 each", len(f.plane.events), len(f.plane.directives))
+	}
+	for i, e := range f.plane.events {
+		var got messagePayload
+		if err := json.Unmarshal(e.Payload, &got); err != nil {
+			t.Fatal(err)
+		}
+		human := i == len(fallbackEchoes)
+		if got.FromClaude == human || (e.Origin == event.OriginHuman) != human {
+			t.Fatalf("message %d: from_claude = %v origin %q, want human %v", i, got.FromClaude, e.Origin, human)
+		}
+		if strings.Contains(f.plane.directives[i].text, "your operator") != human {
+			t.Fatalf("message %d directive = %q, want operator steering only for the human", i, f.plane.directives[i].text)
+		}
+	}
+}
+
 func TestPollerErrorsWatchOnFatalSlackError(t *testing.T) {
 	f := newFixture(t)
 	id := f.watch(agent.TopLevel, testThread)
@@ -404,6 +438,9 @@ func TestPollerRoutesDMsFromTheOperatorOnly(t *testing.T) {
 	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000002.000000", ThreadTimestamp: status.TS, User: testUser, Text: "also bump the version"}})
 	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000003.000000", User: testUser, Text: "what's the status?"}})
 	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000004.000000", User: "UOTHER", Text: "not the operator"}})
+	for i, text := range fallbackEchoes {
+		f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: fmt.Sprintf("180000001%d.000000", i), ThreadTimestamp: status.TS, User: testUser, Text: text}})
+	}
 
 	f.tick()
 	texts := make([]string, 0, len(f.plane.events))
