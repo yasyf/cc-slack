@@ -508,7 +508,7 @@ func (g cursorGroup) covered() bool {
 
 func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message) error {
 	for _, w := range watches {
-		if w.Kind == kindDM && m.User != id.UserID {
+		if w.Kind == kindDM && !id.fromOperator(m) {
 			continue
 		}
 		if err := p.deliver(ctx, db, w, p.messageDelivery(ctx, api, id, w, m)); err != nil {
@@ -519,7 +519,7 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 }
 
 func operatorRoot(id identity, m slack.Message) bool {
-	return m.User == id.UserID && (m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp)
+	return id.fromOperator(m) && (m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp)
 }
 
 func (p *poller) routable(ctx context.Context, db *sql.DB, g cursorGroup, m slack.Message) (bool, error) {
