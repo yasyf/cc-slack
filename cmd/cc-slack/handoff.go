@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,7 @@ import (
 	"github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/version"
 	"github.com/yasyf/daemonkit"
+	"github.com/yasyf/daemonkit/paths"
 )
 
 const (
@@ -46,10 +48,87 @@ func handoffFloor() string {
 }
 
 func incumbentBinary(ctx context.Context) (path, release string, err error) {
-	if health, probeErr := probeIncumbent(ctx); probeErr == nil {
+	health, probeErr := probeIncumbent(ctx)
+	switch {
+	case probeErr == nil:
 		return newerIncumbent(health, handoffFloor())
+	case errors.Is(probeErr, daemonkit.ErrProtocolMismatch):
+		return newerForeignDaemon(ctx, handoffFloor())
 	}
 	return "", "", nil
+}
+
+func newerForeignDaemon(ctx context.Context, floor string) (path, release string, err error) {
+	socket, err := paths.Socket(serviceLabel)
+	if err != nil {
+		return "", "", err
+	}
+	return newerForeignIncumbent(ctx, socket, floor)
+}
+
+// newerForeignIncumbent orders a daemon this build cannot handshake with. It
+// answers no Health, so its release comes from the executable of the process
+// holding its socket.
+func newerForeignIncumbent(ctx context.Context, socket, floor string) (path, release string, err error) {
+	pid, err := socketPeerPID(socket)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: daemon speaks another wire protocol, and its process is unreadable: %w", binaryName, err)
+	}
+	path, err = executablePath(pid)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: daemon speaks another wire protocol, and its executable is unreadable: %w", binaryName, err)
+	}
+	release, err = reportedRelease(ctx, path)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: daemon speaks another wire protocol, and its release is unreadable: %w", binaryName, err)
+	}
+	if !version.Newer(release, floor) {
+		return "", "", nil
+	}
+	return path, release, nil
+}
+
+// refuseForeignRollback stops an ensure from replacing a newer daemon whose wire
+// protocol this build cannot speak: daemonkit evicts any protocol mismatch as
+// an older era, which would roll the newer release back.
+func refuseForeignRollback(ensure func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if _, err := probeIncumbent(ctx); errors.Is(err, daemonkit.ErrProtocolMismatch) {
+			path, release, err := newerForeignDaemon(ctx, appVersion)
+			if err != nil {
+				return err
+			}
+			if path != "" {
+				return fmt.Errorf("%w: %s, on another wire protocol, supersedes this build %s", daemon.ErrIncumbentNewer, release, appVersion)
+			}
+		}
+		return ensure(ctx)
+	}
+}
+
+func socketPeerPID(socket string) (int, error) {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return 0, err
+	}
+	unix.CloseOnExec(fd)
+	defer func() { _ = unix.Close(fd) }()
+	if err := unix.Connect(fd, &unix.SockaddrUnix{Name: socket}); err != nil {
+		return 0, fmt.Errorf("connect %s: %w", socket, err)
+	}
+	return unix.GetsockoptInt(fd, unix.SOL_LOCAL, unix.LOCAL_PEERPID)
+}
+
+func reportedRelease(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, path, "--version").Output() //nolint:gosec // G204: argv to the incumbent cc-slack daemon's own executable, never a shell
+	if err != nil {
+		return "", fmt.Errorf("%s --version: %w", path, err)
+	}
+	release, ok := strings.CutPrefix(strings.TrimSpace(string(out)), binaryName+" version ")
+	if !ok || release == "" {
+		return "", fmt.Errorf("%s --version printed %q", path, out)
+	}
+	return release, nil
 }
 
 func execIncumbent(ctx context.Context) error {

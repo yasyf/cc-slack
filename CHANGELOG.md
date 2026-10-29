@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When a later release's daemon speaks a newer wire protocol, this build hands each command to that daemon's executable instead of failing. It finds the daemon's process through its socket and reads the release from `--version`. Builds before 0.4.3 failed every call with `unsupported protocol version` against the 0.4.3 daemon, and need `/mcp` reconnect to recover. From 0.4.3, an older build's ensure would have stopped the newer daemon with SIGTERM and started itself in its place.
 - A message whose text opens with the Slack MCP fallback marker `_(<name>'s Claude)_` is an agent's own post, so watches mark it `from_claude` and the status thread no longer turns it into operator steering. Such a post goes out under the engineer's own Slack user, so a DM watch used to deliver it back to the session as a DM from the operator.
 - `thread`, `history`, and watched messages print the text and link buttons a message carries in its blocks, and each attachment's fields and blocks. An alert app such as Sentry that posts its issue link only in blocks now shows that link in place of its one-line summary.
 
