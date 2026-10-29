@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,70 @@ import (
 	"github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/daemonkit"
 )
+
+const fakeReleaseEnv = "CC_SLACK_TEST_RELEASE"
+
+func TestMain(m *testing.M) {
+	if release := os.Getenv(fakeReleaseEnv); release != "" && len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("%s version %s\n", binaryName, release)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestNewerForeignIncumbentOrdersTheSocketHoldersRelease(t *testing.T) {
+	dir, err := os.MkdirTemp("", "ccs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "d.sock")
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, release, want string
+	}{
+		{"newer release hands off", "0.4.6", self},
+		{"same release stays", "0.4.5", ""},
+		{"older release stays", "0.2.3", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(fakeReleaseEnv, tc.release)
+			got, release, err := newerForeignIncumbent(context.Background(), socket, "0.4.5")
+			if err != nil || got != tc.want {
+				t.Fatalf("newerForeignIncumbent = %q, %q, %v, want %q", got, release, err, tc.want)
+			}
+			if got != "" && release != tc.release {
+				t.Fatalf("release = %q, want %q", release, tc.release)
+			}
+		})
+	}
+}
+
+func TestNewerForeignIncumbentRefusesAnEmptySocket(t *testing.T) {
+	_, _, err := newerForeignIncumbent(context.Background(), filepath.Join(t.TempDir(), "absent.sock"), "0.4.5")
+	if err == nil || !strings.Contains(err.Error(), "its process is unreadable") {
+		t.Fatalf("newerForeignIncumbent = %v, want the unreadable-process refusal", err)
+	}
+}
+
+func TestReportedReleaseRefusesAForeignVersionLine(t *testing.T) {
+	build := filepath.Join(t.TempDir(), "cc-slack")
+	if err := os.WriteFile(build, []byte("#!/bin/sh\necho 'other version 1.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reportedRelease(context.Background(), build); err == nil || !strings.Contains(err.Error(), "other version 1.0") {
+		t.Fatalf("reportedRelease = %v, want the unparsed version line", err)
+	}
+}
 
 func TestNewerIncumbentNamesTheDaemonsOwnExecutable(t *testing.T) {
 	self, err := os.Executable()
