@@ -44,7 +44,7 @@ CLI_VERBS = {
     "channel-join": "join",
 }
 MESSAGE_VERBS = frozenset({"post", "edit", "delete"})
-VALUED = ("channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd")
+VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd")
 HELP = Option("help", ("--help", "-h"), bool)
 CLI = CommandSchema(
     "cc-slack",

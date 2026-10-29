@@ -786,6 +786,7 @@ on(
             case({"channel_id": PRIYA_USER, "thread_ts": "1791900000.000400", "text": "and one more thing"}, commands=PRIYA_DM, tickets=[covering({"channel": PRIYA_USER, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[covering()]) >> Rewrite(pattern="--ticket 0123456789ab --ticket-tree fixture --ticket-agent main"),
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'") >> DENY,
+            case(command=f"{CLI} reply --agent claude --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[covering()]) >> Rewrite(pattern="--ticket 0123456789ab"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text 'a post' --ticket 0123456789ab") >> Block(pattern="literal values"),
             case(command=f'{CLI} send --channel {FOLLOWERS} --text "$(cat reply.txt)"') >> Block(pattern="literal values"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text a && {CLI} reply --channel {FOLLOWERS} --thread 1 --text b") >> Block(pattern="one write per command"),
