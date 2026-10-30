@@ -1,7 +1,7 @@
 {
   "name": "cc-slack",
   "description": "Post, reply, react, and read Slack threads through a shared Slack app as <display name> (<agent>), and receive thread replies and DM steering in the running session through the cc-slack channel.",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "author": {
     "name": "Yasyf Mohamedali",
     "email": "709645+yasyf@users.noreply.github.com"
