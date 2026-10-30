@@ -71,11 +71,11 @@ homebrew_casks:
     homepage: https://github.com/yasyf/cc-slack
     description: "Slack for Claude Code sessions: post as you, watch threads, and take steering from your DMs."
     hooks:
-      post:
+      pre:
         install_steps: |
           on_macos do
-            # A quarantined binary's first exec blocks on a syspolicyd assessment, which hangs
-            # every cc-slack call for minutes, or forever where syspolicyd is wedged.
+            # Strip quarantine before the binary is linked: an exec that wins the race against a
+            # postflight strip raises a Gatekeeper prompt that holds every later exec until answered.
             run "/usr/bin/xattr", args: ["-d", "com.apple.quarantine", "{{ .StagedPath }}/cc-slack"], must_succeed: false, print_stderr: false
           end
 
