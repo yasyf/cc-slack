@@ -38,7 +38,7 @@ SHORTCUT_BRIEF = "[cc-slack shortcut brief]"
 CARRY = "thread-carry"
 CHECK_SECONDS = 40
 DEADLINE_MARGIN = 5
-CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, subprocess.SubprocessError)
+CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, AttributeError, subprocess.SubprocessError)
 UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
 GRANT_LABEL = "slack-grant:"
 REVOKE_LABEL = "slack-revoke:"
@@ -646,6 +646,7 @@ def case(write: dict[str, Any] | None = None, **fields: Any) -> Case:
     return Case(write or DANA | {"text": DANA_TEXT}, **fields)
 
 
+SUBMITTED_BOARD = {"since": "last-submit", "through": 4222, "interactions": [{"seq": 4214, "type": "triage.decided", "blockId": "merge-prs", "at": "2026-10-30T15:24:19-07:00", "payload": {"verdicts": {"45401": {"verdict": "approved", "head": "e34ab03"}}}}]}
 ALLOW = Rewrite(ticket_agent="main")
 DENY = Block(pattern="No permission covers this Slack write")
 
@@ -839,6 +840,7 @@ on(
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
+            case(**said("post it i already told u to"), commands=NOT_DM | {"cc-present outcomes": json.dumps(SUBMITTED_BOARD)}) >> ALLOW,
             case(env=DISABLED) >> Allow(),
             case(env={}) >> Allow(),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a post'", env=DISABLED) >> Allow(),
