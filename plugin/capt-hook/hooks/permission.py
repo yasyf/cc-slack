@@ -38,6 +38,7 @@ SHORTCUT_BRIEF = "[cc-slack shortcut brief]"
 CARRY = "thread-carry"
 CHECK_SECONDS = 40
 DEADLINE_MARGIN = 5
+CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, AttributeError, subprocess.SubprocessError)
 UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
 GRANT_LABEL = "slack-grant:"
 REVOKE_LABEL = "slack-revoke:"
@@ -429,7 +430,7 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
             conv = conversation(write)
             ctx = context_of(evt, write, conv)
             decided = SLACK.decide(ctx)
-    except Exception as exc:
+    except CHECK_FAILURES as exc:
         return unchecked(evt, write, conv, exc)
     verdict = decided if isinstance(decided, Deny) else decided.ticket
     logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=isinstance(verdict, Ticket), detail=verdict.detail if isinstance(verdict, Deny) else f"{verdict.id} ({verdict.rule})").info("slack write checked")
