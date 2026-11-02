@@ -1731,6 +1731,12 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	previous := t.Reply
 	waits := msg.card.Waits
 	asked := t.kept(*msg.card)
+	var superseded *liveMessage
+	if asked != nil && slices.ContainsFunc(msg.card.Rows, func(r cardRow) bool {
+		return !slices.ContainsFunc(asked.Card.Rows, func(o cardRow) bool { return o.ID == r.ID })
+	}) {
+		superseded, asked = asked, nil
+	}
 	if prior, done := t.Answers[waits]; waits != "" && done {
 		return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
 			waits, prior.Label, prior.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
@@ -1766,6 +1772,11 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	}
 	t.keep(*msg.card, reply)
 	cards.commit(t)
+	if superseded != nil {
+		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {
+			a.poller.log.Printf("group card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, reply.TS, err)
+		}
+	}
 	if found {
 		return thread, reply.TS, true, nil
 	}

@@ -101,6 +101,23 @@ func TestGroupCardEditsInPlaceAndAnEmptyGroupIsNeverPosted(t *testing.T) {
 	}
 }
 
+func TestAGroupCardThatGainsARowPostsAtTheBottomAndDeletesItsEarlierCard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, groupCard(prRow(41)))
+	posts := len(l.slack.sent())
+	fresh := postWaiting(t, l, groupCard(prRow(41), prRow(42)))
+	if fresh.ts == c.ts || len(l.slack.sent()) != posts+1 {
+		t.Fatalf("a group gaining a row posted %d messages at %s, want one new message below the card at %s", len(l.slack.sent())-posts, fresh.ts, c.ts)
+	}
+	if !slices.ContainsFunc(l.slack.deleted(), func(d fakeEdit) bool { return d.ts == c.ts }) {
+		t.Fatalf("deletes %+v, want the superseded card at %s gone", l.slack.deleted(), c.ts)
+	}
+	if again := postWaiting(t, l, groupCard(prRow(42))); again.ts != fresh.ts {
+		t.Fatalf("a re-push with no new row posted at %s, want the card at %s edited", again.ts, fresh.ts)
+	}
+}
+
 func TestRowTapDecidesOnTheBoardInsteadOfSteeringTheSession(t *testing.T) {
 	calls := fakePresent(t)
 	l := startDaemon(t)

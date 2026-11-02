@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A cc-present group card that gains a row its earlier card did not carry posts as a new message at the bottom of the DM thread and deletes the earlier card, instead of editing a card posted days earlier far up the thread, where a new merge question reached the user with no notification.
+
 ### Added
 
 - A channel ai-oncall opened for a page the drive answered takes the standing grant of the channel the page is in. The Slack permission hook reads the newest page threads of each granted channel for ai-oncall's `Incident opened: <#channel>` post in a thread an agent replied in. An agent's own post naming a channel grants nothing, and a revoke on the page channel withdraws the room too.
