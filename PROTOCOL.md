@@ -27,7 +27,7 @@ The backend authenticates the bearer token and routes frames for a user to
 every connection that named that user. Frames are UTF-8 text messages.
 
 Because every connection for a user gets every tap, only the machine that
-holds the user's sessions should connect. `cc-slack login --post-only`, the
+runs the engineer's sessions should connect. `cc-slack login --post-only`, the
 default on every host but macOS, saves no socket URL, so that daemon posts and
 reads but never dials.
 
