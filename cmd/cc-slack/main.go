@@ -95,6 +95,7 @@ func root() *cobra.Command {
 		channelCmd(d, opChannelJoin, approveJoin, "Add the Claude app to a Slack channel, inviting it as you when the channel is private"),
 		revokeCmd(d),
 		invokeCmd(d),
+		superviseCmd(),
 	)
 	return r
 }
