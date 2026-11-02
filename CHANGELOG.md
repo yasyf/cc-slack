@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A channel ai-oncall opened for a page takes the standing grant of the channel the page is in. The Slack permission hook reads the newest page threads of each granted channel for ai-oncall's `Incident opened: <#channel>` post, and a revoke on the page channel withdraws the room too.
+- A channel ai-oncall opened for a page the drive answered takes the standing grant of the channel the page is in. The Slack permission hook reads the newest page threads of each granted channel for ai-oncall's `Incident opened: <#channel>` post in a thread an agent replied in. An agent's own post naming a channel grants nothing, and a revoke on the page channel withdraws the room too.
 
 ### Changed
 
