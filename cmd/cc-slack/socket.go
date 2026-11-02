@@ -21,6 +21,7 @@ const (
 	pongFrame        = "pong"
 
 	socketNoIdentity = "not logged in"
+	socketPostOnly   = "post-only: this host takes no taps"
 	socketConnecting = "connecting"
 	socketConnected  = "connected"
 )
@@ -76,6 +77,8 @@ func (c *socketClient) run(ctx context.Context) {
 		case err != nil:
 			c.log.Printf("socket: %v", err)
 			wait = backoff
+		case id.SocketURL == "":
+			c.setState(socketPostOnly)
 		default:
 			connected, err := c.connect(ctx, id)
 			if ctx.Err() != nil {

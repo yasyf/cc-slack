@@ -253,3 +253,32 @@ func TestSocketConnectsOnceLoginLands(t *testing.T) {
 		t.Fatal("login never woke the socket")
 	}
 }
+
+func TestPostOnlyLoginNeverDialsUntilASocketLoginLands(t *testing.T) {
+	f := newFixture(t)
+	s := newSocketServer(t, false)
+	r := startSocket(t, f, "")
+	deadline := time.Now().Add(5 * time.Second)
+	for r.client.status() != socketPostOnly {
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %q for a post-only login, want %q", r.client.status(), socketPostOnly)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-s.conns:
+		t.Fatal("a post-only daemon dialed the socket")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	f.id.SocketURL = s.url()
+	if err := saveIdentity(f.ctx, f.db(), f.id); err != nil {
+		t.Fatal(err)
+	}
+	r.client.restart()
+	select {
+	case <-s.conns:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a socket login never woke the post-only daemon")
+	}
+}

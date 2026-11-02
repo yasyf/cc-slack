@@ -386,8 +386,8 @@ func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.Token == "" || b.Email == "" || b.SocketURL == "" || b.RepoRoot == "" || b.CaptHook == "" {
-		return fail("login needs a token, an email, a socket_url, a repo_root, and a capt_hook_path")
+	if b.Token == "" || b.Email == "" || b.RepoRoot == "" || b.CaptHook == "" {
+		return fail("login needs a token, an email, a repo_root, and a capt_hook_path")
 	}
 	if err := b.Config.validate(); err != nil {
 		return fail("login: " + err.Error())

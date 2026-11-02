@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -79,7 +80,12 @@ type waitsAnswer struct {
 	settled  bool
 }
 
-var errNoStatusSession = errors.New("no session holds that status thread")
+var errNoStatusSession = errors.New("no session on " + hostName() + " holds that status thread")
+
+func hostName() string {
+	name, _ := os.Hostname()
+	return name
+}
 
 type cardAnswerResult struct {
 	Answered bool      `json:"answered"`
@@ -276,7 +282,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		return err
 	}
 	if len(watches) == 0 {
-		p.log.Printf("card action %s on %s/%s: dropped: no session holds that status thread", a.ActionID, a.Channel, a.ThreadTS)
+		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, errNoStatusSession)
 		return nil
 	}
 	line := tapLine(who, permalink, k, "")

@@ -26,6 +26,11 @@ headers on the upgrade request:
 The backend authenticates the bearer token and routes frames for a user to
 every connection that named that user. Frames are UTF-8 text messages.
 
+Because every connection for a user gets every tap, only the machine that
+runs the engineer's sessions should connect. `cc-slack login --post-only`, the
+default on every host but macOS, saves no socket URL, so that daemon posts and
+reads but never dials.
+
 The daemon sends the text frame `ping` every 60 seconds; the backend answers
 `pong` or nothing. A dropped connection reconnects with jittered backoff from
 1 s to 60 s.
