@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A channel ai-oncall opened for a page takes the standing grant of the channel the page is in. The Slack permission hook reads the newest page threads of each granted channel for ai-oncall's `Incident opened: <#channel>` post, and a revoke on the page channel withdraws the room too.
+
 ### Changed
 
 - The Homebrew cask strips quarantine with a `postflight_steps` stanza instead of the Ruby `postflight` block Homebrew 7 deprecated, so `brew upgrade` no longer warns.

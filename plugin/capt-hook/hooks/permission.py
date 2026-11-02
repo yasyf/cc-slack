@@ -42,6 +42,8 @@ CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, Att
 UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
 GRANT_LABEL = "slack-grant:"
 REVOKE_LABEL = "slack-revoke:"
+ROOM_OPENED = re.compile(r"Incident opened:\W*<#(C[A-Z0-9]+)")
+ROOM_PAGES = "10"
 ASKED = frozenset({"from:owner", "source:askuserquestion"})
 KEEP_POSTING = re.compile(r"\b(?:keep|continue|carry on) posting\b|\bwithout asking\b|\bstop asking\b", re.I)
 STOP_POSTING = re.compile(r"\b(?:stop|quit|no more) posting\b|\b(?:don['’]?t|do not|never|no longer)\s+(?:(?:keep|continue|carry on)\s+)?post|\bno more posts\b", re.I)
@@ -278,12 +280,33 @@ class Standing:
     grants: bool = False
 
 
+def decided(ctx: Context, channel: str, thread: str) -> Standing:
+    live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
+    found = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel, thread)) is not None]
+    return found[-1] if found else Standing()
+
+
+def announced(conv: Conversation) -> set[str]:
+    return {opened[1] for message in read_thread(conv).messages if message.from_bot for opened in ROOM_OPENED.finditer(message.text)}
+
+
+def incident_room(ctx: Context, room: str, thread: str) -> Standing:
+    granted = {tag.removeprefix(GRANT_LABEL) for answer in ccn_answers(live(ctx), GRANT_LABEL) if not answer.get("superseded_by") for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
+    for channel in sorted(granted - {room}):
+        found = decided(ctx, channel, thread)
+        if not found.grants:
+            continue
+        pages = cc_slack("history", "--channel", channel, "--json", "--limit", ROOM_PAGES)["messages"]
+        if any(int(page.get("reply_count") or 0) and room in announced(Conversation(channel, page["ts"])) for page in pages):
+            return found
+    return Standing()
+
+
 def standing_of(ctx: Context) -> Standing:
     def newest(ctx: Context) -> Standing:
         channel, thread = ctx.place["channel"], ctx.place["thread"]
-        live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
-        decided = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel, thread)) is not None]
-        return decided[-1] if decided else Standing()
+        found = decided(ctx, channel, thread)
+        return found if found.answer is not None else incident_room(ctx, channel, thread)
 
     return ctx.fact(Standing, newest)
 
@@ -514,6 +537,7 @@ NOT_DM = {
     f"{CC_SLACK} dm-peer": json.dumps({"peer": "", "peer_name": ""}),
     f"{CC_SLACK} channels": json.dumps({"channels": [{"id": FOLLOWERS, "name": "app-followers"}]}),
     f"{CC_SLACK} thread": json.dumps({"messages": [DANA_OPENED]}),
+    f"{CC_SLACK} history": json.dumps({"channel_id": FOLLOWERS, "messages": []}),
     "ccn answer search": "[]",
     "cc-present outcomes": "{}",
 }
@@ -553,6 +577,13 @@ THREAD_GRANT = LABELED_GRANT | {
 }
 KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
+ROOM = "C0ROOM00001"
+ROOM_POST = {"channel_id": ROOM, "text": "Mechanism: the monitor reads a snapshot taken before runs are assigned; the fix is releasing", "no_watch": True}
+PAGES_HISTORY = {f"{CC_SLACK} history": json.dumps({"channel_id": FOLLOWERS, "messages": [{"ts": "1793580376.381769", "user_name": "Wadsworth", "from_bot": True, "text": "Run queue backlog not draining", "reply_count": 6}]})}
+
+
+def room_opened(room: str, *, from_bot: bool = True) -> dict[str, str]:
+    return thread_read({"ts": "1793581646.621179", "user": "", "user_name": "Wadsworth", "from_bot": from_bot, "text": f":mega: *Incident opened: <#{room}>*\nThe chart, incident doc and every update are there"})
 
 
 def jev(approval: str) -> dict[str, object]:
@@ -824,6 +855,10 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"tags": ["scope:ephemeral"]})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
+            case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM)) >> ALLOW,
+            case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened("C0OTHER0001")) >> DENY,
+            case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM, from_bot=False)) >> DENY,
+            case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED) | PAGES_HISTORY | room_opened(ROOM)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
