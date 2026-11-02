@@ -15,7 +15,7 @@ builds:
     binary: cc-slack
     env:
       - CGO_ENABLED=0
-    goos: [darwin]
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags:
       - -trimpath

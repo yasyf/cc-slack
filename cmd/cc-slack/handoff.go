@@ -14,7 +14,6 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sys/unix"
 
 	"github.com/yasyf/cc-interact/cmd"
 	"github.com/yasyf/cc-interact/daemon"
@@ -106,19 +105,6 @@ func refuseForeignRollback(ensure func(context.Context) error) func(context.Cont
 	}
 }
 
-func socketPeerPID(socket string) (int, error) {
-	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
-	if err != nil {
-		return 0, err
-	}
-	unix.CloseOnExec(fd)
-	defer func() { _ = unix.Close(fd) }()
-	if err := unix.Connect(fd, &unix.SockaddrUnix{Name: socket}); err != nil {
-		return 0, fmt.Errorf("connect %s: %w", socket, err)
-	}
-	return unix.GetsockoptInt(fd, unix.SOL_LOCAL, unix.LOCAL_PEERPID)
-}
-
 func reportedRelease(ctx context.Context, path string) (string, error) {
 	out, err := exec.CommandContext(ctx, path, "--version").Output() //nolint:gosec // G204: argv to the incumbent cc-slack daemon's own executable, never a shell
 	if err != nil {
@@ -158,21 +144,6 @@ func execResolvedExecutable() error {
 
 func handedOffEnv(release string) []string {
 	return append(os.Environ(), handoffEnv+"="+release)
-}
-
-func executablePath(pid int) (string, error) {
-	args, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil {
-		return "", fmt.Errorf("read pid %d arguments: %w", pid, err)
-	}
-	if len(args) < 4 {
-		return "", fmt.Errorf("pid %d arguments: %d bytes", pid, len(args))
-	}
-	path, _, ok := bytes.Cut(args[4:], []byte{0})
-	if !ok || !filepath.IsAbs(string(path)) {
-		return "", fmt.Errorf("pid %d exec path %q is not absolute", pid, path)
-	}
-	return string(path), nil
 }
 
 func invokeVia(ctx context.Context, build, release, session, scope string, op daemon.Op, body json.RawMessage) (daemon.Reply, error) {
