@@ -121,7 +121,7 @@ func requireCurrentState(ensure func(context.Context) error) func(context.Contex
 			if build != "" {
 				return fmt.Errorf("%w: daemon release %s wrote %s in a schema this build cannot read", daemon.ErrIncumbentNewer, release, path)
 			}
-			if born := time.Unix(info.Birthtimespec.Unix()); born.After(processStarted) {
+			if born := bornAt(&info); born.After(processStarted) {
 				return fmt.Errorf("%w: another cc-slack build created %s at %s, after this cc-slack %s process started at %s; restart the session to pick up the current build",
 					errStaleProcess, path, born.Format(time.RFC3339), appVersion, processStarted.Format(time.RFC3339))
 			}
