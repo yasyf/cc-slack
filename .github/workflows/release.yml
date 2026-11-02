@@ -16,6 +16,7 @@ jobs:
   descriptor:
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       actions: write
       contents: write
@@ -68,12 +69,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${GITHUB_REF_NAME}" plugin/bin/cc-slack.binrun --repo "${GITHUB_REPOSITORY}" --clobber
-      - name: Dispatch and wait for post-release checks
+      - name: Dispatch post-release checks
         env:
           COMMIT: ${{ steps.commit.outputs.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pids=()
           for workflow in ci.yml guides.yml; do
             response="$(
               jq -n --arg commit "$COMMIT" '{ref: "main", inputs: {commit: $commit}}' |
@@ -82,12 +82,5 @@ jobs:
                   "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches" \
                   --input -
             )"
-            run_id="$(jq -er '.workflow_run_id' <<<"$response")"
-            gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status &
-            pids+=("$!")
+            echo "${workflow}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$(jq -er '.workflow_run_id' <<<"$response")"
           done
-          status=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
-          done
-          exit "$status"
