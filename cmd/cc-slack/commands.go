@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -117,6 +118,7 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 		email      string
 		repo       string
 		configFlag string
+		postOnly   bool
 	)
 	c := &cobra.Command{
 		Use:   "login",
@@ -157,6 +159,9 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 			if err := archiveStaleState(ctx); err != nil {
 				return err
 			}
+			if postOnly {
+				params.socketURL = ""
+			}
 			return runOp(c, d, f, opLogin, map[string]any{
 				"token": params.token, "email": email, "socket_url": params.socketURL,
 				"avatar_key_id": params.avatarKeyID, "avatar_secret": params.avatarSecret,
@@ -167,6 +172,7 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 	f.bind(c)
 	c.Flags().StringVar(&email, "email", "", "your Slack email (defaults to git config user.email)")
 	c.Flags().StringVar(&repo, "repo", "", "checkout the message shortcut opens orca workspaces in (defaults to the main checkout of the current directory's repo)")
+	c.Flags().BoolVar(&postOnly, "post-only", runtime.GOOS != "darwin", "never open the Slack socket, so this host posts and reads but takes no button taps (defaults on everywhere but macOS)")
 	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+", then ~/.config/cc-slack/config.toml)")
 	return c
 }
