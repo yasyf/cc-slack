@@ -396,8 +396,10 @@ tap arrives as a `slack.action` whose payload carries the ask's `id`.
 
 A card with a `group` id is one group of rows on a cc-present board.
 cc-present posts it; you never write one by hand. Posting the same `group`
-again edits its card in place, and a group with no rows is posted only to
-edit an earlier card. A tap on a row's button goes to the board as that
+again edits its card in place, unless the card gains a row its earlier card
+did not carry: then it posts as a new message at the bottom of the thread,
+so the user is notified, and the earlier card is deleted. A group with no
+rows is posted only to edit an earlier card. A tap on a row's button goes to the board as that
 row's verdict through `cc-present slack-sync decided`, not to the session,
 and the row shows its answer. When the board refuses the tap, the row says
 why, and the next push asks it again.
