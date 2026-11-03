@@ -204,16 +204,7 @@ func (c config) validate() error {
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
-	if err := c.Links.validate(); err != nil {
-		return err
-	}
-	if err := c.Permissions.validate(); err != nil {
-		return err
-	}
-	if err := c.GitHub.validate("github"); err != nil {
-		return err
-	}
-	if err := c.Buildkite.validate("buildkite"); err != nil {
+	if err := errors.Join(c.Links.validate(), c.Permissions.validate(), c.GitHub.validate("github"), c.Buildkite.validate("buildkite")); err != nil {
 		return err
 	}
 	if s := c.SSM; s != nil {
