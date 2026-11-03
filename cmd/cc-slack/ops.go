@@ -1590,7 +1590,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.fill(b.Text)
 		b.Text = ""
 	}
-	if err := checkDMStatus(b, a.now()); err != nil {
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionWrite, err))
+	}
+	if err := checkDMStatus(b, a.now(), id.Config.Links.Tailnet); err != nil {
 		return fail(err.Error())
 	}
 	blocks, err := checkMessage(b)
@@ -1600,10 +1604,6 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
-	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
-	if err != nil {
-		return fail(fallback(actionWrite, err))
 	}
 	id.Agent = b.Agent
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
@@ -1693,7 +1693,7 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(res)
 }
 
-func checkDMStatus(b opBody, now time.Time) error {
+func checkDMStatus(b opBody, now time.Time, tailnet string) error {
 	switch {
 	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || (len(b.Files) > 0 && (!b.Mirrored || b.Card.Waits == ""))):
 		return errors.New("dm-status takes a card, or blocks and files, never both; only a waiting card cc-present sends carries images")
@@ -1704,9 +1704,9 @@ func checkDMStatus(b opBody, now time.Time) error {
 	case b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS):
 		return fmt.Errorf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS)
 	case b.Card != nil && b.Mirrored:
-		return b.Card.checkMirrored(now, b.RootOnly)
+		return b.Card.checkMirrored(now, b.RootOnly, tailnet)
 	case b.Card != nil:
-		return b.Card.check(now, b.RootOnly)
+		return b.Card.check(now, b.RootOnly, tailnet)
 	}
 	return nil
 }

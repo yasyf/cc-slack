@@ -51,7 +51,7 @@ func rowTap(c postedCard, row cardRow, button, n int) cardActionPush {
 
 func TestGroupCardRowsCarryTheirOwnButtonsAndShowTheirAnswer(t *testing.T) {
 	card := groupCard(prRow(41), prRow(42))
-	if err := card.check(time.Now(), false); err != nil {
+	if err := card.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a well-formed group card: %v", err)
 	}
 	at := time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC)

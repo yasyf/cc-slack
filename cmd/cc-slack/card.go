@@ -168,9 +168,12 @@ type askAnswer struct {
 
 func runes(s string) int { return utf8.RuneCountInString(s) }
 
-func checkURL(raw string) bool {
+func checkURL(raw, tailnet string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Host != "" && len(raw) <= cardMaxURLLen
+	if err != nil || u.Host == "" || len(raw) > cardMaxURLLen {
+		return false
+	}
+	return u.Scheme == "https" || u.Scheme == "http" && tailnet != "" && strings.HasSuffix(u.Hostname(), "."+tailnet)
 }
 
 func (c *statusCard) fill(text string) {
@@ -195,8 +198,8 @@ func (c *statusCard) fill(text string) {
 	}
 }
 
-func (c statusCard) check(now time.Time, rootOnly bool) error {
-	return errors.Join(c.checkMirrored(now, rootOnly), c.checkAnswers())
+func (c statusCard) check(now time.Time, rootOnly bool, tailnet string) error {
+	return errors.Join(c.checkMirrored(now, rootOnly, tailnet), c.checkAnswers())
 }
 
 func (c statusCard) checkAnswers() error {
@@ -211,10 +214,10 @@ func (c statusCard) checkAnswers() error {
 	return nil
 }
 
-func (c statusCard) checkMirrored(now time.Time, rootOnly bool) error {
+func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) error {
 	return errors.Join(
 		c.checkHeading(rootOnly),
-		c.checkLinks(),
+		c.checkLinks(tailnet),
 		c.checkOptions(rootOnly),
 		c.checkWaits(rootOnly),
 		c.checkRefs(),
@@ -247,13 +250,13 @@ func (c statusCard) checkHeading(rootOnly bool) error {
 	return nil
 }
 
-func (c statusCard) checkLinks() error {
+func (c statusCard) checkLinks(tailnet string) error {
 	if len(c.Links) > cardMaxLinks {
 		return fmt.Errorf("card carries %d links, at most %d", len(c.Links), cardMaxLinks)
 	}
 	for _, l := range c.Links {
-		if !checkURL(l.URL) || l.Label == "" || runes(l.Label) > cardMaxLabelLen {
-			return fmt.Errorf("card link %q needs a label of up to %d characters and an https url of up to %d", l.URL, cardMaxLabelLen, cardMaxURLLen)
+		if !checkURL(l.URL, tailnet) || l.Label == "" || runes(l.Label) > cardMaxLabelLen {
+			return fmt.Errorf("card link %q needs a label of up to %d characters and an https url, or an http url on the [links] tailnet, of up to %d", l.URL, cardMaxLabelLen, cardMaxURLLen)
 		}
 	}
 	return nil
@@ -415,7 +418,7 @@ func (c statusCard) checkRollup() error {
 		}
 	}
 	for _, p := range r.PRs {
-		if !checkURL(p.URL) || runes(p.Label) > cardMaxLabelLen || runes(p.Status) > cardMaxStatusLen {
+		if !checkURL(p.URL, "") || runes(p.Label) > cardMaxLabelLen || runes(p.Status) > cardMaxStatusLen {
 			return fmt.Errorf("rollup pr %q needs an https url, a label of up to %d characters, and a status of up to %d", p.URL, cardMaxLabelLen, cardMaxStatusLen)
 		}
 	}

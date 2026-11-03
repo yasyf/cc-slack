@@ -97,6 +97,10 @@ public_base = "https://assets.example.com/"
 [doc_cards]
 link = "https://docs.example.com/"
 url = "https://cards.example.com/doc-cards"
+
+# Let a card link use http on your tailnet; every other link stays https.
+[links]
+tailnet = "example.ts.net"
 ```
 
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps

@@ -26,6 +26,7 @@ type config struct {
 	SSM         *ssmSource     `toml:"ssm" json:"-"`
 	Avatars     avatarConfig   `toml:"avatars" json:"avatars"`
 	DocCards    docCardsConfig `toml:"doc_cards" json:"doc_cards"`
+	Links       linksConfig    `toml:"links" json:"links"`
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
 	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
 	Permissions permissions    `toml:"permissions" json:"-"`
@@ -68,6 +69,10 @@ type avatarConfig struct {
 type docCardsConfig struct {
 	Link string `toml:"link" json:"link,omitempty"`
 	URL  string `toml:"url" json:"url,omitempty"`
+}
+
+type linksConfig struct {
+	Tailnet string `toml:"tailnet" json:"tailnet,omitempty"`
 }
 
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
@@ -191,6 +196,9 @@ func (c config) validate() error {
 	}
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
+	}
+	if t := c.Links.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {
+		return fmt.Errorf("[links] tailnet %q must be a tailnet's DNS name, such as example.ts.net", t)
 	}
 	if err := c.Permissions.validate(); err != nil {
 		return err
