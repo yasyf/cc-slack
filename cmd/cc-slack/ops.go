@@ -906,6 +906,11 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 		if err != nil && errorCode(err) != settled {
 			return fail(fallback(act, err))
 		}
+		if act == actionReact && answeringReactions[name] && channelID == id.DMChannelID {
+			if err := a.owed.reacted(hc.Ctx, b.TS); err != nil {
+				return fail(err.Error())
+			}
+		}
 		return ok(map[string]bool{"ok": true})
 	}
 }
