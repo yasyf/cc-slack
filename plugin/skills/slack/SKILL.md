@@ -384,7 +384,9 @@ it without the session list. Other bots' messages stay out of it.
 `cc-slack dm-owed` prints each reply no bot or agent has answered in its thread
 yet, from stored state with no Slack call, including replies written while no
 session was live. A post in that thread answers every earlier reply there; a
-post elsewhere answers none.
+post elsewhere answers none. Once a session has held the DM, the daemon answers
+each reply in its thread at once with one line saying who has it. That line does
+not count as the answer: the session still replies with what was done.
 
 Pass `thread_ts` only for a short conversational answer in the thread the
 user replied in. An edit or delete of the agent's own message in this DM

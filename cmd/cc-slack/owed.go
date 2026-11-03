@@ -45,12 +45,17 @@ func openOwedReplies(ctx context.Context, path string) (*owedReplies, error) {
 
 func (o *owedReplies) Close() error { return o.st.Close() }
 
-func (o *owedReplies) owe(ctx context.Context, r owedReply) error {
-	if _, err := o.st.DB().ExecContext(ctx, `INSERT OR IGNORE INTO owed_replies(thread_ts, ts, text, permalink) VALUES (?, ?, ?, ?)`,
-		r.ThreadTS, r.TS, r.Text, r.Permalink); err != nil {
-		return fmt.Errorf("owe reply %s: %w", r.TS, err)
+func (o *owedReplies) owe(ctx context.Context, r owedReply) (bool, error) {
+	res, err := o.st.DB().ExecContext(ctx, `INSERT OR IGNORE INTO owed_replies(thread_ts, ts, text, permalink) VALUES (?, ?, ?, ?)`,
+		r.ThreadTS, r.TS, r.Text, r.Permalink)
+	if err != nil {
+		return false, fmt.Errorf("owe reply %s: %w", r.TS, err)
 	}
-	return nil
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("owe reply %s: %w", r.TS, err)
+	}
+	return inserted == 1, nil
 }
 
 func (o *owedReplies) answered(ctx context.Context, threadTS, ts string) error {

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A DM a session has held answers each of your replies in its thread at once: the agent has it and will answer, or none is running and it is saved for the next. A DM no session ever held gets no line. The line does not count as the answer in `cc-slack dm-owed`.
+
+### Added
+
 - `cc-slack dm-owed` lists your DM replies no bot or agent has answered in their thread yet, from stored state with no Slack call. A reply is kept even when no live session watches its thread, so one on a thread a finished session posted is not lost.
 
 ### Changed
