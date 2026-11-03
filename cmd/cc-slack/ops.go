@@ -1832,7 +1832,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 		if err := write(func() error {
 			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks)
 		}); err != nil {
-			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group), err)
+			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group, placed.Card.Key), err)
 		}
 		return placed, nil
 	}

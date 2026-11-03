@@ -50,6 +50,7 @@ type liveThread struct {
 	Reply    *liveMessage            `json:"reply,omitempty"`
 	Waiting  map[string]*liveMessage `json:"waiting,omitempty"`
 	Groups   map[string]*liveMessage `json:"groups,omitempty"`
+	Keyed    map[string]*liveMessage `json:"keyed,omitempty"`
 	Timeline []timelineEntry         `json:"timeline,omitempty"`
 	Asks     []cardAsk               `json:"asks,omitempty"`
 	Answers  map[string]askAnswer    `json:"answers,omitempty"`
@@ -106,8 +107,11 @@ func (t *liveThread) rememberGroup(group string, m *liveMessage) {
 }
 
 func (t *liveThread) kept(card statusCard) *liveMessage {
-	if card.Group != "" {
+	switch {
+	case card.Group != "":
 		return t.Groups[card.Group]
+	case card.Key != "":
+		return t.Keyed[card.Key]
 	}
 	return t.Waiting[card.Waits]
 }
@@ -116,13 +120,18 @@ func (t *liveThread) keep(card statusCard, m *liveMessage) {
 	switch {
 	case card.Group != "":
 		t.rememberGroup(card.Group, m)
+	case card.Key != "":
+		if t.Keyed == nil {
+			t.Keyed = map[string]*liveMessage{}
+		}
+		t.Keyed[card.Key] = m
 	case card.Waits != "":
 		t.remember(card.Waits, m)
 	}
 }
 
 func (t *liveThread) messages() []*liveMessage {
-	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)))
+	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)), slices.Collect(maps.Values(t.Keyed)))
 }
 
 func (t *liveThread) openAsks(now time.Time) []cardAsk {
@@ -261,14 +270,14 @@ func (l *liveCards) save() {
 func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
-		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups)
+		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
 }
 
 func (l *liveCards) holding(channel string, threads []string, card statusCard) *liveThread {
-	if card.Waits == "" && card.Group == "" {
+	if card.Waits == "" && card.Group == "" && card.Key == "" {
 		return nil
 	}
 	return l.sessionThread(channel, threads, func(t *liveThread) bool {
@@ -297,7 +306,8 @@ func (l *liveCards) forget(t *liveThread, ts string) {
 	at := func(_ string, m *liveMessage) bool { return m.TS == ts }
 	maps.DeleteFunc(t.Waiting, at)
 	maps.DeleteFunc(t.Groups, at)
-	if t.Root == nil && t.Reply == nil && len(t.Waiting)+len(t.Groups) == 0 {
+	maps.DeleteFunc(t.Keyed, at)
+	if t.Root == nil && t.Reply == nil && len(t.Waiting)+len(t.Groups)+len(t.Keyed) == 0 {
 		delete(l.threads, threadKey(t.Channel, t.Thread))
 	}
 }
@@ -430,7 +440,7 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			redrawn[t.Reply.TS] = true
 		}
 	}
-	for _, kept := range []map[string]*liveMessage{t.Waiting, t.Groups} {
+	for _, kept := range []map[string]*liveMessage{t.Waiting, t.Groups, t.Keyed} {
 		for key, m := range kept {
 			if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
 				continue

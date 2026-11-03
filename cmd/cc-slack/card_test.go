@@ -53,6 +53,9 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"row repeats a button":   {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{{ID: "r", Text: "t", Buttons: []string{"Hold", "Hold"}}}},
 		"row without buttons":    {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{{ID: "r", Text: "t"}}},
 		"twenty-one rows":        {Status: "needs_you", Title: "x", Group: "pg:login", Rows: prRows(21)},
+		"key with space":         {Status: "info", Title: "x", Key: "reply one"},
+		"key on a waiting card":  {Status: "needs_you", Title: "x", Key: "r1", Waits: "step-3:merge", Options: []string{"go"}, Recommended: "go"},
+		"key on a group":         {Status: "needs_you", Title: "x", Key: "r1", Group: "pg:login", Rows: []cardRow{prRow(41)}},
 	} {
 		if err := card.check(time.Now(), false, ""); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)
@@ -60,6 +63,9 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 	}
 	if err := (statusCard{Status: "needs_you", Title: "x", Waits: "step-3:merge"}).check(time.Now(), true, ""); err == nil {
 		t.Error("a root-only waiting card passed check, want a refusal")
+	}
+	if err := (statusCard{Title: "x", Key: "r1"}).check(time.Now(), true); err == nil {
+		t.Error("a root-only keyed card passed check, want a refusal")
 	}
 }
 

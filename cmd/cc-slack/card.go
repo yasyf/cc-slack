@@ -100,6 +100,7 @@ type statusCard struct {
 	Waits       string        `json:"waits,omitempty"`
 	Recommended string        `json:"recommended,omitempty"`
 	Group       string        `json:"group,omitempty"`
+	Key         string        `json:"key,omitempty"`
 	Rows        []cardRow     `json:"rows,omitempty"`
 
 	Images []slack.FileSummary `json:"images,omitempty"`
@@ -220,6 +221,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkLinks(tailnet),
 		c.checkOptions(rootOnly),
 		c.checkWaits(rootOnly),
+		c.checkKey(rootOnly),
 		c.checkRefs(),
 		c.checkAsks(now),
 		c.checkFacts(),
@@ -300,6 +302,18 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 		return fmt.Errorf("name the recommended answer in recommended, never as %s in an option", cardRecommended)
 	case c.Recommended != "" && !slices.Contains(c.Options, c.Recommended):
 		return fmt.Errorf("a waiting card recommends one of its options: recommended %q is not among them", c.Recommended)
+	}
+	return nil
+}
+
+func (c statusCard) checkKey(rootOnly bool) error {
+	switch {
+	case c.Key == "":
+		return nil
+	case !askIDPattern.MatchString(c.Key):
+		return fmt.Errorf("card key %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", c.Key)
+	case rootOnly || c.Waits != "" || c.Group != "":
+		return errors.New("a key redraws a reply card; a root-only, waiting, or group card is redrawn by its own id")
 	}
 	return nil
 }
