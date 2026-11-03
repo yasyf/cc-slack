@@ -152,7 +152,7 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 		t.Fatalf("pick edits after the card posted = %q, want one pointing to the card", got)
 	}
 
-	reply := id.permalink(id.DMChannelID, "1800000009.000100", text["ts"])
+	reply := id.permalink(id.DMChannelID, "1800000009.000100", "")
 	var res cardAnswerResult
 	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "Hold", "via": reply}).Body, &res); err != nil || !res.Answered {
 		t.Fatalf("relayed answer = %+v, %v; want it answered", res, err)
