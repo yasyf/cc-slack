@@ -168,6 +168,55 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestAWithdrawnCardShowsItsReasonInPlaceOfTheButtonsOnce(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	withdraw := map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "superseded by step 4", "withdrawn": true, "via": "http://127.0.0.1:7000/p/asks--ab12"}
+
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{
+		"waits": "step-3:merge", "url": c.url(), "label": "superseded", "withdrawn": true, "settled": true, "via": "http://127.0.0.1:7000/p/asks--ab12",
+	})); err == nil || !strings.Contains(err.Error(), "withdrawn takes the reason as its label") {
+		t.Fatalf("a withdrawal that also settles: %v", err)
+	}
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, withdraw).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("withdraw = %+v, %v; want it answered", res, err)
+	}
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("a withdrawn card steered the session: %q", got)
+	}
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Withdrawn:* superseded by step 4") ||
+		!strings.Contains(edits[len(edits)-1], "Merge #41 now?") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the title kept and the reason in place of the buttons", edits)
+	}
+	if got := l.slack.reactedTo(c.ts); !slices.Equal(got, []string{cardWithdrawnReaction}) {
+		t.Fatalf("reactions on the card = %q, want the withdrawn one", got)
+	}
+	if res := answerOnBoard(t, l, c, "Merge"); res.Answered {
+		t.Fatalf("an answer after the card was withdrawn = %+v, want it refused", res)
+	}
+	if err := json.Unmarshal(l.do(opCardAnswer, withdraw).Body, &res); err != nil || res.Answered {
+		t.Fatalf("a second withdrawal = %+v, %v; want it refused", res, err)
+	}
+	if got, n := l.slack.reactedTo(c.ts), len(editsOf(l.slack.edited(), c.ts)); len(got) != 1 || n != len(edits) {
+		t.Fatalf("after a repeat, reactions %q and %d edits, want the card left as it was", got, n)
+	}
+}
+
+func TestAnAnsweredCardGetsTheAnsweredReaction(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	if res := answerOnBoard(t, l, c, "Merge"); !res.Answered {
+		t.Fatalf("board answer = %+v, want it answered", res)
+	}
+	if got := l.slack.reactedTo(c.ts); !slices.Equal(got, []string{cardAnsweredReaction}) {
+		t.Fatalf("reactions on the card = %q, want the answered one", got)
+	}
+}
+
 func TestASettledCardShowsItsOutcomeAndTellsNoSession(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
