@@ -53,8 +53,9 @@ func owedStamps(t *testing.T, f *fixture) []string {
 
 func deliveredKinds(t *testing.T, f *fixture) []string {
 	t.Helper()
-	kinds := []string{}
-	for _, got := range payloads(t, f) {
+	delivered := payloads(t, f)
+	kinds := make([]string, 0, len(delivered))
+	for _, got := range delivered {
 		kinds = append(kinds, got.Kind)
 	}
 	slices.Sort(kinds)
