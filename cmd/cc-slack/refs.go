@@ -272,45 +272,56 @@ func (p githubPR) state() refState {
 func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID) (map[string]refState, error) {
 	out := map[string]refState{}
 	for start := 0; start < len(refs); start += refGraphQLBatch {
-		batch := refs[start:min(start+refGraphQLBatch, len(refs))]
-		var q strings.Builder
-		q.WriteString("query {")
-		for i, r := range batch {
-			fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { state isDraft mergeQueueEntry { state } "+
-				"commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number)
+		found, err := c.queryPRs(ctx, tok, refs[start:min(start+refGraphQLBatch, len(refs))])
+		for k, pr := range found {
+			out[k] = pr.state()
 		}
-		q.WriteString(" }")
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.githubURL+"/graphql", bytes.NewReader(mustJSON(map[string]string{"query": q.String()})))
 		if err != nil {
 			return out, err
 		}
-		req.Header.Set("Content-Type", "application/json")
-		body, header, err := c.do(ctx, tok, req)
-		if err != nil {
-			return out, err
+	}
+	return out, nil
+}
+
+func (c refClient) queryPRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
+	var q strings.Builder
+	q.WriteString("query {")
+	for i, r := range refs {
+		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { state isDraft mergeQueueEntry { state } "+
+			"commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number)
+	}
+	q.WriteString(" }")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.githubURL+"/graphql", bytes.NewReader(mustJSON(map[string]string{"query": q.String()})))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	body, header, err := c.do(ctx, tok, req)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Data   map[string]*struct{ PullRequest *githubPR } `json:"data"`
+		Errors []struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, fmt.Errorf("decode GitHub pull requests: %w", err)
+	}
+	for _, e := range res.Errors {
+		if e.Type == "RATE_LIMITED" {
+			return nil, errRateLimited{until: c.retryAt(header)}
 		}
-		var res struct {
-			Data   map[string]*struct{ PullRequest *githubPR } `json:"data"`
-			Errors []struct {
-				Type    string `json:"type"`
-				Message string `json:"message"`
-			} `json:"errors"`
-		}
-		if err := json.Unmarshal(body, &res); err != nil {
-			return out, fmt.Errorf("decode GitHub pull requests: %w", err)
-		}
-		for _, e := range res.Errors {
-			if e.Type == "RATE_LIMITED" {
-				return out, errRateLimited{until: c.retryAt(header)}
-			}
-		}
-		if res.Data == nil && len(res.Errors) > 0 {
-			return out, fmt.Errorf("GitHub pull requests: %s", res.Errors[0].Message)
-		}
-		for i, r := range batch {
-			if repo := res.Data[fmt.Sprintf("p%d", i)]; repo != nil && repo.PullRequest != nil {
-				out[r.key()] = repo.PullRequest.state()
-			}
+	}
+	if res.Data == nil && len(res.Errors) > 0 {
+		return nil, fmt.Errorf("GitHub pull requests: %s", res.Errors[0].Message)
+	}
+	out := map[string]githubPR{}
+	for i, r := range refs {
+		if repo := res.Data[fmt.Sprintf("p%d", i)]; repo != nil && repo.PullRequest != nil {
+			out[r.key()] = *repo.PullRequest
 		}
 	}
 	return out, nil

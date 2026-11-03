@@ -74,6 +74,9 @@ url = "https://cards.example.com/doc-cards"
 [github]
 token_command = ["gh", "auth", "token"]
 
+[pr_links]
+repos = ["acme/app", "acme/lib"]
+
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
 ```
@@ -84,6 +87,17 @@ and builds they cite. `login` reads `token_env` from its own environment and
 stores the value, and resolves `token_command`'s program on its `PATH`; the
 daemon runs that command when it needs a token, keeps the output for 30
 minutes, and reruns it after a 401.
+
+With `[github]` set, `send`, `reply`, `edit`, and `dm-status` link every pull
+request the text names, and a card's body, before posting. A GitHub PR URL,
+`owner/repo#N`, and a bare `#N` become `<url|#N>`; a bare number resolves
+against the GitHub repo of the writing session's `origin` remote, then each
+`[pr_links] repos` entry in order, and the first that holds that PR wins.
+Text inside a Slack `<...>` link or mention, a code span, or a code block is
+not scanned, and a number no candidate repo holds stays plain. The daemon
+asks GitHub about every candidate in one GraphQL query per post, with a 5 s
+limit; when that read fails, the post goes out as written and the daemon
+logs why.
 
 `[permissions]` turns on the plugin's capt-hook pack in the checkout that holds
 the file: with `enabled = true`, `plugin/capt-hook/hooks/permission.py` checks

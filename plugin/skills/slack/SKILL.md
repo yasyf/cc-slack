@@ -227,6 +227,13 @@ site that Slack's crawler cannot read still previews, and Slack sends no
 `link_shared` event for links an app posts. A link inside `blocks` alone
 gets no card, and neither does a Slack MCP fallback post.
 
+With `[github]` in the config, the daemon links every pull request the text
+names, so write `#123`, `owner/repo#123`, or the PR URL and never build the
+link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
+this session's repo, then `repos` under `[pr_links]`; a number none of them
+holds stays plain text. Code spans and text already inside `<...>` are left
+alone.
+
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
 every file is a PNG, JPEG, or GIF image, the images appear under the text in

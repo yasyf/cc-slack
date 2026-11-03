@@ -29,7 +29,12 @@ type config struct {
 	Links       linksConfig    `toml:"links" json:"links"`
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
 	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
+	PRLinks     prLinksConfig  `toml:"pr_links" json:"pr_links"`
 	Permissions permissions    `toml:"permissions" json:"-"`
+}
+
+type prLinksConfig struct {
+	Repos []string `toml:"repos" json:"repos,omitempty"`
 }
 
 type permissions struct {
@@ -100,6 +105,15 @@ func (p permissions) validate() error {
 }
 
 func (d docCardsConfig) enabled() bool { return d.URL != "" }
+
+func (p prLinksConfig) validate() error {
+	for _, repo := range p.Repos {
+		if _, ok := parseRepo(repo); !ok {
+			return fmt.Errorf("[pr_links] repos entry %q is not owner/name", repo)
+		}
+	}
+	return nil
+}
 
 func (t *tokenSource) validate(section string) error {
 	if t == nil {
@@ -205,7 +219,7 @@ func (c config) validate() error {
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
-	if err := errors.Join(c.Links.validate(), c.Permissions.validate(), c.GitHub.validate("github"), c.Buildkite.validate("buildkite")); err != nil {
+	if err := errors.Join(c.Links.validate(), c.Permissions.validate(), c.PRLinks.validate(), c.GitHub.validate("github"), c.Buildkite.validate("buildkite")); err != nil {
 		return err
 	}
 	if s := c.SSM; s != nil {

@@ -549,6 +549,8 @@ func (l *liveCards) cited(key string) bool {
 }
 
 func (l *liveCards) host(name string, cfg config) *refHost {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	src := cfg.GitHub
 	if name == refHostBuildkite {
 		src = cfg.Buildkite

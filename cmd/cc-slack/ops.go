@@ -480,9 +480,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
+		text := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)[0]
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, b.Text, blocks, b.Files, extra...)
+			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, text, blocks, b.Files, extra...)
 			return err
 		})
 		if err != nil {
@@ -660,8 +661,8 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, channelID string) error {
-		return updateMessage(ctx, api, channelID, b.TS, b.Text, blocks)
+	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
+		return updateMessage(ctx, api, channelID, b.TS, a.linkPRs(ctx, id, hc.Env.Scope, b.Text)[0], blocks)
 	})
 }
 
@@ -673,13 +674,13 @@ func (a *app) handleDelete(hc daemon.HandlerCtx) daemon.Reply {
 	if b.ChannelID == "" || b.TS == "" || b.Text != "" || len(b.Blocks) > 0 {
 		return fail("delete needs channel_id and ts (or a Slack url), and no text or blocks")
 	}
-	return a.changeOwnMessage(hc, b, approveDelete, actionDelete, func(ctx context.Context, api slackAPI, channelID string) error {
+	return a.changeOwnMessage(hc, b, approveDelete, actionDelete, func(ctx context.Context, api slackAPI, _ identity, channelID string) error {
 		_, _, err := api.DeleteMessageContext(ctx, channelID, b.TS)
 		return err
 	})
 }
 
-func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act action, change func(context.Context, slackAPI, string) error) daemon.Reply {
+func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act action, change func(context.Context, slackAPI, identity, string) error) daemon.Reply {
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(fallback(act, err))
@@ -705,7 +706,7 @@ func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act 
 		return fail(err.Error())
 	}
 	err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() error {
-		return change(hc.Ctx, api, channelID)
+		return change(hc.Ctx, api, id, channelID)
 	})
 	if err != nil {
 		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, act, err))
@@ -1629,7 +1630,10 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
+	msg := dmMessage{text: a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
+	if b.Card != nil {
+		b.Card.Body = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body)[0]
+	}
 	under := b.ThreadTS
 	if b.About != "" {
 		if b.Card != nil || b.Text == "" {
