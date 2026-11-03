@@ -68,17 +68,18 @@ type cardRef struct {
 }
 
 type waitsAnswer struct {
-	card     cardRef
-	tap      askTap
-	other    bool
-	at       time.Time
-	actionTS string
-	source   string
-	where    string
-	via      string
-	viaName  string
-	dedup    string
-	settled  bool
+	card      cardRef
+	tap       askTap
+	other     bool
+	at        time.Time
+	actionTS  string
+	source    string
+	where     string
+	via       string
+	viaName   string
+	dedup     string
+	settled   bool
+	withdrawn bool
 }
 
 var errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
@@ -363,12 +364,22 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
+	if w.withdrawn {
+		line := "*Withdrawn:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
+		if err := p.markOption(ctx, id, w.card, line); err != nil {
+			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+			return cardAnswerResult{}, err
+		}
+		p.react(ctx, id, w.card, cardWithdrawnReaction)
+		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+	}
 	if w.settled {
 		line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
 		if err := p.markOption(ctx, id, w.card, line); err != nil {
 			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
 		}
+		p.react(ctx, id, w.card, cardAnsweredReaction)
 		p.answerSuperseded(ctx, id, w)
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
 	}
@@ -412,11 +423,23 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if err := p.markOption(ctx, id, w.card, answer+clock(w.at, p.now())); err != nil {
 		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
 	}
+	p.react(ctx, id, w.card, cardAnsweredReaction)
 	if w.via == "" {
 		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
 	}
 	p.answerSuperseded(ctx, id, w)
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+const (
+	cardAnsweredReaction  = "white_check_mark"
+	cardWithdrawnReaction = "x"
+)
+
+func (p *poller) react(ctx context.Context, id identity, r cardRef, name string) {
+	if err := p.newAPI(id.Token).AddReactionContext(ctx, name, slack.NewRefToMessage(r.channel, r.ts)); err != nil && errorCode(err) != "already_reacted" {
+		p.log.Printf("card %s/%s: edited, but the %s reaction failed: %v", r.channel, r.ts, name, err)
+	}
 }
 
 func (p *poller) answerSuperseded(ctx context.Context, id identity, w waitsAnswer) {
@@ -435,13 +458,13 @@ func (p *poller) noteSuperseded(ctx context.Context, id identity, posts []string
 	}
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled bool, via string) (cardAnswerResult, error) {
+func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled, withdrawn bool, via string) (cardAnswerResult, error) {
 	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
 	if !ok {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", waits, card)
 	}
 	answers := m.Card.answers()
-	if !other && !slices.Contains(answers, label) {
+	if !other && !withdrawn && !slices.Contains(answers, label) {
 		return cardAnswerResult{}, fmt.Errorf("%q is not one of waiting card %q's answers %q; pass other for a write-in", label, waits, answers)
 	}
 	at := p.now()
@@ -451,16 +474,17 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 		kind, surface, name = "Answer relayed", "Slack message", "Slack"
 	}
 	return p.answerWaits(ctx, id, waitsAnswer{
-		card:    cardRef{id.DMChannelID, thread, m.TS},
-		tap:     askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
-		other:   other,
-		at:      at,
-		source:  fmt.Sprintf("%s from %s, your operator, on %s for your status card posted %s (%s)", kind, id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
-		where:   surface + " " + via + ", which answers Slack card " + permalink,
-		via:     via,
-		viaName: name,
-		dedup:   fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
-		settled: settled,
+		card:      cardRef{id.DMChannelID, thread, m.TS},
+		tap:       askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
+		other:     other,
+		at:        at,
+		source:    fmt.Sprintf("%s from %s, your operator, on %s for your status card posted %s (%s)", kind, id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
+		where:     surface + " " + via + ", which answers Slack card " + permalink,
+		via:       via,
+		viaName:   name,
+		dedup:     fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
+		settled:   settled,
+		withdrawn: withdrawn,
 	})
 }
 

@@ -65,6 +65,7 @@ type fakeSlack struct {
 	posts     []fakePost
 	edits     []fakeEdit
 	deletes   []fakeEdit
+	reactions []fakeEdit
 	joined    []string
 	created   []string
 	archived  []string
@@ -314,10 +315,26 @@ func sentForm(channelID string, options ...slack.MsgOption) (url.Values, error) 
 	return capture.values, nil
 }
 
-func (f *fakeSlack) AddReactionContext(_ context.Context, _ string, _ slack.ItemRef) error {
+func (f *fakeSlack) AddReactionContext(_ context.Context, name string, item slack.ItemRef) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.call("reactions.add")
+	if err := f.call("reactions.add"); err != nil {
+		return err
+	}
+	f.reactions = append(f.reactions, fakeEdit{channelID: item.Channel, ts: item.Timestamp, text: name})
+	return nil
+}
+
+func (f *fakeSlack) reactedTo(ts string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var names []string
+	for _, r := range f.reactions {
+		if r.ts == ts {
+			names = append(names, r.text)
+		}
+	}
+	return names
 }
 
 func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {

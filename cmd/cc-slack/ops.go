@@ -102,6 +102,7 @@ type opBody struct {
 	Label     string            `json:"label"`
 	Other     bool              `json:"other"`
 	Settled   bool              `json:"settled"`
+	Withdrawn bool              `json:"withdrawn"`
 	Via       string            `json:"via"`
 	About     string            `json:"about"`
 	ticketSpend
@@ -1732,16 +1733,18 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail("card-answer needs via, the url of the surface the answer came from")
 	case b.Settled && !b.Other:
 		return fail("card-answer settled takes a written-in outcome with other")
+	case b.Withdrawn && (b.Settled || b.Other):
+		return fail("card-answer withdrawn takes the reason as its label, without settled or other")
 	}
 	label := b.Label
-	if b.Other {
+	if b.Other || b.Withdrawn {
 		label = strings.TrimSpace(label)
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Settled, b.Via)
+	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Settled, b.Withdrawn, b.Via)
 	if err != nil {
 		return fail(err.Error())
 	}
