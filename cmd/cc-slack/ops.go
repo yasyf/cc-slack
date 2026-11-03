@@ -1593,15 +1593,6 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.Card != nil {
-		images, err := allImages(b.Files)
-		if err != nil {
-			return fail(err.Error())
-		}
-		if !images {
-			return fail("a card attaches PNG, JPEG, or GIF images only")
-		}
-	}
 	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
@@ -1616,10 +1607,8 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 			return fail(err.Error())
 		}
 	}
-	if b.Card != nil && len(b.Files) > 0 {
-		if b.Card.Images, err = uploadImages(hc.Ctx, a.newAPI(id.Token), b.Files); err != nil {
-			return fail(fallback(actionWrite, err))
-		}
+	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
+		return fail(fallback(actionWrite, err))
 	}
 	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.About != "" {
@@ -1646,6 +1635,21 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+}
+
+func (a *app) attachCardImages(ctx context.Context, id identity, b opBody) error {
+	if b.Card == nil || len(b.Files) == 0 {
+		return nil
+	}
+	images, err := allImages(b.Files)
+	if err != nil {
+		return err
+	}
+	if !images {
+		return errors.New("a card attaches PNG, JPEG, or GIF images only")
+	}
+	b.Card.Images, err = uploadImages(ctx, a.newAPI(id.Token), b.Files)
+	return err
 }
 
 func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity, thread, ts string, b opBody) map[string]string {
