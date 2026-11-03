@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Every `slack_dm_status` update and every mirrored board card posts as its own message at the root of your DM, with its own thread for your replies and taps, instead of inside one status thread per session. A reply or tap on a message reaches the session that posted it, up to the newest 500 messages per session. An edit of the agent's own message in this DM needs no second ask. Reconnecting reads the DM once instead of polling every thread.
+
 ### Fixed
 
 - A waiting card cc-present sends can carry images, shown on the card above its buttons and kept when a tap redraws it. It can also have no recommended answer, and with no answers at all its write-in button reads Answer. A card posted by hand still needs its answers and a recommendation, and still takes no files.

@@ -20,7 +20,7 @@ import (
 
 const (
 	liveCardIdle      = 48 * time.Hour
-	liveMaxThreads    = 100
+	liveMaxThreads    = 1000
 	liveMaxTimeline   = 20
 	liveMaxAsks       = 20
 	refPollEvery      = time.Minute
@@ -61,6 +61,16 @@ type liveThread struct {
 func threadKey(channel, thread string) string { return channel + "/" + thread }
 
 func (t *liveThread) apply(card statusCard, tag cardTag, at time.Time, rootOnly bool) {
+	for _, k := range card.Asks {
+		t.Asks = slices.DeleteFunc(t.Asks, func(o cardAsk) bool { return o.ID == k.ID })
+		t.Asks = append(t.Asks, k)
+	}
+	t.Asks = t.Asks[max(0, len(t.Asks)-liveMaxAsks):]
+	t.Updated = at
+	if !rootOnly {
+		t.Reply = &liveMessage{Card: card, Tag: tag, At: at}
+		return
+	}
 	root := statusCard{}
 	if t.Root != nil {
 		root = t.Root.Card
@@ -70,15 +80,6 @@ func (t *liveThread) apply(card statusCard, tag cardTag, at time.Time, rootOnly 
 		t.Timeline = append(t.Timeline, timelineEntry{At: at, Emoji: card.emoji(), Title: card.Title})
 		t.Timeline = t.Timeline[max(0, len(t.Timeline)-liveMaxTimeline):]
 	}
-	for _, k := range card.Asks {
-		t.Asks = slices.DeleteFunc(t.Asks, func(o cardAsk) bool { return o.ID == k.ID })
-		t.Asks = append(t.Asks, k)
-	}
-	t.Asks = t.Asks[max(0, len(t.Asks)-liveMaxAsks):]
-	if !rootOnly {
-		t.Reply = &liveMessage{Card: card, Tag: tag, At: at}
-	}
-	t.Updated = at
 }
 
 func (t *liveThread) remember(waits string, m *liveMessage) {
@@ -264,6 +265,41 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
+}
+
+func (l *liveCards) holding(channel string, threads []string, card statusCard) *liveThread {
+	if card.Waits == "" && card.Group == "" {
+		return nil
+	}
+	return l.sessionThread(channel, threads, func(t *liveThread) bool {
+		_, answered := t.Answers[card.Waits]
+		return t.kept(card) != nil || (card.Waits != "" && answered)
+	})
+}
+
+func (l *liveCards) rooted(channel string, threads []string) *liveThread {
+	return l.sessionThread(channel, threads, func(t *liveThread) bool { return t.Root != nil })
+}
+
+func (l *liveCards) sessionThread(channel string, threads []string, matches func(*liveThread) bool) *liveThread {
+	for _, thread := range threads {
+		if t, ok := l.threads[threadKey(channel, thread)]; ok && matches(t) {
+			return t
+		}
+	}
+	return nil
+}
+
+func (l *liveCards) forget(t *liveThread, ts string) {
+	if t.Reply != nil && t.Reply.TS == ts {
+		t.Reply = nil
+	}
+	at := func(_ string, m *liveMessage) bool { return m.TS == ts }
+	maps.DeleteFunc(t.Waiting, at)
+	maps.DeleteFunc(t.Groups, at)
+	if t.Root == nil && t.Reply == nil && len(t.Waiting)+len(t.Groups) == 0 {
+		delete(l.threads, threadKey(t.Channel, t.Thread))
+	}
 }
 
 func (l *liveCards) commit(t *liveThread) {

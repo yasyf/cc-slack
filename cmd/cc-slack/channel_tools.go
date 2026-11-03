@@ -396,18 +396,18 @@ var (
 		},
 		{
 			name: "slack_dm_status",
-			description: "Post a status update to your own DM with the Claude app, in this session's status thread; send updates as a card, plain text only for short conversational replies. The first call opens " +
-				"the thread, or binds the session to thread_ts when given (a shortcut brief's dm_ts); your replies there arrive as directives to this session.",
+			description: "Post a status update to your own DM with the Claude app, as a top-level message with its own thread; send updates as a card, plain text only for short conversational replies. " +
+				"The user's replies in that message's thread, and taps on it, arrive as directives to this session. thread_ts replies under a DM message such as a shortcut brief's dm_ts; a card always posts at the DM root.",
 			op: opDMStatus, failure: actionWrite,
 			properties: map[string]any{
 				"text":      textProp,
-				"thread_ts": map[string]any{"type": "string", "description": "ts of a DM message to post under and bind this session's status thread to"},
+				"thread_ts": map[string]any{"type": "string", "description": "ts of a DM message to reply under; its replies reach this session, and a card still posts at the DM root"},
 				"files":     filesProp,
 				"blocks":    blocksProp,
 				"card":      cardProp,
-				"root_only": map[string]any{"type": "boolean", "description": "redraw only the thread's root card with this card, posting no reply"},
+				"root_only": map[string]any{"type": "boolean", "description": "redraw this session's one root card with this card, posting it at the DM root the first time"},
 				"about": map[string]any{"type": "string", "pattern": askIDPattern.String(),
-					"description": "waits id of a waiting card this text reply is about, such as an Explain more answer; the reply opens with a link back to that card"},
+					"description": "waits id of a waiting card this text reply is about, such as an Explain more answer; the reply lands in that card's thread"},
 				"agent": agentProp,
 			},
 		},
@@ -596,7 +596,7 @@ func receiveSteps(session string) string {
 		`session goes from no subscriptions to one, through a successful slack_watch without an owner, a slack_send or slack_reply ` +
 		`without no_watch, or a slack_dm_status, read the result's channel field. On active, channel tags carry the session: arm no ` +
 		`Monitor. On pending or inactive, arm a persistent Monitor described as that subscription (for example ` +
-		`"cc-slack: thread <channel_id>/<thread_ts>" or "cc-slack: DM status thread"), running exactly this command:
+		`"cc-slack: thread <channel_id>/<thread_ts>" or "cc-slack: DM status"), running exactly this command:
 
     ` + watch + `
 

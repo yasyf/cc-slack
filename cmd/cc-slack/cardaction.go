@@ -80,7 +80,7 @@ type waitsAnswer struct {
 	settled  bool
 }
 
-var errNoStatusSession = errors.New("no session on " + hostName() + " holds that status thread")
+var errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
 
 func hostName() string {
 	name, _ := os.Hostname()
@@ -143,7 +143,7 @@ func (a cardActionPush) ref() cardRef { return cardRef{a.Channel, a.ThreadTS, a.
 
 func (a cardActionPush) check(id identity) error {
 	if a.User != id.UserID || a.Channel != id.DMChannelID {
-		return fmt.Errorf("tap by %s in %s is not %s's own status thread", a.User, a.Channel, id.UserID)
+		return fmt.Errorf("tap by %s in %s is not %s's own DM", a.User, a.Channel, id.UserID)
 	}
 	for _, ts := range []string{a.MessageTS, a.ThreadTS, a.ActionTS} {
 		if !slackTSPattern.MatchString(ts) {
@@ -200,19 +200,19 @@ func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]w
 	rows, err := db.QueryContext(ctx, `SELECT id, subject_id, owner_agent_id, kind, channel_id, thread_ts FROM watches
 		WHERE kind = 'dm' AND status = 'active' AND channel_id = ? AND thread_ts = ? ORDER BY id`, channelID, threadTS)
 	if err != nil {
-		return nil, fmt.Errorf("find status thread %s/%s: %w", channelID, threadTS, err)
+		return nil, fmt.Errorf("find DM message watches %s/%s: %w", channelID, threadTS, err)
 	}
 	var watches []watch
 	for rows.Next() {
 		var w watch
 		if err := rows.Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS); err != nil {
 			_ = rows.Close()
-			return nil, fmt.Errorf("scan status thread watch: %w", err)
+			return nil, fmt.Errorf("scan DM message watch: %w", err)
 		}
 		watches = append(watches, w)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close status thread watches: %w", err)
+		return nil, fmt.Errorf("close DM message watches: %w", err)
 	}
 	return watches, rows.Err()
 }
@@ -398,7 +398,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled bool, via string) (cardAnswerResult, error) {
 	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
 	if !ok {
-		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your status threads", waits, card)
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", waits, card)
 	}
 	answers := m.Card.answers()
 	if !other && !slices.Contains(answers, label) {

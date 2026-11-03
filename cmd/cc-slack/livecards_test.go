@@ -140,7 +140,7 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 func seedLiveThread(l *liveCards, card statusCard, at time.Time) {
 	t := &liveThread{Channel: "D" + testUser, Thread: "1800000000.000100"}
 	t.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, false)
-	t.Reply.TS = "1800000000.000200"
+	t.Reply.TS = t.Thread
 	l.threads[threadKey(t.Channel, t.Thread)] = t
 }
 
@@ -280,8 +280,9 @@ func TestRichCardRendersEveryPartWithinSlackLimits(t *testing.T) {
 	for i := range 3 * cardMaxAsks {
 		ask := card
 		ask.Asks = []cardAsk{{ID: fmt.Sprintf("extra-%d", i), Label: "Hold"}}
-		thread.apply(ask, cardTag{Repo: "app", Branch: "dev"}, at.Add(time.Duration(i)*time.Minute), false)
+		thread.apply(ask, cardTag{Repo: "app", Branch: "dev"}, at.Add(time.Duration(i)*time.Minute), true)
 	}
+	thread.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, true)
 	thread.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, false)
 	refs := map[string]refState{"pr:acme/app#1": {State: "open", Checks: "passed"}}
 	_, root := thread.rootMessage(at, refs)
@@ -344,20 +345,23 @@ func TestRootKeepsStickyStateAndAnsweredAsksStayAnswered(t *testing.T) {
 	tag := cardTag{Repo: "app", Branch: "dev"}
 	thread := &liveThread{Channel: "D1", Thread: "1.1"}
 	thread.apply(statusCard{Status: "progress", Title: "Started", Progress: &cardProgress{Step: 1, Total: 4},
-		Rollup: &cardRollup{Lanes: []rollupLane{{Name: "w1"}}}, Asks: []cardAsk{{ID: "go", Label: "Go"}}}, tag, at, false)
-	thread.apply(statusCard{Status: "info", Title: "Halfway"}, tag, at.Add(time.Minute), false)
+		Rollup: &cardRollup{Lanes: []rollupLane{{Name: "w1"}}}, Asks: []cardAsk{{ID: "go", Label: "Go"}}}, tag, at, true)
+	thread.apply(statusCard{Status: "info", Title: "Halfway"}, tag, at.Add(time.Minute), true)
 	root := thread.Root.Card
 	if root.Title != "Halfway" || root.Progress == nil || root.Rollup == nil || len(thread.Timeline) != 2 {
 		t.Fatalf("root after a bare card = %+v, timeline %v; want the latest title over the earlier progress and rollup", root, thread.Timeline)
 	}
 	thread.apply(statusCard{Rollup: &cardRollup{Lanes: []rollupLane{{Name: "w2"}}}}, tag, at.Add(2*time.Minute), true)
-	if thread.Root.Card.Title != "Halfway" || thread.Root.Card.Rollup.Lanes[0].Name != "w2" || len(thread.Timeline) != 2 || thread.Reply.Card.Title != "Halfway" {
-		t.Fatalf("a root-only rollup gave root %+v, reply %+v, timeline %v", thread.Root.Card, thread.Reply.Card, thread.Timeline)
+	if thread.Root.Card.Title != "Halfway" || thread.Root.Card.Rollup.Lanes[0].Name != "w2" || len(thread.Timeline) != 2 || thread.Reply != nil {
+		t.Fatalf("a root-only rollup gave root %+v, reply %+v, timeline %v", thread.Root.Card, thread.Reply, thread.Timeline)
 	}
 	thread.Answers = map[string]askAnswer{"go": {At: at}}
 	thread.apply(statusCard{Status: "needs_you", Title: "Again", Asks: []cardAsk{{ID: "go", Label: "Go"}}}, tag, at.Add(3*time.Minute), false)
 	if open := thread.openAsks(at.Add(3 * time.Minute)); len(open) != 0 {
 		t.Fatalf("re-posting an answered ask reopened it: %+v", open)
+	}
+	if thread.Root.Card.Title != "Halfway" || thread.Reply.Card.Title != "Again" {
+		t.Fatalf("a plain card gave root %+v, reply %+v; want the root untouched", thread.Root.Card, thread.Reply.Card)
 	}
 }
 
@@ -390,15 +394,15 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 	ask := cardAsk{ID: "merge-41", Label: "Merge #41", Confirm: "Merge #41 now?", ExpiresAt: &expires}
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Merge #41?", Asks: []cardAsk{ask}}})
 	sent := l.slack.sent()
-	root, reply := sent[0].ts, sent[1].ts
-	if !strings.Contains(sent[0].blocks, cardAskAction+"merge-41") || !strings.Contains(sent[1].blocks, cardAskAction+"merge-41") {
-		t.Fatalf("root %s and reply %s: want the open ask on both", sent[0].blocks, sent[1].blocks)
+	asked := sent[0].ts
+	if len(sent) != 1 || !strings.Contains(sent[0].blocks, cardAskAction+"merge-41") {
+		t.Fatalf("posts %+v: want one card carrying the open ask", sent)
 	}
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
-	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: root, ThreadTS: root, ActionID: cardAskAction + "merge-41",
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: asked, ThreadTS: asked, ActionID: cardAskAction + "merge-41",
 		Value: ask.value(), ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0124"}
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered your ask "merge-41" with "Merge #41"`) {
@@ -407,14 +411,14 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 	if payloads := strings.Join(l.channelPayloads(), "\n"); !strings.Contains(payloads, `"id":"merge-41"`) || !strings.Contains(payloads, eventAction) {
 		t.Fatalf("channel payloads %s, want a slack.action carrying the ask id", payloads)
 	}
-	rootEdits, replyEdits := editsOf(l.slack.edited(), root), editsOf(l.slack.edited(), reply)
-	if len(rootEdits) != 1 || strings.Contains(rootEdits[0], cardAskAction) || len(replyEdits) != 1 || !strings.Contains(replyEdits[0], "✓ *Merge #41* · answered") {
-		t.Fatalf("root edits %v, reply edits %v: want the ask gone from the root and answered on the reply", rootEdits, replyEdits)
+	if edits := editsOf(l.slack.edited(), asked); len(edits) != 1 || !strings.Contains(edits[0], "✓ *Merge #41* · answered") {
+		t.Fatalf("card edits %v: want the ask answered on its card", edits)
 	}
 
 	late := cardAsk{ID: "hold-41", Label: "Hold #41", ExpiresAt: &expires}
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Hold?", Asks: []cardAsk{late}}})
-	push.MessageTS, push.ActionID, push.Value = l.slack.sent()[2].ts, cardAskAction+"hold-41", late.value()
+	push.MessageTS, push.ActionID, push.Value = l.slack.sent()[1].ts, cardAskAction+"hold-41", late.value()
+	push.ThreadTS = push.MessageTS
 	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", expires.Add(time.Minute).Unix()), "001800000100000-abcd0125"
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); got != "" {
@@ -427,7 +431,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	loggedIn(t, l)
 	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: "step-3:merge"}
 	l.do(opDMStatus, map[string]any{"card": card})
-	root, reply := l.slack.sent()[0], l.slack.sent()[1]
+	reply := l.slack.sent()[0]
 	if !strings.Contains(reply.blocks, cardWaitAction+"0:step-3:merge") || !strings.Contains(reply.blocks, cardExplainAction+"step-3:merge") ||
 		strings.Contains(reply.blocks, cardAckAction) {
 		t.Fatalf("reply %s, want the answers and Explain more as buttons and no Ack", reply.blocks)
@@ -436,7 +440,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: root.ts,
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardExplainAction + "step-3:merge", Value: string(mustJSON(askTap{ID: card.Waits, Label: cardExplainLabel, Question: card.Title})),
 		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0125"}
 	l.tap(id, push)
@@ -447,7 +451,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	if len(edits) == 0 || edits[0].ts != reply.ts || !strings.Contains(edits[0].blocks, "You asked for more") || !strings.Contains(edits[0].blocks, cardWaitAction) {
 		t.Fatalf("edits %+v, want the tapped reply redrawn first, still offering its answers", edits)
 	}
-	if l.app.cards.answered(id.DMChannelID, root.ts, card.Waits) {
+	if l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
 		t.Fatal("Explain more answered the waiting ask")
 	}
 
@@ -496,18 +500,24 @@ func TestRedrawsKeepATappedOptionAndAWhoamiHidesRefTokens(t *testing.T) {
 	}
 }
 
-func TestRootOnlyRedrawsTheRootWithoutAReply(t *testing.T) {
+func TestRootOnlyPostsOneLiveRootAndRedrawsIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	rollup := map[string]any{"root_only": true, "card": statusCard{Rollup: &cardRollup{Lanes: []rollupLane{{Name: "w4", Status: "shipping"}}}}}
-	raw := mustJSON(rollup)
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "post a card first") {
-		t.Fatalf("root_only before any card: %v", err)
+	rollup := func(lane string) map[string]any {
+		return map[string]any{"root_only": true, "card": statusCard{Rollup: &cardRollup{Lanes: []rollupLane{{Name: lane, Status: "shipping"}}}}}
+	}
+	l.do(opDMStatus, rollup("w4"))
+	sent := l.slack.sent()
+	if len(sent) != 1 || sent[0].threadTS != "" || !strings.Contains(sent[0].blocks, "*w4* · shipping") {
+		t.Fatalf("first root-only posts = %+v, want the rollup at the DM root", sent)
 	}
 	l.do(opDMStatus, cardBody("Started"))
-	l.do(opDMStatus, rollup)
-	sent, edits := l.slack.sent(), l.slack.edited()
-	if len(sent) != 2 || len(edits) != 1 || edits[0].ts != sent[0].ts || !strings.Contains(edits[0].blocks, "*w4* · shipping") || !strings.Contains(edits[0].blocks, "*Started*") {
-		t.Fatalf("posts %d, edits %+v: want the root redrawn with the rollup over the last title and no reply", len(sent), edits)
+	if len(l.slack.edited()) != 0 {
+		t.Fatalf("a plain card edited %+v, want the root left alone", l.slack.edited())
+	}
+	l.do(opDMStatus, rollup("w5"))
+	root, edits := sent[0].ts, l.slack.edited()
+	if len(l.slack.sent()) != 2 || len(edits) != 1 || edits[0].ts != root || !strings.Contains(edits[0].blocks, "*w5* · shipping") {
+		t.Fatalf("posts %+v, edits %+v: want the first root redrawn and no new message", l.slack.sent(), edits)
 	}
 }

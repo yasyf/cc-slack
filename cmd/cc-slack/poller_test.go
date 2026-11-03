@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/yasyf/cc-interact/agent"
 	"github.com/yasyf/cc-interact/event"
+	"github.com/yasyf/cc-interact/subject"
 )
 
 func TestPollerPollsOnlyTheDMWithoutWatches(t *testing.T) {
@@ -676,12 +678,12 @@ func TestPollerKeepsANudgeMarkedAfterItsSnapshot(t *testing.T) {
 	f.poller.mark(key)
 	seen, _ := f.poller.pendingMarks()
 	f.poller.mark(key)
-	f.poller.keepWatched(nil, seen, false)
+	f.poller.keepWatched(nil, seen)
 	if !f.poller.isPending(key) {
 		t.Fatal("a nudge marked after the snapshot was pruned with the snapshot")
 	}
 	seen, _ = f.poller.pendingMarks()
-	f.poller.keepWatched(nil, seen, false)
+	f.poller.keepWatched(nil, seen)
 	if f.poller.isPending(key) {
 		t.Fatal("a key no watch covers survived a snapshot that held its latest mark")
 	}
@@ -735,5 +737,123 @@ func TestAFailedProfileRefreshKeepsTheSavedProfileForADay(t *testing.T) {
 	}
 	if n := f.slack.callCount("users.info"); n != 1 {
 		t.Fatalf("users.info calls = %d, want 1 until the saved profile goes stale again", n)
+	}
+}
+
+func secondSession(t *testing.T, f *fixture) subject.Subject {
+	t.Helper()
+	const id = "fedcba9876543210fedcba9876543210"
+	if _, err := storeSubjects(f).Create(f.ctx, id, "", "sess-2", scopeName, testPID, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := storeSubjects(f).Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
+func dmMessageOf(t *testing.T, f *fixture, sub subject.Subject) string {
+	t.Helper()
+	dm := f.id.DMChannelID
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "an update", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.openSessionThread(f.ctx, f.db(), sub, dm, status.TS); err != nil {
+		t.Fatal(err)
+	}
+	return status.TS
+}
+
+func TestAThreadReplyRoutesToTheSessionThatPostedTheMessage(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	first, other := subjectFor(t, f), secondSession(t, f)
+	older := dmMessageOf(t, f, first)
+	dmMessageOf(t, f, other)
+	dmMessageOf(t, f, first)
+	f.tick()
+
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000090.000000", ThreadTimestamp: older, User: testUser, Text: "hold this one"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000090.000000", ThreadTS: older})
+	f.tick()
+	if len(f.plane.events) != 1 || f.plane.events[0].SubjectID != first.ID {
+		t.Fatalf("events = %+v, want the reply delivered once to the session that posted %s", f.plane.events, older)
+	}
+}
+
+func TestADMRootMessageListsEachSessionOnceByItsNewestMessage(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	first, other := subjectFor(t, f), secondSession(t, f)
+	older := dmMessageOf(t, f, first)
+	newest := dmMessageOf(t, f, first)
+	dmMessageOf(t, f, other)
+	f.tick()
+
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000090.000000", User: testUser, Text: "which one?"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000090.000000"})
+	f.tick()
+	last := f.slack.sent()[len(f.slack.sent())-1]
+	if strings.Count(last.text, "• ") != 2 || !strings.Contains(last.text, f.id.permalink(dm, newest, "")) || strings.Contains(last.text, f.id.permalink(dm, older, "")) {
+		t.Fatalf("session list = %q, want each session once by its newest message", last.text)
+	}
+}
+
+func TestASessionKeepsItsNewestDMMessageWatches(t *testing.T) {
+	f := newFixture(t)
+	sub := subjectFor(t, f)
+	dm := f.id.DMChannelID
+	for i := range sessionMessageWatches + 1 {
+		if err := f.app.openSessionThread(f.ctx, f.db(), sub, dm, fmt.Sprintf("1800000000.%06d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	threads, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != sessionMessageWatches || threads[0] != fmt.Sprintf("1800000000.%06d", sessionMessageWatches) || slices.Contains(threads, "1800000000.000000") {
+		t.Fatalf("%d active watches, newest %s: want the newest %d and the oldest released", len(threads), threads[0], sessionMessageWatches)
+	}
+	if err := f.app.openSessionThread(f.ctx, f.db(), sub, dm, threads[0]); err != nil {
+		t.Fatal(err)
+	}
+	again, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(again, threads) {
+		t.Fatal("opening a watched message again changed the session's watches")
+	}
+}
+
+func TestReconnectReadsTheDMOnceAtAnyMessageCount(t *testing.T) {
+	for _, n := range []int{1, sessionMessageWatches} {
+		f := newFixture(t)
+		sub := subjectFor(t, f)
+		dm := f.id.DMChannelID
+		newest := ""
+		for range n {
+			newest = dmMessageOf(t, f, sub)
+		}
+		f.tick()
+		f.tick()
+		replies, history := f.slack.callCount(methodReplies), f.slack.callCount(methodHistory)
+
+		f.poller.reconcileAll()
+		f.tick()
+		if r, h := f.slack.callCount(methodReplies)-replies, f.slack.callCount(methodHistory)-history; r != 0 || h != 2 {
+			t.Fatalf("N=%d: a quiet reconnect made %d replies and %d history calls, want 0 and 2", n, r, h)
+		}
+
+		f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1900000000.000000", ThreadTimestamp: newest, User: testUser, Text: "sent while the socket was down"}})
+		replies = f.slack.callCount(methodReplies)
+		f.poller.reconcileAll()
+		f.tick()
+		if r := f.slack.callCount(methodReplies) - replies; r != 1 || len(f.plane.events) != 1 {
+			t.Fatalf("N=%d: reconnect after one missed reply made %d replies calls and %d events, want 1 and 1", n, r, len(f.plane.events))
+		}
 	}
 }

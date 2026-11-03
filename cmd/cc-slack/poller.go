@@ -178,7 +178,7 @@ func (p *poller) pendingMarks() (map[cursorKey]uint64, map[cursorKey]string) {
 	return maps.Clone(p.pending), maps.Clone(p.since)
 }
 
-func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64, all bool) {
+func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 	watched := make(map[cursorKey]bool, len(groups))
 	for _, g := range groups {
 		watched[g.key] = true
@@ -191,9 +191,42 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64, al
 		}
 	}
 	p.mu.Unlock()
-	if all {
-		p.mark(slices.Collect(maps.Keys(watched))...)
+}
+
+func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, groups []cursorGroup) error {
+	threads := map[string]bool{}
+	oldest := ""
+	for _, g := range groups {
+		if g.key.channelID != dmChannelID || g.key.threadTS == "" || len(g.watches) == 0 {
+			p.mark(g.key)
+			continue
+		}
+		threads[g.key.threadTS] = true
+		if oldest == "" || tsLess(g.key.threadTS, oldest) {
+			oldest = g.key.threadTS
+		}
 	}
+	if oldest == "" {
+		return nil
+	}
+	msgs, err := fetchHistory(ctx, api, dmChannelID, justBefore(oldest), pageLimit)
+	if err != nil {
+		return fmt.Errorf("reconcile DM %s: %w", dmChannelID, err)
+	}
+	for _, m := range msgs {
+		if !threads[m.Timestamp] || m.LatestReply == "" {
+			continue
+		}
+		key := cursorKey{dmChannelID, m.Timestamp}
+		c, err := loadCursor(ctx, db, key)
+		if err != nil {
+			return err
+		}
+		if tsLess(c.oldest, m.LatestReply) {
+			p.mark(key)
+		}
+	}
+	return nil
 }
 
 func (p *poller) run(ctx context.Context) {
@@ -243,8 +276,14 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	groups := groupWatches(watches, id.DMChannelID, since)
-	p.keepWatched(groups, seen, p.reconcile.Swap(false))
+	p.keepWatched(groups, seen)
 	api := p.newAPI(id.Token)
+	if p.reconcile.Swap(false) {
+		if err := p.markReconciled(ctx, db, api, id.DMChannelID, groups); err != nil {
+			p.reconcile.Store(true)
+			return time.Time{}, err
+		}
+	}
 	now := p.now()
 	var next time.Time
 	for _, g := range groups {
@@ -375,11 +414,14 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	root := group(cursorKey{dmChannelID, ""})
 	root.root = true
-	for _, w := range watches {
-		if w.Kind == kindDM {
+	newest := map[string]bool{}
+	for _, w := range slices.Backward(watches) {
+		if w.Kind == kindDM && !newest[w.SubjectID] {
+			newest[w.SubjectID] = true
 			root.sessions = append(root.sessions, w)
 		}
 	}
+	slices.Reverse(root.sessions)
 	return groups
 }
 

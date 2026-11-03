@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/agent"
 )
 
@@ -356,29 +355,71 @@ func TestABoardQuestionPostsWithNoRecommendationOrNoPresetAnswers(t *testing.T) 
 	}
 }
 
-func TestAReplyAboutAWaitingCardOpensWithALinkBackToIt(t *testing.T) {
+func TestAReplyAboutAWaitingCardLandsInThatCardsThread(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
 	l.do(opDMStatus, map[string]any{"text": "Merging lands #41 before the freeze; holding waits for Monday.", "about": "step-3:merge"})
 	posts := l.slack.sent()
-	want := "<" + c.id.permalink(c.id.DMChannelID, c.ts, c.thread) + "|this card> Merging lands #41"
-	if got := posts[len(posts)-1].text; !strings.HasPrefix(got, want) {
-		t.Fatalf("reply = %q, want it to open with %q", got, want)
-	}
-	explain := slack.NewButtonBlockElement(cardExplainAction+"merge:41:abc1234", "{}", slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, false, false))
-	prCard := slack.Message{Msg: slack.Msg{Timestamp: "1800000003.000100", ThreadTimestamp: c.thread, Text: "Merge PR 41?",
-		Blocks: slack.Blocks{BlockSet: []slack.Block{slack.NewActionBlock("card-actions", explain)}}}}
-	l.slack.add(c.id.DMChannelID, prCard)
-	l.do(opDMStatus, map[string]any{"text": "The PR card asks whether to land PR 41.", "about": "merge:41:abc1234"})
-	posts = l.slack.sent()
-	want = "<" + c.id.permalink(c.id.DMChannelID, prCard.Timestamp, c.thread) + "|this card> The PR card"
-	if got := posts[len(posts)-1].text; !strings.HasPrefix(got, want) {
-		t.Fatalf("reply about a card another app posted = %q, want it to open with %q", got, want)
+	if got := posts[len(posts)-1]; got.threadTS != c.ts || !strings.HasPrefix(got.text, "Merging lands #41") {
+		t.Fatalf("reply = %+v, want it in the card's thread %s", got, c.ts)
 	}
 	raw := mustJSON(map[string]any{"text": "and one more thing", "about": "step-9:nothing"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `no waiting card "step-9:nothing"`) {
 		t.Fatalf("a reply about an unknown card: %v", err)
+	}
+}
+
+func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	if post := l.postedAt(t, c.ts); post.threadTS != "" || c.thread != c.ts {
+		t.Fatalf("mirrored card = %+v at thread %s, want it at the DM root with its own thread", post, c.thread)
+	}
+	redrawn := mergeCard()
+	redrawn.Title = "Merge #41 before the freeze?"
+	again := mirroredCard(t, l, map[string]any{"card": redrawn, "thread_ts": c.thread})
+	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != 1 || len(editsOf(l.slack.edited(), c.ts)) != 1 {
+		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited", again, c, l.slack.sent())
+	}
+}
+
+func TestNothingPostsIntoAnOldStatusThread(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const root, nested = "1800000000.000100", "1800000000.000200"
+	l.do(opDMStatus, map[string]any{"text": "the old status thread", "thread_ts": root})
+	card := mergeCard()
+	waiting := &liveMessage{TS: nested, Card: card}
+	l.app.cards.mu.Lock()
+	l.app.cards.threads[threadKey(id.DMChannelID, root)] = &liveThread{
+		Channel: id.DMChannelID, Thread: root, Root: &liveMessage{TS: root}, Reply: waiting,
+		Waiting: map[string]*liveMessage{card.Waits: waiting}, Answers: map[string]askAnswer{"earlier": {Label: "Go"}}, Updated: time.Now(),
+	}
+	l.app.cards.mu.Unlock()
+	before := len(l.slack.sent())
+
+	c := postWaiting(t, l, card)
+	l.do(opDMStatus, map[string]string{"text": "an update"})
+	l.do(opDMStatus, cardBody("Landed"))
+	for _, post := range l.slack.sent()[before:] {
+		if post.threadTS != "" {
+			t.Fatalf("post %+v, want every message at the DM root", post)
+		}
+	}
+	if c.thread == root || !slices.ContainsFunc(l.slack.deleted(), func(d fakeEdit) bool { return d.ts == nested }) {
+		t.Fatalf("a redrawn card landed at %+v and deleted %v, want it moved out of the old thread", c, l.slack.deleted())
+	}
+	if !l.app.cards.answered(id.DMChannelID, c.thread, "earlier") {
+		t.Fatal("the moved card lost the answers its old thread held")
+	}
+	if edits := l.slack.edited(); len(edits) != 0 {
+		t.Fatalf("edits = %+v, want no edit of a message left in the old thread", edits)
 	}
 }
 
