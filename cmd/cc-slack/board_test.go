@@ -119,6 +119,55 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	}
 }
 
+func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	var text map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "Merge #41 now? Reply A to merge or B to hold."}).Body, &text); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pick := id.permalink(id.DMChannelID, text["ts"], "")
+	elsewhere := mergeCard()
+	elsewhere.Supersedes = []string{"https://example.slack.com/archives/C0OTHER123/p1800000000000100"}
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"card": elsewhere})); err == nil || !strings.Contains(err.Error(), "not in your DM") {
+		t.Fatalf("a card superseding a post outside the DM: %v", err)
+	}
+	card := mergeCard()
+	card.Supersedes = []string{pick}
+	c := postWaiting(t, l, card)
+	pickEdits := func() []string {
+		var out []string
+		for _, e := range l.slack.edited() {
+			if e.ts == text["ts"] {
+				out = append(out, e.text)
+			}
+		}
+		return out
+	}
+	if got := pickEdits(); len(got) != 1 || !strings.Contains(got[0], "is asked again as a card with buttons") || !strings.Contains(got[0], c.url()) {
+		t.Fatalf("pick edits after the card posted = %q, want one pointing to the card", got)
+	}
+
+	reply := id.permalink(id.DMChannelID, "1800000009.000100", text["ts"])
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "Hold", "via": reply}).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("relayed answer = %+v, %v; want it answered", res, err)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "Answer relayed from") || !strings.Contains(got, "on Slack message "+reply) {
+		t.Fatalf("directive = %q, want the relayed answer named with its Slack message", got)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], reply+"|Slack") {
+		t.Fatalf("card edits %v, want the answer linked to the Slack message it came from", edits)
+	}
+	if got := pickEdits(); len(got) != 2 || !strings.Contains(got[1], "answered *Hold*") || !strings.Contains(got[1], c.url()) {
+		t.Fatalf("pick edits after the answer = %q, want the outcome linked to the card", got)
+	}
+}
+
 func TestASettledCardShowsItsOutcomeAndTellsNoSession(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

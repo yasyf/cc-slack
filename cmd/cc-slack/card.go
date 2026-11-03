@@ -45,6 +45,7 @@ const (
 	cardMaxOptionLen  = cardMaxLabelLen - len(" "+cardRecommended)
 	cardMaxLinks      = 5
 	cardMaxRefs       = 10
+	cardMaxSupersedes = 5
 	cardMaxAsks       = 5
 	cardMaxRows       = 20
 	cardMaxRowButtons = 4
@@ -102,6 +103,7 @@ type statusCard struct {
 	Group       string        `json:"group,omitempty"`
 	Key         string        `json:"key,omitempty"`
 	Rows        []cardRow     `json:"rows,omitempty"`
+	Supersedes  []string      `json:"supersedes,omitempty"`
 
 	Images []slack.FileSummary `json:"images,omitempty"`
 }
@@ -227,6 +229,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkFacts(),
 		c.checkRollup(),
 		c.checkRows(rootOnly),
+		c.checkSupersedes(),
 	)
 }
 
@@ -280,6 +283,23 @@ func (c statusCard) checkOptions(rootOnly bool) error {
 			return fmt.Errorf("card option %q repeats a button", o)
 		}
 		seen[o] = true
+	}
+	return nil
+}
+
+func (c statusCard) checkSupersedes() error {
+	switch {
+	case len(c.Supersedes) == 0:
+		return nil
+	case c.Waits == "":
+		return errors.New("supersedes names the earlier posts a waiting card asks again; set waits too")
+	case len(c.Supersedes) > cardMaxSupersedes:
+		return fmt.Errorf("card supersedes %d posts, at most %d", len(c.Supersedes), cardMaxSupersedes)
+	}
+	for _, post := range c.Supersedes {
+		if ref, err := parsePermalink(post); err != nil || ref.ts == "" {
+			return fmt.Errorf("card supersedes %q, which is not a Slack message permalink", post)
+		}
 	}
 	return nil
 }

@@ -165,7 +165,8 @@ func (a *app) ticketPlace(ctx context.Context, api slackAPI, id identity, w writ
 
 func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, session string, s ticketSpend, w write) (hookTicket, error) {
 	if s.TicketID == "" {
-		return hookTicket{}, fmt.Errorf("no ticket covers this %s: the permission hook names one on an approved write, so call it through a hooked tool and get the user's permission", w.action)
+		return hookTicket{}, fmt.Errorf("no ticket covers this %s: the permission hook names one on an approved write, so call it through a hooked tool and get the user's permission. "+
+			"A cc-slack call inside a script, a function or a pipe the hook cannot read gets no ticket; run it as its own Bash command or through its slack_* tool", w.action)
 	}
 	channel, thread, err := a.ticketPlace(ctx, api, id, w)
 	if err != nil {

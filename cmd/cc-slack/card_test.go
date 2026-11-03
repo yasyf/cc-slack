@@ -56,6 +56,8 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"key with space":         {Status: "info", Title: "x", Key: "reply one"},
 		"key on a waiting card":  {Status: "needs_you", Title: "x", Key: "r1", Waits: "step-3:merge", Options: []string{"go"}, Recommended: "go"},
 		"key on a group":         {Status: "needs_you", Title: "x", Key: "r1", Group: "pg:login", Rows: []cardRow{prRow(41)}},
+		"supersedes, no waits":   {Status: "info", Title: "x", Supersedes: []string{"https://example.slack.com/archives/D1/p1800000000000100"}},
+		"supersedes a channel":   {Status: "needs_you", Title: "x", Waits: "step-3:merge", Options: []string{"go"}, Recommended: "go", Supersedes: []string{"https://example.slack.com/archives/D1"}},
 	} {
 		if err := card.check(time.Now(), false, ""); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)

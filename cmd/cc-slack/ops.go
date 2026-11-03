@@ -1776,6 +1776,11 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		return a.rootCard(ctx, db, sub, id, threads, msg)
 	}
 	card := *msg.card
+	for _, post := range card.Supersedes {
+		if ref, _ := parsePermalink(post); ref.channelID != id.DMChannelID {
+			return "", "", false, fmt.Errorf("card supersedes %s, which is not in your DM with the app", post)
+		}
+	}
 	prior := cards.holding(id.DMChannelID, threads, card)
 	t := &liveThread{Channel: id.DMChannelID}
 	var asked, superseded *liveMessage
@@ -1809,6 +1814,10 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {
 			a.poller.log.Printf("card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, placed.TS, err)
 		}
+	}
+	if asked == nil {
+		a.poller.noteSuperseded(ctx, id, card.Supersedes, "↪ *"+mrkdwnEscapes.Replace(card.Title)+"* is asked again as a card with buttons: "+
+			slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer it there"))
 	}
 	if asked != nil {
 		return t.Thread, placed.TS, true, nil
