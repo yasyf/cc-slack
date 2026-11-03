@@ -304,6 +304,13 @@ func (c statusCard) checkSupersedes() error {
 	return nil
 }
 
+func (c statusCard) supersedesIn(channel string) bool {
+	return !slices.ContainsFunc(c.Supersedes, func(post string) bool {
+		ref, _ := parsePermalink(post)
+		return ref.channelID != channel
+	})
+}
+
 func (c statusCard) checkWaits(rootOnly bool) error {
 	switch {
 	case c.Waits == "" && c.Recommended != "":

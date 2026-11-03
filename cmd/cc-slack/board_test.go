@@ -133,7 +133,7 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 	pick := id.permalink(id.DMChannelID, text["ts"], "")
 	elsewhere := mergeCard()
 	elsewhere.Supersedes = []string{"https://example.slack.com/archives/C0OTHER123/p1800000000000100"}
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"card": elsewhere})); err == nil || !strings.Contains(err.Error(), "not in your DM") {
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"card": elsewhere})); err == nil || !strings.Contains(err.Error(), "only the bot's earlier posts in your DM") {
 		t.Fatalf("a card superseding a post outside the DM: %v", err)
 	}
 	card := mergeCard()
