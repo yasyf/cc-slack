@@ -25,13 +25,14 @@ NO_EVIDENCE_ASKS = (
 FIXED_CLAIM = re.compile(r"\b(?:fixed|resolved|works? (?:again|now)|working again|should (?:open|work|load))\b", re.IGNORECASE)
 PROVEN_USER = re.compile(r"\busr_[A-Za-z0-9]+\b")
 PROOF_CITED = re.compile(r"(?<![\w/])#\d{3,}\b|https?://[^\s|>]*(?:sentry\.io|datadoghq\.com)[^\s|>]*")
+RELEASE_NOTE = re.compile(r"\bv?\d+\.\d+\.\d+\b")
 FIXED_JUDGE = Confirm(
     rule="Block only when a line of the post tells a person their problem is fixed, works, or should open;"
-    " a line saying a fix is in progress or not yet verified never blocks."
+    " a line saying a fix is in progress or not yet verified, or a release note naming a version to upgrade to, never blocks."
 )
 UNPROVEN_FIX = (
-    "A fixed line cites the record of that person's case succeeding on the live build, their `usr_` id, and the thread owner's `<@id>`."
-    " Add all three to each such line, or say the fix is still being verified."
+    "Telling someone their problem is fixed needs their `usr_` id, the thread owner's `<@id>` and a link to their case succeeding on the live build"
+    " on that line, so add all three or say the fix is still being verified."
 )
 OWNER = "U0DANA00001"
 OPENED = json.dumps({"messages": [{"ts": THREAD["thread_ts"], "user": OWNER, "user_name": "Dana", "text": "uploads fail for me"}]})
@@ -59,7 +60,7 @@ def proven(line: str, owner: str | None) -> bool:
 
 def unproven(write: Write, text: str) -> bool:
     claims = [line for line in text.splitlines() if FIXED_CLAIM.search(line)]
-    if not claims:
+    if not claims or RELEASE_NOTE.search(text):
         return False
     owner = thread_owner(write) if write.thread else None
     return not all(proven(line, owner) for line in claims)
@@ -91,7 +92,9 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
     Event.PreToolUse,
     only_if=[WritesSlack()],
     tests={
-        reply("Dana, this is fixed now.", decide=CONFIRMED): Block(pattern=r"^A fixed line cites the record"),
+        reply("Dana, this is fixed now.", decide=CONFIRMED): Block(pattern=r"^Telling someone their problem is fixed"),
+        reply("Your run is fixed now.", decide=CONFIRMED): Block(),
+        reply("Fixed in ccx v0.91.61 (`brew upgrade ccx`). Ship and stack submit no longer start an SSO sign-in.", decide=CONFIRMED): Allow(),
         reply(f"<@{OWNER}> your uploads are fixed: usr_8f2k1 now succeeds on the live build (#500310).", decide=CONFIRMED): Allow(),
         reply(f"<@{OWNER}> your uploads are fixed: usr_8f2k1 now succeeds on the live build.", decide=CONFIRMED): Block(),
         reply("Your uploads are fixed: usr_8f2k1 now succeeds on the live build (#500310).", decide=CONFIRMED): Block(),
