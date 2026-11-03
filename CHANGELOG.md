@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A Slack write made while capt-hook is being reinstalled waits up to 30 seconds for it to come back instead of failing. If it stays missing, the error says capt-hook is missing rather than blaming the ticket.
 
+### Changed
+
+- With `proof_channels` set, the incident-comms checks also run in every channel shared with another Slack workspace, so a new customer channel is covered without a config change. `cc-slack channels --json` reports `ext_shared`.
+
 ### Added
 
 - A DM a session has held answers each of your replies in its thread at once: the agent has it and will answer, or none is running and it is saved for the next. A DM no session ever held gets no line. The line does not count as the answer in `cc-slack dm-owed`.

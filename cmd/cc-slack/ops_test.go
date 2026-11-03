@@ -474,6 +474,23 @@ func TestABotPostsSharedImageBlockReadsAsItsFile(t *testing.T) {
 	}
 }
 
+func TestChannelsReportsAChannelSharedWithAnotherWorkspace(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	shared := slack.Channel{GroupConversation: slack.GroupConversation{Conversation: slack.Conversation{ID: "C1", IsExtShared: true}, Name: "northwind-team"}}
+	internal := slack.Channel{GroupConversation: slack.GroupConversation{Conversation: slack.Conversation{ID: "C2"}, Name: "platform-eng"}}
+	l.slack.list(shared, internal)
+
+	var res channelsResult
+	if err := json.Unmarshal(l.do(opChannels, map[string]string{}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	want := []channelInfo{{ID: "C1", Name: "northwind-team", ExtShared: true}, {ID: "C2", Name: "platform-eng"}}
+	if !reflect.DeepEqual(res.Channels, want) {
+		t.Fatalf("channels = %+v, want %+v", res.Channels, want)
+	}
+}
+
 func TestChannelsListsUnarchivedChannelsByPrefix(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

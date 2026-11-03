@@ -40,8 +40,9 @@ OPENED = json.dumps({"messages": [{"ts": THREAD["thread_ts"], "user": OWNER, "us
 OURS = json.dumps({"messages": [{"ts": THREAD["thread_ts"], "user": "", "user_name": "Dana (claude)", "from_claude": True, "text": "Which fix should ship?"}]})
 OUTAGE = "C0OUTAGE"
 TEAM = "C0TEAMROOM"
+SHARED = "C0NORTHWIND"
 DM = "D0DANA0001"
-CHANNELS = json.dumps({"channels": [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}]})
+CHANNELS = json.dumps({"channels": [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}, {"id": SHARED, "name": "northwind-team", "ext_shared": True}]})
 
 
 def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
@@ -56,8 +57,9 @@ def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
 def in_proof_channel(write: Write) -> bool:
     if not (out := capture([CC_SLACK, "channels", "--json"], timeout=5)):
         return False
-    names = [channel["name"] for channel in json.loads(out)["channels"] if channel["id"] == write.channel]
-    return any(fnmatchcase(name, pattern) for name in names for pattern in permissions().proof_channels)
+    patterns = permissions().proof_channels
+    found = next((channel for channel in json.loads(out)["channels"] if channel["id"] == write.channel), None)
+    return bool(patterns and found and (found.get("ext_shared") or any(fnmatchcase(found["name"], pattern) for pattern in patterns)))
 
 
 def thread_root(write: Write) -> Message | None:
@@ -140,6 +142,14 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
         reply("Dana, this is fixed now.", DM, decide=CONFIRMED): Allow(),
         send("The upload errors are fixed.", DM): Allow(),
         reply("Dana, this is fixed now.", TEAM, decide=CONFIRMED): Allow(),
+        reply("Dana, this is fixed now.", SHARED, decide=CONFIRMED): Block(),
+        Input(
+            env=DISABLED,
+            tool=P + "slack_reply",
+            tool_input=THREAD | {"channel_id": SHARED, "text": "Dana, this is fixed now."},
+            commands={f"{CC_SLACK} channels": CHANNELS},
+            decide=CONFIRMED,
+        ): Allow(),
         reply("Dana, this is fixed now.", OUTAGE, root=OURS, decide=CONFIRMED): Allow(),
         Input(
             env=ENABLED,

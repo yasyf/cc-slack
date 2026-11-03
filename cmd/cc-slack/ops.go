@@ -198,6 +198,7 @@ type channelInfo struct {
 	Name          string   `json:"name"`
 	PreviousNames []string `json:"previous_names,omitempty"`
 	Created       int64    `json:"created"`
+	ExtShared     bool     `json:"ext_shared,omitempty"`
 }
 
 type dmOwedResult struct {
@@ -1117,7 +1118,7 @@ func (a *app) handleChannels(hc daemon.HandlerCtx) daemon.Reply {
 	out := []channelInfo{}
 	for _, c := range channels {
 		if strings.HasPrefix(c.Name, b.Prefix) {
-			out = append(out, channelInfo{ID: c.ID, Name: c.Name, PreviousNames: c.PreviousNames, Created: int64(c.Created)})
+			out = append(out, channelInfo{ID: c.ID, Name: c.Name, PreviousNames: c.PreviousNames, Created: int64(c.Created), ExtShared: c.IsExtShared})
 		}
 	}
 	slices.SortFunc(out, func(x, y channelInfo) int { return strings.Compare(x.Name, y.Name) })
