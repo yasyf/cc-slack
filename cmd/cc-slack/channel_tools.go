@@ -145,6 +145,11 @@ var (
 				"type": "string", "maxLength": cardMaxOptionLen,
 				"description": "with waits, the option you recommend; the card shows it first, marked (Recommended). Never put (Recommended) or an Other option in options",
 			},
+			"supersedes": map[string]any{
+				"type": "array", "maxItems": cardMaxSupersedes, "items": map[string]any{"type": "string"},
+				"description": "with waits, permalinks of the bot's earlier posts in this DM that asked the same question, such as a plain-text pick: " +
+					"each is edited at once to point to this card, and again with the outcome once this card is answered on any surface",
+			},
 			"refs": map[string]any{
 				"type": "array", "maxItems": cardMaxRefs, "items": schemaLink("url"),
 				"description": "GitHub pull request and Buildkite build urls whose live state the card shows: queued, CI running, passed, or failed, " +
@@ -393,6 +398,22 @@ var (
 				"invites it to a private one the user is in. Needs a ticket for this channel.",
 			op: opChannelJoin, failure: actionChannel,
 			properties: withTicket(map[string]any{"channel_id": channelProp, "url": urlProp}),
+		},
+		{
+			name: "slack_card_answer",
+			description: "Answer a waiting card in your DM with the app with an answer the user gave somewhere else, such as a reply in a thread or on another card, which you relay. " +
+				"The card shows the answer in place of its buttons, the asking session gets the answer's slack.action as from a tap, the board card resolves, " +
+				"and every post the card supersedes shows the outcome. settled closes a question that what happened answered, such as the pull request landing, with no slack.action. Needs no ticket.",
+			op: opCardAnswer, failure: actionWrite,
+			properties: map[string]any{
+				"waits":   map[string]any{"type": "string", "pattern": askIDPattern.String(), "description": "the waiting card's waits id"},
+				"url":     map[string]any{"type": "string", "description": "the waiting card's Slack permalink"},
+				"label":   map[string]any{"type": "string", "description": "the answer: one of the card's options, or the user's words with other"},
+				"other":   map[string]any{"type": "boolean", "description": "label is the user's own words, not one of the card's options"},
+				"via":     map[string]any{"type": "string", "description": "permalink of where the user answered; the card links it"},
+				"settled": map[string]any{"type": "boolean", "description": "the question was settled by what happened; label, with other, says how"},
+			},
+			required: []string{"waits", "url", "label", "via"},
 		},
 		{
 			name: "slack_dm_status",

@@ -1614,7 +1614,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	if err := checkDMStatus(b, a.now(), id.Config.Links.Tailnet); err != nil {
+	if err := checkDMStatus(b, a.now(), id); err != nil {
 		return fail(err.Error())
 	}
 	blocks, err := checkMessage(b)
@@ -1713,7 +1713,8 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(res)
 }
 
-func checkDMStatus(b opBody, now time.Time, tailnet string) error {
+func checkDMStatus(b opBody, now time.Time, id identity) error {
+	tailnet := id.Config.Links.Tailnet
 	switch {
 	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || (len(b.Files) > 0 && (!b.Mirrored || b.Card.Waits == ""))):
 		return errors.New("dm-status takes a card, or blocks and files, never both; only a waiting card cc-present sends carries images")
@@ -1723,6 +1724,8 @@ func checkDMStatus(b opBody, now time.Time, tailnet string) error {
 		return errors.New("dm-status root_only redraws the session's root card; it takes a card and no thread_ts")
 	case b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS):
 		return fmt.Errorf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS)
+	case b.Card != nil && !b.Card.supersedesIn(id.DMChannelID):
+		return errors.New("a card supersedes only the bot's earlier posts in your DM with the app")
 	case b.Card != nil && b.Mirrored:
 		return b.Card.checkMirrored(now, b.RootOnly, tailnet)
 	case b.Card != nil:
@@ -1809,6 +1812,10 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {
 			a.poller.log.Printf("card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, placed.TS, err)
 		}
+	}
+	if asked == nil {
+		a.poller.noteSuperseded(ctx, id, card.Supersedes, "↪ *"+mrkdwnEscapes.Replace(card.Title)+"* is asked again as a card with buttons: "+
+			slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer it there"))
 	}
 	if asked != nil {
 		return t.Thread, placed.TS, true, nil

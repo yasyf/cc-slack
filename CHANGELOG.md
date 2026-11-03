@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A waiting card takes `supersedes`, the permalinks of the bot's earlier posts in your DM that asked the same question, such as a plain-text pick. Each one is edited to point to the card when it posts, and again with the outcome when the card is answered on any surface, so an old pick no longer sits open after it was asked again or answered.
+- `slack_card_answer` answers a waiting card with an answer given somewhere else, such as a thread reply a lane relays. The card shows the answer linked to where it was given, the asking session gets its `slack.action`, and the posts the card supersedes show the outcome, with no ticket needed.
 - A DM a session has held answers each of your replies in its thread at once: the agent has it and will answer, or none is running and it is saved for the next. A DM no session ever held gets no line. The line does not count as the answer in `cc-slack dm-owed`.
 
 ### Added
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A write refused for want of a ticket now says why one is often missing: a cc-slack call inside a script, a function or a pipe the permission hook cannot read gets no ticket, so run it as its own command or through its `slack_*` tool.
 - A session holds your DM by watching its channel: every reply you write in any DM thread reaches it as well as any session watching that thread, your top-level DMs go to it without the session list, and other bots' messages stay out of it.
 - The two incident-comms checks, no asking a person for evidence and no unproven "fixed" line, run only in channels whose name matches `proof_channels` under `[permissions]` in `.claude/cc-slack.toml`, and never in a DM or a thread we posted. A project with no list runs neither.
 - Every `slack_dm_status` update and every mirrored board card posts as its own message at the root of your DM, with its own thread for your replies and taps, instead of inside one status thread per session. A reply or tap on a message reaches the session that posted it, up to the newest 500 messages per session. An edit of the agent's own message in this DM needs no second ask. Reconnecting reads the DM history instead of polling every thread.

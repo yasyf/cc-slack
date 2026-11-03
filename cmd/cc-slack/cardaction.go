@@ -76,6 +76,7 @@ type waitsAnswer struct {
 	source   string
 	where    string
 	via      string
+	viaName  string
 	dedup    string
 	settled  bool
 }
@@ -347,6 +348,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
 		}
+		p.answerSuperseded(ctx, id, w)
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
 	}
 	db := p.plane.DB()
@@ -384,7 +386,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		answer = "✓ *Other:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · answered "
 	}
 	if w.via != "" {
-		answer += "on " + slackLink(w.via, "the board") + " "
+		answer += "on " + slackLink(w.via, w.viaName) + " "
 	}
 	if err := p.markOption(ctx, id, w.card, answer+clock(w.at, p.now())); err != nil {
 		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
@@ -392,7 +394,24 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.via == "" {
 		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
 	}
+	p.answerSuperseded(ctx, id, w)
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+func (p *poller) answerSuperseded(ctx context.Context, id identity, w waitsAnswer) {
+	card := slackLink(id.permalink(w.card.channel, w.card.ts, w.card.thread), "the card")
+	p.noteSuperseded(ctx, id, p.cards.supersedes(w.card.channel, w.card.thread, w.card.ts),
+		"✓ *"+mrkdwnEscapes.Replace(w.tap.Question)+"* · answered *"+mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen))+"* "+clock(w.at, p.now())+" on "+card)
+}
+
+func (p *poller) noteSuperseded(ctx context.Context, id identity, posts []string, line string) {
+	api := p.newAPI(id.Token)
+	for _, post := range posts {
+		ref, _ := parsePermalink(post)
+		if err := updateMessage(ctx, api, ref.channelID, ref.ts, line, nil); err != nil {
+			p.log.Printf("superseded post %s not edited: %v", post, err)
+		}
+	}
 }
 
 func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled bool, via string) (cardAnswerResult, error) {
@@ -406,14 +425,19 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 	}
 	at := p.now()
 	permalink := id.permalink(id.DMChannelID, m.TS, thread)
+	kind, surface, name := "Board answer", "the cc-present board", "the board"
+	if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
+		kind, surface, name = "Answer relayed", "Slack message", "Slack"
+	}
 	return p.answerWaits(ctx, id, waitsAnswer{
 		card:    cardRef{id.DMChannelID, thread, m.TS},
 		tap:     askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
 		other:   other,
 		at:      at,
-		source:  fmt.Sprintf("Board answer from %s, your operator, on %s for your status card posted %s (%s)", id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
-		where:   "the cc-present board " + via + ", which answers Slack card " + permalink,
+		source:  fmt.Sprintf("%s from %s, your operator, on %s for your status card posted %s (%s)", kind, id.name(), via, m.At.In(pacific).Format(cardTimeLayout), permalink),
+		where:   surface + " " + via + ", which answers Slack card " + permalink,
 		via:     via,
+		viaName: name,
 		dedup:   fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
 		settled: settled,
 	})

@@ -386,6 +386,21 @@ func (l *liveCards) answered(channel, thread, askID string) bool {
 	return done
 }
 
+func (l *liveCards) supersedes(channel, thread, ts string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return nil
+	}
+	for _, m := range t.messages() {
+		if m != nil && m.TS == ts {
+			return m.Card.Supersedes
+		}
+	}
+	return nil
+}
+
 func (l *liveCards) markReply(channel, thread, ts string, mark func(*liveMessage)) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
