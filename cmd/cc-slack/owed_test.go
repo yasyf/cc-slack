@@ -313,3 +313,31 @@ func TestAReplyDrawsNoAutoReply(t *testing.T) {
 		})
 	}
 }
+
+func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	dm := "D" + testUser
+	const seen, liked, other = "1800000090.000000", "1800000090.000100", "1800000090.000200"
+	for _, ts := range []string{seen, liked, other} {
+		if err := l.app.owed.owe(l.ctx, owedReply{ThreadTS: testThread, TS: ts, Text: "A"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	l.do(opReact, map[string]string{"channel_id": dm, "ts": seen, "name": "eyes"})
+	l.do(opReact, map[string]string{"channel_id": dm, "ts": liked, "name": ":+1:"})
+	l.do(opReact, map[string]string{"channel_id": testChannel, "ts": other, "name": "+1"})
+
+	replies, err := l.app.owed.list(l.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(replies))
+	for _, r := range replies {
+		got = append(got, r.TS)
+	}
+	if !slices.Equal(got, []string{seen, other}) {
+		t.Fatalf("owed = %v, want only the thumbs-up in the DM to answer its reply", got)
+	}
+}

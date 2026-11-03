@@ -398,7 +398,10 @@ no bot or agent has answered in its thread yet, from stored state with no Slack
 call, including replies written while no session was live, and the session that
 owes them as `holder_session`. A post in that thread answers every earlier reply there; a
 post elsewhere answers none. The daemon posts nothing of its own in reply, so the
-session holding the DM acknowledges each reply itself.
+session holding the DM acknowledges each reply itself. A DM message or card tap
+that needs nothing back gets a `+1` reaction on it and no reply, which also clears
+it from `dm-owed`. Reply in the thread only with what the user does not have: a
+condition, a correction, a time or release number, an answer, or a consequence.
 
 Pass `thread_ts` only for a short conversational answer in the thread the
 user replied in. An edit or delete of the agent's own message in this DM
@@ -599,8 +602,8 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 On any message you have read and are acting on but have not answered, add
 `eyes` at once. When the ask is done, swap it: add `white_check_mark` with
 `slack_react`, then remove `eyes` with `slack_unreact`.
-For a message that needs only acknowledgment and no reply, use `pray`.
-Use only these three:
+For a message that needs only acknowledgment and no reply, use `pray`, or `+1`
+in the user's own DM with the bot. Everywhere else, use only these three:
 
 | Emoji | Name to pass | When |
 |---|---|---|
