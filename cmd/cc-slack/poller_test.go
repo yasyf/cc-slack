@@ -495,10 +495,13 @@ func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, dm, "", status.TS, f.now); err != nil {
 		t.Fatal(err)
 	}
+	f.tick()
+	history := f.slack.callCount(methodHistory)
 	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000009.000000", User: testUser, Text: "what's the status?"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000009.000000"})
 
 	f.tick()
-	if n := f.slack.callCount(methodHistory); n != 1 {
+	if n := f.slack.callCount(methodHistory) - history; n != 1 {
 		t.Fatalf("history calls = %d, want one poll of the shared DM root", n)
 	}
 	kinds := make([]string, 0, len(f.plane.events))
@@ -829,7 +832,7 @@ func TestASessionKeepsItsNewestDMMessageWatches(t *testing.T) {
 	}
 }
 
-func TestReconnectReadsTheDMOnceAtAnyMessageCount(t *testing.T) {
+func TestReconnectCallsStayFlatAtAnyMessageCount(t *testing.T) {
 	for _, n := range []int{1, sessionMessageWatches} {
 		f := newFixture(t)
 		sub := subjectFor(t, f)

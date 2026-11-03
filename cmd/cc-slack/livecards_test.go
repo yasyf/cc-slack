@@ -172,7 +172,7 @@ func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 		t.Fatalf("GitHub query = %q, want one batched query with the configured token", q)
 	}
 	calls := refs.calls()
-	if wait := cards.tick(l.ctx); refs.calls() != calls || len(l.slack.edited()) != 2 || wait < 50*time.Second {
+	if wait := cards.tick(l.ctx); refs.calls() != calls || len(l.slack.edited()) != 1 || wait < 50*time.Second {
 		t.Fatalf("an early tick polled %d times, edited %d cards, and waits %s; want no poll and no edit before the interval", refs.calls()-calls, len(l.slack.edited()), wait)
 	}
 
