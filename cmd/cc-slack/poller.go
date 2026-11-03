@@ -31,6 +31,7 @@ const (
 
 	dmReceivedHeard = "Got it. The agent on your DM has this and will answer here."
 	dmReceivedSaved = "Got it. No agent is running right now, so this is saved and the next one will answer here."
+	dmReceivedLife  = 60
 )
 
 var routedSubtypes = map[string]bool{
@@ -577,40 +578,62 @@ func (p *poller) trackOwed(ctx context.Context, db *sql.DB, api slackAPI, id ide
 	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
 	switch {
 	case id.fromOperator(m) && routedSubtypes[m.SubType]:
-		fresh, err := p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
+		reply := owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)}
+		fresh, err := p.owed.owe(ctx, reply)
 		if err != nil || !fresh {
 			return err
 		}
-		return p.received(ctx, db, api, id, g, thread)
+		return p.received(ctx, db, api, id, g, reply)
 	case id.fromClaude(m) && m.Text != dmReceivedHeard && m.Text != dmReceivedSaved:
-		return p.owed.answered(ctx, thread, m.Timestamp)
+		return answerOwed(ctx, p.owed, api, p.log, id, thread, m.Timestamp)
 	}
 	return nil
 }
 
-func (p *poller) received(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, thread string) error {
-	text := dmReceivedSaved
-	if slices.ContainsFunc(slices.Concat(g.watches, g.covering), func(w watch) bool { return w.Kind == kindChannel }) {
-		text = dmReceivedHeard
-	} else if held, err := dmHeld(ctx, db, id.DMChannelID); err != nil || !held {
+func (p *poller) received(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, reply owedReply) error {
+	text, err := receivedLine(ctx, db, id.DMChannelID, g)
+	if err != nil || text == "" {
 		return err
 	}
-	if _, _, err := postMessage(ctx, api, db, p.log, id, id.DMChannelID, thread, text, nil, nil); err != nil {
-		p.log.Printf("post received line in %s: %v", thread, err)
+	_, ts, err := postMessage(ctx, api, db, p.log, id, id.DMChannelID, reply.ThreadTS, text, nil, nil)
+	if err != nil {
+		p.log.Printf("post received line in %s: %v", reply.ThreadTS, err)
+		return nil
 	}
-	return nil
+	return p.owed.noted(ctx, reply, ts)
 }
 
-func dmHeld(ctx context.Context, db *sql.DB, dmChannelID string) (bool, error) {
-	var one int
-	err := db.QueryRowContext(ctx, `SELECT 1 FROM watches WHERE channel_id = ? AND thread_ts = '' AND kind = 'channel' AND status IN ('active', 'orphaned') LIMIT 1`, dmChannelID).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+func receivedLine(ctx context.Context, db *sql.DB, dmChannelID string, g cursorGroup) (string, error) {
+	var status string
+	err := db.QueryRowContext(ctx, `SELECT status FROM watches WHERE channel_id = ? AND thread_ts = '' AND kind = 'channel' AND status IN ('active', 'orphaned')
+		ORDER BY status = 'active' DESC LIMIT 1`, dmChannelID).Scan(&status)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("find the DM's holder: %w", err)
+	case status == "active" || !g.idle():
+		return dmReceivedHeard, nil
 	}
+	return dmReceivedSaved, nil
+}
+
+func answerOwed(ctx context.Context, owed *owedReplies, api slackAPI, logger *log.Logger, id identity, thread, ts string) error {
+	lines, err := owed.answered(ctx, thread, ts)
 	if err != nil {
-		return false, fmt.Errorf("find the DM's holder: %w", err)
+		return err
 	}
-	return true, nil
+	answeredAt, _ := splitTS(ts)
+	for _, line := range lines {
+		postedAt, _ := splitTS(line)
+		if answeredAt-postedAt >= dmReceivedLife {
+			continue
+		}
+		if _, _, err := api.DeleteMessageContext(ctx, id.DMChannelID, line); err != nil {
+			logger.Printf("delete received line %s: %v", line, err)
+		}
+	}
+	return nil
 }
 
 func operatorRoot(id identity, m slack.Message) bool {

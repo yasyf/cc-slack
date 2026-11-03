@@ -561,7 +561,7 @@ func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, thre
 	if err == nil && threadTS != "" {
 		a.wrote(ctx, res.ChannelID, threadTS)
 		if res.ChannelID == id.DMChannelID {
-			if err := a.owed.answered(ctx, threadTS, res.TS); err != nil {
+			if err := answerOwed(ctx, a.owed, a.newAPI(id.Token), a.poller.log, id, threadTS, res.TS); err != nil {
 				a.poller.log.Printf("%v", err)
 			}
 		}
