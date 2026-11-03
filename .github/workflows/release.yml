@@ -58,10 +58,14 @@ jobs:
             git push --force origin "refs/tags/${GITHUB_REF_NAME}"
           fi
           git fetch origin main
+          version="${GITHUB_REF_NAME#v}"
+          on_main="$(git show origin/main:plugin/.claude-plugin/plugin.json | jq -r .version)"
           if git merge-base --is-ancestor HEAD origin/main; then
             echo "main already carries ${GITHUB_REF_NAME}'s descriptor and manifest"
+          elif [ "$(printf '%s\n' "$on_main" "$version" | sort -V | tail -n1)" != "$version" ]; then
+            echo "main already carries the newer ${on_main}, so ${GITHUB_REF_NAME}'s descriptor stays on its tag"
           else
-            git rebase origin/main
+            git rebase -X theirs origin/main
             git push origin HEAD:main
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
