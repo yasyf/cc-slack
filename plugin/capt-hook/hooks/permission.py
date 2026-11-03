@@ -95,6 +95,9 @@ RULES = """
       overrides an earlier skip, hold, or edit request.
     - A destination the user named by id, name, or link is that place; words about another destination permit
       nothing here unless they widen to this one, as "etc.", "and the others", or "everywhere it was owed" do.
+    - Telling the agent to fix, correct, reword, or edit a message it posted, or complaining that its message is
+      wrong or makes no sense, permits editing that message, deleting it, and posting the correction in the same
+      place. Once the user has told the agent to write somewhere, its edits there need no second ask.
     - Words that hold the write back, withdraw it, or answer a different proposal permit nothing.
 """
 
@@ -330,6 +333,20 @@ class NotRevoked(CustomTicketCondition):
 
 
 @dataclass(frozen=True, slots=True)
+class OwnPost(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        write = pending(live(ctx))[0]
+        if write.verb not in ("edit", "delete"):
+            return None
+        written = [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
+        conv = conversation_of(ctx)
+        messages = thread_of(ctx).messages if conv.thread else read_thread(Conversation(conv.channel, write.ts)).messages
+        if not written or not any(message.ts == write.ts and message.from_claude for message in messages):
+            return None
+        return [Evidence(id=f"ticket:{written[-1].id}", source="ticket", quote=f"this session wrote in {conv.where} under ticket {written[-1].id} ({written[-1].rule}), and the message is the agent's own")]
+
+
+@dataclass(frozen=True, slots=True)
 class TopLevel(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         return None if ctx.place["thread"] else []
@@ -372,6 +389,7 @@ SLACK = Tickets(
         Rule("standing-grant", StandingGrant()),
         Rule("user-linked", UserSaid(Linked())),
         Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(TopLevel(), NotRevoked(), UserRuled("channel")))),
+        Rule("own-post", OwnPost()),
         Rule("decide", Judged(Decide(RULES, contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
@@ -647,6 +665,10 @@ def covering(place: dict[str, str] | None = None, *, rule: str = "asked-user", r
     )
 
 
+def posted_once(place: dict[str, str] | None = None) -> Ticket:
+    return covering(place, rule=UNCHECKED).model_copy(update={"reach": Reach.ONCE, "fingerprint": "0" * 16})
+
+
 @dataclass(frozen=True, slots=True)
 class Case:
     write: dict[str, Any]
@@ -841,6 +863,11 @@ on(
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[covering({"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | {f"{CC_SLACK} thread": ""}) >> Rewrite(ticket_id="0123456789ab"),
             case(PRIYA_EDIT, tool="slack_edit", tickets=[covering({"channel": PRIYA_USER, "thread": ""})], commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Rewrite(ticket_id="0123456789ab"),
             case(PRIYA_EDIT, tool="slack_edit", commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern="Edit the bot's message to this"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
+            case({"channel_id": FOLLOWERS, "ts": DANA_FOLLOWED_UP["ts"], "text": "edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once({"channel": FOLLOWERS, "thread": "1791000000.000001"})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
+            case(tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> DENY,
             case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
             case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True),
