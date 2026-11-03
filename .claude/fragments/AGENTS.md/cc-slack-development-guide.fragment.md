@@ -76,6 +76,8 @@ token_command = ["gh", "auth", "token"]
 
 [pr_links]
 repos = ["acme/app", "acme/lib"]
+card_channels = ["C0TEAMROOM"]
+card_command = ["lr", "board", "card", "--lane", "pr-cards"]
 
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
@@ -98,6 +100,27 @@ not scanned, and a number no candidate repo holds stays plain. The daemon
 asks GitHub about every candidate in one GraphQL query per post, with a 5 s
 limit; when that read fails, the post goes out as written and the daemon
 logs why.
+
+`card_command` names a program, resolved on `PATH` at `login`, that draws a
+linked PR's card. After a post in the bot's DM with the engineer, or in a
+channel whose ID `card_channels` lists, the daemon runs it once with
+`{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR the post
+linked that no card in that thread cites yet. A merged or closed PR stays a
+link. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
+`card` a waiting `dm-status` card with `options`, and the daemon posts each
+one that passes the card checks as a reply in the post's thread. It keeps
+them in `live-cards.json`, so a PR is carded once per thread, and the ref
+poller redraws a card when its PR changes state. A PR the program leaves out
+stays a link, as does every PR when the program fails or runs past 30 s, and
+the daemon logs why. Every other channel, a thread we posted in it included,
+gets links and no card. A tap on one of the card's options, other than Other
+or Explain more, goes to the same program as `{"answer": {"repo", "number",
+"waits", "label"}}` instead of to a session. When the program exits 0, the
+card shows the answer in place of its buttons. Otherwise the daemon logs why
+and the card keeps its buttons.
+
+A card with `refs` and no body, options, asks, links, facts, images,
+progress, or rollup gets no Ack or Pause button.
 
 `[permissions]` turns on the plugin's capt-hook pack in the checkout that holds
 the file: with `enabled = true`, `plugin/capt-hook/hooks/permission.py` checks

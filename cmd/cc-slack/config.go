@@ -34,7 +34,9 @@ type config struct {
 }
 
 type prLinksConfig struct {
-	Repos []string `toml:"repos" json:"repos,omitempty"`
+	Repos        []string `toml:"repos" json:"repos,omitempty"`
+	CardChannels []string `toml:"card_channels" json:"card_channels,omitempty"`
+	CardCommand  []string `toml:"card_command" json:"card_command,omitempty"`
 }
 
 type permissions struct {
@@ -162,7 +164,18 @@ func (c *config) resolveTokens() error {
 	if err := c.GitHub.resolve("github"); err != nil {
 		return err
 	}
-	return c.Buildkite.resolve("buildkite")
+	if err := c.Buildkite.resolve("buildkite"); err != nil {
+		return err
+	}
+	if len(c.PRLinks.CardCommand) == 0 {
+		return nil
+	}
+	bin, err := exec.LookPath(c.PRLinks.CardCommand[0])
+	if err != nil {
+		return fmt.Errorf("[pr_links] card_command: %w", err)
+	}
+	c.PRLinks.CardCommand[0] = bin
+	return nil
 }
 
 func configPath(flag, repo string) (path string, required bool, err error) {

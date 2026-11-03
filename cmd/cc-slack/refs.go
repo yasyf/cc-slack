@@ -37,7 +37,9 @@ type refID struct {
 	Number int
 }
 
-func (r refID) key() string { return fmt.Sprintf("%s:%s/%s#%d", r.Kind, r.Owner, r.Repo, r.Number) }
+func (r refID) key() string {
+	return strings.ToLower(fmt.Sprintf("%s:%s/%s#%d", r.Kind, r.Owner, r.Repo, r.Number))
+}
 
 func (r refID) defaultLabel() string {
 	if r.Kind == refPR {

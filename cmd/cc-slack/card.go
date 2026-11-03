@@ -920,7 +920,15 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	if c.Waits != "" {
 		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, c.waitHint())), c.waitActions(), c.context(v.tag, v.at, ""))
 	}
+	if c.refsOnly() {
+		return append(blocks, c.context(v.tag, v.at, ""))
+	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
+}
+
+func (c statusCard) refsOnly() bool {
+	return len(c.Refs) > 0 && c.Body == "" && c.Progress == nil && c.Rollup == nil &&
+		len(c.Options)+len(c.Asks)+len(c.Links)+len(c.Facts)+len(c.Images) == 0
 }
 
 func (c statusCard) rootBlocks(v cardView) []slack.Block {
