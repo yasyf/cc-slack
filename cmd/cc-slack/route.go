@@ -102,7 +102,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 
 func messageLine(m messagePayload, operator bool) string {
 	if m.Kind == kindDM {
-		return fmt.Sprintf("Slack DM from %s, your operator, in this session's status thread (ts %s, %s): %q. "+
+		return fmt.Sprintf("Slack DM from %s, your operator, to this session (ts %s, %s): %q. "+
 			"Act on it as operator steering, and post status back with slack_dm_status.", m.UserName, m.TS, m.Permalink, m.Text)
 	}
 	if operator {

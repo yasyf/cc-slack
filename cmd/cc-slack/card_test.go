@@ -194,7 +194,7 @@ func cardBody(title string, options ...string) map[string]any {
 	return map[string]any{"card": statusCard{Status: "needs_you", Title: title, Body: "Two PRs are green.", Options: options}}
 }
 
-func TestDMStatusCardOpensALiveRootAndRedrawsIt(t *testing.T) {
+func TestDMStatusCardsEachLandAtTheDMRootWithTheirOwnThread(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	var first, second map[string]string
@@ -202,33 +202,29 @@ func TestDMStatusCardOpensALiveRootAndRedrawsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := l.slack.sent()
-	if len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != sent[0].ts || first["thread_ts"] != sent[0].ts {
-		t.Fatalf("first card posts = %+v, result %v, want a root then a reply in its thread", sent, first)
+	if len(sent) != 1 || sent[0].threadTS != "" || first["thread_ts"] != sent[0].ts || first["ts"] != sent[0].ts {
+		t.Fatalf("first card posts = %+v, result %v, want one message at the DM root", sent, first)
 	}
-	if strings.Contains(sent[0].blocks, cardActionsBlock) || !strings.Contains(sent[1].blocks, cardAckAction) {
-		t.Fatalf("root %s, reply %s: want buttons on the reply only", sent[0].blocks, sent[1].blocks)
+	if !strings.Contains(sent[0].blocks, cardAckAction) {
+		t.Fatalf("card %s, want its buttons on the message", sent[0].blocks)
 	}
-	if sent[1].text != "🙋 Merge the stack? — Two PRs are green." {
-		t.Fatalf("notification text = %q", sent[1].text)
+	if sent[0].text != "🙋 Merge the stack? — Two PRs are green." {
+		t.Fatalf("notification text = %q", sent[0].text)
 	}
 	if err := json.Unmarshal(l.do(opDMStatus, cardBody("Landed")).Body, &second); err != nil {
 		t.Fatal(err)
 	}
-	sent = l.slack.sent()
-	edits := l.slack.edited()
-	if second["thread_ts"] != first["thread_ts"] || len(sent) != 3 || sent[2].threadTS != first["thread_ts"] {
-		t.Fatalf("second card posts = %+v, want one more reply in the thread", sent)
-	}
-	if len(edits) != 1 || edits[0].ts != first["thread_ts"] || !strings.Contains(edits[0].blocks, "*Landed*") {
-		t.Fatalf("root edits = %+v, want the root redrawn with the latest card", edits)
-	}
 	l.do(opDMStatus, map[string]string{"text": "a quick aside"})
-	if len(l.slack.edited()) != 1 {
-		t.Fatalf("a plain-text status redrew the root: %+v", l.slack.edited())
+	sent = l.slack.sent()
+	if len(sent) != 3 || sent[1].threadTS != "" || sent[2].threadTS != "" || second["thread_ts"] != sent[1].ts || second["thread_ts"] == first["thread_ts"] {
+		t.Fatalf("later posts = %+v, result %v, want each at the DM root with its own thread", sent, second)
+	}
+	if edits := l.slack.edited(); len(edits) != 0 {
+		t.Fatalf("edits = %+v, want no earlier message redrawn", edits)
 	}
 }
 
-func TestDMStatusCardLeavesAShortcutRootAlone(t *testing.T) {
+func TestDMStatusCardPostsAtTheRootAndKeepsAShortcutDMWatched(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	const dmTS = "1800000050.000000"
@@ -237,8 +233,11 @@ func TestDMStatusCardLeavesAShortcutRootAlone(t *testing.T) {
 	l.do(opDMStatus, body)
 	l.do(opDMStatus, cardBody("Halfway"))
 	sent := l.slack.sent()
-	if len(sent) != 2 || sent[0].threadTS != dmTS || sent[1].threadTS != dmTS || len(l.slack.edited()) != 0 {
-		t.Fatalf("posts %+v, edits %+v: want replies under the shortcut DM and no edit of it", sent, l.slack.edited())
+	if len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != "" || len(l.slack.edited()) != 0 {
+		t.Fatalf("posts %+v, edits %+v: want both at the DM root and no edit of the shortcut DM", sent, l.slack.edited())
+	}
+	if active := activeDMThreads(t, l); !slices.Contains(active, dmTS) || !slices.Contains(active, sent[0].ts) || !slices.Contains(active, sent[1].ts) {
+		t.Fatalf("active DM watches = %v, want the shortcut DM and both cards", active)
 	}
 }
 
@@ -267,13 +266,13 @@ func TestCardTapSteersTheSessionOnceAndMarksTheCard(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.do(opDMStatus, cardBody("Merge the stack?", "merge it"))
-	sent := l.slack.sent()
-	root, reply := sent[0].ts, sent[1].ts
+	l.do(opDMStatus, cardBody("A later update"))
+	reply := l.slack.sent()[0].ts
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
-	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply, ThreadTS: root,
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply, ThreadTS: reply,
 		ActionID: cardOptionAction + "0", Value: "merge it", ActionTS: "1800000100.000000", Seq: "001800000100000-abcd0123"}
 	l.tap(id, push)
 	got := l.inject(agent.TopLevel)
@@ -305,7 +304,7 @@ func TestCardTapPauseAndStrangersAreHandled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	push := cardActionPush{User: "U0STRANGER", Channel: id.DMChannelID, MessageTS: sent[1].ts, ThreadTS: sent[0].ts,
+	push := cardActionPush{User: "U0STRANGER", Channel: id.DMChannelID, MessageTS: sent[0].ts, ThreadTS: sent[0].ts,
 		ActionID: cardPauseAction, Value: cardPauseLabel, ActionTS: "1800000100.000000"}
 	l.tap(id, push)
 	if got := l.inject(agent.TopLevel); got != "" || len(l.slack.edited()) != 0 {

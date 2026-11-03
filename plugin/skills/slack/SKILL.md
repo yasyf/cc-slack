@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Post, reply, or react in Slack through cc-slack with the user's permission; read or watch threads, take DM steering, and work sessions opened from the "Open in Claude" Slack shortcut. Use this session's DM status thread for updates and the Slack MCP fallback for reads or personal 1:1 DMs the bot cannot reach.
+description: Post, reply, or react in Slack through cc-slack with the user's permission; read or watch threads, take DM steering, and work sessions opened from the "Open in Claude" Slack shortcut. Send updates to the user's DM as top-level messages and the Slack MCP fallback for reads or personal 1:1 DMs the bot cannot reach.
 ---
 
 # Work in Slack
@@ -287,7 +287,7 @@ result:
 - `active`: channel tags already reach this session. Arm no Monitor.
 - `pending` or `inactive`: arm Monitor with `persistent: true` and a
   description naming that subscription, such as
-  `cc-slack: thread <channel_id>/<thread_ts>` or `cc-slack: DM status thread`,
+  `cc-slack: thread <channel_id>/<thread_ts>` or `cc-slack: DM status`,
   running:
 
   ```bash
@@ -365,10 +365,19 @@ permission to send; every resulting write needs a ticket like any other.
 
 ## Take steering in the user's DM
 
-Call `slack_dm_status(card)` to open or update this session's status thread
-in the user's DM with the app. It returns `{channel_id, thread_ts}`. Receive
-the user's replies there as directives through the same receive protocol,
-deduplicate them, and post status back with `slack_dm_status`.
+Call `slack_dm_status(card)` to post an update in the user's DM with the
+app. Every card and every update lands as its own message at the DM root,
+never inside another message's thread. It returns `{channel_id, thread_ts, ts}`,
+and `thread_ts` is that message's own timestamp. Receive the user's replies
+in that message's thread, and taps on it, as directives through the same
+receive protocol, deduplicate them, and post status back with
+`slack_dm_status`. A message the user types at the DM root reaches this
+session when it is the only one live; with several live, cc-slack answers
+with a link to each session's newest message.
+
+Pass `thread_ts` only for a short conversational answer in the thread the
+user replied in. An edit or delete of the agent's own message in this DM
+needs no second ask.
 
 ### Send status as a card
 
@@ -394,14 +403,13 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, each with up to 4 buttons |
 
-The first card opens the thread with a root card. Every later card posts
-in the thread and redraws the root with its latest state. The root keeps
-the last progress, times, facts, refs, links, and rollup any card set,
-lists every open ask in the thread, and shows a timeline of the last
-updates. `root_only` (`dm-status --root-only`) redraws the root without
-posting a reply, for a script that keeps a drive's rollup current. The
-daemon tags both cards with the session's short id, repo, branch, and
-worktree. A thread bound to a shortcut DM keeps that message as its root.
+Every card posts as its own message at the DM root. `root_only`
+(`dm-status --root-only`) keeps one live root card per session, for a script
+that keeps a drive's rollup current: the first call posts it, and each later
+call redraws it, keeping the last progress, times, facts, refs, links, and
+rollup any call set, every open ask, and a timeline of the last updates. The
+daemon tags each card with the session's short id, repo, branch, and
+worktree.
 
 An ask's `id` is stable: reusing it updates the same ask, and an answered
 ask stays answered, so a script can resend its asks every pass. `confirm`
@@ -470,10 +478,9 @@ more` and the question id. It answers nothing, and the lane stays
 stopped. For a card on a cc-present board, reply with
 `cc-present reply --block <question id> --body <answer>`, which answers on
 the board and under the card. Otherwise reply with `slack_dm_status` text
-and `about` set to the question id. Either way cc-slack opens the reply with
-a Slack link back to the card,
-`<permalink|this card>`, so nobody scrolls to find it. Pass `about` on any
-other reply about a waiting card too. Give the question in plain words and
+and `about` set to the question id. Either way the reply lands in the card's
+own thread, so it stays beside the question. Pass `about` on any other reply
+about a waiting card too. Give the question in plain words and
 what each answer does, and keep waiting for the answer.
 
 A card about a pull request lists it in `refs`. The card links each one as
@@ -512,9 +519,10 @@ and a bot DM with a reply from `<display name> (agent)` naming this workspace.
 2. If the bot cannot read a private channel or DM, use
    `mcp__slack__slack_get_thread`.
 3. Call `slack_watch` for that thread as the top-level session. Omit `owner`.
-4. Call `slack_dm_status` with `thread_ts` set to the brief's `dm_ts` and one
-   line saying the session started and what it read. The reply lands under
-   the shortcut DM message; pass the same `thread_ts` on every later status.
+4. Call `slack_dm_status(card)` with `thread_ts` set to the brief's `dm_ts`
+   and one line saying the session started and what it read. The card lands
+   at the DM root, and the user's replies under the shortcut DM message reach
+   this session too. Later status needs no `thread_ts`.
 5. Do the work in this workspace's checkout.
 
 The invoker chose the message, so its thread states the task. The brief and

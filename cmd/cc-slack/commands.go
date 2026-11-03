@@ -759,7 +759,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
-		Short: "Post status to your DM with the app, in this session's thread",
+		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about}
@@ -776,13 +776,13 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		},
 	}
 	f.bind(c)
-	c.Flags().StringVar(&thread, "thread", "", "ts of a DM message to post under and bind this session's status thread to")
+	c.Flags().StringVar(&thread, "thread", "", "ts of a DM message to reply under; its replies reach this session, and a card still posts at the DM root")
 	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
 	c.Flags().StringVar(&card, "card", "", "status card as a JSON object, or @path to a file holding one, in place of text")
-	c.Flags().BoolVar(&rootOnly, "root-only", false, "redraw only the status thread's root card with --card, posting no reply")
+	c.Flags().BoolVar(&rootOnly, "root-only", false, "redraw this session's one root card with --card, posting it at the DM root the first time")
 	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
-	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply opens with a link back to it")
+	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	bindAgent(c, &agentName)
 	return c
 }

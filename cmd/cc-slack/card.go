@@ -844,6 +844,12 @@ func timelineBlock(entries []timelineEntry, now time.Time) []slack.Block {
 	return []slack.Block{mrkdwn("card-timeline", strings.Join(lines, "\n"))}
 }
 
+func (c statusCard) gainsRows(previous statusCard) bool {
+	return slices.ContainsFunc(c.Rows, func(r cardRow) bool {
+		return !slices.ContainsFunc(previous.Rows, func(o cardRow) bool { return o.ID == r.ID })
+	})
+}
+
 func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks := []slack.Block{header(c.emoji() + " " + c.Title)}
 	if c.Body != "" {
@@ -855,6 +861,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)
 	blocks = append(blocks, c.refs(v)...)
+	blocks = append(blocks, c.rollup(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
 	if c.Group != "" {

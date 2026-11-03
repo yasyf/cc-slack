@@ -143,6 +143,7 @@ class Conversation:
     ts: str = ""
     channel_wide: bool = False
     linkable: bool = True
+    own: bool = False
 
     @property
     def place(self) -> dict[str, str]:
@@ -186,7 +187,7 @@ def conversation(write: Write) -> Conversation:
     peer = cc_slack("dm-peer", "--channel", write.channel)
     name = str(peer.get("peer_name") or "")
     names = tuple(dict.fromkeys(found for found in (name, *peer.get("peer_names", [])) if found))
-    return Conversation(write.channel, write.thread or message_thread(write), str(peer.get("peer") or ""), name, names, write.ts)
+    return Conversation(write.channel, write.thread or message_thread(write), str(peer.get("peer") or ""), name, names, write.ts, own=bool(peer.get("own")))
 
 
 def message_thread(write: Write) -> str:
@@ -340,9 +341,13 @@ class OwnPost(CustomTicketCondition):
             return None
         written = [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
         conv = conversation_of(ctx)
-        messages = thread_of(ctx).messages if conv.thread else read_thread(Conversation(conv.channel, write.ts)).messages
-        if not written or not any(message.ts == write.ts and message.from_claude for message in messages):
+        if not written and not conv.own:
             return None
+        messages = thread_of(ctx).messages if conv.thread else read_thread(Conversation(conv.channel, write.ts)).messages
+        if not any(message.ts == write.ts and message.from_claude for message in messages):
+            return None
+        if conv.own:
+            return [Evidence(id=f"message:{write.ts}", source="message", quote=f"message {write.ts} is the agent's own, in the user's own DM with the app")]
         return [Evidence(id=f"ticket:{written[-1].id}", source="ticket", quote=f"this session wrote in {conv.where} under ticket {written[-1].id} ({written[-1].rule}), and the message is the agent's own")]
 
 
@@ -563,6 +568,8 @@ NOT_DM = {
     "ccn answer search": "[]",
     "cc-present outcomes": "{}",
 }
+OWN_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": "U0OWNER0001", "peer_name": "Alex", "own": True})}
+OWN_DM_EDIT = {"channel_id": "D0OWNDM0001", "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}
 PRIYA_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": PRIYA_USER, "peer_name": "priya"})}
 PRIYA_BY_USER = NOT_DM | {f"{CC_SLACK} dm-peer": (1, "dm-peer needs channel_id (or a Slack url)"), f"{CC_SLACK} dm-peer --channel {PRIYA_USER}": PRIYA_DM[f"{CC_SLACK} dm-peer"]}
 SAM_USER = "U0SAMOK0001"
@@ -868,6 +875,10 @@ on(
             case({"channel_id": FOLLOWERS, "ts": DANA_FOLLOWED_UP["ts"], "text": "edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once({"channel": FOLLOWERS, "thread": "1791000000.000001"})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
             case(tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> DENY,
+            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
+            case({"channel_id": OWN_DM_EDIT["channel_id"], "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
+            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED | {"from_claude": False})) >> Block(pattern="Edit the bot's message to this"),
+            case(OWN_DM_EDIT, tool="slack_edit", commands=PRIYA_DM | thread_read(BOT_ANSWERED)) >> Block(pattern="Edit the bot's message to this"),
             case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
             case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True),

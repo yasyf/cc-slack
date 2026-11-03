@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -409,6 +410,7 @@ func (f *fakeSlack) GetConversationHistoryContext(_ context.Context, params *sla
 		m := msgs[i]
 		top := m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp
 		if top && (params.Oldest == "" || tsLess(params.Oldest, m.Timestamp)) {
+			m.LatestReply = cmp.Or(latestReply(msgs, m.Timestamp), m.LatestReply)
 			resp.Messages = append(resp.Messages, m)
 		}
 		if params.Limit > 0 && len(resp.Messages) == params.Limit {
@@ -416,6 +418,16 @@ func (f *fakeSlack) GetConversationHistoryContext(_ context.Context, params *sla
 		}
 	}
 	return resp, nil
+}
+
+func latestReply(msgs []slack.Message, parent string) string {
+	latest := ""
+	for _, m := range msgs {
+		if m.ThreadTimestamp == parent && m.Timestamp != parent && (latest == "" || tsLess(latest, m.Timestamp)) {
+			latest = m.Timestamp
+		}
+	}
+	return latest
 }
 
 const fakeListPage = 2

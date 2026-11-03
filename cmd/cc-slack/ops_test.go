@@ -1023,7 +1023,7 @@ func TestReactInAPrivateChannelNamesChannelJoinNotTheMCP(t *testing.T) {
 	}
 }
 
-func TestDMStatusOpensOneThreadPerSession(t *testing.T) {
+func TestDMStatusPostsEachUpdateAtTheRootWithItsOwnThread(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	var first, second map[string]string
@@ -1033,15 +1033,37 @@ func TestDMStatusOpensOneThreadPerSession(t *testing.T) {
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]string{"text": "halfway"}).Body, &second); err != nil {
 		t.Fatal(err)
 	}
-	if first["thread_ts"] == "" || second["thread_ts"] != first["thread_ts"] || first["channel_id"] != "D"+testUser {
-		t.Fatalf("dm-status threads = %v then %v, want one DM thread", first, second)
+	sent := l.slack.sent()
+	if sent[0].threadTS != "" || sent[1].threadTS != "" || first["thread_ts"] != sent[0].ts || second["thread_ts"] != sent[1].ts || first["channel_id"] != "D"+testUser {
+		t.Fatalf("dm-status posts = %+v, results %v then %v, want each at the DM root", sent, first, second)
 	}
-	if got := l.slack.sent()[1]; got.threadTS != first["thread_ts"] {
-		t.Fatalf("second status = %+v, want it in the session thread", got)
+	if active := activeDMThreads(t, l); !slices.Equal(active, []string{sent[0].ts, sent[1].ts}) {
+		t.Fatalf("active DM watches = %v, want one per message", active)
 	}
 }
 
-func TestDMStatusBindsToAGivenDMMessage(t *testing.T) {
+func activeDMThreads(t *testing.T, l *liveDaemon) []string {
+	t.Helper()
+	rows, err := l.srv.DB().QueryContext(l.ctx, `SELECT thread_ts FROM watches WHERE kind = 'dm' AND status = 'active' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var active []string
+	for rows.Next() {
+		var ts string
+		if err := rows.Scan(&ts); err != nil {
+			t.Fatal(err)
+		}
+		active = append(active, ts)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return active
+}
+
+func TestDMStatusRepliesUnderAGivenDMMessageOnlyWhenAsked(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	var opened, bound, later map[string]string
@@ -1055,30 +1077,15 @@ func TestDMStatusBindsToAGivenDMMessage(t *testing.T) {
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]string{"text": "done"}).Body, &later); err != nil {
 		t.Fatal(err)
 	}
-	if bound["thread_ts"] != dmTS || later["thread_ts"] != dmTS {
-		t.Fatalf("dm-status threads = %v then %v, want both on the shortcut DM", bound, later)
-	}
 	sent := l.slack.sent()
-	if sent[1].threadTS != dmTS || sent[2].threadTS != dmTS {
-		t.Fatalf("status posts = %+v, want them under %s", sent, dmTS)
+	if bound["thread_ts"] != dmTS || sent[1].threadTS != dmTS {
+		t.Fatalf("bound reply = %v, post %+v, want it under %s", bound, sent[1], dmTS)
 	}
-	var active []string
-	rows, err := l.srv.DB().QueryContext(l.ctx, `SELECT thread_ts FROM watches WHERE kind = 'dm' AND status = 'active'`)
-	if err != nil {
-		t.Fatal(err)
+	if sent[2].threadTS != "" || later["thread_ts"] != sent[2].ts {
+		t.Fatalf("later status = %v, post %+v, want it back at the DM root", later, sent[2])
 	}
-	for rows.Next() {
-		var ts string
-		if err := rows.Scan(&ts); err != nil {
-			t.Fatal(err)
-		}
-		active = append(active, ts)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if len(active) != 1 || active[0] != dmTS || opened["thread_ts"] == dmTS {
-		t.Fatalf("active DM watches = %v, want only the shortcut DM thread", active)
+	if active := activeDMThreads(t, l); !slices.Equal(active, []string{opened["thread_ts"], dmTS, later["thread_ts"]}) {
+		t.Fatalf("active DM watches = %v, want each message and the given one", active)
 	}
 	raw := mustJSON(map[string]string{"text": "x", "thread_ts": "not-a-ts"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "not a Slack ts") {
@@ -1180,7 +1187,7 @@ func TestDMPeerNamesThePersonADMReaches(t *testing.T) {
 	for channel, want := range map[string]dmPeerResult{
 		mpim:           {ChannelID: mpim, Peer: "UOTHER", PeerName: "anubhav", PeerNames: []string{"anubhav"}},
 		"UOTHER":       {ChannelID: "UOTHER", Peer: "UOTHER", PeerName: "anubhav", PeerNames: []string{"anubhav"}},
-		"D" + testUser: {ChannelID: "D" + testUser, Peer: testUser, PeerName: "yasyf", PeerNames: owner},
+		"D" + testUser: {ChannelID: "D" + testUser, Peer: testUser, PeerName: "yasyf", PeerNames: owner, Own: true},
 		testChannel:    {ChannelID: testChannel},
 	} {
 		var got dmPeerResult
