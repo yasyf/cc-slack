@@ -140,15 +140,16 @@ func (r receipt) channelResult(replayed bool) channelResult {
 }
 
 type threadMessage struct {
-	TS         string        `json:"ts"`
-	ThreadTS   string        `json:"thread_ts,omitempty"`
-	User       string        `json:"user"`
-	UserName   string        `json:"user_name"`
-	FromUser   bool          `json:"from_user,omitempty"`
-	FromClaude bool          `json:"from_claude"`
-	FromBot    bool          `json:"from_bot,omitempty"`
-	Text       string        `json:"text"`
-	Files      []messageFile `json:"files,omitempty"`
+	TS         string          `json:"ts"`
+	ThreadTS   string          `json:"thread_ts,omitempty"`
+	User       string          `json:"user"`
+	UserName   string          `json:"user_name"`
+	FromUser   bool            `json:"from_user,omitempty"`
+	FromClaude bool            `json:"from_claude"`
+	FromBot    bool            `json:"from_bot,omitempty"`
+	Text       string          `json:"text"`
+	Files      []messageFile   `json:"files,omitempty"`
+	Shares     []sharedMessage `json:"shares,omitempty"`
 }
 
 type messageFile struct {
@@ -156,6 +157,8 @@ type messageFile struct {
 	Name      string `json:"name"`
 	Mimetype  string `json:"mimetype"`
 	Permalink string `json:"permalink"`
+	Path      string `json:"path,omitempty"`
+	PathError string `json:"path_error,omitempty"`
 }
 
 type threadResult struct {
@@ -168,16 +171,17 @@ type threadResult struct {
 }
 
 type historyMessage struct {
-	TS          string        `json:"ts"`
-	User        string        `json:"user"`
-	UserName    string        `json:"user_name"`
-	FromUser    bool          `json:"from_user,omitempty"`
-	FromClaude  bool          `json:"from_claude"`
-	Text        string        `json:"text"`
-	Permalink   string        `json:"permalink"`
-	ReplyCount  int           `json:"reply_count,omitempty"`
-	LatestReply string        `json:"latest_reply,omitempty"`
-	Files       []messageFile `json:"files,omitempty"`
+	TS          string          `json:"ts"`
+	User        string          `json:"user"`
+	UserName    string          `json:"user_name"`
+	FromUser    bool            `json:"from_user,omitempty"`
+	FromClaude  bool            `json:"from_claude"`
+	Text        string          `json:"text"`
+	Permalink   string          `json:"permalink"`
+	ReplyCount  int             `json:"reply_count,omitempty"`
+	LatestReply string          `json:"latest_reply,omitempty"`
+	Files       []messageFile   `json:"files,omitempty"`
+	Shares      []sharedMessage `json:"shares,omitempty"`
 }
 
 type historyResult struct {
@@ -922,6 +926,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
 			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
+			Shares: a.sharedMessages(hc.Ctx, api, m),
 		})
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
@@ -966,7 +971,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 			TS: m.Timestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m), FromUser: m.User == id.UserID,
 			FromClaude: id.fromClaude(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files,
+			Files: files, Shares: a.sharedMessages(hc.Ctx, api, m),
 		})
 	}
 	return ok(historyResult{ChannelID: channelID, Messages: out})
@@ -977,7 +982,7 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 	seen := map[string]bool{}
 	for _, f := range m.Files {
 		seen[f.ID] = true
-		out = append(out, messageFile{ID: f.ID, Name: f.Name, Mimetype: f.Mimetype, Permalink: f.Permalink})
+		out = append(out, attachedFile(ctx, api, &f))
 	}
 	for _, block := range m.Blocks.BlockSet {
 		image, ok := block.(*slack.ImageBlock)
@@ -989,7 +994,7 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, messageFile{ID: f.ID, Name: f.Name, Mimetype: f.Mimetype, Permalink: f.Permalink})
+		out = append(out, attachedFile(ctx, api, f))
 	}
 	return out, nil
 }
@@ -997,6 +1002,10 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 func messageText(m slack.Message) string {
 	parts := append([]string{sectionedText(m)}, blockTexts(m.Blocks)...)
 	for _, at := range m.Attachments {
+		if ref, shared := shareRef(at); shared {
+			parts = append(parts, fmt.Sprintf("Shared from %s in <#%s>: %s", shareAuthor(at), ref.channelID, cmp.Or(at.Text, at.Fallback)))
+			continue
+		}
 		parts = append(parts, at.Pretext, at.Title, at.Text, at.TitleLink)
 		if at.Title == "" && at.Text == "" {
 			parts = append(parts, at.Fallback)

@@ -44,7 +44,10 @@ CLI_VERBS = {
     "channel-join": "join",
 }
 MESSAGE_VERBS = frozenset({"post", "edit", "delete"})
-VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd")
+READ_TOOLS = frozenset({"slack_thread", "slack_get_thread"})
+READ_VERBS = {"thread": "read"}
+THREADED_VERBS = MESSAGE_VERBS | set(READ_VERBS.values())
+VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd", "limit")
 HELP = Option("help", ("--help", "-h"), bool)
 CLI = CommandSchema(
     "cc-slack",
@@ -130,7 +133,7 @@ class Write:
 
     @property
     def thread(self) -> str:
-        thread = str(self.fields.get("thread_ts") or self.link[1]) if self.verb in MESSAGE_VERBS else ""
+        thread = str(self.fields.get("thread_ts") or self.link[1]) if self.verb in THREADED_VERBS else ""
         return "" if thread == self.ts else thread
 
     @property
@@ -179,3 +182,9 @@ def pending(evt: ToolHookEvent) -> list[Write]:
         return [Write(TOOL_VERBS[tool], dict(raw), daemon=tool not in USER_TOOLS)]
     extra = [write for cli in permissions().clis for _, write in bound_calls(evt, cli.schema, cli.verbs, daemon=False)]
     return [*(write for _, write in cli_calls(evt)), *extra]
+
+
+def read_threads(evt: ToolHookEvent) -> list[str]:
+    tool = (evt.tool_name or "").rsplit("__", 1)[-1]
+    reads = [Write("read", dict(evt.input.raw), daemon=True)] if tool in READ_TOOLS else [write for _, write in bound_calls(evt, CLI, READ_VERBS, daemon=True) if write.readable]
+    return [read.thread for read in reads if read.thread]

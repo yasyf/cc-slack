@@ -169,6 +169,20 @@ same bot, so two agents could otherwise ping-pong. The daemon never routes
 its own posts back as `from_claude` messages, so a lane's consecutive
 replies need no human turn between them.
 
+Read before you reply. A post into a thread, through `slack_reply`,
+`slack_send` with a thread, the CLI, or `mcp__slack__slack_send_message`, is
+refused unless this agent read that whole thread in the last 10 minutes with
+`slack_thread`, or `mcp__slack__slack_get_thread` where the bot cannot reach it.
+A `truncated` or `stale` read does not count, and neither does a subagent's read
+for its parent or a parent's for its subagent.
+
+A message listed under `shares` is someone else's report. The person, the
+machine, and the screenshot belong to its original author, not to whoever shared
+it, so read it before you answer, and never ask for what it already holds. An
+image carries a local `path` you can Read; `path_error` says why it could not be
+downloaded. A share with `unreadable` set could not be opened, and that field
+names the read to use instead.
+
 ## Send, react, and read
 
 The tool names below have the full prefix
@@ -183,7 +197,7 @@ The tool names below have the full prefix
 | Remove the bot's reaction | `slack_unreact(channel_id, ts, name)` |
 | Replace the text of the bot's own post | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
-| Read a thread; a rate-limited read returns the cached copy with `stale: true` and `retry_after` | `slack_thread(channel_id, thread_ts, limit?)` |
+| Read a thread, with each shared message's original author, channel, text, and files under `shares` and each image's local `path`; a rate-limited read returns the cached copy with `stale: true` and `retry_after` | `slack_thread(channel_id, thread_ts, limit?)` |
 | Read a channel's latest top-level messages, newest first, with reply counts and permalinks | `slack_history(channel_id, limit?)` |
 | Download a file attachment, such as a screenshot, to a local path you can Read (CLI `cc-slack file <permalink or id> [--out <path>]`) | `slack_file(file_id or url, out?)` |
 | List unarchived public channels, and private ones the bot is in, by name prefix, with id, name, and created | `slack_channels(prefix?)` |

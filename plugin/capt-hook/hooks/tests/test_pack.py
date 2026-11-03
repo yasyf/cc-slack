@@ -11,15 +11,19 @@ import sys
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from captain_hook import Action, Event, app
 from captain_hook.loader import discover_pack
 from captain_hook.packs.manager import pack_module_name
-from captain_hook.testing.helpers import mock_event
+from captain_hook.session import SessionStore
+from captain_hook.testing.helpers import mock_event, mock_tool_event
 
 HOOKS = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+TOOLS = "mcp__plugin_cc-slack_cc-slack__"
+THREAD = {"channel_id": "C0APPTHREAD", "thread_ts": "1790210144.444179"}
 
 
 class PackTest(unittest.TestCase):
@@ -32,6 +36,7 @@ class PackTest(unittest.TestCase):
         cls.common = sys.modules[f"{cls.package}.common"]
         cls.agent_plane = sys.modules[f"{cls.package}.agent_plane"]
         cls.session = sys.modules[f"{cls.package}.session"]
+        cls.read_guard = sys.modules[f"{cls.package}.read_before_reply"]
         cls.original_bin = cls.common.BIN
 
     @classmethod
@@ -90,8 +95,8 @@ class PackTest(unittest.TestCase):
 
     def test_discover_pack_loads_every_module_and_hook(self) -> None:
         self.assertEqual(app._state.load_errors, [])
-        self.assertEqual(len(app._state.hooks), 10)
-        for module in ("agent_plane", "common", "slack_comms_need_proof", "session", "permission", "plain_words", "writes"):
+        self.assertEqual(len(app._state.hooks), 12)
+        for module in ("agent_plane", "common", "slack_comms_need_proof", "session", "permission", "plain_words", "read_before_reply", "writes"):
             self.assertIn(f"{self.package}.{module}", sys.modules)
 
         expected = {
@@ -105,6 +110,8 @@ class PackTest(unittest.TestCase):
             "slack_posts_use_plain_words": (Event.PreToolUse, False, True),
             "comms_never_asks_for_evidence": (Event.PreToolUse, False, True),
             "fixed_lines_name_the_proven_user": (Event.PreToolUse, False, True),
+            "replies_read_their_thread_first": (Event.PreToolUse, False, True),
+            "full_thread_reads_are_recorded": (Event.PostToolUse, False, True),
         }
         actual = {
             hook.name: (hook.spec.events, hook.spec.async_, hook.spec.skip_planning_agents)
@@ -231,6 +238,57 @@ class PackTest(unittest.TestCase):
         record = self.stub(stdout="unused")
         self.assertIsNone(self.session.session_record(mock_event(Event.SessionStart, source="startup")))
         self.assertFalse(record.exists())
+
+    def read(self, session: Path, tool: str = TOOLS + "slack_thread", agent_id: str | None = None, **result: object) -> None:
+        output = json.dumps({"channel_id": THREAD["channel_id"], "thread_ts": THREAD["thread_ts"], "messages": [], **result})
+        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(tool, event=Event.PostToolUse, tool_input=THREAD, output=output, agent_id=agent_id, session_dir=session))
+
+    def refused(self, session: Path, agent_id: str | None = None) -> bool:
+        evt = mock_tool_event(TOOLS + "slack_reply", tool_input=THREAD | {"text": "On it."}, agent_id=agent_id, session_dir=session)
+        result = self.read_guard.replies_read_their_thread_first(evt)
+        return result is not None and result.action == Action.block
+
+    def test_a_reply_without_a_read_is_refused_and_names_the_read(self) -> None:
+        evt = mock_tool_event(TOOLS + "slack_reply", tool_input=THREAD | {"text": "On it."}, session_dir=Path(self.tmp.name) / "session")
+        result = self.read_guard.replies_read_their_thread_first(evt)
+        self.assertEqual(result.action, Action.block)
+        self.assertIn(f"`slack_thread` with `channel_id` {THREAD['channel_id']}, `thread_ts` {THREAD['thread_ts']}", result.message)
+
+    def test_a_reply_after_a_full_read_is_allowed(self) -> None:
+        session = Path(self.tmp.name) / "session"
+        self.read(session)
+        self.assertFalse(self.refused(session))
+
+    def test_a_read_older_than_ten_minutes_is_refused(self) -> None:
+        session = Path(self.tmp.name) / "session"
+        self.read(session)
+        slot = SessionStore(session)[self.read_guard.ThreadReads]
+        reads = slot.get()
+        reads.at = {key: datetime.now(UTC) - timedelta(minutes=10, seconds=1) for key in reads.at}
+        slot.set(reads)
+        self.assertTrue(self.refused(session))
+
+    def test_a_truncated_or_stale_read_is_not_a_full_read(self) -> None:
+        for label, result in (("truncated", {"truncated": True}), ("stale", {"stale": True, "retry_after": 30})):
+            with self.subTest(case=label):
+                session = Path(self.tmp.name) / label
+                self.read(session, **result)
+                self.assertTrue(self.refused(session))
+
+    def test_a_read_clears_only_the_agent_that_read(self) -> None:
+        session = Path(self.tmp.name) / "session"
+        self.read(session, agent_id="a1")
+        self.assertTrue(self.refused(session))
+        self.assertFalse(self.refused(session, agent_id="a1"))
+
+    def test_the_cli_and_the_user_fallback_reads_count(self) -> None:
+        cli = Path(self.tmp.name) / "cli"
+        command = f"cc-slack thread --channel {THREAD['channel_id']} --thread {THREAD['thread_ts']} --limit 1000"
+        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(event=Event.PostToolUse, command=command, output=json.dumps({"messages": []}), session_dir=cli))
+        self.assertFalse(self.refused(cli))
+        fallback = Path(self.tmp.name) / "fallback"
+        self.read_guard.full_thread_reads_are_recorded(mock_tool_event("mcp__slack__slack_get_thread", event=Event.PostToolUse, tool_input=THREAD, output="a formatted thread", session_dir=fallback))
+        self.assertFalse(self.refused(fallback))
 
 
 if __name__ == "__main__":

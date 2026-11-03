@@ -288,7 +288,9 @@ var (
 		{
 			name: "slack_thread",
 			description: "Read a Slack thread's messages, oldest first, through the cc-slack bot. The daemon caches each thread it reads and fetches only " +
-				"newer messages; when Slack rate-limits the read, the result is the cached copy with stale: true and retry_after in seconds.",
+				"newer messages; when Slack rate-limits the read, the result is the cached copy with stale: true and retry_after in seconds. A message that " +
+				"shares another lists it under shares with its original author, channel, text, and files: that person's report, not the sharer's. An image " +
+				"carries a local path you can Read. A reply into a thread needs a read of the whole thread, not truncated or stale, in the last 10 minutes.",
 			op: opThread, failure: actionRead,
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,
@@ -298,7 +300,7 @@ var (
 		{
 			name: "slack_history",
 			description: "Read a Slack channel's most recent top-level messages, newest first, through the cc-slack bot. Each message carries ts, " +
-				"user, user_name, from_claude, text, permalink, and reply_count and latest_reply when it has replies.",
+				"user, user_name, from_claude, text, permalink, and reply_count and latest_reply when it has replies, plus files and shares as in slack_thread.",
 			op: opHistory, failure: actionRead,
 			properties: map[string]any{
 				"channel_id": channelProp, "url": urlProp,

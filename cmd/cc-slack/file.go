@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/slack-go/slack"
 
@@ -24,6 +25,26 @@ type fileResult struct {
 }
 
 func filesDir() string { return filepath.Join(appPaths().StateDir(), "files") }
+
+func filePath(f *slack.File) string { return filepath.Join(filesDir(), f.ID+filepath.Ext(f.Name)) }
+
+func attachedFile(ctx context.Context, api slackAPI, f *slack.File) messageFile {
+	out := messageFile{ID: f.ID, Name: f.Name, Mimetype: f.Mimetype, Permalink: f.Permalink}
+	if !strings.HasPrefix(f.Mimetype, "image/") {
+		return out
+	}
+	path := filePath(f)
+	if info, err := os.Stat(path); err == nil && info.Size() == int64(f.Size) {
+		out.Path = path
+		return out
+	}
+	if err := saveFile(ctx, api, f, path); err != nil {
+		out.PathError = fallback(actionFile, err)
+		return out
+	}
+	out.Path = path
+	return out
+}
 
 func (a *app) handleFile(hc daemon.HandlerCtx) daemon.Reply {
 	b, err := decodeBody(hc)
@@ -46,7 +67,7 @@ func (a *app) handleFile(hc daemon.HandlerCtx) daemon.Reply {
 		a.poller.log.Printf("file %s: files.info: %v", b.FileID, err)
 		return fail(fallback(actionFile, err))
 	}
-	path := cmp.Or(b.Out, filepath.Join(filesDir(), f.ID+filepath.Ext(f.Name)))
+	path := cmp.Or(b.Out, filePath(f))
 	if err := saveFile(hc.Ctx, api, f, path); err != nil {
 		a.poller.log.Printf("file %s: download: %v", b.FileID, err)
 		return fail(fallback(actionFile, err))
