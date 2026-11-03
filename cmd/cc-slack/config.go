@@ -77,6 +77,13 @@ type linksConfig struct {
 
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
 
+func (l linksConfig) validate() error {
+	if t := l.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {
+		return fmt.Errorf("[links] tailnet %q must be a tailnet's DNS name, such as example.ts.net", t)
+	}
+	return nil
+}
+
 func (p permissions) validate() error {
 	for _, cli := range p.CLIs {
 		if cli.Program == "" || len(cli.Verbs) == 0 {
@@ -197,8 +204,8 @@ func (c config) validate() error {
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
-	if t := c.Links.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {
-		return fmt.Errorf("[links] tailnet %q must be a tailnet's DNS name, such as example.ts.net", t)
+	if err := c.Links.validate(); err != nil {
+		return err
 	}
 	if err := c.Permissions.validate(); err != nil {
 		return err
