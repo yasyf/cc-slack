@@ -1731,10 +1731,10 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail("card-answer needs url, the Slack card's permalink")
 	case b.Via == "":
 		return fail("card-answer needs via, the url of the surface the answer came from")
-	case b.Settled && !b.Other:
-		return fail("card-answer settled takes a written-in outcome with other")
 	case b.Withdrawn && (b.Settled || b.Other):
 		return fail("card-answer withdrawn takes the reason as its label, without settled or other")
+	case b.Settled && !b.Other:
+		return fail("card-answer settled takes a written-in outcome with other")
 	}
 	label := b.Label
 	if b.Other || b.Withdrawn {
