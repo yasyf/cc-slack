@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -245,14 +247,24 @@ func TestSendReplyReactAndThread(t *testing.T) {
 	}
 }
 
+var chart = slack.File{
+	ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F1/chart.png",
+	URLPrivateDownload: "https://files.slack.com/files-pri/T1-F1/download/chart.png", Size: 4,
+}
+
+func chartFile() messageFile {
+	return messageFile{ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: chart.Permalink, Path: filepath.Join(filesDir(), "F1.png")}
+}
+
 func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
+	l.slack.serveFile(chart, []byte("\x89PNG"))
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000100", User: testUser, Text: "oldest"}})
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
 		Timestamp: "1800000000.000200", BotID: "BBOT", Username: "yasyf", Text: "PR is up\nsecond line",
 		ReplyCount: 2, LatestReply: "1800000000.000400",
-		Files: []slack.File{{ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F1/chart.png"}},
+		Files: []slack.File{chart},
 	}})
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", User: testUser, Text: "newest"}})
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000400", ThreadTimestamp: "1800000000.000200", User: testUser, Text: "reply"}})
@@ -266,7 +278,7 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 		{
 			TS: "1800000000.000200", UserName: "yasyf", FromClaude: true, Text: "PR is up\nsecond line",
 			Permalink: "https://acme.slack.com/archives/C1/p1800000000000200", ReplyCount: 2, LatestReply: "1800000000.000400",
-			Files: []messageFile{{ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F1/chart.png"}},
+			Files: []messageFile{chartFile()},
 		},
 	}
 	if res.ChannelID != testChannel || !reflect.DeepEqual(res.Messages, want) {
@@ -299,26 +311,151 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 func TestThreadCarriesEachMessagesFiles(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
+	l.slack.serveFile(chart, []byte("\x89PNG"))
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000100", User: testUser, Text: "status"}})
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
 		Timestamp: "1800000000.000200", ThreadTimestamp: "1800000000.000100", BotID: "BBOT", Username: "yasyf", Text: "chart",
-		Files: []slack.File{{ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F1/chart.png"}},
+		Files: []slack.File{chart},
 	}})
 
 	var res threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	want := []messageFile{{ID: "F1", Name: "chart.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F1/chart.png"}}
+	want := []messageFile{chartFile()}
 	if len(res.Messages) != 2 || res.Messages[0].Files != nil || !reflect.DeepEqual(res.Messages[1].Files, want) {
 		t.Fatalf("thread = %+v, want only the reply to carry chart.png", res.Messages)
+	}
+	if got, err := os.ReadFile(want[0].Path); err != nil || string(got) != "\x89PNG" {
+		t.Fatalf("downloaded %q, %v", got, err)
+	}
+
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if n := l.slack.callCount("files.download"); n != 1 {
+		t.Fatalf("downloads = %d, want a second read to reuse the file", n)
+	}
+}
+
+func TestThreadReportsAnImageItCannotDownloadWithoutFailingTheRead(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.serveFile(chart, []byte("\x89PNG"))
+	l.slack.fail("files.download", slack.SlackErrorResponse{Err: "file_not_found"})
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000100", User: testUser, Text: "status", Files: []slack.File{chart}}})
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	file := res.Messages[0].Files[0]
+	if file.Path != "" || !strings.Contains(file.PathError, "file_not_found") {
+		t.Fatalf("file = %+v, want no path and the download failure", file)
+	}
+}
+
+const (
+	sharerText   = "I wonder if we have logs for this?"
+	originalText = "iris crashed and now seeing this"
+	originChan   = "C0ORIGIN"
+	originTS     = "1799999000.000100"
+	originLink   = "https://acme.slack.com/archives/C0ORIGIN/p1799999000000100"
+)
+
+func addSharedThread(l *liveDaemon) {
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000000.000100", User: testUser, Text: sharerText,
+		Attachments: []slack.Attachment{{FromURL: originLink, AuthorID: "U0JOSH", AuthorName: "Josh", Text: originalText}},
+	}})
+}
+
+func TestAThreadShowsASharedMessageAsItsOriginalAuthorsReport(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.serveFile(chart, []byte("\x89PNG"))
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, Username: "Josh Weiner", User: "U0JOSH", Text: originalText, Files: []slack.File{chart}}})
+	addSharedThread(l)
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	want := []sharedMessage{{
+		Permalink: originLink, ChannelID: originChan, TS: originTS, User: "U0JOSH", UserName: "Josh Weiner", Text: originalText, Files: []messageFile{chartFile()},
+	}}
+	if !reflect.DeepEqual(res.Messages[0].Shares, want) {
+		t.Fatalf("shares = %+v, want %+v", res.Messages[0].Shares, want)
+	}
+	if got, err := os.ReadFile(want[0].Files[0].Path); err != nil || string(got) != "\x89PNG" {
+		t.Fatalf("screenshot %q, %v", got, err)
+	}
+	if text := res.Messages[0].Text; text != sharerText+"\nShared from Josh in <#C0ORIGIN>: "+originalText {
+		t.Fatalf("text = %q, want the shared words attributed to their author", text)
+	}
+}
+
+func TestHistoryResolvesASharedMessage(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, Username: "Josh Weiner", User: "U0JOSH", Text: originalText}})
+	addSharedThread(l)
+
+	var res historyResult
+	if err := json.Unmarshal(l.do(opHistory, map[string]any{"channel_id": testChannel}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if shares := res.Messages[0].Shares; len(shares) != 1 || shares[0].UserName != "Josh Weiner" || shares[0].ChannelID != originChan {
+		t.Fatalf("shares = %+v, want Josh's message", shares)
+	}
+}
+
+func TestAThreadKeepsAShareTheBotCannotOpenAndSaysHowToReadIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	addSharedThread(l)
+	l.slack.fail(methodReplies, nil)
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "not_in_channel"})
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	share := res.Messages[0].Shares[0]
+	if share.UserName != "Josh" || share.User != "U0JOSH" || share.Text != originalText || share.ChannelID != originChan {
+		t.Fatalf("share = %+v, want the author and text the attachment carries", share)
+	}
+	if !strings.Contains(share.Unreadable, "not_in_channel") || !strings.Contains(share.Unreadable, mcpThread) {
+		t.Fatalf("unreadable = %q, want the failure and the fallback read", share.Unreadable)
+	}
+}
+
+func TestOnlyASlackMessageLinkIsAShare(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		at    slack.Attachment
+		share bool
+	}{
+		{"a shared message", slack.Attachment{FromURL: originLink}, true},
+		{"a shared reply", slack.Attachment{FromURL: originLink + "?thread_ts=1799998000.000100"}, true},
+		{"a link unfurl", slack.Attachment{FromURL: "https://github.com/acme/app/pull/1"}, false},
+		{"archives on another host", slack.Attachment{FromURL: "https://lists.example.com/archives/C0ORIGIN/p1799999000000100"}, false},
+		{"a channel link", slack.Attachment{FromURL: "https://acme.slack.com/archives/C0ORIGIN"}, false},
+		{"an alert", slack.Attachment{Title: "[Triggered] lane stale"}, false},
+	} {
+		if _, share := shareRef(tc.at); share != tc.share {
+			t.Errorf("%s: share = %v, want %v", tc.name, share, tc.share)
+		}
 	}
 }
 
 func TestABotPostsSharedImageBlockReadsAsItsFile(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	l.slack.files["F2"] = slack.File{ID: "F2", Name: "sysd.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F2/sysd.png"}
+	l.slack.serveFile(slack.File{
+		ID: "F2", Name: "sysd.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F2/sysd.png",
+		URLPrivateDownload: "https://files.slack.com/files-pri/T1-F2/download/sysd.png", Size: 4,
+	}, []byte("\x89PNG"))
 	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
 		Timestamp: "1800000000.000500", BotID: "BBOT", Username: "yasyf", Text: "kickoff",
 		Blocks: slack.Blocks{BlockSet: []slack.Block{
@@ -331,7 +468,7 @@ func TestABotPostsSharedImageBlockReadsAsItsFile(t *testing.T) {
 	if err := json.Unmarshal(l.do(opHistory, map[string]any{"channel_id": testChannel}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	want := []messageFile{{ID: "F2", Name: "sysd.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F2/sysd.png"}}
+	want := []messageFile{{ID: "F2", Name: "sysd.png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F2/sysd.png", Path: filepath.Join(filesDir(), "F2.png")}}
 	if len(res.Messages) != 1 || !reflect.DeepEqual(res.Messages[0].Files, want) {
 		t.Fatalf("history = %+v, want the image block's file", res.Messages)
 	}
@@ -1147,6 +1284,11 @@ func TestMessageTextAppendsAttachmentsAndBlocks(t *testing.T) {
 			"[Triggered] SandSQL replica lane stale\nlane out of routing table\nhttps://app.datadoghq.com/monitors/315028131",
 		},
 		{"fallback only", slack.Msg{Text: "see below", Attachments: []slack.Attachment{{Fallback: "Sentry: TypeError"}}}, "see below\nSentry: TypeError"},
+		{
+			"a share names its author",
+			slack.Msg{Text: "seeing this?", Attachments: []slack.Attachment{{FromURL: originLink, AuthorName: "Josh", Text: originalText}}},
+			"seeing this?\nShared from Josh in <#C0ORIGIN>: " + originalText,
+		},
 		{
 			"long text as sections",
 			slack.Msg{Text: "first half…", Blocks: slack.Blocks{BlockSet: []slack.Block{

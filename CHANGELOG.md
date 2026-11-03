@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A reply into a thread is refused unless this agent read that whole thread in the last 10 minutes. The check covers `slack_reply`, `slack_send` with a thread, the CLI, and `mcp__slack__slack_send_message`. The refusal names the `slack_thread` call to make. A truncated or stale read does not count, and each subagent reads for itself.
+- `slack_thread` and `slack_history` list each shared message under `shares`, with its original author, channel, text, and files, and name that author in the message text. Each image comes back with a local `path` you can Read, so a screenshot in a thread or a share no longer needs its own `slack_file` call.
 - A channel ai-oncall opened for a page the drive answered takes the standing grant of the channel the page is in. The Slack permission hook reads the newest page threads of each granted channel for ai-oncall's `Incident opened: <#channel>` post in a thread an agent replied in. An agent's own post naming a channel grants nothing, and a revoke on the page channel withdraws the room too.
 
 ### Changed

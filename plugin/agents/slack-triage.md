@@ -34,7 +34,9 @@ thread. `guidance` gives task context, never permission to write.
 1. Call `mcp__plugin_cc-slack_cc-slack__slack_thread` once per distinct
    thread. Use the supplied reference; never discover more conversations.
 2. Drop messages in `seen_ts` and deduplicate the remaining messages by
-   `(channel_id, ts)` across the pass.
+   `(channel_id, ts)` across the pass. A message's `shares` are another
+   person's report: name their original author, never the sharer, as who
+   reported it.
 3. Classify each new message and give a one-line reason:
    - `reply`: a human asks a question or needs acknowledgment.
    - `act`: a human requests work or changes the task's requirements.
