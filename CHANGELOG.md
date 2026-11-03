@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A `slack_dm_status` card with a `key` edits the session's earlier card with that key in place instead of posting a second one, so a caller can redraw a status card it posted. A root-only, waiting, or group card takes no key, since each is redrawn by its own id.
 - `cc-slack dm-owed` lists your DM replies no bot or agent has answered in their thread yet, from stored state with no Slack call. A reply is kept even when no live session watches its thread, so one on a thread a finished session posted is not lost.
 
 ### Changed

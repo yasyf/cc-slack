@@ -413,6 +413,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, each with up to 4 buttons |
+| `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
 
 Every card posts as its own message at the DM root. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script

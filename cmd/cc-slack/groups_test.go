@@ -101,6 +101,25 @@ func TestGroupCardEditsInPlaceAndAnEmptyGroupIsNeverPosted(t *testing.T) {
 	}
 }
 
+func TestAKeyedCardRedrawsTheCardWithItsKeyInPlace(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := statusCard{Status: "info", Title: "The relay fix", Body: "Checks are running.", Key: "r1"}
+	c := postWaiting(t, l, card)
+	posts := len(l.slack.sent())
+	card.Status, card.Body = "done", "Checks passed."
+	if again := postWaiting(t, l, card); again.ts != c.ts || len(l.slack.sent()) != posts {
+		t.Fatalf("a re-post posted %d messages at %s, want the card at %s edited", len(l.slack.sent())-posts, again.ts, c.ts)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Checks passed.") {
+		t.Fatalf("card edits %v, want the new body drawn over the old card", edits)
+	}
+	card.Key = "r2"
+	if other := postWaiting(t, l, card); other.ts == c.ts || len(l.slack.sent()) != posts+1 {
+		t.Fatalf("another key posted at %s with %d new messages, want one card of its own", other.ts, len(l.slack.sent())-posts)
+	}
+}
+
 func TestAGroupCardThatGainsARowPostsAtTheBottomAndDeletesItsEarlierCard(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
