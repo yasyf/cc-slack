@@ -91,7 +91,7 @@ every Slack write for a ticket and `plain_words.py` warns on posts a reader
 outside the session cannot decode. Without the section, or with
 `enabled = false`, the pack lets every write through and the daemon spends no
 ticket. `proof_channels` lists name patterns of the channels where
-`slack_comms_need_proof.py` runs. Each `[[permissions.clis]]` entry names another posting CLI the gate
+`slack_comms_need_proof.py` runs, along with every channel shared with another workspace. Each `[[permissions.clis]]` entry names another posting CLI the gate
 checks: its `program`, the `verbs` that write mapped to `post`, `edit`,
 `delete`, `create`, `archive`, `invite`, `topic`, or `join`, and the
 `options` that take a value and the boolean `flags` it accepts. Such a CLI
