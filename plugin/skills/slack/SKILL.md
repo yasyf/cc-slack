@@ -430,9 +430,9 @@ a `needs_you` card naming what is paused and what resuming would start.
 
 An ask card is how a lane asks the user a question during execution. With
 cc-present installed, every question starts on the cc-present board: put
-each question card there with `cc-present update-block` or `push`, then run
-`cc-present send` once to post the board's open questions here as ask cards,
-or `cc-present ask <card>` for a single card. A `waits` card posted with
+each question card there with `cc-present update-block` or `push`, and
+cc-present posts it here as an ask card by itself, with the card's images.
+`cc-present ask <card>` does the same for a single card. A `waits` card posted with
 `slack_dm_status` or `dm-status` is still posted, but its reply carries a
 `warning` saying so. The rest of this section describes the Slack card those
 calls post, and how to post one directly when cc-present is not installed. Set
@@ -481,9 +481,11 @@ A card about a pull request lists it in `refs`. The card links each one as
 
 #### On a cc-present board too
 
-With `cc-present` on PATH, `cc-present send` posts a board's open
-question cards here, and a card already posted in the thread is edited in
-place. An ask card posted here directly also lands on this session's
+With `cc-present` on PATH, each board write posts its simple question cards
+here: one single-select choice of up to 4 answers, an approval, or an input,
+images included. A card already posted in the thread is edited in place when
+it changes. `cc-present send` posts any the board still holds unsent. An ask
+card posted here directly also lands on this session's
 cc-present board as a card with the same question, answers, and
 recommendation.
 The user answers on whichever surface is in front of them. Whichever

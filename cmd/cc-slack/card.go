@@ -37,6 +37,7 @@ const (
 	cardRowAction     = cardActionPrefix + ":row:"
 	cardExplainLabel  = "Explain more"
 	cardOtherLabel    = "Other"
+	cardAnswerLabel   = "Answer"
 	cardRecommended   = "(Recommended)"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
@@ -65,6 +66,7 @@ const (
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or tap Other to write your own answer."
+	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
 )
 
 var (
@@ -99,6 +101,8 @@ type statusCard struct {
 	Recommended string        `json:"recommended,omitempty"`
 	Group       string        `json:"group,omitempty"`
 	Rows        []cardRow     `json:"rows,omitempty"`
+
+	Images []slack.FileSummary `json:"images,omitempty"`
 }
 
 type cardRow struct {
@@ -192,6 +196,22 @@ func (c *statusCard) fill(text string) {
 }
 
 func (c statusCard) check(now time.Time, rootOnly bool) error {
+	return errors.Join(c.checkMirrored(now, rootOnly), c.checkAnswers())
+}
+
+func (c statusCard) checkAnswers() error {
+	switch {
+	case c.Waits == "":
+		return nil
+	case len(c.Options) == 0:
+		return errors.New("a waiting card needs its answers as options")
+	case c.Recommended == "":
+		return errors.New("a waiting card recommends one of its options")
+	}
+	return nil
+}
+
+func (c statusCard) checkMirrored(now time.Time, rootOnly bool) error {
 	return errors.Join(
 		c.checkHeading(rootOnly),
 		c.checkLinks(),
@@ -269,15 +289,13 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 		return fmt.Errorf("card waits id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", c.Waits)
 	case rootOnly:
 		return errors.New("a waiting card is a reply card; a root-only card takes no waits")
-	case len(c.Options) == 0:
-		return errors.New("a waiting card needs its answers as options")
 	case len(c.Asks) > 0:
 		return errors.New("a waiting card asks one question; its answers go in options, not asks")
 	case slices.Contains(c.Options, cardExplainLabel), slices.Contains(c.Options, cardOtherLabel):
 		return fmt.Errorf("a waiting card carries its own %s and %s buttons; no option may repeat them", cardOtherLabel, cardExplainLabel)
 	case slices.ContainsFunc(c.Options, func(o string) bool { return strings.Contains(o, cardRecommended) }):
 		return fmt.Errorf("name the recommended answer in recommended, never as %s in an option", cardRecommended)
-	case !slices.Contains(c.Options, c.Recommended):
+	case c.Recommended != "" && !slices.Contains(c.Options, c.Recommended):
 		return fmt.Errorf("a waiting card recommends one of its options: recommended %q is not among them", c.Recommended)
 	}
 	return nil
@@ -448,7 +466,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 	if next.Rollup != nil {
 		c.Rollup = next.Rollup
 	}
-	c.Options, c.Asks, c.Waits, c.Recommended, c.Group, c.Rows = nil, nil, "", "", "", nil
+	c.Options, c.Asks, c.Waits, c.Recommended, c.Group, c.Rows, c.Images = nil, nil, "", "", "", nil, nil
 	return c
 }
 
@@ -606,6 +624,9 @@ func (c statusCard) actions() slack.Block {
 }
 
 func (c statusCard) answers() []string {
+	if c.Recommended == "" {
+		return slices.Clone(c.Options)
+	}
 	rest := slices.DeleteFunc(slices.Clone(c.Options), func(o string) bool { return o == c.Recommended })
 	return append([]string{c.Recommended}, rest...)
 }
@@ -628,10 +649,21 @@ func (c statusCard) waitActions() slack.Block {
 	}
 	other := string(mustJSON(askTap{ID: c.Waits, Label: cardOtherLabel, Question: c.Title, Options: answers}))
 	explain := string(mustJSON(askTap{ID: c.Waits, Label: cardExplainLabel, Question: c.Title}))
+	write := cardOtherLabel
+	if len(answers) == 0 {
+		write = cardAnswerLabel
+	}
 	buttons = append(buttons,
-		slack.NewButtonBlockElement(cardOtherAction+c.Waits, other, slack.NewTextBlockObject(slack.PlainTextType, cardOtherLabel, true, false)),
+		slack.NewButtonBlockElement(cardOtherAction+c.Waits, other, slack.NewTextBlockObject(slack.PlainTextType, write, true, false)),
 		slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain, slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
 	return slack.NewActionBlock(cardActionsBlock, buttons...)
+}
+
+func (c statusCard) waitHint() string {
+	if len(c.Options) == 0 {
+		return cardWriteHint
+	}
+	return cardWaitHint
 }
 
 func (c statusCard) progress(now time.Time) []slack.Block {
@@ -817,6 +849,9 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	if c.Body != "" {
 		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, c.Body, false, false), nil, nil))
 	}
+	for _, image := range c.Images {
+		blocks = append(blocks, imageBlock(image))
+	}
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)
 	blocks = append(blocks, c.refs(v)...)
@@ -832,7 +867,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
 	}
 	if c.Waits != "" {
-		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, cardWaitHint)), c.waitActions(), c.context(v.tag, v.at, ""))
+		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, c.waitHint())), c.waitActions(), c.context(v.tag, v.at, ""))
 	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
 }

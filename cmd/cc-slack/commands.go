@@ -781,7 +781,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	bindBlocks(c, &blocks)
 	c.Flags().StringVar(&card, "card", "", "status card as a JSON object, or @path to a file holding one, in place of text")
 	c.Flags().BoolVar(&rootOnly, "root-only", false, "redraw only the status thread's root card with --card, posting no reply")
-	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board")
+	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply opens with a link back to it")
 	bindAgent(c, &agentName)
 	return c
