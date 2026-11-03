@@ -142,6 +142,16 @@ func TestEnvParametersNeedTheBotTokenAndSocketURL(t *testing.T) {
 	}
 }
 
+func TestACardCommandThisMachineLacksLeavesCardsOffAndLoginWorking(t *testing.T) {
+	c := config{PRLinks: prLinksConfig{CardCommand: []string{"cc-slack-test-no-such-program", "card"}}}
+	if err := c.resolveTokens(); err != nil {
+		t.Fatalf("a missing card_command program refused login: %v", err)
+	}
+	if len(c.PRLinks.CardCommand) != 0 {
+		t.Fatalf("card_command = %v, want cards off on this machine", c.PRLinks.CardCommand)
+	}
+}
+
 func TestTokenSourcesResolveAtLogin(t *testing.T) {
 	t.Setenv("CC_SLACK_TEST_GH", "ghp-test")
 	t.Setenv("CC_SLACK_TEST_EMPTY", "")

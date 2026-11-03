@@ -171,6 +171,10 @@ func (c *config) resolveTokens() error {
 		return nil
 	}
 	bin, err := exec.LookPath(c.PRLinks.CardCommand[0])
+	if errors.Is(err, exec.ErrNotFound) {
+		c.PRLinks.CardCommand = nil
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("[pr_links] card_command: %w", err)
 	}
