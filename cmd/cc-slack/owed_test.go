@@ -281,14 +281,14 @@ func TestForgettingAThreadKeepsOtherThreadsOwed(t *testing.T) {
 	thread := postDMThread(t, f)
 	kept := postDMThread(t, f)
 	f.tick()
-	ownerReplies(f, thread, "1800000001.500000", "A")
-	ownerReplies(f, kept, "1800000001.600000", "B")
+	ownerReplies(f, thread, "1800000090.000000", "A")
+	ownerReplies(f, kept, "1800000090.000100", "B")
 
 	if err := f.app.owed.forget(f.ctx, thread); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.600000"}) {
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000090.000100"}) {
 		t.Fatalf("owed = %v, want only the other thread still owed", got)
 	}
 }
