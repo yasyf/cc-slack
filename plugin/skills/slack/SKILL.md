@@ -389,9 +389,11 @@ A session holds the DM by calling `slack_watch` with the DM's channel id and no
 `thread_ts`. Every reply the user writes in any DM thread then reaches it as
 well as any session watching that thread, and a message at the DM root goes to
 it without the session list. Other bots' messages stay out of it.
-`cc-slack dm-owed` prints each reply no bot or agent has answered in its thread
-yet, from stored state with no Slack call, including replies written while no
-session was live. A post in that thread answers every earlier reply there; a
+Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
+returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
+no bot or agent has answered in its thread yet, from stored state with no Slack
+call, including replies written while no session was live, and the session that
+owes them as `holder_session`. A post in that thread answers every earlier reply there; a
 post elsewhere answers none. Once a session has held the DM, the daemon answers
 each reply in its thread at once with one line saying who has it. That line does
 not count as the answer: the session still replies with what was done, and an

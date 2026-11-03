@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/yasyf/cc-interact/agent"
+	"github.com/yasyf/cc-interact/cmd"
 )
 
 const (
@@ -373,5 +375,72 @@ func TestAnAnswerAfterAMinuteLeavesTheReceivedLine(t *testing.T) {
 	}
 	if got := owedStamps(t, f); len(got) != 0 {
 		t.Fatalf("owed %v, want the reply answered", got)
+	}
+}
+
+func TestOneSessionHoldsTheDM(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	dm := "D" + testUser
+	l.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: testThread, Text: "parent"}})
+	other := l.deps
+	other.ClaudePID = func() int { return testPID + 3 }
+	follow := func(d cmd.Deps, session string) followResult {
+		t.Helper()
+		reply, err := invoke(l.ctx, d, session, "/any", opFollow, mustJSON(map[string]string{"channel_id": dm}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res followResult
+		if err := json.Unmarshal(reply.Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	holder := func() string {
+		t.Helper()
+		var owed dmOwedResult
+		if err := json.Unmarshal(l.do(opDMOwed, map[string]any{}).Body, &owed); err != nil {
+			t.Fatal(err)
+		}
+		return owed.HolderSession
+	}
+
+	if got := holder(); got != "" {
+		t.Fatalf("holder before any hold = %q, want none", got)
+	}
+	held := follow(l.deps, testSession)
+	if held.WatchID == 0 || held.HeldBy != "" || holder() != testSession {
+		t.Fatalf("first hold = %+v, holder %q, want this session holding", held, holder())
+	}
+	if refused := follow(other, "other-session"); refused.WatchID != 0 || refused.HeldBy != testSession || holder() != testSession {
+		t.Fatalf("second session's hold = %+v, holder %q, want it refused and named", refused, holder())
+	}
+	if again := follow(l.deps, testSession); again.WatchID != held.WatchID {
+		t.Fatalf("holder's next prompt made watch %d, want its own %d kept", again.WatchID, held.WatchID)
+	}
+
+	l.do(opUnfollow, map[string]int64{"watch_id": held.WatchID})
+
+	if taken := follow(other, "other-session"); taken.WatchID == 0 || holder() != "other-session" {
+		t.Fatalf("hold after the holder left = %+v, holder %q, want the other session holding", taken, holder())
+	}
+}
+
+func TestForgettingAThreadKeepsOtherThreadsOwed(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	kept := postDMThread(t, f)
+	f.tick()
+	ownerReplies(f, thread, "1800000001.500000", "A")
+	ownerReplies(f, kept, "1800000001.600000", "B")
+
+	if err := f.app.owed.forget(f.ctx, thread); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.600000"}) {
+		t.Fatalf("owed = %v, want only the other thread still owed", got)
 	}
 }

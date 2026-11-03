@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,6 +90,13 @@ func (o *owedReplies) answered(ctx context.Context, threadTS, ts string) ([]stri
 	return lines, nil
 }
 
+func (o *owedReplies) forget(ctx context.Context, threadTS string) error {
+	if _, err := o.st.DB().ExecContext(ctx, `DELETE FROM owed_replies WHERE thread_ts = ?`, threadTS); err != nil {
+		return fmt.Errorf("forget thread %s: %w", threadTS, err)
+	}
+	return nil
+}
+
 func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
 	rows, err := o.st.DB().QueryContext(ctx, `SELECT thread_ts, ts, text, permalink FROM owed_replies ORDER BY ts`)
 	if err != nil {
@@ -106,4 +115,23 @@ func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
 		return nil, fmt.Errorf("iterate owed replies: %w", err)
 	}
 	return replies, nil
+}
+
+type dmHold struct {
+	subject string
+	session string
+}
+
+func dmHolder(ctx context.Context, db *sql.DB, dmChannelID string) (dmHold, error) {
+	var hold dmHold
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.session_id FROM watches w JOIN subjects s ON s.id = w.subject_id
+		WHERE w.channel_id = ? AND w.thread_ts = '' AND w.kind = 'channel' AND w.status = 'active'
+		ORDER BY w.id LIMIT 1`, dmChannelID).Scan(&hold.subject, &hold.session)
+	if errors.Is(err, sql.ErrNoRows) {
+		return dmHold{}, nil
+	}
+	if err != nil {
+		return dmHold{}, fmt.Errorf("find the DM's holder: %w", err)
+	}
+	return hold, nil
 }

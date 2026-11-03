@@ -202,7 +202,8 @@ type channelInfo struct {
 }
 
 type dmOwedResult struct {
-	Replies []owedReply `json:"replies"`
+	Replies       []owedReply `json:"replies"`
+	HolderSession string      `json:"holder_session"`
 }
 
 type channelsResult struct {
@@ -235,6 +236,7 @@ type followResult struct {
 	Joined    bool                `json:"joined"`
 	Cursor    string              `json:"cursor"`
 	Channel   daemon.ChannelState `json:"channel,omitempty"`
+	HeldBy    string              `json:"held_by,omitempty"`
 }
 
 type unfollowResult struct {
@@ -675,8 +677,10 @@ func (a *app) handleDelete(hc daemon.HandlerCtx) daemon.Reply {
 		return fail("delete needs channel_id and ts (or a Slack url), and no text or blocks")
 	}
 	return a.changeOwnMessage(hc, b, approveDelete, actionDelete, func(ctx context.Context, api slackAPI, _ identity, channelID string) error {
-		_, _, err := api.DeleteMessageContext(ctx, channelID, b.TS)
-		return err
+		if _, _, err := api.DeleteMessageContext(ctx, channelID, b.TS); err != nil {
+			return err
+		}
+		return a.owed.forget(ctx, b.TS)
 	})
 }
 
@@ -1161,7 +1165,15 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	return ok(dmOwedResult{Replies: replies})
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	holder, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(dmOwedResult{Replies: replies, HolderSession: holder.session})
 }
 
 func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {
@@ -1236,6 +1248,15 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
 	if err != nil {
 		return fail(fallback(actionWatch, err))
+	}
+	if kind == kindChannel && channelID == id.DMChannelID {
+		holder, err := dmHolder(hc.Ctx, hc.DB, channelID)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if holder.subject != "" && holder.subject != subjectID {
+			return ok(followResult{ChannelID: channelID, HeldBy: holder.session})
+		}
 	}
 	if existing, oldest, found, err := activeWatch(hc.Ctx, hc.DB, subjectID, b.Owner, channelID, b.ThreadTS); err != nil {
 		return fail(err.Error())
