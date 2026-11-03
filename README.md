@@ -101,6 +101,13 @@ url = "https://cards.example.com/doc-cards"
 # Let a card link use http on your tailnet; every other link stays https.
 [links]
 tailnet = "example.ts.net"
+
+# Read pull request state, and link #N to a PR in one of these repos.
+[github]
+token_command = ["gh", "auth", "token"]
+
+[pr_links]
+repos = ["acme/app", "acme/lib"]
 ```
 
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
