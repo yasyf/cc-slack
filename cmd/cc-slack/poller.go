@@ -50,6 +50,7 @@ type poller struct {
 	alive     func(pid int) bool
 	now       func() time.Time
 	cache     *readCache
+	owed      *owedReplies
 	replay    *replayCursor
 	shortcuts *shortcutHandler
 	cards     *liveCards
@@ -401,7 +402,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
-		if !own && len(channels[key.channelID]) == 0 {
+		if !own && len(channels[key.channelID]) == 0 && key.channelID != dmChannelID {
 			continue
 		}
 		g := group(key)
@@ -499,6 +500,11 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			}
 			continue
 		}
+		if g.key.channelID == id.DMChannelID {
+			if err := p.trackOwed(ctx, id, m); err != nil {
+				return c, err
+			}
+		}
 		if g.idle() {
 			continue
 		}
@@ -512,7 +518,7 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		if err := p.routeAll(ctx, db, api, id, slices.Concat(g.watches, g.covering), m); err != nil {
 			return c, err
 		}
-		if len(g.sessions) > 0 && operatorRoot(id, m) {
+		if len(g.sessions) > 0 && operatorRoot(id, m) && !g.held() {
 			if err := p.routeRoot(ctx, db, api, id, g.sessions, m); err != nil {
 				return c, err
 			}
@@ -545,17 +551,32 @@ func (g cursorGroup) idle() bool {
 }
 
 func (g cursorGroup) covered() bool {
-	return len(g.watches) == 0 && len(g.covering) > 0
+	return len(g.watches) == 0 && g.since != ""
+}
+
+func (g cursorGroup) held() bool {
+	return slices.ContainsFunc(g.watches, func(w watch) bool { return w.Kind == kindChannel })
 }
 
 func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message) error {
 	for _, w := range watches {
-		if w.Kind == kindDM && !id.fromOperator(m) {
+		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
 		if err := p.deliver(ctx, db, w, p.messageDelivery(ctx, api, id, w, m)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) error {
+	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
+	switch {
+	case id.fromOperator(m) && routedSubtypes[m.SubType]:
+		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
+	case id.fromClaude(m):
+		return p.owed.answered(ctx, thread, m.Timestamp)
 	}
 	return nil
 }

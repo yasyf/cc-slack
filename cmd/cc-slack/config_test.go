@@ -91,6 +91,13 @@ flags = ["broadcast"]
 	}
 }
 
+func TestLoadConfigAcceptsProofChannels(t *testing.T) {
+	path := writeConfig(t, t.TempDir(), "[permissions]\nenabled = true\nproof_channels = [\"acc-*\", \"outage*\"]\n")
+	if _, err := loadConfig(path, true); err != nil {
+		t.Fatalf("loadConfig with proof_channels: %v", err)
+	}
+}
+
 func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
 		"unknown key":       {"[avatars]\nbuckets = \"x\"\n", "unknown keys: avatars.buckets"},

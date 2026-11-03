@@ -377,6 +377,15 @@ receive protocol, deduplicate them, and post status back with
 session when it is the only one live; with several live, cc-slack answers
 with a link to each session's newest message.
 
+A session holds the DM by calling `slack_watch` with the DM's channel id and no
+`thread_ts`. Every reply the user writes in any DM thread then reaches it as
+well as any session watching that thread, and a message at the DM root goes to
+it without the session list. Other bots' messages stay out of it.
+`cc-slack dm-owed` prints each reply no bot or agent has answered in its thread
+yet, from stored state with no Slack call, including replies written while no
+session was live. A post in that thread answers every earlier reply there; a
+post elsewhere answers none.
+
 Pass `thread_ts` only for a short conversational answer in the thread the
 user replied in. An edit or delete of the agent's own message in this DM
 needs no second ask.

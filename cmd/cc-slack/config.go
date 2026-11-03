@@ -32,8 +32,9 @@ type config struct {
 }
 
 type permissions struct {
-	Enabled bool       `toml:"enabled"`
-	CLIs    []extraCLI `toml:"clis"`
+	Enabled       bool       `toml:"enabled"`
+	CLIs          []extraCLI `toml:"clis"`
+	ProofChannels []string   `toml:"proof_channels"`
 }
 
 type extraCLI struct {

@@ -6,13 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `cc-slack dm-owed` lists your DM replies no bot or agent has answered in their thread yet, from stored state with no Slack call. A reply is kept even when no live session watches its thread, so one on a thread a finished session posted is not lost.
+
 ### Changed
 
+- A session holds your DM by watching its channel: every reply you write in any DM thread reaches it as well as any session watching that thread, your top-level DMs go to it without the session list, and other bots' messages stay out of it.
 - The two incident-comms checks, no asking a person for evidence and no unproven "fixed" line, run only in channels whose name matches `proof_channels` under `[permissions]` in `.claude/cc-slack.toml`, and never in a DM or a thread we posted. A project with no list runs neither.
 - Every `slack_dm_status` update and every mirrored board card posts as its own message at the root of your DM, with its own thread for your replies and taps, instead of inside one status thread per session. A reply or tap on a message reaches the session that posted it, up to the newest 500 messages per session. An edit of the agent's own message in this DM needs no second ask. Reconnecting reads the DM history instead of polling every thread.
 
 ### Fixed
 
+- `cc-slack login` accepts `proof_channels` under `[permissions]` instead of refusing it as an unknown key.
 - A waiting card cc-present sends can carry images, shown on the card above its buttons and kept when a tap redraws it. It can also have no recommended answer, and with no answers at all its write-in button reads Answer. A card posted by hand still needs its answers and a recommendation, and still takes no files.
 - The incident-comms hook no longer blocks a release note that says a tool is fixed in a named version, such as `Fixed in ccx v0.91.61`. It still blocks telling a person their own problem is fixed without their `usr_` id, the thread owner's mention and a link to their case succeeding.
 - A cc-present group card that gains a row its earlier card did not carry posts as a new message at the bottom of the DM thread and deletes the earlier card, instead of editing a card posted days earlier far up the thread, where a new merge question reached the user with no notification.

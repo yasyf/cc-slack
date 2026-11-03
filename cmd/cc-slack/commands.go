@@ -709,6 +709,20 @@ func dmPeerCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func dmOwedCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	c := &cobra.Command{
+		Use:   "dm-owed",
+		Short: "Print your DM replies that no bot or agent has answered in their thread yet, from stored state",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opDMOwed, map[string]any{})
+		},
+	}
+	f.bind(c)
+	return c
+}
+
 func followCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var owner string
