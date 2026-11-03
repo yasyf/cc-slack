@@ -28,6 +28,9 @@ const (
 	methodReplies  = "conversations.replies"
 	methodHistory  = "conversations.history"
 	nudgeEventType = "cc_slack_message"
+
+	dmReceivedHeard = "Got it. The agent on your DM has this and will answer here."
+	dmReceivedSaved = "Got it. No agent is running right now, so this is saved and the next one will answer here."
 )
 
 var routedSubtypes = map[string]bool{
@@ -501,7 +504,7 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		if g.key.channelID == id.DMChannelID {
-			if err := p.trackOwed(ctx, id, m); err != nil {
+			if err := p.trackOwed(ctx, db, api, id, g, m); err != nil {
 				return c, err
 			}
 		}
@@ -570,15 +573,44 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 	return nil
 }
 
-func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) error {
+func (p *poller) trackOwed(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, m slack.Message) error {
 	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
 	switch {
 	case id.fromOperator(m) && routedSubtypes[m.SubType]:
-		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
-	case id.fromClaude(m):
+		fresh, err := p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
+		if err != nil || !fresh {
+			return err
+		}
+		return p.received(ctx, db, api, id, g, thread)
+	case id.fromClaude(m) && m.Text != dmReceivedHeard && m.Text != dmReceivedSaved:
 		return p.owed.answered(ctx, thread, m.Timestamp)
 	}
 	return nil
+}
+
+func (p *poller) received(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, thread string) error {
+	text := dmReceivedSaved
+	if slices.ContainsFunc(slices.Concat(g.watches, g.covering), func(w watch) bool { return w.Kind == kindChannel }) {
+		text = dmReceivedHeard
+	} else if held, err := dmHeld(ctx, db, id.DMChannelID); err != nil || !held {
+		return err
+	}
+	if _, _, err := postMessage(ctx, api, db, p.log, id, id.DMChannelID, thread, text, nil, nil); err != nil {
+		p.log.Printf("post received line in %s: %v", thread, err)
+	}
+	return nil
+}
+
+func dmHeld(ctx context.Context, db *sql.DB, dmChannelID string) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `SELECT 1 FROM watches WHERE channel_id = ? AND thread_ts = '' AND kind = 'channel' AND status IN ('active', 'orphaned') LIMIT 1`, dmChannelID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("find the DM's holder: %w", err)
+	}
+	return true, nil
 }
 
 func operatorRoot(id identity, m slack.Message) bool {
