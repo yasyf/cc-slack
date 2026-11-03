@@ -512,8 +512,8 @@ func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 		}
 		kinds = append(kinds, got.Kind)
 	}
-	if strings.Join(kinds, ",") != kindChannel+","+kindDM {
-		t.Fatalf("routed kinds = %q, want the channel watch and the session", kinds)
+	if strings.Join(kinds, ",") != kindChannel {
+		t.Fatalf("routed kinds = %q, want only the channel watch, which holds the DM", kinds)
 	}
 }
 

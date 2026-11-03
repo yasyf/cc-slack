@@ -39,6 +39,7 @@ const (
 	opChannels     daemon.Op = "channels"
 	opUsers        daemon.Op = "users"
 	opDMPeer       daemon.Op = "dm-peer"
+	opDMOwed       daemon.Op = "dm-owed"
 	opFollow       daemon.Op = "follow"
 	opUnfollow     daemon.Op = "unfollow"
 	opDMStatus     daemon.Op = "dm-status"
@@ -199,6 +200,10 @@ type channelInfo struct {
 	Created       int64    `json:"created"`
 }
 
+type dmOwedResult struct {
+	Replies []owedReply `json:"replies"`
+}
+
 type channelsResult struct {
 	Channels []channelInfo `json:"channels"`
 }
@@ -266,6 +271,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opChannels, a.handleChannels)
 	s.Register(opUsers, a.handleUsers)
 	s.Register(opDMPeer, a.handleDMPeer)
+	s.Register(opDMOwed, a.handleDMOwed)
 	s.Register(opFollow, a.handleFollow)
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opDMStatus, a.handleDMStatus)
@@ -553,6 +559,11 @@ func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, thre
 	res, err := postAs(ctx, a.newAPI(id.Token), db, a.avatar, a.poller.log, a.now(), id, channelID, threadTS, text, blocks, files)
 	if err == nil && threadTS != "" {
 		a.wrote(ctx, res.ChannelID, threadTS)
+		if res.ChannelID == id.DMChannelID {
+			if err := a.owed.answered(ctx, threadTS, res.TS); err != nil {
+				a.poller.log.Printf("%v", err)
+			}
+		}
 	}
 	return res, err
 }
@@ -1141,6 +1152,14 @@ func (a *app) handleUsers(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	slices.SortFunc(out, func(x, y userInfo) int { return strings.Compare(x.Name, y.Name) })
 	return ok(usersResult{Users: out})
+}
+
+func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
+	replies, err := a.owed.list(hc.Ctx)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(dmOwedResult{Replies: replies})
 }
 
 func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {

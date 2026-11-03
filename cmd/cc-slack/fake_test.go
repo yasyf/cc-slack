@@ -704,7 +704,7 @@ func newFixture(t *testing.T) *fixture {
 	f.slack.users["UOTHER"] = &slack.User{ID: "UOTHER", Profile: slack.UserProfile{DisplayName: "teammate"}}
 	f.cache = openTestCache(t)
 	f.cache.now = func() time.Time { return f.now }
-	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestReplay(t))
+	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestReplay(t))
 	f.app.now = func() time.Time { return f.now }
 	f.app.avatar = agentAvatar
 	f.poller = f.app.poller
@@ -738,6 +738,16 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.poller.reconcileAll()
 	return f
+}
+
+func openTestOwed(t *testing.T) *owedReplies {
+	t.Helper()
+	o, err := openOwedReplies(context.Background(), filepath.Join(t.TempDir(), "owed-replies.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = o.Close() })
+	return o
 }
 
 func openTestReplay(t *testing.T) *replayCursor {

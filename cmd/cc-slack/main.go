@@ -82,6 +82,7 @@ func root() *cobra.Command {
 		historyCmd(d),
 		fileCmd(d),
 		dmPeerCmd(d),
+		dmOwedCmd(d),
 		channelsCmd(d),
 		usersCmd(d),
 		followCmd(d),

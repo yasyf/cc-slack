@@ -27,6 +27,7 @@ type app struct {
 	newAPI    func(token string) slackAPI
 	user      userSession
 	cache     *readCache
+	owed      *owedReplies
 	replay    *replayCursor
 	poller    *poller
 	cards     *liveCards
@@ -44,7 +45,7 @@ type app struct {
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
-func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, replay *replayCursor) *app {
+func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, replay *replayCursor) *app {
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
 		newAPI:        newAPI,
@@ -76,6 +77,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		alive:     alive,
 		now:       time.Now,
 		cache:     cache,
+		owed:      owed,
 		replay:    replay,
 		shortcuts: shortcuts,
 		cards:     cards,
@@ -89,6 +91,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		newAPI:    newAPI,
 		user:      mcpUserSession(),
 		cache:     cache,
+		owed:      owed,
 		replay:    replay,
 		captHook:  execCommand,
 		claudeCwd: claudeCwd,
@@ -176,11 +179,16 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = cache.Close() }()
+	owed, err := openOwedReplies(ctx, owedRepliesPath())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = owed.Close() }()
 	replay, err := loadReplayCursor(replayPath())
 	if err != nil {
 		return err
 	}
-	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, replay).buildServer()
+	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, replay).buildServer()
 	if err != nil {
 		return err
 	}
