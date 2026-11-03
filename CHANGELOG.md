@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The received line says no agent is running only when no session is watching the DM. It wrongly said so when the session holding the DM also watched that thread.
+- A received line is deleted when the real answer lands within a minute, so you read one message instead of two.
 - A Slack write made while capt-hook is being reinstalled waits up to 30 seconds for it to come back instead of failing. If it stays missing, the error says capt-hook is missing rather than blaming the ticket.
 
 ### Changed

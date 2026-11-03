@@ -64,7 +64,7 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 	if err := (statusCard{Status: "needs_you", Title: "x", Waits: "step-3:merge"}).check(time.Now(), true, ""); err == nil {
 		t.Error("a root-only waiting card passed check, want a refusal")
 	}
-	if err := (statusCard{Title: "x", Key: "r1"}).check(time.Now(), true); err == nil {
+	if err := (statusCard{Title: "x", Key: "r1"}).check(time.Now(), true, ""); err == nil {
 		t.Error("a root-only keyed card passed check, want a refusal")
 	}
 }

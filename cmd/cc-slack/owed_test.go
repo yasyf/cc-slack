@@ -304,3 +304,74 @@ func TestABotMessageGetsNoReceivedLine(t *testing.T) {
 		t.Fatalf("thread got %q, want no line for a bot's message", got)
 	}
 }
+
+func TestALiveHolderWithItsOwnThreadWatchGetsTheHeardLine(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedHeard}) {
+		t.Fatalf("thread got %q, want the heard line while a session holds the DM", got)
+	}
+}
+
+func TestAStoodDownPostersThreadGetsTheHeardLineWhileTheDMIsHeld(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	if _, err := storeSubjects(f).Create(f.ctx, stoodDownID, "", "sess-gone", scopeName, stoodDownPID, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := insertWatch(f.ctx, f.db(), stoodDownID, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedHeard}) {
+		t.Fatalf("thread got %q, want the heard line", got)
+	}
+}
+
+func TestAnAnswerWithinAMinuteDeletesTheReceivedLine(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	f.tick()
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, thread, "Seen: A is applied.", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := f.slack.callCount("chat.delete"); n != 1 {
+		t.Fatalf("chat.delete calls = %d, want the received line deleted", n)
+	}
+}
+
+func TestAnAnswerAfterAMinuteLeavesTheReceivedLine(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	f.tick()
+	ownerReplies(f, thread, "1800000001.500000", "A")
+	f.slack.clock += dmReceivedLife
+
+	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, thread, "Seen: A is applied.", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := f.slack.callCount("chat.delete"); n != 0 {
+		t.Fatalf("chat.delete calls = %d, want the older line left in place", n)
+	}
+	if got := owedStamps(t, f); len(got) != 0 {
+		t.Fatalf("owed %v, want the reply answered", got)
+	}
+}
