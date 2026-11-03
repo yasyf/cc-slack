@@ -225,8 +225,9 @@ func TestOneReplyCostsOneReadWhateverTheNumberOfDMThreads(t *testing.T) {
 }
 
 func receivedLines(f *fixture, thread string) []string {
-	lines := []string{}
-	for _, post := range f.slack.sent() {
+	posts := f.slack.sent()
+	lines := make([]string, 0, len(posts))
+	for _, post := range posts {
 		if post.threadTS == thread {
 			lines = append(lines, post.text)
 		}
