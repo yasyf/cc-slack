@@ -341,6 +341,13 @@ lookup.
 
 ## Fallback
 
+A Slack call answered 429 or 5xx, or whose connection drops, tries again, up to
+four tries in all. It waits 0.5 s, 1 s, then 2 s, or a 429's `Retry-After` when that
+is 30 s or less; a longer one fails at once. A post, a file share, and a channel
+create retry only a 429, since after a 5xx or a dropped connection Slack may
+already have acted, and an upload's file bytes are sent once. A 5xx or dropped
+connection that outlasts its retries says how many tries it took.
+
 Except for the private-channel invite refusal above, failures the bot cannot get
 past answer with text naming the tool to use from the user-level Slack server.
 Posts fall back to
