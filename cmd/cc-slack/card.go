@@ -727,16 +727,24 @@ func refLine(target, label string, id refID, state refState, status string) stri
 	return line
 }
 
-func (c statusCard) refs(v cardView) []slack.Block {
-	if len(c.Refs) == 0 {
-		return nil
-	}
+func (c statusCard) refLines(v cardView) []string {
 	lines := make([]string, 0, len(c.Refs))
 	for _, r := range c.Refs {
 		id, _ := parseRef(r.URL)
 		lines = append(lines, refLine(r.URL, r.Label, id, v.refs[id.key()], ""))
 	}
-	return []slack.Block{section("card-refs", bulleted("*PRs and builds*", lines))}
+	return lines
+}
+
+func (c statusCard) refs(v cardView) []slack.Block {
+	if len(c.Refs) == 0 {
+		return nil
+	}
+	return []slack.Block{section("card-refs", bulleted("*PRs and builds*", c.refLines(v)))}
+}
+
+func (c statusCard) prBlocks(v cardView) []slack.Block {
+	return []slack.Block{section("card-prs", strings.Join(c.refLines(v), "\n"))}
 }
 
 func (c statusCard) rollup(v cardView) []slack.Block {

@@ -34,7 +34,8 @@ type config struct {
 }
 
 type prLinksConfig struct {
-	Repos []string `toml:"repos" json:"repos,omitempty"`
+	Repos        []string `toml:"repos" json:"repos,omitempty"`
+	CardChannels []string `toml:"card_channels" json:"card_channels,omitempty"`
 }
 
 type permissions struct {

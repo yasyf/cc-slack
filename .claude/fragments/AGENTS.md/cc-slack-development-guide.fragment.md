@@ -76,6 +76,7 @@ token_command = ["gh", "auth", "token"]
 
 [pr_links]
 repos = ["acme/app", "acme/lib"]
+card_channels = ["C0TEAMROOM"]
 
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
@@ -98,6 +99,16 @@ not scanned, and a number no candidate repo holds stays plain. The daemon
 asks GitHub about every candidate in one GraphQL query per post, with a 5 s
 limit; when that read fails, the post goes out as written and the daemon
 logs why.
+
+A post in the bot's DM with the engineer, or in a channel whose ID
+`card_channels` lists, then gets a PR card in the post's thread: one reply
+listing each linked PR as `<url|repo#N title>` with its live state, up to 10
+per card. The daemon keeps each thread's PR cards in `live-cards.json`. A PR
+already carded in that thread, or cited by a status card there, gets no
+second card, and the ref poller redraws a PR card when its PR changes state.
+Every other channel, a thread we posted in it included, gets the links and
+no card. A `dm-status` card adds each PR its title or body names to its
+`refs`, up to 10, instead of a separate card.
 
 `[permissions]` turns on the plugin's capt-hook pack in the checkout that holds
 the file: with `enabled = true`, `plugin/capt-hook/hooks/permission.py` checks

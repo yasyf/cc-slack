@@ -231,7 +231,10 @@ names, so write `#123`, `owner/repo#123`, or the PR URL and never build the
 link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
 this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. Code spans and text already inside `<...>` are left
-alone.
+alone. In the user's DM, and in channels `card_channels` lists, the daemon
+also posts each linked PR's live card in the post's thread, once per thread.
+A status card gets each PR it names in its `refs`. Never add a PR card or a
+`refs` entry by hand for a PR your text names.
 
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When

@@ -226,6 +226,7 @@ func (c refClient) retryAt(h http.Header) time.Time {
 }
 
 type githubPR struct {
+	Title           string `json:"title"`
 	State           string `json:"state"`
 	IsDraft         bool   `json:"isDraft"`
 	MergeQueueEntry *struct {
@@ -287,7 +288,7 @@ func (c refClient) queryPRs(ctx context.Context, tok *refToken, refs []refID) (m
 	var q strings.Builder
 	q.WriteString("query {")
 	for i, r := range refs {
-		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { state isDraft mergeQueueEntry { state } "+
+		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { title state isDraft mergeQueueEntry { state } "+
 			"commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number)
 	}
 	q.WriteString(" }")

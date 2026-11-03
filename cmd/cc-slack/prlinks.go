@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -25,6 +26,16 @@ type prMention struct {
 	start, end int
 	ref        refID
 	url        string
+}
+
+type linkedPR struct {
+	ref   refID
+	title string
+	state refState
+}
+
+func (p linkedPR) label() string {
+	return clipRunes(fmt.Sprintf("%s#%d %s", p.ref.Repo, p.ref.Number, p.title), cardMaxLabelLen)
 }
 
 func prURL(r refID) string {
@@ -101,9 +112,9 @@ func prRepos(ctx context.Context, scope string, listed []string) []refID {
 	return repos
 }
 
-func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...string) []string {
+func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...string) ([]string, []linkedPR) {
 	if id.Config.GitHub == nil {
-		return texts
+		return texts, nil
 	}
 	mentions := make([][]prMention, len(texts))
 	bare := false
@@ -124,16 +135,17 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 		}
 	}
 	if len(asked) == 0 {
-		return texts
+		return texts, nil
 	}
 	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
 	defer cancel()
 	found, err := a.cards.client.queryPRs(lookup, a.cards.host(refHostGitHub, id.Config).token, asked)
 	if err != nil {
 		a.poller.log.Printf("post goes out with its PR references unlinked: %v", err)
-		return texts
+		return texts, nil
 	}
 	linked := make([]string, len(texts))
+	var prs []linkedPR
 	for i, text := range texts {
 		var out strings.Builder
 		at := 0
@@ -146,9 +158,69 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 			out.WriteString(text[at:m.start])
 			out.WriteString(slackLink(cmp.Or(m.url, prURL(held[k])), fmt.Sprintf("#%d", held[k].Number)))
 			at = m.end
+			if gh := found[held[k].key()]; !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == held[k] }) {
+				prs = append(prs, linkedPR{ref: held[k], title: gh.Title, state: gh.state()})
+			}
 		}
 		out.WriteString(text[at:])
 		linked[i] = out.String()
 	}
-	return linked
+	return linked, prs
+}
+
+func cardsAt(id identity, channelID string) bool {
+	return strings.HasPrefix(channelID, "D") || slices.Contains(id.Config.PRLinks.CardChannels, channelID)
+}
+
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, prs []linkedPR) {
+	if len(prs) == 0 || !cardsAt(id, channelID) {
+		return
+	}
+	cards := a.cards
+	cards.mu.Lock()
+	defer cards.mu.Unlock()
+	t := cards.draft(channelID, threadTS)
+	prs = slices.DeleteFunc(slices.Clone(prs), func(pr linkedPR) bool { return t.carded(map[string]bool{pr.ref.key(): true}) })
+	if len(prs) == 0 {
+		return
+	}
+	now := a.now()
+	for chunk := range slices.Chunk(prs, cardMaxRefs) {
+		m := &liveMessage{At: now}
+		labels := make([]string, len(chunk))
+		for i, pr := range chunk {
+			labels[i] = pr.label()
+			m.Card.Refs = append(m.Card.Refs, cardLink{URL: prURL(pr.ref), Label: labels[i]})
+			cards.refs[pr.ref.key()] = pr.state
+		}
+		m.Card.Title = strings.Join(labels, "\n")
+		res, err := a.post(ctx, db, id, channelID, threadTS, m.Card.Title, m.Card.prBlocks(t.view(m, now, cards.refs)), nil)
+		if err != nil {
+			a.poller.log.Printf("PR card in %s/%s not posted: %v", channelID, threadTS, err)
+			break
+		}
+		m.TS = res.TS
+		t.PRCards = append(t.PRCards, m)
+	}
+	t.Updated = now
+	cards.commit(t)
+}
+
+func (c *statusCard) cite(prs []linkedPR) {
+	for _, pr := range prs {
+		if len(c.Refs) == cardMaxRefs {
+			return
+		}
+		if !slices.ContainsFunc(c.refIDs(), func(id refID) bool { return strings.EqualFold(id.key(), pr.ref.key()) }) {
+			c.Refs = append(c.Refs, cardLink{URL: prURL(pr.ref), Label: pr.label()})
+		}
+	}
+}
+
+func (l *liveCards) seed(prs []linkedPR) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, pr := range prs {
+		l.refs[pr.ref.key()] = pr.state
+	}
 }
