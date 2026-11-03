@@ -470,6 +470,11 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			}
 		}
 	}
+	if drawn, err := l.drawTappedPRCard(ctx, api, t, now, first); err != nil {
+		errs = append(errs, err)
+	} else if drawn {
+		redrawn[first] = true
+	}
 	if t.Reply != nil && t.Reply.TS == first {
 		drawReply()
 		drawRoot()
@@ -699,10 +704,28 @@ func (l *liveCards) drawPRCards(ctx context.Context, api slackAPI, t *liveThread
 			continue
 		}
 		drawn = true
-		if err := l.update(ctx, api, t, &t.PRCards[i], m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs))); err != nil {
+		if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
 			l.log.Printf("live card %v", err)
 		}
 	}
 	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
 	return drawn
+}
+
+func (l *liveCards) drawTappedPRCard(ctx context.Context, api slackAPI, t *liveThread, now time.Time, first string) (bool, error) {
+	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == first })
+	if i < 0 {
+		return false, nil
+	}
+	if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
+		return false, err
+	}
+	drawn := t.PRCards[i] != nil
+	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
+	return drawn, nil
+}
+
+func (l *liveCards) drawPRCard(ctx context.Context, api slackAPI, t *liveThread, i int, now time.Time) error {
+	m := t.PRCards[i]
+	return l.update(ctx, api, t, &t.PRCards[i], m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs)))
 }

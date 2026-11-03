@@ -226,6 +226,9 @@ func tapHow(k askTap) string {
 }
 
 func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, who, permalink string) error {
+	if pr, ok := p.cards.prCard(a.Channel, a.ThreadTS, k.ID); ok && !k.Other && len(id.Config.PRLinks.CardCommand) > 0 {
+		return p.tapPRCard(ctx, id, a, k, pr, at)
+	}
 	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
 		p.log.Printf("card action %s on %s: dropped: the card was redrawn with another question after this answer was drawn", a.ActionID, a.MessageTS)
 		return nil
@@ -271,9 +274,6 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	tappedAt := slackTime(a.ActionTS)
 	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
-	if pr, ok := p.cards.prCard(a.Channel, a.ThreadTS, k.ID); ok && k.Waits && !k.Explain && !k.Other && len(id.Config.PRLinks.CardCommand) > 0 {
-		return p.tapPRCard(ctx, id, a, k, pr, tappedAt)
-	}
 	if k.Waits && !k.Explain {
 		return p.tapWaits(ctx, id, a, k, tappedAt, who, permalink)
 	}
