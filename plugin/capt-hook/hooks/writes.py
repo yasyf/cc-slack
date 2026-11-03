@@ -71,6 +71,7 @@ class ExtraCLI:
 class Permissions:
     enabled: bool = False
     clis: tuple[ExtraCLI, ...] = ()
+    proof_channels: tuple[str, ...] = ()
 
 
 def extra_cli(table: dict[str, Any]) -> ExtraCLI:
@@ -85,7 +86,7 @@ def extra_cli(table: dict[str, Any]) -> ExtraCLI:
 @cache
 def parsed(path: Path, modified: int) -> Permissions:
     table = tomllib.loads(path.read_text()).get("permissions", {})
-    return Permissions(bool(table.get("enabled")), tuple(extra_cli(cli) for cli in table.get("clis", ())))
+    return Permissions(bool(table.get("enabled")), tuple(extra_cli(cli) for cli in table.get("clis", ())), tuple(table.get("proof_channels", ())))
 
 
 def permissions() -> Permissions:

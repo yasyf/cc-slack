@@ -1,5 +1,6 @@
 [permissions]
 enabled = true
+proof_channels = ["acc-*", "outage*"]
 
 [[permissions.clis]]
 program = "slack-post"

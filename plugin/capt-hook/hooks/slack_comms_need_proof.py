@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+from fnmatch import fnmatchcase
 
 from captain_hook import CONFIRMED, UNCONFIRMED, Allow, Block, Confirm, Event, HookResult, Input, PreToolUseEvent, on
 
-from .permission import CC_SLACK, Conversation, read_thread
+from .permission import CC_SLACK, Conversation, Message, read_thread
 from .plain_words import DISABLED, ENABLED, P, THREAD, WritesSlack, block_text
-from .writes import Write, pending
+from .writes import Write, capture, pending, permissions
 
 EVIDENCE_ASK = re.compile(
     r"\b(?:send|share|attach|paste|upload|grab|post|forward|provide|give)\b[^.?!\n]{0,40}\b(?:logs?|screenshots?|screen ?(?:recordings?|captures?)|recordings?|versions?|console (?:output|logs?)|har files?)\b"
@@ -36,6 +37,11 @@ UNPROVEN_FIX = (
 )
 OWNER = "U0DANA00001"
 OPENED = json.dumps({"messages": [{"ts": THREAD["thread_ts"], "user": OWNER, "user_name": "Dana", "text": "uploads fail for me"}]})
+OURS = json.dumps({"messages": [{"ts": THREAD["thread_ts"], "user": "", "user_name": "Dana (claude)", "from_claude": True, "text": "Which fix should ship?"}]})
+OUTAGE = "C0OUTAGE"
+TEAM = "C0TEAMROOM"
+DM = "D0DANA0001"
+CHANNELS = json.dumps({"channels": [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}]})
 
 
 def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
@@ -47,11 +53,20 @@ def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
     return found
 
 
-def thread_owner(write: Write) -> str | None:
-    thread = read_thread(Conversation(write.channel, write.thread))
-    if not thread.readable or not thread.messages:
-        return None
-    return next((message.user for message in thread.messages if message.ts == write.thread), thread.messages[0].user)
+def in_proof_channel(write: Write) -> bool:
+    if not (out := capture([CC_SLACK, "channels", "--json"], timeout=5)):
+        return False
+    names = [channel["name"] for channel in json.loads(out)["channels"] if channel["id"] == write.channel]
+    return any(fnmatchcase(name, pattern) for name in names for pattern in permissions().proof_channels)
+
+
+def thread_root(write: Write) -> Message | None:
+    messages = read_thread(Conversation(write.channel, write.thread)).messages
+    return next((message for message in messages if message.ts == write.thread), messages[0]) if messages else None
+
+
+def posted_by_us(root: Message | None) -> bool:
+    return root is not None and root.from_claude
 
 
 def proven(line: str, owner: str | None) -> bool:
@@ -60,14 +75,24 @@ def proven(line: str, owner: str | None) -> bool:
 
 def unproven(write: Write, text: str) -> bool:
     claims = [line for line in text.splitlines() if FIXED_CLAIM.search(line)]
-    if not claims or RELEASE_NOTE.search(text):
+    if not claims or RELEASE_NOTE.search(text) or not in_proof_channel(write):
         return False
-    owner = thread_owner(write) if write.thread else None
-    return not all(proven(line, owner) for line in claims)
+    root = thread_root(write)
+    return not posted_by_us(root) and not all(proven(line, root.user if root else None) for line in claims)
 
 
-def reply(text: str, **extra: object) -> Input:
-    return Input(env=ENABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": text}, commands={f"{CC_SLACK} thread": OPENED}, **extra)
+def reply(text: str, channel: str = THREAD["channel_id"], root: str | tuple[int, str] = OPENED, **extra: object) -> Input:
+    return Input(
+        env=ENABLED,
+        tool=P + "slack_reply",
+        tool_input=THREAD | {"channel_id": channel, "text": text},
+        commands={f"{CC_SLACK} channels": CHANNELS, f"{CC_SLACK} thread": root},
+        **extra,
+    )
+
+
+def send(text: str, channel: str = THREAD["channel_id"]) -> Input:
+    return Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": channel, "text": text}, commands={f"{CC_SLACK} channels": CHANNELS}, decide=CONFIRMED)
 
 
 @on(
@@ -77,14 +102,18 @@ def reply(text: str, **extra: object) -> Input:
         reply("Can you send us your logs from this morning?", decide=CONFIRMED): Block(pattern=r"^Incident comms never asks a person for logs"),
         reply("Which version of the app are you on?", decide=CONFIRMED): Block(),
         reply("Could you provide a screenshot of the error?", decide=CONFIRMED): Block(),
-        Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": THREAD["channel_id"], "text": "Can you send your logs?"}, decide=CONFIRMED): Block(),
+        send("Can you send your logs?"): Block(),
+        send("Can you send your logs?", OUTAGE): Block(),
+        send("Can you send your logs?", DM): Allow(),
+        send("Can you send your logs?", TEAM): Allow(),
+        reply("Can you send your logs?", root=OURS, decide=CONFIRMED): Allow(),
         reply("Can you send us your logs from this morning?", decide=UNCONFIRMED): Allow(),
         reply("We read the upload errors from telemetry; a fix is building.", decide=CONFIRMED): Allow(),
         Input(env=DISABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Can you send us your logs?"}, decide=CONFIRMED): Allow(),
     },
 )
 def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
-    asks = [write for write, text in posts(evt) if EVIDENCE_ASK.search(text)]
+    asks = [write for write, text in posts(evt) if EVIDENCE_ASK.search(text) and in_proof_channel(write) and not posted_by_us(thread_root(write))]
     return evt.block(NO_EVIDENCE_ASKS, confirm=EVIDENCE_JUDGE) if asks else None
 
 
@@ -103,18 +132,20 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
         reply("The app should open now.", decide=CONFIRMED): Block(),
         reply("Dana, this is fixed now.", decide=UNCONFIRMED): Allow(),
         reply("A fix for the upload errors is building; we will confirm once it is live.", decide=CONFIRMED): Allow(),
-        Input(
-            env=ENABLED,
-            tool=P + "slack_reply",
-            tool_input=THREAD | {"text": "usr_8f2k1 is fixed now (#500310)."},
-            commands={f"{CC_SLACK} thread": (1, "cc-slack can't reach the daemon")},
-            decide=CONFIRMED,
-        ): Allow(),
-        Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": THREAD["channel_id"], "text": "The upload errors are fixed."}, decide=CONFIRMED): Block(),
+        reply("usr_8f2k1 is fixed now (#500310).", root=(1, "cc-slack can't reach the daemon"), decide=CONFIRMED): Allow(),
+        send("The upload errors are fixed."): Block(),
+        send("usr_8f2k1 uploads are fixed: https://acme.sentry.io/issues/42/"): Allow(),
+        reply("Dana, this is fixed now.", OUTAGE, decide=CONFIRMED): Block(),
+        send("The upload errors are fixed.", OUTAGE): Block(),
+        reply("Dana, this is fixed now.", DM, decide=CONFIRMED): Allow(),
+        send("The upload errors are fixed.", DM): Allow(),
+        reply("Dana, this is fixed now.", TEAM, decide=CONFIRMED): Allow(),
+        reply("Dana, this is fixed now.", OUTAGE, root=OURS, decide=CONFIRMED): Allow(),
         Input(
             env=ENABLED,
             tool=P + "slack_send",
-            tool_input={"channel_id": THREAD["channel_id"], "text": "usr_8f2k1 uploads are fixed: https://acme.sentry.io/issues/42/"},
+            tool_input={"channel_id": OUTAGE, "text": "The upload errors are fixed."},
+            commands={f"{CC_SLACK} channels": (1, "cc-slack can't reach the daemon")},
             decide=CONFIRMED,
         ): Allow(),
         Input(env=DISABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Dana, this is fixed now."}, decide=CONFIRMED): Allow(),

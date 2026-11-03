@@ -84,6 +84,7 @@ project turns it on in `.claude/cc-slack.toml`, the file `login` reads:
 ```toml
 [permissions]
 enabled = true
+proof_channels = ["acc-*", "outage*"]
 
 [[permissions.clis]]
 program = "team-post"
@@ -95,6 +96,7 @@ flags = ["broadcast"]
 | Key | Meaning |
 |---|---|
 | `enabled` | Turns on the permission hook and the plain-words warning on posts. Missing or `false` lets every write through. |
+| `proof_channels` | Name patterns of the channels where a post may not ask a person for logs, versions or screenshots and may not tell them their problem is fixed without proof, such as customer channels and an outage channel. A DM, a channel no pattern names, and a thread we posted are never checked. Missing runs neither check. |
 | `clis` | Other posting CLIs the hook checks, one table each. They spend no ticket, so an approved write goes ahead as written. |
 | `clis.program` | The executable name, as typed in a Bash command. |
 | `clis.verbs` | Each subcommand that writes, mapped to `post`, `edit`, `delete`, `create`, `archive`, `invite`, `topic`, or `join`. |
