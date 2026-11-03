@@ -1593,6 +1593,15 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if b.Card != nil {
+		images, err := allImages(b.Files)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if !images {
+			return fail("a card attaches PNG, JPEG, or GIF images only")
+		}
+	}
 	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
@@ -1605,6 +1614,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if b.RootOnly {
 		if err := ownStatusRoot(hc.Ctx, hc.DB, sub.ID, id.DMChannelID); err != nil {
 			return fail(err.Error())
+		}
+	}
+	if b.Card != nil && len(b.Files) > 0 {
+		if b.Card.Images, err = uploadImages(hc.Ctx, a.newAPI(id.Token), b.Files); err != nil {
+			return fail(fallback(actionWrite, err))
 		}
 	}
 	msg := dmMessage{text: b.Text, blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
@@ -1679,14 +1693,16 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 
 func checkDMStatus(b opBody, now time.Time) error {
 	switch {
-	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || len(b.Files) > 0):
-		return errors.New("dm-status takes a card, or blocks and files, never both")
+	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || (len(b.Files) > 0 && (!b.Mirrored || b.Card.Waits == ""))):
+		return errors.New("dm-status takes a card, or blocks and files, never both; only a waiting card cc-present sends carries images")
 	case b.Card == nil && b.Text == "" && len(b.Files) == 0:
 		return errors.New("dm-status needs a card, text, or files")
 	case b.RootOnly && (b.Card == nil || b.ThreadTS != ""):
 		return errors.New("dm-status root_only redraws the session thread's root card; it takes a card and no thread_ts")
 	case b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS):
 		return fmt.Errorf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS)
+	case b.Card != nil && b.Mirrored:
+		return b.Card.checkMirrored(now, b.RootOnly)
 	case b.Card != nil:
 		return b.Card.check(now, b.RootOnly)
 	}
@@ -1798,9 +1814,18 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 func (a *app) placeReply(ctx context.Context, db *sql.DB, id identity, t *liveThread, thread string, previous, asked *liveMessage) (*liveMessage, error) {
 	reply := t.Reply
 	text, blocks := t.replyMessage(a.now(), a.cards.refs)
+	write := func(do func() error) error {
+		if len(reply.Card.Images) == 0 {
+			return do()
+		}
+		return whileProcessing(ctx, do)
+	}
 	if asked == nil {
-		res, err := a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
-		if err != nil {
+		var res postResult
+		if err := write(func() (err error) {
+			res, err = a.post(ctx, db, id, id.DMChannelID, thread, text, blocks, nil)
+			return err
+		}); err != nil {
 			return nil, err
 		}
 		reply.TS = res.TS
@@ -1810,7 +1835,9 @@ func (a *app) placeReply(ctx context.Context, db *sql.DB, id identity, t *liveTh
 	if previous != nil && previous.TS != asked.TS {
 		t.Reply = previous
 	}
-	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks); err != nil {
+	if err := write(func() error {
+		return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks)
+	}); err != nil {
 		return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(reply.Card.Waits, reply.Card.Group), err)
 	}
 	return reply, nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +251,111 @@ func TestWaitingCardsTellTheBoardOnPostAndOnASlackAnswer(t *testing.T) {
 	}
 }
 
+func mirroredCard(t *testing.T, l *liveDaemon, body map[string]any) postedCard {
+	t.Helper()
+	body["mirrored"] = true
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, body).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return postedCard{id: id, thread: res["thread_ts"], ts: res["ts"]}
+}
+
+func (l *liveDaemon) postedAt(t *testing.T, ts string) fakePost {
+	t.Helper()
+	sent := l.slack.sent()
+	i := slices.IndexFunc(sent, func(p fakePost) bool { return p.ts == ts })
+	if i < 0 {
+		t.Fatalf("no post at %s in %+v", ts, sent)
+	}
+	return sent[i]
+}
+
+func TestABoardCardReachesSlackWithItsImageAndButtonsAndATapAnswersTheBoard(t *testing.T) {
+	calls := fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := mergeCard()
+	c := mirroredCard(t, l, map[string]any{"card": card, "files": []string{writeFile(t, "Feed first.png", pngBytes)}})
+
+	post := l.postedAt(t, c.ts)
+	if ids := imageIDs(t, post.blocks); len(ids) != 1 {
+		t.Fatalf("image blocks %v in %s, want the card's one image", ids, post.blocks)
+	}
+	if !strings.Contains(post.blocks, "Feed first.png") {
+		t.Fatalf("blocks %s lack the image's title", post.blocks)
+	}
+	for _, button := range []string{"Hold (Recommended)", "Merge", cardOtherLabel, cardExplainLabel} {
+		if !strings.Contains(post.blocks, button) {
+			t.Fatalf("blocks %s lack the %s button", post.blocks, button)
+		}
+	}
+	if got := presentCalls(t, calls); got != "" {
+		t.Fatalf("a card from the board told the board it was posted: %q", got)
+	}
+
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Hold", Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0500"})
+	got := presentCalls(t, calls)
+	if !strings.Contains(got, "slack-sync answered") || !strings.Contains(got, `"label":"Hold"`) || !strings.Contains(got, `"waits":"`+card.Waits+`"`) {
+		t.Fatalf("cc-present calls after the tap %q, want the answer sent to the board", got)
+	}
+	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
+	if len(edits) == 0 || len(imageIDs(t, edits[len(edits)-1].blocks)) != 1 {
+		t.Fatalf("edits %+v, want the tapped card to keep its image", edits)
+	}
+}
+
+func TestOnlyACardFromTheBoardCarriesImages(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	png := writeFile(t, "a.png", pngBytes)
+	card := mergeCard()
+	for name, body := range map[string]map[string]any{
+		"a hand-posted question":  {"card": card, "files": []string{png}},
+		"a status card":           {"card": statusCard{Status: "info", Title: "Landed"}, "mirrored": true, "files": []string{png}},
+		"a file that is no image": {"card": card, "mirrored": true, "files": []string{writeFile(t, "a.txt", "plain words")}},
+	} {
+		if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(body)); err == nil {
+			t.Errorf("%s: dm-status took it", name)
+		}
+	}
+}
+
+func TestABoardQuestionPostsWithNoRecommendationOrNoPresetAnswers(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	unrecommended := mirroredCard(t, l, map[string]any{"card": statusCard{Status: "needs_you", Title: "Which one?", Waits: "pick", Options: []string{"This", "That"}}})
+	blocks := l.postedAt(t, unrecommended.ts).blocks
+	if strings.Contains(blocks, cardRecommended) || !strings.Contains(blocks, "This") || !strings.Contains(blocks, "That") {
+		t.Fatalf("blocks %s, want both answers and neither marked recommended", blocks)
+	}
+	var answer cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"waits": "pick", "url": unrecommended.url(), "label": "That", "via": "http://127.0.0.1:7000/p/asks--ab12"}).Body, &answer); err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Answered {
+		t.Fatalf("board answer = %+v, want it to win", answer)
+	}
+
+	written := mirroredCard(t, l, map[string]any{"card": statusCard{Status: "needs_you", Title: "What should the title say?", Waits: "title"}})
+	blocks = l.postedAt(t, written.ts).blocks
+	if !strings.Contains(blocks, cardAnswerLabel) || !strings.Contains(blocks, cardWriteHint) || strings.Contains(blocks, `"text":"`+cardOtherLabel+`"`) {
+		t.Fatalf("blocks %s, want one Answer button and its hint", blocks)
+	}
+
+	handPosted := statusCard{Status: "needs_you", Title: "Which one?", Waits: "pick-2", Options: []string{"This", "That"}}
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"card": handPosted})); err == nil {
+		t.Fatal("a hand-posted question with no recommendation was taken")
+	}
+}
+
 func TestAReplyAboutAWaitingCardOpensWithALinkBackToIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -317,7 +423,7 @@ func TestOneDMStatusCallPostsACardGivenTextBesideIt(t *testing.T) {
 	}
 }
 
-func TestAHandPostedQuestionCardIsPostedWithAWarningNamingCcPresentSend(t *testing.T) {
+func TestAHandPostedQuestionCardIsPostedWithAWarningNamingTheBoard(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -330,8 +436,8 @@ func TestAHandPostedQuestionCardIsPostedWithAWarningNamingCcPresentSend(t *testi
 		return res
 	}
 	res := post(map[string]any{"card": mergeCard()})
-	if res["ts"] == "" || !strings.Contains(res["warning"], "cc-present send") {
-		t.Fatalf("a hand-posted question card got %v, want it posted with a warning naming cc-present send", res)
+	if res["ts"] == "" || !strings.Contains(res["warning"], "cc-present update-block") {
+		t.Fatalf("a hand-posted question card got %v, want it posted with a warning naming cc-present update-block", res)
 	}
 	mirrored := mergeCard()
 	mirrored.Waits = "step-4:deploy"

@@ -238,24 +238,39 @@ func uploadFiles(ctx context.Context, api slackAPI, paths []string) ([]slack.Fil
 }
 
 func postImages(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, blocks []slack.Block, paths []string, extra ...slack.MsgOption) (string, string, error) {
-	files, err := uploadFiles(ctx, api, paths)
+	files, err := uploadImages(ctx, api, paths)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{Files: files}); err != nil {
-		return "", "", err
-	}
 	opts := append(id.postOptions(shortText(fallbackText(text, files)), threadTS, extra...), slack.MsgOptionBlocks(imageMessage(text, blocks, files)...))
+	var ch, ts string
+	err = whileProcessing(ctx, func() (err error) {
+		ch, ts, err = api.PostMessageContext(ctx, channelID, opts...)
+		return err
+	})
+	return ch, ts, err
+}
+
+func uploadImages(ctx context.Context, api slackAPI, paths []string) ([]slack.FileSummary, error) {
+	files, err := uploadFiles(ctx, api, paths)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{Files: files}); err != nil {
+		return nil, err
+	}
+	return files, awaitProcessed(ctx, api, files)
+}
+
+// Slack can refuse a just-processed file with invalid_blocks for a moment after files.info reports its size.
+func whileProcessing(ctx context.Context, write func() error) error {
 	for attempt := 1; ; attempt++ {
-		if err := awaitProcessed(ctx, api, files); err != nil {
-			return "", "", err
-		}
-		ch, ts, err := api.PostMessageContext(ctx, channelID, opts...)
+		err := write()
 		if err == nil || errorCode(err) != "invalid_blocks" || attempt == readyTries {
-			return ch, ts, err
+			return err
 		}
 		if err := pause(ctx); err != nil {
-			return "", "", err
+			return err
 		}
 	}
 }
@@ -314,10 +329,14 @@ func pause(ctx context.Context) error {
 func imageMessage(text string, body []slack.Block, files []slack.FileSummary) []slack.Block {
 	blocks := messageBlocks(text, body)
 	for _, file := range files {
-		blocks = append(blocks, slack.NewImageBlockSlackFile(&slack.SlackFileObject{ID: file.ID}, file.Title, "",
-			slack.NewTextBlockObject(slack.PlainTextType, file.Title, false, false)))
+		blocks = append(blocks, imageBlock(file))
 	}
 	return blocks
+}
+
+func imageBlock(file slack.FileSummary) slack.Block {
+	return slack.NewImageBlockSlackFile(&slack.SlackFileObject{ID: file.ID}, file.Title, "",
+		slack.NewTextBlockObject(slack.PlainTextType, file.Title, false, false))
 }
 
 func messageBlocks(text string, blocks []slack.Block) []slack.Block {

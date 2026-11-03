@@ -17,7 +17,7 @@ import (
 
 const presentBinary = "cc-present"
 
-const questionOnBoard = "a question goes on the cc-present board first: put the card there with cc-present update-block, then run cc-present send. This card was posted anyway."
+const questionOnBoard = "a question goes on the cc-present board first: cc-present update-block or push posts its card here by itself. This card was posted anyway."
 
 type boardCard struct {
 	Waits       string    `json:"waits"`
