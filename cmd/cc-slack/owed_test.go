@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/yasyf/cc-interact/agent"
+	"github.com/yasyf/cc-interact/cmd"
 )
 
 const (
@@ -186,8 +188,8 @@ func TestAnOwnersDMRootMessageGoesToTheHolderWithoutASessionList(t *testing.T) {
 	f.poller.nudged(messageNudge{Channel: dm, TS: root})
 	f.tick()
 
-	if got := f.slack.sent(); len(got) != sent+1 || got[sent].text != dmReceivedHeard || got[sent].threadTS != root {
-		t.Fatalf("posted %+v, want only the received line, no session list, when a session holds the DM", got[sent:])
+	if got := f.slack.sent(); len(got) != sent {
+		t.Fatalf("posted %+v, want no auto-reply and no session list when a session holds the DM", got[sent:])
 	}
 	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindChannel}) {
 		t.Fatalf("delivered to %v, want only the holder", got)
@@ -224,154 +226,90 @@ func TestOneReplyCostsOneReadWhateverTheNumberOfDMThreads(t *testing.T) {
 	}
 }
 
-func receivedLines(f *fixture, thread string) []string {
-	posts := f.slack.sent()
-	lines := make([]string, 0, len(posts))
-	for _, post := range posts {
-		if post.threadTS == thread {
-			lines = append(lines, post.text)
+func TestOneSessionHoldsTheDM(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	dm := "D" + testUser
+	l.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: testThread, Text: "parent"}})
+	other := l.deps
+	other.ClaudePID = func() int { return testPID + 3 }
+	follow := func(d cmd.Deps, session string) followResult {
+		t.Helper()
+		reply, err := invoke(l.ctx, d, session, "/any", opFollow, mustJSON(map[string]string{"channel_id": dm}))
+		if err != nil {
+			t.Fatal(err)
 		}
+		var res followResult
+		if err := json.Unmarshal(reply.Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
 	}
-	return lines
+	holder := func() string {
+		t.Helper()
+		var owed dmOwedResult
+		if err := json.Unmarshal(l.do(opDMOwed, map[string]any{}).Body, &owed); err != nil {
+			t.Fatal(err)
+		}
+		return owed.HolderSession
+	}
+
+	if got := holder(); got != "" {
+		t.Fatalf("holder before any hold = %q, want none", got)
+	}
+	held := follow(l.deps, testSession)
+	if held.WatchID == 0 || held.HeldBy != "" || holder() != testSession {
+		t.Fatalf("first hold = %+v, holder %q, want this session holding", held, holder())
+	}
+	if refused := follow(other, "other-session"); refused.WatchID != 0 || refused.HeldBy != testSession || holder() != testSession {
+		t.Fatalf("second session's hold = %+v, holder %q, want it refused and named", refused, holder())
+	}
+	if again := follow(l.deps, testSession); again.WatchID != held.WatchID {
+		t.Fatalf("holder's next prompt made watch %d, want its own %d kept", again.WatchID, held.WatchID)
+	}
+
+	l.do(opUnfollow, map[string]int64{"watch_id": held.WatchID})
+
+	if taken := follow(other, "other-session"); taken.WatchID == 0 || holder() != "other-session" {
+		t.Fatalf("hold after the holder left = %+v, holder %q, want the other session holding", taken, holder())
+	}
 }
 
-func TestAReplyGetsTheReceivedLineInItsThreadAndStaysOwed(t *testing.T) {
+func TestForgettingAThreadKeepsOtherThreadsOwed(t *testing.T) {
 	f := newFixture(t)
 	holdDM(t, f)
 	thread := postDMThread(t, f)
+	kept := postDMThread(t, f)
 	f.tick()
+	ownerReplies(f, thread, "1800000090.000000", "A")
+	ownerReplies(f, kept, "1800000090.000100", "B")
 
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedHeard}) {
-		t.Fatalf("thread got %q, want the one received line", got)
-	}
-	last := f.slack.sent()[len(f.slack.sent())-1]
-	f.poller.nudged(messageNudge{Channel: f.id.DMChannelID, TS: last.ts, ThreadTS: thread, Subtype: "bot_message"})
-	f.tick()
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.500000"}) {
-		t.Fatalf("owed %v, want the received line not to count as the answer", got)
-	}
-	if got := receivedLines(f, thread); len(got) != 1 {
-		t.Fatalf("thread got %q, want one line after the bot's own post is read back", got)
-	}
-}
-
-func TestAReplyToAStoodDownHolderSaysItIsSaved(t *testing.T) {
-	f := newFixture(t)
-	if _, err := storeSubjects(f).Create(f.ctx, stoodDownID, "", "sess-gone", scopeName, stoodDownPID, statusOpen); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := insertWatch(f.ctx, f.db(), stoodDownID, agent.TopLevel, kindChannel, f.id.DMChannelID, "", beforeEveryPost, f.now); err != nil {
-		t.Fatal(err)
-	}
-	thread := postDMThread(t, f)
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedSaved}) {
-		t.Fatalf("thread got %q, want the saved line", got)
-	}
-}
-
-func TestADMNobodyEverHeldGetsNoReceivedLine(t *testing.T) {
-	f := newFixture(t)
-	thread := postDMThread(t, f)
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := receivedLines(f, thread); len(got) != 0 {
-		t.Fatalf("thread got %q, want no line for a project that never held the DM", got)
-	}
-}
-
-func TestABotMessageGetsNoReceivedLine(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := postDMThread(t, f)
-	f.tick()
-
-	const fromAnotherHost = "1800000001.600000"
-	f.slack.add(f.id.DMChannelID, slack.Message{Msg: slack.Msg{
-		Timestamp: fromAnotherHost, ThreadTimestamp: thread, SubType: "bot_message", User: f.id.BotUserID, BotID: f.id.BotID, Username: "Yasyf (claude)", Text: "Status",
-	}})
-	f.poller.nudged(messageNudge{Channel: f.id.DMChannelID, TS: fromAnotherHost, ThreadTS: thread, Subtype: "bot_message"})
-	f.tick()
-
-	if got := receivedLines(f, thread); len(got) != 0 {
-		t.Fatalf("thread got %q, want no line for a bot's message", got)
-	}
-}
-
-func TestALiveHolderWithItsOwnThreadWatchGetsTheHeardLine(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := postDMThread(t, f)
-	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
-		t.Fatal(err)
-	}
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedHeard}) {
-		t.Fatalf("thread got %q, want the heard line while a session holds the DM", got)
-	}
-}
-
-func TestAStoodDownPostersThreadGetsTheHeardLineWhileTheDMIsHeld(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := postDMThread(t, f)
-	if _, err := storeSubjects(f).Create(f.ctx, stoodDownID, "", "sess-gone", scopeName, stoodDownPID, statusOpen); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := insertWatch(f.ctx, f.db(), stoodDownID, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
-		t.Fatal(err)
-	}
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := receivedLines(f, thread); !slices.Equal(got, []string{dmReceivedHeard}) {
-		t.Fatalf("thread got %q, want the heard line", got)
-	}
-}
-
-func TestAnAnswerWithinAMinuteDeletesTheReceivedLine(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := postDMThread(t, f)
-	f.tick()
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, thread, "Seen: A is applied.", nil, nil); err != nil {
+	if err := f.app.owed.forget(f.ctx, thread); err != nil {
 		t.Fatal(err)
 	}
 
-	if n := f.slack.callCount("chat.delete"); n != 1 {
-		t.Fatalf("chat.delete calls = %d, want the received line deleted", n)
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000090.000100"}) {
+		t.Fatalf("owed = %v, want only the other thread still owed", got)
 	}
 }
 
-func TestAnAnswerAfterAMinuteLeavesTheReceivedLine(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := postDMThread(t, f)
-	f.tick()
-	ownerReplies(f, thread, "1800000001.500000", "A")
-	f.slack.clock += dmReceivedLife
+func TestAReplyDrawsNoAutoReply(t *testing.T) {
+	for name, hold := range map[string]func(*testing.T, *fixture){"held": holdDM, "never held": func(*testing.T, *fixture) {}} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			hold(t, f)
+			thread := postDMThread(t, f)
+			f.tick()
+			sent := len(f.slack.sent())
 
-	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, thread, "Seen: A is applied.", nil, nil); err != nil {
-		t.Fatal(err)
-	}
+			ownerReplies(f, thread, "1800000001.500000", "A")
 
-	if n := f.slack.callCount("chat.delete"); n != 0 {
-		t.Fatalf("chat.delete calls = %d, want the older line left in place", n)
-	}
-	if got := owedStamps(t, f); len(got) != 0 {
-		t.Fatalf("owed %v, want the reply answered", got)
+			if got := f.slack.sent(); len(got) != sent {
+				t.Fatalf("posted %+v, want the daemon to post nothing of its own", got[sent:])
+			}
+			if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.500000"}) {
+				t.Fatalf("owed %v, want the reply still owed", got)
+			}
+		})
 	}
 }
