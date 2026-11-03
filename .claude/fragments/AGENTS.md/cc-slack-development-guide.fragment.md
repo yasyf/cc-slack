@@ -102,7 +102,8 @@ limit; when that read fails, the post goes out as written and the daemon
 logs why.
 
 `card_command` names a program, resolved on `PATH` at `login`, that draws a
-linked PR's card. After a post in the bot's DM with the engineer, or in a
+linked PR's card. A checked-in config can name a tool only some engineers have,
+so `login` on a machine without it leaves cards off and links still work. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, the daemon runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR the post
 linked that no card in that thread cites yet. A merged or closed PR stays a

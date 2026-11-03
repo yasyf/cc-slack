@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cc-slack login` no longer fails when the program `card_command` names is missing from this machine. PR cards stay off there and PR links still work, so a shared config can name a tool only some people have.
 - Only one session holds your DM with the bot. A second session asking to follow it gets `held_by` with the holder's session id and no watch, so your replies stop reaching an unrelated session. `cc-slack dm-owed` names the holder as `holder_session`, so only that session owes the replies.
 - Deleting a card forgets the replies owed on it, since nothing can answer in a thread that is gone.
 - The daemon no longer posts anything of its own when you reply in your DM. The "Got it" lines are gone; your reply is still delivered and still listed by `cc-slack dm-owed` until someone answers it.
