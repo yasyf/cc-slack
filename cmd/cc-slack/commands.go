@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	tokenPlaceholder = "unset"
-	captHookBinary   = "capt-hook"
-	pacificLayout    = "2006-01-02 15:04"
+	tokenPlaceholder      = "unset"
+	captHookBinary        = "capt-hook"
+	captHookReinstallWait = 30 * time.Second
+	captHookReinstallPoll = 250 * time.Millisecond
+	pacificLayout         = "2006-01-02 15:04"
 )
 
 var pacific = func() *time.Location {

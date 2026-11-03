@@ -93,7 +93,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		cache:     cache,
 		owed:      owed,
 		replay:    replay,
-		captHook:  execCommand,
+		captHook:  waitingForReinstall(captHookReinstallWait, captHookReinstallPoll, execCommand),
 		claudeCwd: claudeCwd,
 		avatar:    avatars.publish,
 		now:       time.Now,

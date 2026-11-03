@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 
@@ -78,6 +80,28 @@ func execCommand(ctx context.Context, bin string, args ...string) ([]byte, error
 		return out, errors.New(strings.TrimPrefix(reason[strings.LastIndex(reason, "\n")+1:], "Error: "))
 	}
 	return out, err
+}
+
+var errCaptHookMissing = errors.New("capt-hook is missing")
+
+func waitingForReinstall(wait, poll time.Duration, run commandRunner) commandRunner {
+	return func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		deadline := time.Now().Add(wait)
+		for {
+			out, err := run(ctx, bin, args...)
+			if !errors.Is(err, fs.ErrNotExist) {
+				return out, err
+			}
+			if !time.Now().Before(deadline) {
+				return out, fmt.Errorf("%w at %s after waiting %s for a reinstall to finish; run `cc-slack login` if it moved", errCaptHookMissing, bin, wait)
+			}
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(poll):
+			}
+		}
+	}
 }
 
 func claudeCwd(ctx context.Context, pid int) (string, error) {
@@ -151,6 +175,9 @@ func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, sessio
 		"--place", "channel="+channel, "--place", "thread="+thread,
 		"--tree", s.Tree, "--session", session, "--agent", s.Agent, "--call", s.Call,
 		"--fingerprint", s.Fingerprint, "--summary", w.target())
+	if errors.Is(err, errCaptHookMissing) {
+		return hookTicket{}, err
+	}
 	if err != nil {
 		return hookTicket{}, fmt.Errorf("ticket %s does not cover this %s: %w", s.TicketID, w.action, err)
 	}
