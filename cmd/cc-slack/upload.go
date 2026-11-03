@@ -219,7 +219,7 @@ func awaitShared(ctx context.Context, api slackAPI, want slack.FileSummary, chan
 		if attempt == readyTries {
 			return "", fmt.Errorf("no share of %s (%s) in that thread after %d tries", want.Title, want.ID, readyTries)
 		}
-		if err := pause(ctx); err != nil {
+		if err := pause(ctx, readyWait); err != nil {
 			return "", err
 		}
 	}
@@ -269,7 +269,7 @@ func whileProcessing(ctx context.Context, write func() error) error {
 		if err == nil || errorCode(err) != "invalid_blocks" || attempt == readyTries {
 			return err
 		}
-		if err := pause(ctx); err != nil {
+		if err := pause(ctx, readyWait); err != nil {
 			return err
 		}
 	}
@@ -309,7 +309,7 @@ func awaitProcessed(ctx context.Context, api slackAPI, files []slack.FileSummary
 			if attempt == readyTries {
 				return fmt.Errorf("slack never finished processing %s (%s)", want.Title, want.ID)
 			}
-			if err := pause(ctx); err != nil {
+			if err := pause(ctx, readyWait); err != nil {
 				return err
 			}
 		}
@@ -317,11 +317,11 @@ func awaitProcessed(ctx context.Context, api slackAPI, files []slack.FileSummary
 	return nil
 }
 
-func pause(ctx context.Context) error {
+var pause = func(ctx context.Context, wait time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(readyWait):
+	case <-time.After(wait):
 		return nil
 	}
 }

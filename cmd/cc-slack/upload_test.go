@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -295,6 +296,7 @@ func TestShareFilesReportsAnUnknownTSAsMaybeSent(t *testing.T) {
 }
 
 func TestShareFilesSurfacesRateLimits(t *testing.T) {
+	waits := pausesInstantly(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "7")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -304,6 +306,9 @@ func TestShareFilesSurfacesRateLimits(t *testing.T) {
 	var rate *slack.RateLimitedError
 	if !errors.As(err, &rate) || rate.RetryAfter != 7*time.Second {
 		t.Fatalf("ShareFilesContext on a 429 = %v, want a rate limit of 7s", err)
+	}
+	if want := []time.Duration{7 * time.Second, 7 * time.Second, 7 * time.Second}; !slices.Equal(*waits, want) {
+		t.Fatalf("waits = %v, want %v: a refused share waits out Retry-After between its 4 tries", *waits, want)
 	}
 }
 
