@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -12,7 +16,10 @@ import (
 	"time"
 )
 
-const prLookupPatience = 5 * time.Second
+const (
+	prLookupPatience = 5 * time.Second
+	prCardPatience   = 30 * time.Second
+)
 
 var (
 	prUnscanned   = regexp.MustCompile("(?s)```.*?```|`[^`\n]+`|<[^<>\n]*>|https?://[^\\s<>]+")
@@ -25,6 +32,17 @@ type prMention struct {
 	start, end int
 	ref        refID
 	url        string
+}
+
+type linkedPR struct {
+	ref   refID
+	state refState
+}
+
+type providedCard struct {
+	Repo   string     `json:"repo"`
+	Number int        `json:"number"`
+	Card   statusCard `json:"card"`
 }
 
 func prURL(r refID) string {
@@ -101,9 +119,9 @@ func prRepos(ctx context.Context, scope string, listed []string) []refID {
 	return repos
 }
 
-func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...string) []string {
+func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...string) ([]string, []linkedPR) {
 	if id.Config.GitHub == nil {
-		return texts
+		return texts, nil
 	}
 	mentions := make([][]prMention, len(texts))
 	bare := false
@@ -124,16 +142,17 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 		}
 	}
 	if len(asked) == 0 {
-		return texts
+		return texts, nil
 	}
 	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
 	defer cancel()
 	found, err := a.cards.client.queryPRs(lookup, a.cards.host(refHostGitHub, id.Config).token, asked)
 	if err != nil {
 		a.poller.log.Printf("post goes out with its PR references unlinked: %v", err)
-		return texts
+		return texts, nil
 	}
 	linked := make([]string, len(texts))
+	var prs []linkedPR
 	for i, text := range texts {
 		var out strings.Builder
 		at := 0
@@ -146,9 +165,82 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 			out.WriteString(text[at:m.start])
 			out.WriteString(slackLink(cmp.Or(m.url, prURL(held[k])), fmt.Sprintf("#%d", held[k].Number)))
 			at = m.end
+			if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == held[k] }) {
+				prs = append(prs, linkedPR{ref: held[k], state: found[held[k].key()].state()})
+			}
 		}
 		out.WriteString(text[at:])
 		linked[i] = out.String()
 	}
-	return linked
+	return linked, prs
+}
+
+func cardsAt(id identity, channelID string) bool {
+	return strings.HasPrefix(channelID, "D") || slices.Contains(id.Config.PRLinks.CardChannels, channelID)
+}
+
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, prs []linkedPR) {
+	command := id.Config.PRLinks.CardCommand
+	if len(command) == 0 || !cardsAt(id, channelID) {
+		return
+	}
+	cards := a.cards
+	cards.mu.Lock()
+	defer cards.mu.Unlock()
+	t := cards.draft(channelID, threadTS)
+	var asked []map[string]any
+	for _, pr := range prs {
+		if pr.state.terminal() || t.carded(map[string]bool{pr.ref.key(): true}) {
+			continue
+		}
+		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
+		cards.refs[pr.ref.key()] = pr.state
+	}
+	if len(asked) == 0 {
+		return
+	}
+	out, err := runCardCommand(ctx, command, map[string]any{"prs": asked})
+	if err != nil {
+		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, threadTS, err)
+		return
+	}
+	var answer struct {
+		Cards []providedCard `json:"cards"`
+	}
+	if err := json.Unmarshal(out, &answer); err != nil {
+		a.poller.log.Printf("PR cards for %s/%s: decode %s: %v", channelID, threadTS, command[0], err)
+		return
+	}
+	now := a.now()
+	for _, p := range answer.Cards {
+		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
+			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
+			continue
+		}
+		m := &liveMessage{Card: p.Card, At: now}
+		res, err := a.post(ctx, db, id, channelID, threadTS, m.Card.text(), m.Card.replyBlocks(t.view(m, now, cards.refs)), nil)
+		if err != nil {
+			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, threadTS, err)
+			break
+		}
+		m.TS = res.TS
+		t.PRCards = append(t.PRCards, m)
+	}
+	t.Updated = now
+	cards.commit(t)
+}
+
+func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
+	cmd.Stdin = bytes.NewReader(mustJSON(ask))
+	out, err := cmd.Output()
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+		return nil, fmt.Errorf("%s: %w: %s", command[0], err, bytes.TrimSpace(exit.Stderr))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", command[0], err)
+	}
+	return out, nil
 }

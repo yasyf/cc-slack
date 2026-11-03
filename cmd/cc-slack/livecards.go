@@ -51,6 +51,7 @@ type liveThread struct {
 	Waiting  map[string]*liveMessage `json:"waiting,omitempty"`
 	Groups   map[string]*liveMessage `json:"groups,omitempty"`
 	Keyed    map[string]*liveMessage `json:"keyed,omitempty"`
+	PRCards  []*liveMessage          `json:"pr_cards,omitempty"`
 	Timeline []timelineEntry         `json:"timeline,omitempty"`
 	Asks     []cardAsk               `json:"asks,omitempty"`
 	Answers  map[string]askAnswer    `json:"answers,omitempty"`
@@ -131,7 +132,7 @@ func (t *liveThread) keep(card statusCard, m *liveMessage) {
 }
 
 func (t *liveThread) messages() []*liveMessage {
-	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)), slices.Collect(maps.Values(t.Keyed)))
+	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)), slices.Collect(maps.Values(t.Keyed)), t.PRCards)
 }
 
 func (t *liveThread) openAsks(now time.Time) []cardAsk {
@@ -165,18 +166,16 @@ func (t *liveThread) replyMessage(now time.Time, refs map[string]refState) (stri
 	return t.Reply.Card.text(), t.Reply.Card.replyBlocks(t.view(t.Reply, now, refs))
 }
 
+func (m *liveMessage) cites(keys map[string]bool) bool {
+	return m != nil && slices.ContainsFunc(m.Card.refIDs(), func(id refID) bool { return keys[id.key()] })
+}
+
 func (t *liveThread) cites(keys map[string]bool) bool {
-	for _, m := range []*liveMessage{t.Root, t.Reply} {
-		if m == nil {
-			continue
-		}
-		for _, id := range m.Card.refIDs() {
-			if keys[id.key()] {
-				return true
-			}
-		}
-	}
-	return false
+	return t.Root.cites(keys) || t.Reply.cites(keys)
+}
+
+func (t *liveThread) carded(keys map[string]bool) bool {
+	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) })
 }
 
 func (t *liveThread) expiredSinceDrawn(now time.Time) bool {
@@ -271,6 +270,7 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
 		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
+		c.PRCards = slices.Clone(t.PRCards)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
@@ -307,7 +307,7 @@ func (l *liveCards) forget(t *liveThread, ts string) {
 	maps.DeleteFunc(t.Waiting, at)
 	maps.DeleteFunc(t.Groups, at)
 	maps.DeleteFunc(t.Keyed, at)
-	if t.Root == nil && t.Reply == nil && len(t.Waiting)+len(t.Groups)+len(t.Keyed) == 0 {
+	if t.Root == nil && t.Reply == nil && len(t.Waiting)+len(t.Groups)+len(t.Keyed)+len(t.PRCards) == 0 {
 		delete(l.threads, threadKey(t.Channel, t.Thread))
 	}
 }
@@ -470,6 +470,11 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			}
 		}
 	}
+	if drawn, err := l.drawTappedPRCard(ctx, api, t, now, first); err != nil {
+		errs = append(errs, err)
+	} else if drawn {
+		redrawn[first] = true
+	}
 	if t.Reply != nil && t.Reply.TS == first {
 		drawReply()
 		drawRoot()
@@ -510,7 +515,7 @@ func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool,
 	var expiry time.Time
 	for _, t := range l.threads {
 		expiry = earliest(expiry, t.nextExpiry(now))
-		for _, m := range []*liveMessage{t.Root, t.Reply} {
+		for _, m := range slices.Concat([]*liveMessage{t.Root, t.Reply}, t.PRCards) {
 			if m == nil {
 				continue
 			}
@@ -541,7 +546,7 @@ func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool,
 
 func (l *liveCards) cited(key string) bool {
 	for _, t := range l.threads {
-		if t.cites(map[string]bool{key: true}) {
+		if t.carded(map[string]bool{key: true}) {
 			return true
 		}
 	}
@@ -667,7 +672,60 @@ func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map
 			l.log.Printf("live card %s: %v", k, err)
 		}
 	}
+	for _, t := range l.threads {
+		if l.drawPRCards(ctx, api, t, changed, now) {
+			dirty = true
+		}
+	}
 	if dirty {
 		l.save()
 	}
+}
+
+func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return refID{}, false
+	}
+	for _, m := range t.PRCards {
+		if ids := m.Card.refIDs(); m.Card.Waits == waits && len(ids) > 0 {
+			return ids[0], true
+		}
+	}
+	return refID{}, false
+}
+
+func (l *liveCards) drawPRCards(ctx context.Context, api slackAPI, t *liveThread, changed map[string]bool, now time.Time) bool {
+	drawn := false
+	for i, m := range t.PRCards {
+		if !m.cites(changed) {
+			continue
+		}
+		drawn = true
+		if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
+			l.log.Printf("live card %v", err)
+		}
+	}
+	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
+	return drawn
+}
+
+func (l *liveCards) drawTappedPRCard(ctx context.Context, api slackAPI, t *liveThread, now time.Time, first string) (bool, error) {
+	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == first })
+	if i < 0 {
+		return false, nil
+	}
+	if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
+		return false, err
+	}
+	drawn := t.PRCards[i] != nil
+	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
+	return drawn, nil
+}
+
+func (l *liveCards) drawPRCard(ctx context.Context, api slackAPI, t *liveThread, i int, now time.Time) error {
+	m := t.PRCards[i]
+	return l.update(ctx, api, t, &t.PRCards[i], m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs)))
 }

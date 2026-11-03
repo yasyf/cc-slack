@@ -482,10 +482,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		text := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)[0]
+		texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, text, blocks, b.Files, extra...)
+			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, texts[0], blocks, b.Files, extra...)
 			return err
 		})
 		if err != nil {
@@ -501,6 +501,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
+		a.attachPRCards(hc.Ctx, hc.DB, id, res.ChannelID, res.ThreadTS, prs)
 		if b.NoWatch {
 			return ok(res)
 		}
@@ -664,7 +665,8 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
-		return updateMessage(ctx, api, channelID, b.TS, a.linkPRs(ctx, id, hc.Env.Scope, b.Text)[0], blocks)
+		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, b.Text)
+		return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
 	})
 }
 
@@ -1651,9 +1653,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	msg := dmMessage{text: a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
+	texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
+	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card != nil {
-		b.Card.Body = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body)[0]
+		texts, prs = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
+		b.Card.Body = texts[0]
 	}
 	under := b.ThreadTS
 	if b.About != "" {
@@ -1677,6 +1681,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	a.attachPRCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, prs)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 }
 

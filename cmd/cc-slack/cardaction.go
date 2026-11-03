@@ -226,6 +226,9 @@ func tapHow(k askTap) string {
 }
 
 func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, who, permalink string) error {
+	if pr, ok := p.cards.prCard(a.Channel, a.ThreadTS, k.ID); ok && !k.Other && len(id.Config.PRLinks.CardCommand) > 0 {
+		return p.tapPRCard(ctx, id, a, k, pr, at)
+	}
 	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
 		p.log.Printf("card action %s on %s: dropped: the card was redrawn with another question after this answer was drawn", a.ActionID, a.MessageTS)
 		return nil
@@ -316,6 +319,24 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	}
 	if err != nil {
 		p.log.Printf("card action %s on %s: delivered, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
+	}
+	return nil
+}
+
+func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
+	won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	if !won {
+		p.log.Printf("PR card %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
+		return nil
+	}
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+		p.cards.release(a.Channel, a.ThreadTS, k.ID)
+		p.log.Printf("PR card %s: %q not applied, so the card keeps its buttons: %v", k.ID, k.Label, err)
+		return nil
+	}
+	if err := p.markOption(ctx, id, a.ref(), "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now())); err != nil {
+		p.log.Printf("PR card %s: %q applied, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
 	return nil
 }
