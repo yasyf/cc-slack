@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -67,11 +68,84 @@ type apiClient struct {
 	http     doer
 }
 
+const (
+	slackTries         = 4
+	slackFirstBackoff  = 500 * time.Millisecond
+	slackMaxBackoff    = 8 * time.Second
+	slackMaxRetryAfter = 30 * time.Second
+)
+
+var nonIdempotent = map[string]bool{
+	"chat.postMessage":             true,
+	"chat.postEphemeral":           true,
+	"chat.scheduleMessage":         true,
+	"chat.meMessage":               true,
+	"files.completeUploadExternal": true,
+	"conversations.create":         true,
+}
+
+type retrying struct{ next doer }
+
 func newSlackClient(token, endpoint string, hc doer) slackAPI {
+	hc = retrying{hc}
 	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(hc)), token, endpoint, hc}
 }
 
 func newSlackAPI(token string) slackAPI { return newSlackClient(token, slack.APIURL, &http.Client{}) }
+
+func (r retrying) Do(req *http.Request) (*http.Response, error) {
+	replayable := req.Body == nil || req.GetBody != nil
+	idempotent := !nonIdempotent[path.Base(req.URL.Path)]
+	backoff := slackFirstBackoff
+	for try := 1; ; try++ {
+		resp, err := r.next.Do(req) //nolint:gosec // G704: the caller built the request for Slack or the doc-cards URL the config names
+		if err == nil && resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
+			return resp, nil
+		}
+		wait, again := retryWait(resp, err, idempotent, backoff)
+		if !again || !replayable || try == slackTries || req.Context().Err() != nil {
+			return withTries(resp, err, try)
+		}
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		if err := pause(req.Context(), wait); err != nil {
+			return nil, err
+		}
+		if req.GetBody != nil {
+			if req.Body, err = req.GetBody(); err != nil {
+				return nil, err
+			}
+		}
+		backoff = min(2*backoff, slackMaxBackoff)
+	}
+}
+
+func retryWait(resp *http.Response, err error, idempotent bool, backoff time.Duration) (time.Duration, bool) {
+	if err != nil || resp.StatusCode != http.StatusTooManyRequests {
+		return backoff, idempotent
+	}
+	after := resp.Header.Get("Retry-After")
+	if after == "" {
+		return backoff, true
+	}
+	seconds, err := strconv.Atoi(after)
+	wait := time.Duration(seconds) * time.Second
+	return wait, err == nil && wait <= slackMaxRetryAfter
+}
+
+func withTries(resp *http.Response, err error, tries int) (*http.Response, error) {
+	if tries == 1 {
+		return resp, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w after %d tries", err, tries)
+	}
+	// slack-go, ShareFilesContext and DocCardsContext quote Status in the error they build from a refused response.
+	resp.Status += fmt.Sprintf(" after %d tries", tries)
+	return resp, nil
+}
 
 // ShareFilesContext calls files.completeUploadExternal itself because slack-go sends no username or icon_url,
 // which the share message needs to read as the user's agent.
