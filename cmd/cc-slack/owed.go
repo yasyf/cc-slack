@@ -17,7 +17,6 @@ CREATE TABLE owed_replies (
   ts        TEXT NOT NULL,
   text      TEXT NOT NULL,
   permalink TEXT NOT NULL,
-  line_ts   TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (thread_ts, ts)
 );
 `}
@@ -48,46 +47,19 @@ func openOwedReplies(ctx context.Context, path string) (*owedReplies, error) {
 
 func (o *owedReplies) Close() error { return o.st.Close() }
 
-func (o *owedReplies) owe(ctx context.Context, r owedReply) (bool, error) {
-	res, err := o.st.DB().ExecContext(ctx, `INSERT OR IGNORE INTO owed_replies(thread_ts, ts, text, permalink) VALUES (?, ?, ?, ?)`,
-		r.ThreadTS, r.TS, r.Text, r.Permalink)
-	if err != nil {
-		return false, fmt.Errorf("owe reply %s: %w", r.TS, err)
-	}
-	inserted, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("owe reply %s: %w", r.TS, err)
-	}
-	return inserted == 1, nil
-}
-
-func (o *owedReplies) noted(ctx context.Context, r owedReply, lineTS string) error {
-	if _, err := o.st.DB().ExecContext(ctx, `UPDATE owed_replies SET line_ts = ? WHERE thread_ts = ? AND ts = ?`, lineTS, r.ThreadTS, r.TS); err != nil {
-		return fmt.Errorf("note received line for %s: %w", r.TS, err)
+func (o *owedReplies) owe(ctx context.Context, r owedReply) error {
+	if _, err := o.st.DB().ExecContext(ctx, `INSERT OR IGNORE INTO owed_replies(thread_ts, ts, text, permalink) VALUES (?, ?, ?, ?)`,
+		r.ThreadTS, r.TS, r.Text, r.Permalink); err != nil {
+		return fmt.Errorf("owe reply %s: %w", r.TS, err)
 	}
 	return nil
 }
 
-func (o *owedReplies) answered(ctx context.Context, threadTS, ts string) ([]string, error) {
-	rows, err := o.st.DB().QueryContext(ctx, `DELETE FROM owed_replies WHERE thread_ts = ? AND ts < ? RETURNING line_ts`, threadTS, ts)
-	if err != nil {
-		return nil, fmt.Errorf("answer thread %s: %w", threadTS, err)
+func (o *owedReplies) answered(ctx context.Context, threadTS, ts string) error {
+	if _, err := o.st.DB().ExecContext(ctx, `DELETE FROM owed_replies WHERE thread_ts = ? AND ts < ?`, threadTS, ts); err != nil {
+		return fmt.Errorf("answer thread %s: %w", threadTS, err)
 	}
-	defer func() { _ = rows.Close() }()
-	var lines []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			return nil, fmt.Errorf("scan answered reply: %w", err)
-		}
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("answer thread %s: %w", threadTS, err)
-	}
-	return lines, nil
+	return nil
 }
 
 func (o *owedReplies) forget(ctx context.Context, threadTS string) error {

@@ -394,10 +394,8 @@ returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each rep
 no bot or agent has answered in its thread yet, from stored state with no Slack
 call, including replies written while no session was live, and the session that
 owes them as `holder_session`. A post in that thread answers every earlier reply there; a
-post elsewhere answers none. Once a session has held the DM, the daemon answers
-each reply in its thread at once with one line saying who has it. That line does
-not count as the answer: the session still replies with what was done, and an
-answer within a minute deletes the line.
+post elsewhere answers none. The daemon posts nothing of its own in reply, so the
+session holding the DM acknowledges each reply itself.
 
 Pass `thread_ts` only for a short conversational answer in the thread the
 user replied in. An edit or delete of the agent's own message in this DM
