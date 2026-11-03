@@ -71,6 +71,9 @@ public_base = "https://public.example.com/"
 link = "https://docs.example.com/"
 url = "https://cards.example.com/doc-cards"
 
+[links]
+tailnet = "example.ts.net"
+
 [permissions]
 enabled = true
 
@@ -85,7 +88,7 @@ flags = ["broadcast"]
 		t.Fatal(err)
 	}
 	if c.SSM == nil || c.SSM.Region != "us-east-1" || c.SSM.AvatarSecret != "/slack/avatar-secret" || c.Avatars.Bucket != "public" ||
-		c.DocCards.URL != "https://cards.example.com/doc-cards" || !c.Permissions.Enabled ||
+		c.DocCards.URL != "https://cards.example.com/doc-cards" || c.Links.Tailnet != "example.ts.net" || !c.Permissions.Enabled ||
 		len(c.Permissions.CLIs) != 1 || c.Permissions.CLIs[0].Verbs["send"] != "post" {
 		t.Fatalf("config = %+v (ssm %+v)", c, c.SSM)
 	}
@@ -104,6 +107,8 @@ func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 		"partial avatars":   {"[avatars]\nbucket = \"x\"\n", "endpoint, bucket, and public_base together"},
 		"unslashed base":    {"[avatars]\nendpoint = \"https://s\"\nbucket = \"x\"\npublic_base = \"https://p\"\n", "must end in /"},
 		"partial cards":     {"[doc_cards]\nurl = \"https://c\"\n", "link and url together"},
+		"not a tailnet":     {"[links]\ntailnet = \"example.com\"\n", "must be a tailnet's DNS name"},
+		"bare tailnet tld":  {"[links]\ntailnet = \".ts.net\"\n", "must be a tailnet's DNS name"},
 		"partial ssm":       {"[ssm]\nregion = \"us-west-2\"\n", "region, bot_token, and socket_url"},
 		"cli without verbs": {"[[permissions.clis]]\nprogram = \"team-post\"\n", "needs program and verbs"},
 		"unknown cli verb":  {"[[permissions.clis]]\nprogram = \"team-post\"\nverbs = { send = \"shout\" }\n", "not one of post"},

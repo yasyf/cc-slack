@@ -273,7 +273,7 @@ func richCard(at time.Time) statusCard {
 func TestRichCardRendersEveryPartWithinSlackLimits(t *testing.T) {
 	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
 	card := richCard(at)
-	if err := card.check(at, false); err != nil {
+	if err := card.check(at, false, ""); err != nil {
 		t.Fatalf("a maxed-out card: %v", err)
 	}
 	thread := &liveThread{Channel: "D1", Thread: "1.1"}

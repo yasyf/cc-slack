@@ -16,7 +16,7 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 	past := time.Now().Add(-time.Minute)
 	ok := statusCard{Status: "needs_you", Title: "Merge the stack?", Options: []string{"merge", "hold"},
 		Links: []cardLink{{Label: "PR", URL: "https://github.com/acme/app/pull/1"}}}
-	if err := ok.check(time.Now(), false); err != nil {
+	if err := ok.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a well-formed card: %v", err)
 	}
 	for name, card := range map[string]statusCard{
@@ -54,12 +54,36 @@ func TestStatusCardRefusesBadShapes(t *testing.T) {
 		"row without buttons":    {Status: "needs_you", Title: "x", Group: "pg:login", Rows: []cardRow{{ID: "r", Text: "t"}}},
 		"twenty-one rows":        {Status: "needs_you", Title: "x", Group: "pg:login", Rows: prRows(21)},
 	} {
-		if err := card.check(time.Now(), false); err == nil {
+		if err := card.check(time.Now(), false, ""); err == nil {
 			t.Errorf("%s: check passed, want a refusal", name)
 		}
 	}
-	if err := (statusCard{Status: "needs_you", Title: "x", Waits: "step-3:merge"}).check(time.Now(), true); err == nil {
+	if err := (statusCard{Status: "needs_you", Title: "x", Waits: "step-3:merge"}).check(time.Now(), true, ""); err == nil {
 		t.Error("a root-only waiting card passed check, want a refusal")
+	}
+}
+
+func TestACardLinksHTTPOnlyOnTheConfiguredTailnet(t *testing.T) {
+	const tailnet = "example.ts.net"
+	link := func(url string) statusCard {
+		return statusCard{Status: "info", Title: "x", Links: []cardLink{{Label: "One-pager", URL: url}}}
+	}
+	if err := link("http://studio.example.ts.net:8642/one-pagers/memory/").check(time.Now(), false, tailnet); err != nil {
+		t.Fatalf("an http link on the tailnet: %v", err)
+	}
+	for name, tc := range map[string]struct{ url, tailnet string }{
+		"no tailnet configured":  {"http://studio.example.ts.net:8642/", ""},
+		"another tailnet":        {"http://studio.other.ts.net/", tailnet},
+		"a host ending the same": {"http://studio.notexample.ts.net/", tailnet},
+		"the open web":           {"http://example.com/", tailnet},
+	} {
+		if err := link(tc.url).check(time.Now(), false, tc.tailnet); err == nil {
+			t.Errorf("%s: %s passed check, want a refusal", name, tc.url)
+		}
+	}
+	rollup := statusCard{Status: "info", Title: "x", Rollup: &cardRollup{PRs: []rollupPR{{URL: "http://studio.example.ts.net/pull/1"}}}}
+	if err := rollup.check(time.Now(), false, tailnet); err == nil {
+		t.Error("an http rollup pr on the tailnet passed check; only card links may be http")
 	}
 }
 
@@ -82,7 +106,7 @@ func cardButtons(t *testing.T, blocks []slack.Block) []*slack.ButtonBlockElement
 
 func TestWaitingCardLeadsWithItsRecommendationThenOtherAndExplainMore(t *testing.T) {
 	card := statusCard{Status: "needs_you", Title: "Merge #41 now?", Options: []string{"Merge", "Hold"}, Recommended: "Hold", Waits: "step-3:merge"}
-	if err := card.check(time.Now(), false); err != nil {
+	if err := card.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a well-formed waiting card: %v", err)
 	}
 	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
@@ -324,7 +348,7 @@ func TestFillCompletesACardPostedWithTextAndAMarkedLabel(t *testing.T) {
 	if g, w := string(mustJSON(c)), string(mustJSON(want)); g != w {
 		t.Fatalf("filled card = %s\nwant %s", g, w)
 	}
-	if err := c.check(time.Now(), false); err != nil {
+	if err := c.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a filled card: %v", err)
 	}
 	info := statusCard{Title: "Batch 3 landed"}
@@ -335,7 +359,7 @@ func TestFillCompletesACardPostedWithTextAndAMarkedLabel(t *testing.T) {
 }
 
 func TestCheckNamesEveryProblemAtOnce(t *testing.T) {
-	err := statusCard{Status: "urgent", Title: "x", Options: []string{"go", "go"}}.check(time.Now(), false)
+	err := statusCard{Status: "urgent", Title: "x", Options: []string{"go", "go"}}.check(time.Now(), false, "")
 	if err == nil || !strings.Contains(err.Error(), "urgent") || !strings.Contains(err.Error(), "repeats a button") {
 		t.Fatalf("check = %v, want both the status and the repeated option named", err)
 	}

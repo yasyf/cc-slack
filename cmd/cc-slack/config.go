@@ -26,6 +26,7 @@ type config struct {
 	SSM         *ssmSource     `toml:"ssm" json:"-"`
 	Avatars     avatarConfig   `toml:"avatars" json:"avatars"`
 	DocCards    docCardsConfig `toml:"doc_cards" json:"doc_cards"`
+	Links       linksConfig    `toml:"links" json:"links"`
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
 	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
 	Permissions permissions    `toml:"permissions" json:"-"`
@@ -71,7 +72,18 @@ type docCardsConfig struct {
 	URL  string `toml:"url" json:"url,omitempty"`
 }
 
+type linksConfig struct {
+	Tailnet string `toml:"tailnet" json:"tailnet,omitempty"`
+}
+
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
+
+func (l linksConfig) validate() error {
+	if t := l.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {
+		return fmt.Errorf("[links] tailnet %q must be a tailnet's DNS name, such as example.ts.net", t)
+	}
+	return nil
+}
 
 func (p permissions) validate() error {
 	for _, cli := range p.CLIs {
@@ -193,13 +205,7 @@ func (c config) validate() error {
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
-	if err := c.Permissions.validate(); err != nil {
-		return err
-	}
-	if err := c.GitHub.validate("github"); err != nil {
-		return err
-	}
-	if err := c.Buildkite.validate("buildkite"); err != nil {
+	if err := errors.Join(c.Links.validate(), c.Permissions.validate(), c.GitHub.validate("github"), c.Buildkite.validate("buildkite")); err != nil {
 		return err
 	}
 	if s := c.SSM; s != nil {
