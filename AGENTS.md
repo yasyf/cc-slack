@@ -106,6 +106,15 @@ asks GitHub about every candidate in one GraphQL query per post, with a 5 s
 limit; when that read fails, the post goes out as written and the daemon
 logs why.
 
+A `send`, `reply` or `dm-status` to the engineer's DM that links a message in that
+DM carrying a card shows a preview of each, up to five, below the text: the card's
+title, its question, its answer buttons and a button that opens it. A status card
+carries them in a reply in its thread. A preview is read once, at the post, so
+unfurls stay off and nothing shows a snapshot Slack froze. A tap on a preview's
+answer is the same tap on the card, which shows the answer, and the preview's
+buttons give way to what was tapped. A post anywhere else, and a link to anything
+else, stays a link.
+
 `card_command` names a program, resolved on `PATH` at `login`, that draws a
 linked PR's card. A checked-in config can name a tool only some engineers have,
 so `login` on a machine without it leaves cards off and links still work. After a post in the bot's DM with the engineer, or in a
