@@ -16,80 +16,217 @@ import (
 const (
 	linkPreviewLimit = 5
 	linkPreviewChars = 600
+	prAboutChars     = 1500
 	linkPreviewsLead = "What this links to:"
 	linkPreviewsMore = "link-previews-more"
 	rowLanded        = "landed"
 	rowClosed        = "closed"
 	rowTapped        = "tapped"
 	rowOpen          = "open"
-	rowNoHold        = "none"
+	rowNone          = "none"
+	rowConflict      = "conflict"
+	rowQueued        = "queued"
+	ciGreen          = "green"
+	ciRed            = "red"
+	gradePass        = "pass"
+	gradeFail        = "fail"
+	tagGreen         = "green"
+	tagRed           = "red"
+	tagBlue          = "blue"
+	tagYellow        = "yellow"
+	tagGray          = "gray"
+	prEntityType     = "slack#/entities/item"
+	prEntityRefType  = "github-pr"
+	prDisplayType    = "Pull request"
+	prProductName    = "GitHub"
+	prOpenLabel      = "Open on GitHub"
 )
 
 var (
 	prLink     = regexp.MustCompile(`https://github\.com/([\w-]+)/([\w.-]+)/pull/(\d+)`)
 	prLinkLine = regexp.MustCompile(`^[-*•\s]*(?:<?https://github\.com/[\w-]+/[\w.-]+/pull/\d+(?:\|[^>\n]*)?>?[\s,]*)+$`)
 	buildLink  = regexp.MustCompile(`https://buildkite\.com/[\w.-]+/[\w.-]+/builds/\d+`)
-	sentence   = regexp.MustCompile(`(?m)^.+?(?:[.!?](?:\s|$)|$)`)
 )
 
 type ledgerRow struct {
-	Repo        string `json:"repo"`
-	Number      int    `json:"number"`
-	Title       string `json:"title"`
-	ForUsers    string `json:"for_users"`
-	WaitsOn     string `json:"waits_on"`
-	ReadyForTap bool   `json:"ready_for_tap"`
-	State       string `json:"state"`
-	CI          string `json:"ci"`
-	Hold        string `json:"hold"`
+	Repo          string `json:"repo"`
+	Number        int    `json:"number"`
+	Title         string `json:"title"`
+	Lane          string `json:"lane"`
+	ForUsers      string `json:"for_users"`
+	Risk          string `json:"risk"`
+	Description   string `json:"description"`
+	WaitsOn       string `json:"waits_on"`
+	ReadyForTap   bool   `json:"ready_for_tap"`
+	State         string `json:"state"`
+	CI            string `json:"ci"`
+	Approvers     string `json:"approvers"`
+	Grade         string `json:"grade"`
+	GradeFindings string `json:"grade_findings"`
+	Mergeable     string `json:"mergeable"`
+	Queue         string `json:"queue"`
+	Hold          string `json:"hold"`
 }
 
 func (r ledgerRow) ready() bool { return r.ReadyForTap && r.State == rowOpen }
 
-func (r ledgerRow) standing() string {
+func (r ledgerRow) ended() bool { return r.State == rowLanded || r.State == rowClosed }
+
+func (r ledgerRow) approved() bool { return r.Approvers != "" && r.Approvers != rowNone }
+
+func (r ledgerRow) held() bool { return r.Hold != "" && r.Hold != rowNone }
+
+func (r ledgerRow) mergeTag() prField {
+	field := prField{key: "status", label: "Merge"}
 	switch {
 	case r.State == rowLanded:
-		return "*Landed.*"
+		field.value, field.color = "Merged", tagGreen
 	case r.State == rowClosed:
-		return "*Closed.*"
+		field.value, field.color = "Closed", tagGray
 	case r.ready():
-		return "*Ready for your tap.*" + r.checks()
-	case r.Hold != "" && r.Hold != rowNoHold:
-		return "*On hold.*" + r.checks()
+		field.value, field.color = "Ready for your tap", tagBlue
+	case r.State == rowTapped:
+		field.value, field.color = "Tapped", tagBlue
+	case r.held():
+		field.value, field.color = "On hold", tagYellow
+	case r.CI == ciRed:
+		field.value, field.color = "Blocked: CI red", tagRed
+	case r.Mergeable == rowConflict:
+		field.value, field.color = "Blocked: conflict", tagRed
+	case !r.approved():
+		field.value, field.color = "Blocked: review", tagYellow
+	case r.Queue == rowQueued || r.State == rowQueued:
+		field.value, field.color = "Queued", tagYellow
+	default:
+		field.value, field.color = "Open", tagBlue
 	}
-	waits := mrkdwnEscapes.Replace(clipRunes(strings.TrimRight(r.WaitsOn, ". "), linkPreviewChars)) + "."
-	if r.State == rowTapped {
-		return "*" + waits + "*" + r.checks()
-	}
-	return "*Waiting:* " + waits + r.checks()
+	return field
 }
 
-func (r ledgerRow) checks() string {
-	if r.CI == "" {
+func (r ledgerRow) ciTag() prField {
+	field := prField{key: "ci", label: "CI", value: "Running", color: tagBlue}
+	switch r.CI {
+	case ciGreen:
+		field.value, field.color = "Green", tagGreen
+	case ciRed:
+		field.value, field.color = "Red", tagRed
+	}
+	return field
+}
+
+func (r ledgerRow) reviewTag() prField {
+	if r.approved() {
+		return prField{key: "review", label: "Review", value: "Approved", color: tagGreen}
+	}
+	return prField{key: "review", label: "Review", value: "Waiting", color: tagBlue}
+}
+
+func (r ledgerRow) gradeTag() prField {
+	field := prField{key: "grade", label: "Grade", value: "Pending", color: tagBlue}
+	switch r.Grade {
+	case gradePass:
+		field.value, field.color = "Pass", tagGreen
+	case gradeFail:
+		field.value, field.color = "Fail", tagRed
+	}
+	return field
+}
+
+func (r ledgerRow) waiting() string {
+	if r.ended() || r.ready() || r.held() {
 		return ""
 	}
-	return " CI " + mrkdwnEscapes.Replace(r.CI) + "."
+	return r.WaitsOn
 }
 
-func (r ledgerRow) words() string {
-	return mrkdwnEscapes.Replace(clipRunes(strings.TrimSpace(sentence.FindString(strings.TrimSpace(r.ForUsers))), linkPreviewChars))
-}
-
-func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.Attachment) {
-	if channelID != id.DMChannelID {
-		return text, nil
+func (r ledgerRow) findings() string {
+	if r.GradeFindings == rowNone {
+		return ""
 	}
-	text, previews, more := a.prPreviews(ctx, id, text)
-	builds, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(previews))
-	previews = append(previews, builds...)
+	return r.GradeFindings
+}
+
+type prField struct {
+	key, label, value, color, link string
+}
+
+func (f prField) custom(limit int) map[string]any {
+	custom := map[string]any{"key": f.key, "label": f.label, "type": "string", "value": clipRunes(f.value, limit)}
+	if f.color != "" {
+		custom["tag_color"] = f.color
+	}
+	if f.link != "" {
+		custom["link"] = f.link
+	}
+	return custom
+}
+
+func (r ledgerRow) entity(url, cardLink string) slack.WorkObjectEntity {
+	lines := []prField{
+		r.mergeTag(), r.ciTag(), r.reviewTag(), r.gradeTag(),
+		{key: "changes", label: "What it changes", value: strings.TrimSpace(r.ForUsers)},
+		{key: "waits", label: "Waiting on", value: strings.TrimSpace(r.waiting())},
+		{key: "risk", label: "Risk", value: strings.TrimSpace(r.Risk)},
+		{key: "findings", label: "Findings", value: r.findings()},
+		{key: "lane", label: "Lane", value: r.Lane},
+	}
+	if cardLink != "" {
+		lines = append(lines, prField{key: "card", label: "Your tap", value: "Open the card", link: cardLink})
+	}
+	custom := make([]map[string]any, 0, len(lines)+1)
+	order := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		if line.value != "" {
+			custom = append(custom, line.custom(linkPreviewChars))
+			order = append(order, line.key)
+		}
+	}
+	if about := strings.TrimSpace(r.Description); about != "" {
+		custom = append(custom, prField{key: "about", label: "Description", value: about}.custom(prAboutChars))
+		order = append(order, "about")
+	}
+	shown := "#" + strconv.Itoa(r.Number)
+	return slack.WorkObjectEntity{
+		URL:         url,
+		ExternalRef: slack.WorkObjectExternalRef{ID: r.Repo + shown, Type: prEntityRefType},
+		EntityType:  prEntityType,
+		EntityPayload: map[string]any{
+			"attributes": map[string]any{
+				"title":        map[string]any{"text": strings.TrimSpace(shown + " " + r.Title)},
+				"display_type": prDisplayType,
+				"display_id":   shown,
+				"product_name": prProductName,
+			},
+			"custom_fields": custom,
+			"display_order": order,
+			"actions": map[string]any{"primary_actions": []map[string]any{
+				{"text": prOpenLabel, "action_id": cardLinkAction + "github", "url": url},
+			}},
+		},
+	}
+}
+
+func entitiesOption(entities []slack.WorkObjectEntity) []slack.MsgOption {
+	if len(entities) == 0 {
+		return nil
+	}
+	return []slack.MsgOption{slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: entities})}
+}
+
+func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.WorkObjectEntity, []slack.Attachment) {
+	if channelID != id.DMChannelID {
+		return text, nil, nil
+	}
+	text, prs, more := a.prPreviews(ctx, id, text)
+	previews, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(prs))
 	if more += moreBuilds; more > 0 {
 		line := fmt.Sprintf("+%d more not shown here", more)
 		previews = append(previews, slack.Attachment{Fallback: line, Blocks: slack.Blocks{BlockSet: []slack.Block{mrkdwn(linkPreviewsMore, line)}}})
 	}
-	return text, previews
+	return text, prs, previews
 }
 
-func (a *app) prPreviews(ctx context.Context, id identity, text string) (string, []slack.Attachment, int) {
+func (a *app) prPreviews(ctx context.Context, id identity, text string) (string, []slack.WorkObjectEntity, int) {
 	command := id.Config.PRLinks.PreviewCommand
 	prs := linkedPRRefs(text)
 	if len(command) == 0 || len(prs) == 0 {
@@ -100,7 +237,7 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string) (string,
 		a.poller.log.Printf("post keeps its PR links with no previews: %v", err)
 		return text, nil, 0
 	}
-	var previews []slack.Attachment
+	var previews []slack.WorkObjectEntity
 	drawn := map[string]bool{}
 	more := 0
 	for _, pr := range prs {
@@ -200,17 +337,12 @@ func readLedgerRows(ctx context.Context, command []string, prs []refID) (map[str
 	return byPR, nil
 }
 
-func (a *app) prPreview(id identity, pr refID, row ledgerRow) slack.Attachment {
-	title := fmt.Sprintf("#%d %s", pr.Number, row.Title)
-	lines := []string{"*" + slackLink(prURL(pr), title) + "*"}
-	if words := row.words(); words != "" {
-		lines = append(lines, words)
-	}
-	standing := row.standing()
+func (a *app) prPreview(id identity, pr refID, row ledgerRow) slack.WorkObjectEntity {
+	cardLink := ""
 	if ts, thread, ok := a.cards.openPRCard(id.DMChannelID, pr); ok && row.ready() {
-		standing += " " + slackLink(id.permalink(id.DMChannelID, ts, thread), "Open the card")
+		cardLink = id.permalink(id.DMChannelID, ts, thread)
 	}
-	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: []slack.Block{section("", strings.Join(append(lines, standing), "\n"))}}}
+	return row.entity(prURL(pr), cardLink)
 }
 
 func withoutRepeatedLinks(text string, drawn map[string]bool) string {

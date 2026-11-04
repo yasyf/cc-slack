@@ -153,6 +153,8 @@ type cardPR struct {
 	Risk        string `json:"risk"`
 	Blocks      string `json:"blocks"`
 	Description string `json:"description,omitempty"`
+
+	Row *ledgerRow `json:"row,omitempty"`
 }
 
 type cardLink struct {
@@ -595,6 +597,16 @@ func (c statusCard) refIDs() []refID {
 		}
 	}
 	return ids
+}
+
+func (c statusCard) prEntities() []slack.MsgOption {
+	var entities []slack.WorkObjectEntity
+	for _, p := range c.PRs {
+		if p.Row != nil {
+			entities = append(entities, p.Row.entity(p.URL, ""))
+		}
+	}
+	return entitiesOption(entities)
 }
 
 func (c statusCard) allPRs() []*cardPR {
@@ -1077,6 +1089,9 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 }
 
 func (p cardPR) blocks(v cardView, limit int) []slack.Block {
+	if p.Row != nil {
+		return nil
+	}
 	id, _ := parseRef(p.URL)
 	line := "*" + slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number)) + "*"
 	if p.Title != "" {
