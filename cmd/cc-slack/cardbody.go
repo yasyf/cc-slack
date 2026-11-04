@@ -27,16 +27,17 @@ const (
 )
 
 var (
-	mdBold      = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
-	mdLink      = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\s]+)\)`)
-	mdHeading   = regexp.MustCompile(`^#{1,6} +(.+?)\s*#*$`)
-	mdBullet    = regexp.MustCompile(`^(\s*)[-*] +`)
-	mdRule      = regexp.MustCompile(`^\|?[\s:|-]*-[\s:|-]*\|?$`)
-	mdMarks     = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\|`)
-	cellToken   = regexp.MustCompile("<(https?://[^|>\\s]+)\\|([^>]+)>|\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|\\*\\*?([^*\\n]+)\\*\\*?|`([^`\\n]+)`")
-	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
-	htmlSummary = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
-	htmlFold    = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
+	mdBold          = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+	mdLink          = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\s]+)\)`)
+	mdHeading       = regexp.MustCompile(`^#{1,6} +(.+?)\s*#*$`)
+	mdBullet        = regexp.MustCompile(`(?m)^([ \t]*)[-*] +`)
+	mdEndsOnHeading = regexp.MustCompile(`(?:^|\n)(?:#{1,6} +[^\n]*|\*{1,2}[^*\n]+\*{1,2})\s*$`)
+	mdRule          = regexp.MustCompile(`^\|?[\s:|-]*-[\s:|-]*\|?$`)
+	mdMarks         = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\|`)
+	cellToken       = regexp.MustCompile("<(https?://[^|>\\s]+)\\|([^>]+)>|\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|\\*\\*?([^*\\n]+)\\*\\*?|`([^`\\n]+)`")
+	htmlComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
+	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
 )
 
 type bodyPiece struct {
@@ -225,7 +226,7 @@ func sectionCut(text []rune, limit int) string {
 		keep int
 	}{{"\n\n", 0}, {"\n", 0}, {". ", 1}, {" ", 0}} {
 		for at := strings.LastIndex(head, sep.text); at > 0; at = strings.LastIndex(head[:at], sep.text) {
-			if strings.LastIndex(head[:at], "<") <= strings.LastIndex(head[:at], ">") {
+			if strings.LastIndex(head[:at], "<") <= strings.LastIndex(head[:at], ">") && !mdEndsOnHeading.MatchString(head[:at+sep.keep]) {
 				return head[:at+sep.keep]
 			}
 		}

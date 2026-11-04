@@ -356,8 +356,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	}
 	switch {
 	case k.Explain:
-		err = p.markHint(ctx, id, a.ref(), "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread. "+
-			"The lane that asked is still stopped until you tap an answer.")
+		err = p.markHint(ctx, id, a.ref(), "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread.")
 	case k.ID != "":
 		err = p.markAsk(ctx, id, a, k)
 	default:

@@ -483,3 +483,36 @@ func TestAStatusCardShowsItsWholeBodyAndFoldsOnlyPastTheVisibleLimit(t *testing.
 		t.Fatal("a table folded away: a table is what he reads at a glance")
 	}
 }
+
+func TestACutNeverEndsOnAHeading(t *testing.T) {
+	body := strings.Repeat("words ", 40)
+	for _, heading := range []string{"## Summary", "**Summary**", "*Summary*"} {
+		pr := cardPR{Description: "The intro.\n\n" + heading + "\n\n" + body}
+		shown, rest := pr.description(40)
+		if shown != "The intro." || !strings.HasPrefix(rest, heading) {
+			t.Fatalf("%s: shown %q, rest %q, want the heading moved to the rest", heading, shown, rest)
+		}
+	}
+	parts := splitSection("## Summary\n\n"+body, 40)
+	if len(parts) < 2 || parts[0] == "## Summary" {
+		t.Fatalf("parts = %q, want the heading kept with its body", parts)
+	}
+}
+
+func TestEveryLineOfAPRFactReadsAsTheSameBullet(t *testing.T) {
+	if got := plainMrkdwn("- first\n- second\n  - third"); got != "• first\n• second\n  • third" {
+		t.Fatalf("got %q, want every marker converted", got)
+	}
+}
+
+func TestAPRCardSaysWhatItsButtonsDoAndClaimsNoLaneStops(t *testing.T) {
+	asks := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Waits: "w"}
+	if got := blocksJSON(t, asks.replyBlocks(view())); !strings.Contains(got, "stopped until you answer") {
+		t.Fatalf("a lane's card lost its wait line: %s", got)
+	}
+	asks.PRs = []cardPR{fullPR(7)}
+	got := blocksJSON(t, asks.replyBlocks(view()))
+	if strings.Contains(got, "stopped") || !strings.Contains(got, cardPRHint) {
+		t.Fatalf("a PR card reads %s, want only what its buttons do", got)
+	}
+}

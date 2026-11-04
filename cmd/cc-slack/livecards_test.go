@@ -471,7 +471,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 		}
 	}
 	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 2 || !strings.Contains(edits[1], "✓ *Merge* · answered") ||
-		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "still stopped") {
+		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "You asked for more") {
 		t.Fatalf("reply edits %v, want the answer in place of the hint and buttons", edits)
 	}
 

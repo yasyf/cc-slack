@@ -496,7 +496,8 @@ in `body`, the answers as `options`, and the answer you recommend as
 `recommended`. The card shows the recommended answer first, marked
 (Recommended), then the other answers, numbered in that order, then fixed Other and Explain more
 buttons, with no Ack or Pause. It tells the user the lane is stopped until
-they answer, and it takes no `asks`.
+they answer, except a card carrying `prs`, which says only what its buttons
+do, and it takes no `asks`.
 
 Every ask card has a recommendation and an Other. A card without
 `recommended` is refused. Never write (Recommended) into a label or add
