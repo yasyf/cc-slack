@@ -65,7 +65,6 @@ const (
 	cardMaxPRs        = 10
 	cardMaxPRRows     = 8
 	cardQuietBody     = 400
-	cardWaitBody      = 1500
 	cardMaxNameLen    = 80
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
@@ -1170,11 +1169,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	}
 	tail := c.tail(v)
 	if c.Body != "" {
-		visible := cardQuietBody
-		if c.Waits != "" {
-			visible = cardWaitBody
-		}
-		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(tail)-1, visible, true)
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(tail)-1, cardMaxVisible, true)
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}

@@ -463,34 +463,23 @@ func TestACardFooterIsOneQuietLineWithNoBookkeeping(t *testing.T) {
 	}
 }
 
-func TestAStatusCardShowsItsFirstSentencesAndFoldsTheWall(t *testing.T) {
+func TestAStatusCardShowsItsWholeBodyAndFoldsOnlyPastTheVisibleLimit(t *testing.T) {
 	sentence := "The credential landed and launches stopped waiting on a new one. "
 	card := statusCard{Status: "info", Title: "Storage credential", Body: strings.Repeat(sentence, 30)}
 	blocks, fold := card.layout(view())
-	shown := sectionTexts(blocks)
-	if len(shown) != 1 || runes(shown[0]) > cardQuietBody || !strings.HasSuffix(shown[0], ".") {
-		t.Fatalf("shown = %q, want one section under %d characters ending on a whole sentence", shown, cardQuietBody)
+	if got := strings.Count(blocksJSON(t, blocks), "landed"); got != 30 || len(fold) != 0 {
+		t.Fatalf("%d of 30 sentences in view with %d fold pages, want all in view and none", got, len(fold))
 	}
+	wall := statusCard{Status: "info", Title: "Storage credential", Body: strings.Repeat(sentence, 300)}
+	blocks, fold = wall.layout(view())
 	if len(fold) == 0 || !strings.Contains(blocksJSON(t, blocks), cardFoldAction) {
 		t.Fatalf("fold = %d pages, want the rest behind Explain more", len(fold))
 	}
-	if got := strings.Count(blocksJSON(t, blocks), "landed") + strings.Count(blocksJSON(t, slices.Concat(fold...)), "landed"); got != 30 {
-		t.Fatalf("%d sentences across the card and its fold, want all 30", got)
-	}
-	short := statusCard{Status: "info", Title: "Storage credential", Body: sentence}
-	if _, fold := short.layout(view()); len(fold) != 0 {
-		t.Fatalf("a one-sentence body folded %d pages", len(fold))
+	if got := strings.Count(blocksJSON(t, blocks), "landed") + strings.Count(blocksJSON(t, slices.Concat(fold...)), "landed"); got != 300 {
+		t.Fatalf("%d sentences across the card and its fold, want all 300", got)
 	}
 	table := statusCard{Status: "info", Title: "Checks", Body: "| check | state |\n|---|---|\n| " + strings.Repeat("a long cell ", 50) + " | green |"}
 	if got := tables(table.replyBlocks(view())); len(got) != 1 {
 		t.Fatal("a table folded away: a table is what he reads at a glance")
-	}
-}
-
-func TestAPickCardKeepsMoreOfItsBodyInView(t *testing.T) {
-	card := statusCard{Status: "needs_you", Title: "Which relay?", Options: []string{"Land", "Hold"}, Recommended: "Land", Waits: "w", Body: strings.Repeat("One more reason to pick. ", 40)}
-	shown := sectionTexts(card.replyBlocks(view()))
-	if len(shown) == 0 || runes(shown[0]) <= cardQuietBody || runes(shown[0]) > cardWaitBody {
-		t.Fatalf("shown = %d characters, want between %d and %d", runes(shown[0]), cardQuietBody, cardWaitBody)
 	}
 }
