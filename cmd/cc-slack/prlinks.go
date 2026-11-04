@@ -309,7 +309,7 @@ func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
 func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
+	cmd := exec.CommandContext(ctx, installed(command[0]), command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
 	cmd.Stdin = bytes.NewReader(mustJSON(ask))
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()

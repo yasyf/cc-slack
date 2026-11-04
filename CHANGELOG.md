@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A GitHub token command or PR card command that `login` pinned keeps working after its tool moves: the daemon finds it on its own `PATH`. A removed `gh` shim used to cost every card its live CI, PR title and description until the next `login`.
 - A reply in a card's thread reaches only the session that posted the card. The session holding the DM used to get every thread's replies and owe them in `cc-slack dm-owed`, so another drive's relay acted on an order that was not its own. The holder gets the thread back once the posting session ends.
 - A card's options are no longer cut off. Every card with options lists them in full, numbered, above its buttons. When any option runs past two words, each button shows only its number, and (Recommended) still marks the recommended one. A tap still answers with the full option. A bare number replied in the card's thread answers the card the way its button would. Any other reply stays an ordinary reply.
 - A Slack permission card says in words where the post goes: the channel by `#name`, a direct message by the person's name, and a thread by who started it, when, and its opening words, above the text to be posted. The asking agent opens the body with a `Why:` line. A permission card whose title or body still shows a channel id, thread ts, hash, or lane name is refused before it reaches Slack or the board, with what to write instead.

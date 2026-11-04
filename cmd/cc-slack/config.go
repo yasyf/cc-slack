@@ -160,6 +160,13 @@ func (t *tokenSource) resolve(section string) error {
 	return nil
 }
 
+func installed(bin string) string {
+	if _, err := os.Stat(bin); errors.Is(err, fs.ErrNotExist) {
+		return filepath.Base(bin)
+	}
+	return bin
+}
+
 func (c *config) resolveTokens() error {
 	if err := c.GitHub.resolve("github"); err != nil {
 		return err
