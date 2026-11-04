@@ -108,7 +108,7 @@ func TestAReplyInAStoodDownLanesDMThreadReachesTheHolder(t *testing.T) {
 
 func cardSessionElsewhere(t *testing.T, f *fixture) subject.Subject {
 	t.Helper()
-	const id, pid = "0123456789abcdef0123456789abcdef", testPID + 2
+	const id, pid = "abcdef0123456789abcdef0123456789", testPID + 2
 	f.alive[pid] = true
 	if _, err := storeSubjects(f).Create(f.ctx, id, "", "sess-card", scopeName, pid, statusOpen); err != nil {
 		t.Fatal(err)
