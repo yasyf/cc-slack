@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A standing grant can cover every thread in a channel: the label `slack-grant:<channel>/threads` lets replies in any thread there go out with no per-thread approval, while a new top-level post still needs one.
+
 ### Changed
 
 - A card's footer is one quiet line, the drive or repo, the phase and the time. The branch, worktree and session no longer show.
