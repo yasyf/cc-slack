@@ -108,10 +108,28 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 					return fmt.Errorf("session-start hook input: %w", err)
 				}
 			}
-			_, err = invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, nil)
-			return err
+			reply, err := invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, nil)
+			if err != nil {
+				return err
+			}
+			var res sessionStartResult
+			if err := json.Unmarshal(reply.Body, &res); err != nil {
+				return fmt.Errorf("session-start reply: %w", err)
+			}
+			return writeWatchesBack(c.OutOrStdout(), res)
 		},
 	}
+}
+
+func writeWatchesBack(w io.Writer, res sessionStartResult) error {
+	if res.WatchesBack == 0 {
+		return nil
+	}
+	return json.NewEncoder(w).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+		"hookEventName": "SessionStart",
+		"additionalContext": fmt.Sprintf("cc-slack brought back %d of this session's Slack watches after the restart, and anything sent while it was down arrives as usual. "+
+			"Nothing already delivered comes again. There is nothing to re-arm by hand.", res.WatchesBack),
+	}})
 }
 
 func loginCmd(d cmd.Deps) *cobra.Command {

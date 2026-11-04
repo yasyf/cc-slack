@@ -860,3 +860,137 @@ func TestReconnectCallsStayFlatAtAnyMessageCount(t *testing.T) {
 		}
 	}
 }
+
+func operatorReplies(f *fixture, channel, thread string, n int) {
+	for i := range n {
+		f.slack.add(channel, slack.Message{Msg: slack.Msg{Timestamp: fmt.Sprintf("18000002%02d.000000", i), ThreadTimestamp: thread, User: testUser, Text: fmt.Sprintf("order %d", i)}})
+	}
+}
+
+func orphanWatches(t *testing.T, f *fixture, subjectID string) {
+	t.Helper()
+	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'orphaned' WHERE subject_id = ?`, subjectID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAResumedSessionReopeningAThreadGetsNoDirectiveAgain(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub := subjectFor(t, f)
+	thread := dmMessageOf(t, f, sub)
+	operatorReplies(f, dm, thread, 10)
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000209.000000", ThreadTS: thread})
+	f.tick()
+	if len(f.plane.events) != 10 || len(f.plane.directives) != 10 {
+		t.Fatalf("first delivery: %d events, %d directives, want 10 each", len(f.plane.events), len(f.plane.directives))
+	}
+
+	orphanWatches(t, f, sub.ID)
+	if err := f.app.bindSessionThread(f.ctx, f.db(), sub, f.id, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	if len(f.plane.events) != 10 || len(f.plane.directives) != 10 {
+		t.Fatalf("after the resume: %d events, %d directives, want the same 10", len(f.plane.events), len(f.plane.directives))
+	}
+	c, err := loadCursor(f.ctx, f.db(), cursorKey{dm, thread})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.oldest != "1800000209.000000" {
+		t.Fatalf("cursor = %q, want it left on the last delivered reply", c.oldest)
+	}
+}
+
+func TestAResumedSessionStillGetsWhatArrivedWhileItWasDown(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub := subjectFor(t, f)
+	thread := dmMessageOf(t, f, sub)
+	f.tick()
+
+	orphanWatches(t, f, sub.ID)
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000300.000000", ThreadTimestamp: thread, User: testUser, Text: "sent during the restart"}})
+	if err := f.app.bindSessionThread(f.ctx, f.db(), sub, f.id, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	if len(f.plane.directives) != 1 || !strings.Contains(f.plane.directives[0].text, "sent during the restart") {
+		t.Fatalf("directives = %+v, want the one message sent during the restart", f.plane.directives)
+	}
+}
+
+func TestOneMessageReachesASessionOnceAcrossItsWatches(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub := subjectFor(t, f)
+	thread := dmMessageOf(t, f, sub)
+	operatorReplies(f, dm, thread, 1)
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000200.000000", ThreadTS: thread})
+	f.tick()
+
+	orphanWatches(t, f, sub.ID)
+	if _, err := f.db().ExecContext(f.ctx, `UPDATE cursors SET oldest_ts = ? WHERE channel_id = ? AND thread_ts = ?`, thread, dm, thread); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.bindSessionThread(f.ctx, f.db(), sub, f.id, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	if len(f.plane.directives) != 1 {
+		t.Fatalf("directives = %d, want the message delivered once under its own ts", len(f.plane.directives))
+	}
+}
+
+func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub := subjectFor(t, f)
+	thread := dmMessageOf(t, f, sub)
+	stopped := dmMessageOf(t, f, sub)
+	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'stopped' WHERE subject_id = ? AND thread_ts = ?`, sub.ID, stopped); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'orphaned' WHERE subject_id = ? AND thread_ts = ?`, sub.ID, thread); err != nil {
+		t.Fatal(err)
+	}
+
+	back, err := reviveWatches(f.ctx, f.db(), sub.ID, dm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back != 1 {
+		t.Fatalf("back = %d, want the one orphaned watch", back)
+	}
+	threads, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(threads, thread) || slices.Contains(threads, stopped) {
+		t.Fatalf("active threads = %v, want %s back and %s still stopped", threads, thread, stopped)
+	}
+	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, dm); err != nil || again != 0 {
+		t.Fatalf("second pass = %d err=%v, want nothing", again, err)
+	}
+}
+
+func TestARestartedSessionDoesNotTakeBackTheDMFromAnother(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub, other := subjectFor(t, f), secondSession(t, f)
+	for _, subjectID := range []string{sub.ID, other.ID} {
+		if _, _, err := insertWatch(f.ctx, f.db(), subjectID, agent.TopLevel, kindChannel, dm, "", "1800000000.000000", f.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orphanWatches(t, f, sub.ID)
+
+	back, err := reviveWatches(f.ctx, f.db(), sub.ID, dm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back != 0 {
+		t.Fatalf("back = %d, want the DM left with the session that holds it", back)
+	}
+}

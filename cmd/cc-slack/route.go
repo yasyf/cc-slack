@@ -91,7 +91,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	return delivery{
 		base:   eventMessage,
 		origin: origin,
-		dedup:  fmt.Sprintf("slack:%d:%s", w.ID, m.Timestamp),
+		dedup:  fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, m.Timestamp),
 		line:   messageLine(msg, id.fromOperator(m)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
