@@ -7,7 +7,7 @@ import shlex
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,12 +20,11 @@ from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
 from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, UserRuled, holds, store
 from captain_hook.tickets.context import ccn_answers, instruction_words, ruling_evidence, said_evidence, written_at
-from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
 from captain_hook.util import reqenv
 
 from .common import BIN
-from .writes import Write, capture, cli_calls, pending, permalink, permissions
+from .writes import MESSAGE_VERBS, Write, capture, cli_calls, pending, permalink, permissions
 
 CC_SLACK = str(BIN)
 GATE = "slack_writes_need_permission"
@@ -39,7 +38,8 @@ CARRY = "thread-carry"
 CHECK_SECONDS = 40
 DEADLINE_MARGIN = 5
 CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, AttributeError, subprocess.SubprocessError)
-UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
+UNFINISHED = "The Slack permission check did not finish ({cause}), so this write was refused and nothing was sent. Send the same write again; each try runs the check from the start."
+NO_CHANNEL = "This Slack write names no channel, so nothing can check it or send it. Pass `channel_id`, not `channel`, or a Slack `url`, and send it again."
 GRANT_LABEL = "slack-grant:"
 EVERY_THREAD = "/threads"
 REVOKE_LABEL = "slack-revoke:"
@@ -573,14 +573,10 @@ def named_ticket(evt: PreToolUseEvent, ctx: Context, ticket: Ticket) -> HookResu
     return evt.rewrite_command(f"{head}{call.command.raw} {flags}{tail}")
 
 
-def unchecked(evt: PreToolUseEvent, write: Write, conv: Conversation, exc: Exception) -> HookResult:
+def unfinished(evt: PreToolUseEvent, exc: Exception) -> HookResult:
     cause = f"{type(exc).__name__}: {str(exc).partition(chr(10))[0]}"[:SHOWN]
-    logger.bind(hook=GATE, cause=cause).opt(exception=True).warning("slack write check failed; the write goes ahead unchecked")
-    note = UNFINISHED.format(gate=GATE, cause=cause)
-    if not write.daemon:
-        return evt.allow(system_message=note)
-    ctx = context_of(evt, write, conv)
-    return replace(named_ticket(evt, ctx, SLACK.unchecked(ctx, cause)), system_message=note)
+    logger.bind(hook=GATE, cause=cause).opt(exception=True).warning("slack write check failed; the write is refused")
+    return evt.block(UNFINISHED.format(cause=cause))
 
 
 def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
@@ -588,7 +584,8 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     if len(writes) > 1 or not writes[0].readable:
         return evt.block(UNREAD)
     write = writes[0]
-    conv = Conversation(write.channel, write.thread)
+    if write.verb in MESSAGE_VERBS and not write.channel:
+        return evt.block(NO_CHANNEL)
     try:
         with check_deadline():
             conv = conversation(write)
@@ -596,13 +593,14 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
             decided = SLACK.decide(ctx)
             verdict = decided if isinstance(decided, Deny) else decided.ticket
             withdrawn = isinstance(verdict, Ticket) and (found := standing_of(ctx)).answer is not None and not found.grants and written_at(found.answer) > verdict.created
+            refusal = refused(write, ctx) if withdrawn or isinstance(verdict, Deny) else ""
     except CHECK_FAILURES as exc:
-        return unchecked(evt, write, conv, exc)
+        return unfinished(evt, exc)
     if withdrawn:
-        return evt.block(refused(write, ctx), system_message=f"{GATE}: a revocation newer than ticket {verdict.id} withdraws it.")
+        return evt.block(refusal, system_message=f"{GATE}: a revocation newer than ticket {verdict.id} withdraws it.")
     logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=isinstance(verdict, Ticket), detail=verdict.detail if isinstance(verdict, Deny) else f"{verdict.id} ({verdict.rule})").info("slack write checked")
     if isinstance(verdict, Deny):
-        return evt.block(refused(write, ctx), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
+        return evt.block(refusal, system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
     if not write.daemon:
         return evt.allow()
     return named_ticket(evt, ctx, verdict)
@@ -639,7 +637,7 @@ def slack_posts_carry_their_thread(evt: PostToolUseEvent) -> HookResult | None:
     if len(writes) != 1 or writes[0].verb != "post" or writes[0].thread or (result := posted(evt)) is None or (ticket := ticket_behind(evt, writes[0], result)) is None:
         return None
     place = {"channel": str(result.get("channel_id") or result.get("channel") or ticket.place["channel"]), "thread": str(result.get("thread_ts") or result["ts"])}
-    if ticket.kind != KIND or ticket.rule == UNCHECKED or ticket.place["thread"] or ticket.place["channel"] != place["channel"]:
+    if ticket.kind != KIND or ticket.place["thread"] or ticket.place["channel"] != place["channel"]:
         return None
     ctx = SLACK.context(evt, Proposal(place, summary=f"replies in {place['channel']}, thread {place['thread']}"))
     if store.covering(KIND, ctx.trees, place, ctx.action.fingerprint) is not None:
@@ -798,7 +796,7 @@ def covering(place: dict[str, str] | None = None, *, rule: str = "asked-user", r
 
 
 def posted_once(place: dict[str, str] | None = None) -> Ticket:
-    return covering(place, rule=UNCHECKED).model_copy(update={"reach": Reach.ONCE, "fingerprint": "0" * 16})
+    return covering(place).model_copy(update={"reach": Reach.ONCE, "fingerprint": "0" * 16})
 
 
 @dataclass(frozen=True, slots=True)
@@ -873,6 +871,8 @@ def relayed(text: str) -> list[dict[str, Any]]:
 SUBMITTED_BOARD = {"since": "last-submit", "through": 4222, "interactions": [{"seq": 4214, "type": "triage.decided", "blockId": "merge-prs", "at": "2026-10-30T15:24:19-07:00", "payload": {"verdicts": {"45401": {"verdict": "approved", "head": "e34ab03"}}}}]}
 ALLOW = Rewrite(ticket_agent="main")
 DENY = Block(pattern="No permission covers this Slack write")
+UNCHECKABLE = Block(pattern="did not finish .*nothing was sent")
+NAMES_NO_CHANNEL = Block(pattern="names no channel")
 
 
 def fixture_stubs(line: dict[str, Any]) -> dict[str, str]:
@@ -1045,10 +1045,13 @@ on(
             case({"channel_id": OWN_DM_EDIT["channel_id"], "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
             case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED | {"from_claude": False})) >> Block(pattern="Edit the bot's message to this"),
             case(OWN_DM_EDIT, tool="slack_edit", commands=PRIYA_DM | thread_read(BOT_ANSWERED)) >> Block(pattern="Edit the bot's message to this"),
-            case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
-            case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
-            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True),
-            case(**said("let dana know the fix landed, in her thread"), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
+            case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> UNCHECKABLE,
+            case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> UNCHECKABLE,
+            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> UNCHECKABLE,
+            case({"channel": FOLLOWERS, "thread_ts": DANA_THREAD, "text": "any reply"}) >> NAMES_NO_CHANNEL,
+            case({"channel": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete") >> NAMES_NO_CHANNEL,
+            case({"channel": FOLLOWERS, "text": "a post"}, tool="mcp__slack__slack_send_message") >> NAMES_NO_CHANNEL,
+            case(**said("let dana know the fix landed, in her thread"), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> UNCHECKABLE,
             case(command=f"{CLI} send --user {PRIYA_USER} --text '{PRIYA_DM_TEXT}'", transcript=owner_answered(PRIYA_ASKED, ["DM priya and ask her to try posting it", "I'll paste it myself"], "DM priya and ask her to try posting it", id="doc-link"), commands=PRIYA_BY_USER) >> Rewrite(pattern="--ticket-agent main"),
             case(command=f"{CLI} send --user {PRIYA_USER} --text '{PRIYA_DM_TEXT}'", commands=PRIYA_BY_USER) >> DENY,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_archive", transcript=owner_answered(f"Archive {FOLLOWERS}, the stale incident channel?", ["Yes", "No"], "Yes", id="archive")) >> ALLOW,
@@ -1057,7 +1060,7 @@ on(
             case({"text": "status"}, tool="slack_dm_status") >> Allow(),
             case({"query": "release"}, tool="mcp__slack__slack_search_messages") >> Allow(),
             case({"ticket_id": "0123456789ab"}, tool="slack_revoke") >> Allow(),
-            case(commands=NOT_DM | {f"{CC_SLACK} dm-peer": "cc-slack can't reach the daemon"}) >> ALLOW,
+            case(commands=NOT_DM | {f"{CC_SLACK} dm-peer": "cc-slack can't reach the daemon"}) >> UNCHECKABLE,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING)) >> ALLOW,
             case(command=f"{CLI} send --channel {FOLLOWERS} --text 'another landing'", **said("status?"), commands=ruled(KEPT_POSTING)) >> Rewrite(pattern="--ticket-agent main"),
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"No\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
@@ -1093,7 +1096,7 @@ on(
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
-            case(**said("post it i already told u to"), commands=NOT_DM | {"cc-present outcomes": json.dumps(SUBMITTED_BOARD)}) >> ALLOW,
+            case(**said("post it i already told u to"), commands=NOT_DM | {"cc-present outcomes": json.dumps(SUBMITTED_BOARD)}) >> UNCHECKABLE,
             case(**said("status?"), commands=board_tapped("yes")) >> ALLOW,
             case(**said("status?"), commands=board_tapped("no")) >> DENY,
             case(DANA | {"text": "another reply"}, **said("status?"), commands=board_tapped("yes")) >> DENY,
@@ -1149,13 +1152,6 @@ on(
             tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
         ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
         Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": FOLLOWERS, "text": "a post"}, output="rate limited; nothing was sent", tickets=[covering({"channel": FOLLOWERS, "thread": ""})]): Allow(),
-        Input(
-            env=ENABLED,
-            tool=P + "slack_send",
-            tool_input={"channel_id": FOLLOWERS, "text": "a top-level post"},
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000700", "thread_ts": "1791950000.000700", "ticket_id": "0123456789ab"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""}, rule=UNCHECKED)],
-        ): Allow(),
         Input(
             env=ENABLED,
             command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a top-level post'",
