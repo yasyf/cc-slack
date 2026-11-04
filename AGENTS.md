@@ -117,12 +117,17 @@ linked PR's card. A checked-in config can name a tool only some engineers have,
 so `login` on a machine without it leaves cards off and links still work. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, the daemon runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR the post
-linked that no card in that thread cites yet. A merged or closed PR stays a
+linked that no card in the post's thread cites and no open card at the DM root
+cites. A merged or closed PR stays a
 link. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
-one that passes the card checks as a reply in the post's thread. It keeps
-them in `live-cards.json`, so a PR is carded once per thread, and the ref
-poller redraws a card when its PR changes state. A PR the program leaves out
+one that passes the card checks. In the bot's DM the card opens at the root in
+its own thread, watched by the session whose post named the PR, wherever that
+post sits; a post lands in a DM thread only when its call names that thread. In
+a listed channel the card is a reply in the post's thread. It keeps them in
+`live-cards.json`, so a PR at one head is carded once at the DM root, and once
+per thread in a channel, and the ref poller redraws a card when its PR changes
+state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
 the daemon logs why. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
