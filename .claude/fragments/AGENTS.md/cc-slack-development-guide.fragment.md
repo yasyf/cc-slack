@@ -93,14 +93,15 @@ minutes, and reruns it after a 401.
 
 With `[github]` set, `send`, `reply`, `edit`, and `dm-status` link every pull
 request the text names, and a card's body, before posting. A GitHub PR URL,
-`owner/repo#N`, and a bare `#N` become `<url|#N>`. With `card_command` set, a
+`owner/repo#N`, and a bare `#N` become `<url|#N>`, and a Markdown link to a PR
+becomes `<url|text>`. With `card_command` set, a
 bare number's candidates are the PRs the program names for
 `{"numbers": [N]}` on stdin, answering `{"prs": [{"repo", "number"}]}`;
 without it, they are the GitHub repo of the writing session's `origin` remote
 and each `[pr_links] repos` entry. A bare number links only when exactly one
 candidate holds that PR, so a number two repos hold stays plain, as does one
 the program cannot answer.
-Text inside a Slack `<...>` link or mention, a code span, or a code block is
+Text inside a Slack `<...>` link or mention, a Markdown link, a code span, or a code block is
 not scanned, and a number no candidate repo holds stays plain. The daemon
 asks GitHub about every candidate in one GraphQL query per post, with a 5 s
 limit; when that read fails, the post goes out as written and the daemon
