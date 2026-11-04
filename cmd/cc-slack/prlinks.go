@@ -310,8 +310,9 @@ func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]pro
 
 // recardPR redraws a PR card in place from what the card command says now, so
 // it never offers a head or a question that no longer stands; a card for a PR
-// that no longer waits gives up its buttons. A refused tap also answers in the
-// thread, since nothing else tells him.
+// that no longer waits keeps its answer, or gives up its buttons, under the
+// row's current words. A refused tap also answers in the thread, since nothing
+// else tells him.
 func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID, refused string) {
 	if err := a.redrawPRCard(ctx, id, card, pr); err != nil {
 		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)

@@ -773,31 +773,32 @@ func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[stri
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
-	for _, open := range l.openPRCards() {
-		if moved[open.pr.key()] {
-			l.recard(ctx, id, open.card, open.pr, "")
+	for _, posted := range l.postedPRCards() {
+		if moved[posted.pr.key()] {
+			l.recard(ctx, id, posted.card, posted.pr, "")
 		}
 	}
 }
 
-type openPRCard struct {
+type postedPRCard struct {
 	card cardRef
 	pr   refID
 }
 
-// openPRCards lists each PR card still offering its buttons.
-func (l *liveCards) openPRCards() []openPRCard {
+// postedPRCards lists every PR card, answered ones too, since each follows its
+// PR's row for as long as it stays in the thread.
+func (l *liveCards) postedPRCards() []postedPRCard {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var open []openPRCard
+	var posted []postedPRCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			if ids := m.Card.refIDs(); t.open(m) && len(ids) > 0 {
-				open = append(open, openPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids[0]})
+			if ids := m.Card.refIDs(); len(ids) > 0 {
+				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids[0]})
 			}
 		}
 	}
-	return open
+	return posted
 }
 
 // replacePRCard redraws a posted PR card in place from what its command says now.
@@ -811,6 +812,12 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == card.ts })
 	if i < 0 {
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
+	}
+	if m := t.PRCards[i]; drawn.Waits == "" {
+		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended
+		if t.open(m) {
+			m.Tapped = cardNoLongerWaits
+		}
 	}
 	t.PRCards[i].Card = drawn
 	err := l.drawPRCard(ctx, api, t, i, now)
