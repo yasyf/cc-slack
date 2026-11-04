@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -27,8 +26,10 @@ const (
 	cardWaitBlock     = "card-wait"
 	cardTappedBlock   = "card-tapped-"
 	cardRowBlock      = "card-row-"
-	cardOptionsBlock  = "card-options"
+	cardOptionBlock   = "card-option-"
+	cardFoldBlock     = "card-fold"
 	cardAckAction     = cardActionPrefix + ":ack"
+	cardFoldAction    = cardActionPrefix + ":fold"
 	cardPauseAction   = cardActionPrefix + ":pause"
 	cardOptionAction  = cardActionPrefix + ":opt:"
 	cardLinkAction    = cardActionPrefix + ":link:"
@@ -44,6 +45,7 @@ const (
 	cardRecommended   = "(Recommended)"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
+	cardPickLabel     = "Pick"
 	cardMaxOptions    = 4
 	cardMaxOptionLen  = cardMaxLabelLen - len(" "+cardRecommended)
 	cardMaxShortWords = 2
@@ -58,7 +60,12 @@ const (
 	cardMaxTimeline   = 5
 	cardMaxHeaderLen  = 150
 	cardMaxTitleLen   = 140
-	cardMaxBodyLen    = 2800
+	cardMaxBodyLen    = 40000
+	cardMaxFieldLen   = 2000
+	cardMaxPRs        = 10
+	cardMaxPRRows     = 8
+	cardQuietBody     = 400
+	cardWaitBody      = 1500
 	cardMaxNameLen    = 80
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
@@ -70,6 +77,7 @@ const (
 	cardProgressCells = 10
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
+	cardShortHead     = 7
 	cardPermission    = "slack-"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
@@ -83,11 +91,12 @@ var (
 		"incident":  "🚨",
 		"done":      "✅",
 	}
-	cardAskStyles = map[string]slack.Style{"": slack.StyleDefault, "primary": slack.StylePrimary, "danger": slack.StyleDanger}
-	askIDPattern  = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
-	mrkdwnEscapes = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "¦")
-	slackToken    = regexp.MustCompile(`<[^<>\s][^<>]*>`)
-	cardJargon    = []struct {
+	cardAskStyles   = map[string]slack.Style{"": slack.StyleDefault, "primary": slack.StylePrimary, "danger": slack.StyleDanger}
+	askIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+	mrkdwnEscapes   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "¦")
+	cardWordEscapes = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	slackToken      = regexp.MustCompile(`<[^<>\s][^<>]*>`)
+	cardJargon      = []struct {
 		pattern *regexp.Regexp
 		mixed   bool
 		fix     string
@@ -100,26 +109,29 @@ var (
 )
 
 type statusCard struct {
-	Status      string        `json:"status"`
-	Title       string        `json:"title"`
-	Body        string        `json:"body"`
-	Drive       string        `json:"drive"`
-	Phase       string        `json:"phase"`
-	Links       []cardLink    `json:"links"`
-	Options     []string      `json:"options"`
-	Refs        []cardLink    `json:"refs,omitempty"`
-	Progress    *cardProgress `json:"progress,omitempty"`
-	StartedAt   *time.Time    `json:"started_at,omitempty"`
-	ETA         *time.Time    `json:"eta,omitempty"`
-	Asks        []cardAsk     `json:"asks,omitempty"`
-	Facts       []cardFact    `json:"facts,omitempty"`
-	Rollup      *cardRollup   `json:"rollup,omitempty"`
-	Waits       string        `json:"waits,omitempty"`
-	Recommended string        `json:"recommended,omitempty"`
-	Group       string        `json:"group,omitempty"`
-	Key         string        `json:"key,omitempty"`
-	Rows        []cardRow     `json:"rows,omitempty"`
-	Supersedes  []string      `json:"supersedes,omitempty"`
+	Status      string            `json:"status"`
+	Title       string            `json:"title"`
+	Body        string            `json:"body"`
+	Drive       string            `json:"drive"`
+	Phase       string            `json:"phase"`
+	Links       []cardLink        `json:"links"`
+	Options     []string          `json:"options"`
+	Refs        []cardLink        `json:"refs,omitempty"`
+	Progress    *cardProgress     `json:"progress,omitempty"`
+	StartedAt   *time.Time        `json:"started_at,omitempty"`
+	ETA         *time.Time        `json:"eta,omitempty"`
+	Asks        []cardAsk         `json:"asks,omitempty"`
+	Facts       []cardFact        `json:"facts,omitempty"`
+	Rollup      *cardRollup       `json:"rollup,omitempty"`
+	Waits       string            `json:"waits,omitempty"`
+	Recommended string            `json:"recommended,omitempty"`
+	Group       string            `json:"group,omitempty"`
+	Key         string            `json:"key,omitempty"`
+	Rows        []cardRow         `json:"rows,omitempty"`
+	Supersedes  []string          `json:"supersedes,omitempty"`
+	PRs         []cardPR          `json:"prs,omitempty"`
+	Hints       map[string]string `json:"hints,omitempty"`
+	Replaces    string            `json:"replaces,omitempty"`
 
 	Images []slack.FileSummary `json:"images,omitempty"`
 }
@@ -128,6 +140,19 @@ type cardRow struct {
 	ID      string   `json:"id"`
 	Text    string   `json:"text"`
 	Buttons []string `json:"buttons"`
+	PR      *cardPR  `json:"pr,omitempty"`
+}
+
+type cardPR struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Head        string `json:"head,omitempty"`
+	Review      string `json:"review,omitempty"`
+	Change      string `json:"change"`
+	Plan        string `json:"plan"`
+	Risk        string `json:"risk"`
+	Blocks      string `json:"blocks"`
+	Description string `json:"description,omitempty"`
 }
 
 type cardLink struct {
@@ -245,6 +270,8 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkFacts(),
 		c.checkRollup(),
 		c.checkRows(rootOnly),
+		c.checkPRs(),
+		c.checkReplaces(),
 		c.checkSupersedes(),
 		c.checkPermissionWords(),
 	)
@@ -287,8 +314,44 @@ func (c statusCard) checkHeading(rootOnly bool) error {
 	if runes(c.Drive) > cardMaxNameLen || runes(c.Phase) > cardMaxNameLen {
 		return fmt.Errorf("card drive and phase run to %d characters each", cardMaxNameLen)
 	}
-	if runes(c.Body) > cardMaxBodyLen {
-		return fmt.Errorf("card body runs past %d characters", cardMaxBodyLen)
+	if rootOnly && runes(c.Body) > cardMaxVisible {
+		return fmt.Errorf("a root card's body runs past %d characters", cardMaxVisible)
+	}
+	return nil
+}
+
+func (c statusCard) checkPRs() error {
+	if len(c.PRs) > cardMaxPRs {
+		return fmt.Errorf("card carries %d PRs, at most %d", len(c.PRs), cardMaxPRs)
+	}
+	for _, p := range c.PRs {
+		if err := p.check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p cardPR) check() error {
+	if id, ok := parseRef(p.URL); !ok || id.Kind != refPR {
+		return fmt.Errorf("card PR %q is not a https://github.com/<owner>/<repo>/pull/<n> url", p.URL)
+	}
+	return nil
+}
+
+func (p cardPR) fields() []cardFact {
+	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}, {"Blocks landing", p.Blocks}}
+}
+
+func (c statusCard) checkReplaces() error {
+	if c.Replaces == "" {
+		return nil
+	}
+	if ref, err := parsePermalink(c.Replaces); err != nil || ref.ts == "" {
+		return fmt.Errorf("card replaces %q, which is not a Slack message permalink", c.Replaces)
+	}
+	if c.Waits != "" || c.Group != "" || c.Key != "" || len(c.Options)+len(c.Asks)+len(c.Rows) > 0 {
+		return errors.New("a card that replaces a posted card carries no buttons: no waits, group, key, options, asks, or rows")
 	}
 	return nil
 }
@@ -391,8 +454,8 @@ func (c statusCard) checkFacts() error {
 		return fmt.Errorf("card carries %d facts, at most %d", len(c.Facts), cardMaxFacts)
 	}
 	for _, f := range c.Facts {
-		if f.Label == "" || runes(f.Label) > cardMaxNameLen || f.Value == "" || runes(f.Value) > cardMaxDetailLen {
-			return fmt.Errorf("card fact %q needs a label of up to %d characters and a value of up to %d", f.Label, cardMaxNameLen, cardMaxDetailLen)
+		if f.Label == "" || runes(f.Label) > cardMaxNameLen || f.Value == "" || runes(f.Value) > cardMaxFieldLen-cardMaxNameLen {
+			return fmt.Errorf("card fact %q needs a label of up to %d characters and a value of up to %d", f.Label, cardMaxNameLen, cardMaxFieldLen-cardMaxNameLen)
 		}
 	}
 	return nil
@@ -449,6 +512,9 @@ func (c statusCard) checkRows(rootOnly bool) error {
 	case len(c.Rows) > cardMaxRows:
 		return fmt.Errorf("group card carries %d rows, at most %d", len(c.Rows), cardMaxRows)
 	}
+	if slices.ContainsFunc(c.Rows, func(r cardRow) bool { return r.PR != nil }) && len(c.Rows) > cardMaxPRRows {
+		return fmt.Errorf("group card carries %d PR rows, at most %d", len(c.Rows), cardMaxPRRows)
+	}
 	ids := map[string]bool{}
 	for _, r := range c.Rows {
 		if ids[r.ID] {
@@ -466,8 +532,13 @@ func (r cardRow) check() error {
 	if !askIDPattern.MatchString(r.ID) {
 		return fmt.Errorf("card row id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", r.ID)
 	}
-	if strings.TrimSpace(r.Text) == "" || runes(r.Text) > cardMaxSectionLen {
-		return fmt.Errorf("card row %q needs text of 1 to %d characters", r.ID, cardMaxSectionLen)
+	if strings.TrimSpace(r.Text) == "" && r.PR == nil {
+		return fmt.Errorf("card row %q needs a PR or text", r.ID)
+	}
+	if r.PR != nil {
+		if err := r.PR.check(); err != nil {
+			return err
+		}
 	}
 	if len(r.Buttons) == 0 || len(r.Buttons) > cardMaxRowButtons {
 		return fmt.Errorf("card row %q carries %d buttons, 1 to %d", r.ID, len(r.Buttons), cardMaxRowButtons)
@@ -511,6 +582,11 @@ func (c statusCard) refIDs() []refID {
 			ids = append(ids, id)
 		}
 	}
+	for _, p := range c.allPRs() {
+		if id, ok := parseRef(p.URL); ok {
+			ids = append(ids, id)
+		}
+	}
 	if c.Rollup != nil {
 		for _, p := range c.Rollup.PRs {
 			if id, ok := parseRef(p.URL); ok {
@@ -519,6 +595,19 @@ func (c statusCard) refIDs() []refID {
 		}
 	}
 	return ids
+}
+
+func (c statusCard) allPRs() []*cardPR {
+	prs := make([]*cardPR, 0, len(c.PRs)+len(c.Rows))
+	for i := range c.PRs {
+		prs = append(prs, &c.PRs[i])
+	}
+	for _, r := range c.Rows {
+		if r.PR != nil {
+			prs = append(prs, r.PR)
+		}
+	}
+	return prs
 }
 
 func (c statusCard) merged(next statusCard) statusCard {
@@ -549,6 +638,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 		c.Rollup = next.Rollup
 	}
 	c.Options, c.Asks, c.Waits, c.Recommended, c.Group, c.Rows, c.Images = nil, nil, "", "", "", nil, nil
+	c.PRs, c.Hints, c.Replaces = nil, nil, ""
 	return c
 }
 
@@ -558,7 +648,7 @@ func (c statusCard) text() string {
 	if c.Body == "" {
 		return c.emoji() + " " + c.Title
 	}
-	return c.emoji() + " " + c.Title + " — " + c.Body
+	return clipRunes(c.emoji()+" "+c.Title+" — "+c.Body, cardMaxSectionLen)
 }
 
 func gitCardTag(ctx context.Context, session, dir string) cardTag {
@@ -594,6 +684,8 @@ type cardView struct {
 	timeline []timelineEntry
 	tapped   string
 	hint     string
+	final    bool
+	unfolded bool
 }
 
 type timelineEntry struct {
@@ -648,19 +740,12 @@ func slackLink(target, label string) string {
 func (c statusCard) context(tag cardTag, now time.Time, stamp string) slack.Block {
 	var parts []string
 	if c.Drive != "" {
-		parts = append(parts, "*"+c.Drive+"*")
+		parts = append(parts, c.Drive)
+	} else if tag.Repo != "" {
+		parts = append(parts, tag.Repo)
 	}
 	if c.Phase != "" {
 		parts = append(parts, c.Phase)
-	}
-	if tag.Repo != "" {
-		parts = append(parts, "`"+tag.Repo+"@"+tag.Branch+"`")
-	}
-	if tag.Worktree != "" {
-		parts = append(parts, "worktree `"+tag.Worktree+"`")
-	}
-	if tag.Session != "" {
-		parts = append(parts, "session `"+tag.Session+"`")
 	}
 	parts = append(parts, stamp+now.In(pacific).Format(cardTimeLayout))
 	return mrkdwn("card-tag", strings.Join(parts, " · "))
@@ -700,16 +785,12 @@ type cardPick struct {
 
 func (c statusCard) picks() []cardPick {
 	answers := c.answers()
-	short := !slices.ContainsFunc(answers, func(o string) bool { return len(strings.Fields(o)) > cardMaxShortWords })
 	picks := make([]cardPick, 0, len(answers))
 	for i, o := range answers {
-		p := cardPick{actionID: fmt.Sprintf("%s%d", cardOptionAction, i), value: o, option: o, label: strconv.Itoa(i + 1)}
+		p := cardPick{actionID: fmt.Sprintf("%s%d", cardOptionAction, i), value: o, option: o, label: o}
 		if c.Waits != "" {
 			p.actionID = fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits)
 			p.value = string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: answers}))
-		}
-		if short {
-			p.label = o
 		}
 		if o == c.Recommended {
 			p.label += " " + cardRecommended
@@ -719,23 +800,50 @@ func (c statusCard) picks() []cardPick {
 	return picks
 }
 
-func (c statusCard) optionList() []slack.Block {
-	if len(c.Options) == 0 {
+func (c statusCard) listed() bool {
+	return len(c.Hints) > 0 || slices.ContainsFunc(c.Options, func(o string) bool { return len(strings.Fields(o)) > cardMaxShortWords })
+}
+
+func (c statusCard) optionRows(live bool) []slack.Block {
+	if len(c.Options) == 0 || !c.listed() {
 		return nil
 	}
-	lines := make([]string, 0, len(c.Options))
-	for i, p := range c.picks() {
-		line := fmt.Sprintf("*%d.* %s", i+1, mrkdwnEscapes.Replace(p.option))
+	picks := c.picks()
+	rows := make([]slack.Block, 0, len(picks))
+	for i, p := range picks {
+		line := fmt.Sprintf("*%d. %s*", i+1, mrkdwnEscapes.Replace(p.option))
 		if p.option == c.Recommended {
 			line += " _" + cardRecommended + "_"
 		}
-		lines = append(lines, line)
+		parts := splitSection(line+"\n"+c.Hints[p.option], cardMaxSectionLen)
+		if c.Hints[p.option] == "" {
+			parts = []string{line}
+		}
+		var pick *slack.Accessory
+		if live {
+			b := slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, cardPickLabel, true, false))
+			if p.option == c.Recommended {
+				b.Style = slack.StylePrimary
+			}
+			pick = slack.NewAccessory(b)
+		}
+		rows = append(rows, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, parts[0], false, false), nil, pick, slack.SectionBlockOptionBlockID(fmt.Sprintf("%s%d", cardOptionBlock, i))))
+		for _, more := range parts[1:] {
+			rows = append(rows, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, more, false, false), nil, nil))
+		}
 	}
-	return []slack.Block{section(cardOptionsBlock, strings.Join(lines, "\n"))}
+	return rows
+}
+
+func (c statusCard) inlinePicks() []cardPick {
+	if c.listed() {
+		return nil
+	}
+	return c.picks()
 }
 
 func (c statusCard) actions() slack.Block {
-	picks := c.picks()
+	picks := c.inlinePicks()
 	buttons := make([]slack.BlockElement, 0, len(picks)+2)
 	for _, p := range picks {
 		buttons = append(buttons, slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, p.label, true, false)))
@@ -755,7 +863,7 @@ func (c statusCard) answers() []string {
 }
 
 func (c statusCard) waitActions() slack.Block {
-	picks := c.picks()
+	picks := c.inlinePicks()
 	answers := c.answers()
 	buttons := make([]slack.BlockElement, 0, len(picks)+2)
 	for _, p := range picks {
@@ -812,7 +920,7 @@ func (c statusCard) facts() []slack.Block {
 	}
 	fields := make([]*slack.TextBlockObject, 0, len(c.Facts))
 	for _, f := range c.Facts {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, "*"+mrkdwnEscapes.Replace(f.Label)+"*\n"+f.Value, false, false))
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, "*"+mrkdwnEscapes.Replace(f.Label)+"*\n"+mrkdwnLine(f.Value), false, false))
 	}
 	return []slack.Block{slack.NewSectionBlock(nil, fields, nil, slack.SectionBlockOptionBlockID("card-facts"))}
 }
@@ -916,10 +1024,22 @@ func (k cardAsk) block(v cardView) slack.Block {
 }
 
 func (r cardRow) blocks(v cardView) []slack.Block {
-	text := slack.NewTextBlockObject(slack.MarkdownType, r.Text, false, false)
-	if ans, ok := v.answers[r.ID]; ok {
-		answer := "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now)
-		return []slack.Block{section(cardRowBlock+r.ID, clipRunes(r.Text, cardMaxSectionLen-runes(answer))+answer)}
+	blocks := make([]slack.Block, 0, len(r.Buttons))
+	if r.PR != nil {
+		blocks = r.PR.blocks(v, cardQuietBody)
+	}
+	text := r.Text
+	ans, answered := v.answers[r.ID]
+	if answered {
+		text = strings.TrimSpace(text + "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now))
+	}
+	if text != "" {
+		for _, part := range splitSection(text, cardMaxSectionLen) {
+			blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
+		}
+	}
+	if answered {
+		return blocks
 	}
 	buttons := make([]slack.BlockElement, 0, len(r.Buttons))
 	for i, label := range r.Buttons {
@@ -930,7 +1050,70 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 		}
 		buttons = append(buttons, b)
 	}
-	return []slack.Block{slack.NewSectionBlock(text, nil, nil), slack.NewActionBlock(cardRowBlock+r.ID, buttons...)}
+	return append(blocks, slack.NewActionBlock(cardRowBlock+r.ID, buttons...))
+}
+
+func (p cardPR) blocks(v cardView, limit int) []slack.Block {
+	id, _ := parseRef(p.URL)
+	line := "*" + slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number)) + "*"
+	if p.Title != "" {
+		line += " " + plainMrkdwn(p.Title)
+	}
+	if p.Head != "" {
+		line += " `" + p.Head[:min(len(p.Head), cardShortHead)] + "`"
+	}
+	if live := v.refs[id.key()].text(); live != "" {
+		line += " · " + live
+	}
+	if p.Review != "" {
+		line += "\n" + plainMrkdwn(p.Review)
+	}
+	facts := p.fields()
+	fields := make([]*slack.TextBlockObject, 0, len(facts))
+	blocks := []slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, line, false, false), nil, nil)}
+	var long []string
+	for _, f := range facts {
+		text := "*" + f.Label + "*\n" + plainMrkdwn(f.Value)
+		switch {
+		case strings.TrimSpace(f.Value) == "":
+		case runes(text) > cardMaxFieldLen:
+			long = append(long, splitSection(text, cardMaxSectionLen)...)
+		default:
+			fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, text, false, false))
+		}
+	}
+	if len(fields) > 0 {
+		blocks = append(blocks, slack.NewSectionBlock(nil, fields, nil))
+	}
+	for _, text := range long {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, nil))
+	}
+	shown, _ := p.description(limit)
+	if shown == "" {
+		return blocks
+	}
+	return append(blocks, bodyPages(shown, cardMaxBlocks, cardMaxVisible, false)[0]...)
+}
+
+func (p cardPR) description(limit int) (string, string) {
+	if runes(p.Description) <= limit {
+		return p.Description, ""
+	}
+	shown := sectionCut([]rune(p.Description), limit)
+	return strings.TrimSpace(shown), strings.TrimSpace(strings.TrimPrefix(p.Description, shown))
+}
+
+func (p cardPR) folded(limit int) [][]slack.Block {
+	_, rest := p.description(limit)
+	if rest == "" {
+		return nil
+	}
+	id, _ := parseRef(p.URL)
+	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, the rest of its description", id.Repo, id.Number)), rest), cardMaxPageBlock, cardMaxVisible, true)
+}
+
+func plainMrkdwn(text string) string {
+	return mrkdwnLine(cardWordEscapes.Replace(text))
 }
 
 func askBlocks(asks []cardAsk, v cardView) []slack.Block {
@@ -969,10 +1152,40 @@ func (c statusCard) gainsRows(previous statusCard) bool {
 }
 
 func (c statusCard) replyBlocks(v cardView) []slack.Block {
-	blocks := []slack.Block{header(c.emoji() + " " + c.Title)}
-	if c.Body != "" {
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, c.Body, false, false), nil, nil))
+	blocks, _ := c.layout(v)
+	return blocks
+}
+
+func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
+	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
+	var fold [][]slack.Block
+	for _, p := range c.PRs {
+		lead = append(lead, p.blocks(v, cardQuietBody)...)
+		fold = append(fold, p.folded(cardQuietBody)...)
 	}
+	for _, r := range c.Rows {
+		if r.PR != nil {
+			fold = append(fold, r.PR.folded(cardQuietBody)...)
+		}
+	}
+	tail := c.tail(v)
+	if c.Body != "" {
+		visible := cardQuietBody
+		if c.Waits != "" {
+			visible = cardWaitBody
+		}
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(tail)-1, visible, true)
+		lead = append(lead, body[0]...)
+		fold = append(body[1:], fold...)
+	}
+	if len(fold) > 0 && !v.unfolded && c.Waits == "" && v.tapped == "" {
+		tail = slices.Insert(tail, len(tail)-1, slack.Block(slack.NewActionBlock(cardFoldBlock, button(cardFoldAction, cardExplainLabel))))
+	}
+	return append(lead, tail...), fold
+}
+
+func (c statusCard) tail(v cardView) []slack.Block {
+	blocks := make([]slack.Block, 0, len(c.Images)+len(c.Options)+len(c.Rows)+cardMaxFacts)
 	for _, image := range c.Images {
 		blocks = append(blocks, imageBlock(image))
 	}
@@ -982,7 +1195,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.rollup(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
-	blocks = append(blocks, c.optionList()...)
+	blocks = append(blocks, c.optionRows(v.tapped == "" && !v.final)...)
 	if c.Group != "" {
 		for _, r := range c.Rows {
 			blocks = append(blocks, r.blocks(v)...)
@@ -992,18 +1205,18 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	if v.tapped != "" {
 		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
 	}
+	if v.final || c.refsOnly() {
+		return append(blocks, c.context(v.tag, v.at, ""))
+	}
 	if c.Waits != "" {
 		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, c.waitHint())), c.waitActions(), c.context(v.tag, v.at, ""))
-	}
-	if c.refsOnly() {
-		return append(blocks, c.context(v.tag, v.at, ""))
 	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
 }
 
 func (c statusCard) refsOnly() bool {
-	return len(c.Refs) > 0 && c.Body == "" && c.Progress == nil && c.Rollup == nil &&
-		len(c.Options)+len(c.Asks)+len(c.Links)+len(c.Facts)+len(c.Images) == 0
+	return len(c.Refs) > 0 && c.Body == "" && c.Waits == "" && c.Progress == nil && c.Rollup == nil &&
+		len(c.Options)+len(c.Asks)+len(c.Links)+len(c.Facts)+len(c.Images)+len(c.PRs) == 0
 }
 
 func (c statusCard) rootBlocks(v cardView) []slack.Block {
@@ -1021,7 +1234,7 @@ func (c statusCard) rootBlocks(v cardView) []slack.Block {
 		if c.Body != "" {
 			latest += "\n" + c.Body
 		}
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, latest, false, false), nil, nil))
+		blocks = append(blocks, bodyPages(latest, cardMaxBlocks, cardMaxBodyLen, false)[0]...)
 	}
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)

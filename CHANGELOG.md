@@ -6,9 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A card's footer is one quiet line, the drive or repo, the phase and the time. The branch, worktree and session no longer show.
+- A card lists an option with words to read once, beside its own Pick button, in place of a numbered list above a row of numbered buttons.
+
 ### Added
 
 - `slack_dm_status` with `thread_ts` posts a status card under that thread, where it used to post every card at the DM root. A directive for a DM message written in a thread names that thread and tells the session to pass it, so a reply lands where the user wrote.
+- A status card's `prs` field draws each pull request the same way: its link with live CI, what it changes, what differed from the plan, its risk and what blocks it as fields, and its description read from GitHub. A missing line is left out, and a failed GitHub read posts the card without its description.
+- A card's `replaces` field redraws a posted card in place with a new title and body and no buttons, and `hints` carries an option's words to read.
+- A card body renders markdown in Block Kit, bold, links, lists and a table block, up to 40,000 characters, splitting under Slack's section limit. A card body has no length limit now, except a root card's. A status card shows its first 400 characters and a waiting card its first 1,500; the rest stays behind Explain more, which posts it in the card's thread.
 - The permission hook honours the user's tap on a permission card drawn by another session: `asked-user` finds the write's own card through its board-watch answer row and confirms the tap in that board's recorded interaction. The card as drawn must name the write's destination, a later `slack-revoke:` answer for the place wins, and a ccn row alone, or a lookup that fails, grants nothing.
 - The `decide` judge reads the drive's owner ledger: a record in the session tree that cites `owner:m<row>` gives the judge that row's words, read by exact id from the communicator's `owner-relay/owner-ledger.md` in the drive's state dir, never the citing record's own quote.
 - A permission card's id names its place, `slack:<channel>:<thread>:<digest>`, and an approving tap on one tells the session to record its capture with the label `slack-grant:<channel>/<thread>`, or `slack-grant:<channel>` for a top-level post or DM.

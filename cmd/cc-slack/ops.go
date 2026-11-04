@@ -607,6 +607,9 @@ func (a *app) watchPostThread(ctx context.Context, db *sql.DB, subjectID, channe
 }
 
 func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string) (postResult, error) {
+	if err := checkBlocks(blocks); err != nil {
+		return postResult{}, err
+	}
 	res, err := postAs(ctx, a.newAPI(id.Token), db, a.avatar, a.poller.log, a.now(), id, channelID, threadTS, text, blocks, files)
 	if err == nil && threadTS != "" {
 		a.wrote(ctx, res.ChannelID, threadTS)
@@ -921,6 +924,9 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block) error {
+	if err := checkBlocks(blocks); err != nil {
+		return err
+	}
 	text, blocks = fitText(text, blocks)
 	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts,
 		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl())
@@ -1714,23 +1720,17 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
-	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
-	if b.Card != nil {
-		texts, prs = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
-		b.Card.Body = texts[0]
-	}
-	under := b.ThreadTS
-	if b.About != "" {
-		if b.Card != nil || b.Text == "" {
-			return fail("about puts a text reply in a waiting card's thread; send text, not a card")
+	msg, later, prs := a.dmMessageOf(hc, id, b, blocks)
+	if b.Card != nil && b.Card.Replaces != "" {
+		thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, msg.tag)
+		if err != nil {
+			return fail(fallback(actionWrite, err))
 		}
-		if under, err = a.cardThread(hc.Ctx, hc.DB, sub.ID, id, b.About); err != nil {
-			return fail(err.Error())
-		}
+		return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 	}
-	if b.Card != nil {
-		msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
+	under, err := a.dmThreadOf(hc, sub, id, b)
+	if err != nil {
+		return fail(err.Error())
 	}
 	thread, ts, posted, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, under, msg)
 	if errors.Is(err, errAskedAgain) {
@@ -1742,8 +1742,73 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
+		return fail(err.Error())
+	}
 	a.attachPRCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, prs)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+}
+
+func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, error) {
+	if b.About == "" {
+		return b.ThreadTS, nil
+	}
+	if b.Card != nil || b.Text == "" {
+		return "", errors.New("about puts a text reply in a waiting card's thread; send text, not a card")
+	}
+	return a.cardThread(hc.Ctx, hc.DB, sub.ID, id, b.About)
+}
+
+func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block, []linkedPR) {
+	texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
+	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
+	if b.Card == nil {
+		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
+			return msg, nil, prs
+		}
+		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true)
+		msg.text, msg.blocks = clipRunes(msg.text, cardMaxSectionLen), pages[0]
+		return msg, pages[1:], prs
+	}
+	texts, prs = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
+	b.Card.Body = texts[0]
+	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
+	a.describeCardPRs(hc.Ctx, id, b.Card)
+	return msg, nil, prs
+}
+
+func (a *app) postPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts, text string, pages [][]slack.Block) error {
+	for _, page := range pages {
+		if _, _, _, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, thread, dmMessage{text: text, blocks: page}); err != nil {
+			return fmt.Errorf("posted the start of this reply at %s, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
+		}
+	}
+	return nil
+}
+
+func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag cardTag) (string, string, error) {
+	ref, err := parsePermalink(card.Replaces)
+	if err != nil {
+		return "", "", err
+	}
+	thread := cmp.Or(ref.threadTS, ref.ts)
+	card.Replaces = ""
+	api := a.newAPI(id.Token)
+	now := a.now()
+	if a.cards.markReply(id.DMChannelID, thread, ref.ts, func(m *liveMessage) {
+		m.Card, m.Tapped, m.Hint, m.Final, m.Unfolded = card, "", "", true, false
+	}) {
+		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
+	} else {
+		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}))
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("replace card %s in place: %w", ref.ts, err)
+	}
+	if err := api.RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: ref.ts}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
+		a.poller.log.Printf("card %s replaced, but its withdrawn mark stays: %v", ref.ts, err)
+	}
+	return thread, ref.ts, nil
 }
 
 func (a *app) attachCardImages(ctx context.Context, id identity, b opBody) error {
