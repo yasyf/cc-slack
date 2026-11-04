@@ -483,6 +483,7 @@ func TestAHeldStreamAloneCarriesTheMessageWhileItRuns(t *testing.T) {
 
 	f.alive[stream] = false
 	f.slack.add(testChannel, reply("1800000000.000300", "after it exits"))
+	f.nudgeThread()
 	f.tick()
 	if len(f.plane.directives) != 1 {
 		t.Fatalf("directives = %+v, want the message once the stream is gone", f.plane.directives)
