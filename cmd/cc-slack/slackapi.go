@@ -243,7 +243,7 @@ func fetchRecentTopLevel(ctx context.Context, api slackAPI, channelID string, li
 		})
 		if err != nil {
 			var rate *slack.RateLimitedError
-			if len(out) == 0 || !(errors.Is(err, context.DeadlineExceeded) || errors.As(err, &rate)) {
+			if len(out) == 0 || (!errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &rate)) {
 				return nil, false, err
 			}
 			partial = true
