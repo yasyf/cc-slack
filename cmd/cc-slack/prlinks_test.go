@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -313,7 +314,7 @@ func TestPRReposAddTheSessionRepoToTheListedOnes(t *testing.T) {
 	}
 }
 
-func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
+func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	var sent map[string]string
@@ -321,8 +322,8 @@ func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	cards := awaitPRCards(t, l, testDM)
-	if len(cards) != 1 || cards[0].threadTS != sent["thread_ts"] {
-		t.Fatalf("cards = %+v, want one in thread %s", cards, sent["thread_ts"])
+	if len(cards) != 1 || cards[0].threadTS != "" {
+		t.Fatalf("cards = %+v, want one at the DM root", cards)
 	}
 	for _, want := range []string{"*What changes:* chats load faster", "*Blocks landing:* your approval", "<https://github.com/acme/app/pull/41|acme/app#41>"} {
 		if !strings.Contains(shown(t, cards[0]), want) {
@@ -336,8 +337,62 @@ func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
 		t.Fatalf("card command asked %v", got)
 	}
 	l.do(opDMStatus, map[string]any{"thread_ts": sent["thread_ts"], "text": "acme/app#41 again"})
+	l.do(opDMStatus, map[string]any{"text": "acme/app#41 elsewhere"})
+	l.do(opDMStatus, map[string]any{"thread_ts": cards[0].ts, "text": "acme/app#41 under its own card"})
 	if cards := prCards(l, testDM); len(cards) != 1 || len(cmd.requests(t)) != 1 {
-		t.Fatalf("a second mention drew cards %+v after %d asks, want the one card and one ask", cards, len(cmd.requests(t)))
+		t.Fatalf("later mentions drew cards %+v after %d asks, want the one card and one ask", cards, len(cmd.requests(t)))
+	}
+}
+
+func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green"})
+	cards := awaitPRCards(t, l, testDM)
+	if len(cards) != 1 || cards[0].threadTS != "" {
+		t.Fatalf("cards = %+v, want one at the DM root, not in his thread %s", cards, hisThread)
+	}
+	eventually(t, "the watch on the card's own thread", func() bool { return slices.Contains(activeDMThreads(t, l), cards[0].ts) })
+	tapMerge(t, l, cards[0])
+	if edits := editsOf(l.slack.edited(), cards[0].ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
+		t.Fatalf("card edits = %v, want the tap on the root card applied", edits)
+	}
+}
+
+func TestAPRAskedAgainAtANewHeadGetsANewRootCard(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	tapMerge(t, l, awaitPRCards(t, l, testDM)[0])
+	asks := len(cmd.requests(t))
+	l.do(opDMStatus, map[string]any{"text": "#41 at the head he answered"})
+	eventually(t, "the ask after his answer", func() bool { return len(cmd.requests(t)) > asks })
+	if got := prCards(l, testDM); len(got) != 1 {
+		t.Fatalf("PR cards = %+v, want no second card for the head he answered", got)
+	}
+	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 moved"})
+	eventually(t, "the new head's card at the DM root", func() bool {
+		return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
+			return strings.Contains(p.blocks, "merge:41:09b10f1") && p.threadTS == ""
+		})
+	})
+}
+
+func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "a reply naming its thread"})
+	l.do(opDMStatus, cardBody("A card from the session that just posted there", "merge it"))
+	l.do(opDMStatus, map[string]any{"text": "a status with no row"})
+	sent := l.slack.sent()
+	if len(sent) != 3 || sent[0].threadTS != hisThread || sent[1].threadTS != "" || sent[2].threadTS != "" {
+		t.Fatalf("posts = %+v, want the reply in %s and the card and status at the DM root", sent, hisThread)
 	}
 }
 
@@ -399,9 +454,12 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 	if got := l.slack.sentTo(testChannel); len(got) != 2 || len(cmd.requests(t)) != 0 {
 		t.Fatalf("unlisted channel got %+v after %d asks, want two linked posts, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
 	}
-	l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green"})
-	if cards := awaitPRCards(t, l, testRoom); len(cards) != 1 {
-		t.Fatalf("listed channel got cards %+v, want one", cards)
+	var room postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green"}).Body, &room); err != nil {
+		t.Fatal(err)
+	}
+	if cards := awaitPRCards(t, l, testRoom); len(cards) != 1 || cards[0].threadTS != room.TS {
+		t.Fatalf("listed channel got cards %+v, want one in the post's thread %s", cards, room.TS)
 	}
 }
 
@@ -414,7 +472,7 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: card.threadTS,
+	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
 		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
 		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0300"})
 	want := `{"answer":{"label":"Merge","number":41,"repo":"acme/app","waits":"merge:41:e718a74"}}`
@@ -447,7 +505,7 @@ func tapMerge(t *testing.T, l *liveDaemon, card fakePost) identity {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: card.threadTS,
+	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
 		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
 		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0301"})
 	return id
@@ -472,7 +530,7 @@ func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T)
 
 	said := l.slack.sentTo(testDM)
 	last := said[len(said)-1]
-	if last.threadTS != card.threadTS || !strings.Contains(last.text, "Your *Merge* did not count: #41 moved to 09b10f1") || !strings.Contains(last.text, "shows where it stands now") {
+	if last.threadTS != card.ts || !strings.Contains(last.text, "Your *Merge* did not count: #41 moved to 09b10f1") || !strings.Contains(last.text, "shows where it stands now") {
 		t.Fatalf("last post = %+v, want the refusal in his thread", last)
 	}
 	edits := editsOf(l.slack.edited(), card.ts)

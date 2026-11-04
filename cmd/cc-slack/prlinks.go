@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yasyf/cc-interact/subject"
 )
 
 const (
@@ -220,7 +222,14 @@ func cardsAt(id identity, channelID string) bool {
 	return strings.HasPrefix(channelID, "D") || slices.Contains(id.Config.PRLinks.CardChannels, channelID)
 }
 
-func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, prs []linkedPR) {
+func prCardThread(id identity, channelID, postThread string) string {
+	if channelID == id.DMChannelID {
+		return ""
+	}
+	return postThread
+}
+
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread string, prs []linkedPR) {
 	command := id.Config.PRLinks.CardCommand
 	if len(command) == 0 || !cardsAt(id, channelID) {
 		return
@@ -228,10 +237,12 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channe
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
-	t := cards.draft(channelID, threadTS)
+	post := cards.draft(channelID, postThread)
 	var asked []map[string]any
 	for _, pr := range prs {
-		if pr.state.terminal() || t.carded(map[string]bool{pr.ref.key(): true}) {
+		keys := map[string]bool{pr.ref.key(): true}
+		open := func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) }
+		if pr.state.terminal() || post.carded(keys) || cards.rootPRCard(channelID, open) {
 			continue
 		}
 		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
@@ -240,39 +251,47 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channe
 	if len(asked) == 0 {
 		return
 	}
-	go a.postPRCards(context.WithoutCancel(ctx), db, id, channelID, threadTS, asked)
+	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), asked)
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, asked []map[string]any) {
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, asked []map[string]any) {
 	provided, err := askPRCards(ctx, id, asked)
 	if err != nil {
-		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, threadTS, err)
+		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
 		return
 	}
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
-	t := cards.draft(channelID, threadTS)
 	now := a.now()
 	for _, p := range provided {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
 			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
 			continue
 		}
-		if slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }) {
+		sameAsk := func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }
+		t := cards.draft(channelID, thread)
+		if slices.ContainsFunc(t.PRCards, sameAsk) || cards.rootPRCard(channelID, func(_ *liveThread, m *liveMessage) bool { return sameAsk(m) }) {
 			continue
 		}
 		m := &liveMessage{Card: p.Card, At: now}
-		res, err := a.post(ctx, db, id, channelID, threadTS, m.Card.text(), m.Card.replyBlocks(t.view(m, now, cards.refs)), nil)
+		res, err := a.post(ctx, db, id, channelID, thread, m.Card.text(), m.Card.replyBlocks(t.view(m, now, cards.refs)), nil)
 		if err != nil {
-			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, threadTS, err)
-			break
+			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
+			return
 		}
 		m.TS = res.TS
+		t.Thread = cmp.Or(thread, res.TS)
 		t.PRCards = append(t.PRCards, m)
+		t.Updated = now
+		cards.commit(t)
+		if thread != "" {
+			continue
+		}
+		if err := a.bindSessionThread(ctx, db, sub, id, res.TS); err != nil {
+			a.poller.log.Printf("PR card for %s#%d at %s: its thread goes unwatched: %v", p.Repo, p.Number, res.TS, err)
+		}
 	}
-	t.Updated = now
-	cards.commit(t)
 }
 
 func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]providedCard, error) {

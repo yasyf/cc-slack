@@ -182,6 +182,11 @@ func (t *liveThread) carded(keys map[string]bool) bool {
 	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) })
 }
 
+func (t *liveThread) open(m *liveMessage) bool {
+	_, answered := t.Answers[m.Card.Waits]
+	return !answered && m.Tapped == ""
+}
+
 func (t *liveThread) expiredSinceDrawn(now time.Time) bool {
 	for _, k := range t.Asks {
 		if k.ExpiresAt != nil && k.ExpiresAt.After(t.Drawn) && !now.Before(*k.ExpiresAt) {
@@ -323,6 +328,15 @@ func (l *liveCards) sessionThread(channel string, threads []string, matches func
 		}
 	}
 	return nil
+}
+
+func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMessage) bool) bool {
+	for _, t := range l.threads {
+		if t.Channel == channel && slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == t.Thread && matches(t, m) }) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *liveCards) forget(t *liveThread, ts string) {
@@ -778,8 +792,7 @@ func (l *liveCards) openPRCards() []openPRCard {
 	var open []openPRCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			_, answered := t.Answers[m.Card.Waits]
-			if ids := m.Card.refIDs(); !answered && m.Tapped == "" && len(ids) > 0 {
+			if ids := m.Card.refIDs(); t.open(m) && len(ids) > 0 {
 				open = append(open, openPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids[0]})
 			}
 		}
