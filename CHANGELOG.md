@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The permission hook honours the user's tap on a permission card drawn by another session: `asked-user` finds the write's own card through its board-watch answer row and confirms the tap in that board's recorded interaction. A ccn row alone grants nothing.
+- The `decide` judge reads the drive's owner ledger: a record in the session tree that cites `owner:m<row>` gives the judge that row's words from the communicator's `owner` record, never the citing record's own quote.
+- A permission card's id names its place, `slack:<channel>:<thread>:<digest>`, and an approving tap on one tells the session to record its capture with the label `slack-grant:<channel>/<thread>`, or `slack-grant:<channel>` for a top-level post or DM.
+
 - A resumed session gets its Slack watches back with no re-arming: the `session-start` hook brings back what the restart orphaned, says so in the session's context, and catches up on anything sent while it was down. A DM another session took meanwhile stays with that session.
 - `cc-slack card-answer --withdrawn --label "<reason>"` closes a waiting card whose question was withdrawn. The card keeps its title and shows `Withdrawn: <reason>` in place of its buttons. No session receives a tap, and later answers are refused.
 - An answered, settled, or withdrawn waiting card gets a reaction: `white_check_mark` for an answer, `x` for a withdrawal.

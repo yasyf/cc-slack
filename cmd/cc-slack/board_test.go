@@ -587,3 +587,21 @@ func TestAHandPostedQuestionCardIsPostedWithAWarningNamingTheBoard(t *testing.T)
 		t.Fatalf("a status card that asks nothing got the warning %q", res["warning"])
 	}
 }
+
+func TestApprovedPermissionCardTapNamesItsGrantLabel(t *testing.T) {
+	options := []string{"Yes", "No"}
+	for _, c := range []struct {
+		tap  askTap
+		want string
+	}{
+		{askTap{ID: "slack:C0APPFOLLOW:1791859635.513139:0a1b2c3d4e5f", Label: "Yes", Options: options}, "slack-grant:C0APPFOLLOW/1791859635.513139"},
+		{askTap{ID: "slack:U0PRIYA0001::0a1b2c3d4e5f", Label: "Yes", Options: options}, "slack-grant:U0PRIYA0001"},
+		{askTap{ID: "slack:C0APPFOLLOW:1791859635.513139:0a1b2c3d4e5f", Label: "No", Options: options}, ""},
+		{askTap{ID: "slack:C0APPFOLLOW:1791859635.513139:0a1b2c3d4e5f", Label: "only after I review it", Options: options, Other: true}, ""},
+		{askTap{ID: "step-3:merge", Label: "Merge", Options: []string{"Merge", "Hold"}}, ""},
+	} {
+		if got := grantLabel(c.tap); got != c.want {
+			t.Errorf("grantLabel(%+v) = %q, want %q", c.tap, got, c.want)
+		}
+	}
+}

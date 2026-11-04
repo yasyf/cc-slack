@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,6 +22,8 @@ const (
 	cardActionEventType = "cc_slack_action"
 	eventAction         = "slack.action"
 )
+
+var permissionCard = regexp.MustCompile(`^slack:([A-Z0-9]+):(\d+\.\d+)?:[0-9a-f]{12}$`)
 
 type cardActionPush struct {
 	User      string `json:"user"`
@@ -180,8 +183,12 @@ func tapLine(who, permalink string, k askTap, capture string) string {
 			who, k.ID, k.ID, k.ID, permalink)
 	}
 	if k.Waits {
+		record := "record the capture in cc-notes"
+		if label := grantLabel(k); label != "" {
+			record += " with the label " + label
+		}
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. The lane that asked is stopped on this answer: hand it to that lane now, "+
-			"and record the capture in cc-notes: %s", who, k.ID, k.Label, capture)
+			"and %s: %s", who, k.ID, k.Label, record, capture)
 	}
 	if k.ID != "" {
 		return fmt.Sprintf("%s: they answered your ask %q with %q. Act on it as operator steering; a later card may have superseded it.",
@@ -196,6 +203,17 @@ func tapLine(who, permalink string, k askTap, capture string) string {
 	}
 	return fmt.Sprintf("%s: they chose %q. Act on it as operator steering; nothing waits on this tap, and a later card may have superseded it.",
 		who, k.Label)
+}
+
+func grantLabel(k askTap) string {
+	place := permissionCard.FindStringSubmatch(k.ID)
+	if place == nil || k.Other || len(k.Options) < 2 || k.Label == k.Options[len(k.Options)-1] {
+		return ""
+	}
+	if place[2] == "" {
+		return "slack-grant:" + place[1]
+	}
+	return "slack-grant:" + place[1] + "/" + place[2]
 }
 
 func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
