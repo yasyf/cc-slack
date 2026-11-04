@@ -168,9 +168,9 @@ func mergeRowCard() providedCard {
 	}}
 }
 
-func awaitPRCards(t *testing.T, l *liveDaemon, channelID string, n int) []fakePost {
+func awaitPRCards(t *testing.T, l *liveDaemon, channelID string) []fakePost {
 	t.Helper()
-	eventually(t, "the PR cards", func() bool { return len(prCards(l, channelID)) >= n })
+	eventually(t, "the PR cards", func() bool { return len(prCards(l, channelID)) > 0 })
 	return prCards(l, channelID)
 }
 
@@ -302,7 +302,7 @@ func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green"}).Body, &sent); err != nil {
 		t.Fatal(err)
 	}
-	cards := awaitPRCards(t, l, testDM, 1)
+	cards := awaitPRCards(t, l, testDM)
 	if len(cards) != 1 || cards[0].threadTS != sent["thread_ts"] {
 		t.Fatalf("cards = %+v, want one in thread %s", cards, sent["thread_ts"])
 	}
@@ -330,7 +330,7 @@ func TestAPostReturnsBeforeItsPRCardCommandAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slow := strings.Replace(string(script), "*) echo", fmt.Sprintf("*) until [ -e '%s' ]; do sleep 0.02; done; echo", release), 1)
+	slow := strings.Replace(string(script), "\n*) echo", fmt.Sprintf("\n*) until [ -e '%s' ]; do sleep 0.02; done; echo", release), 1)
 	if err := os.WriteFile(cmd.argv[0], []byte(slow), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestAPostReturnsBeforeItsPRCardCommandAnswers(t *testing.T) {
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cards := awaitPRCards(t, l, testDM, 1); len(cards) != 1 {
+	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
 		t.Fatalf("cards = %+v, want one once the command answers", cards)
 	}
 }
@@ -382,7 +382,7 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 		t.Fatalf("unlisted channel got %+v after %d asks, want two linked posts, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
 	}
 	l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green"})
-	if cards := awaitPRCards(t, l, testRoom, 1); len(cards) != 1 {
+	if cards := awaitPRCards(t, l, testRoom); len(cards) != 1 {
 		t.Fatalf("listed channel got cards %+v, want one", cards)
 	}
 }
@@ -391,7 +391,7 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
-	card := awaitPRCards(t, l, testDM, 1)[0]
+	card := awaitPRCards(t, l, testDM)[0]
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
@@ -424,7 +424,7 @@ func TestPRCardRedrawsWhenItsPRLands(t *testing.T) {
 	gh.mergedAfter = 1
 	gh.mu.Unlock()
 	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
-	card := awaitPRCards(t, l, testDM, 1)[0]
+	card := awaitPRCards(t, l, testDM)[0]
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, b := range editsOf(l.slack.edited(), card.ts) {
