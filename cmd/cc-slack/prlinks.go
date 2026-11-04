@@ -94,15 +94,11 @@ func prMentions(text string) []prMention {
 	return out
 }
 
-func (m prMention) candidates(repos []refID) []refID {
+func (m prMention) candidates(holders map[int][]refID) []refID {
 	if m.ref.Owner != "" {
 		return []refID{m.ref}
 	}
-	out := make([]refID, len(repos))
-	for i, r := range repos {
-		out[i] = refID{Kind: refPR, Owner: r.Owner, Repo: r.Repo, Number: m.ref.Number}
-	}
-	return out
+	return holders[m.ref.Number]
 }
 
 func prRepos(ctx context.Context, scope string, listed []string) []refID {
@@ -124,18 +120,21 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 		return texts, nil
 	}
 	mentions := make([][]prMention, len(texts))
-	bare := false
+	var bare []int
 	for i, text := range texts {
 		mentions[i] = prMentions(text)
-		bare = bare || slices.ContainsFunc(mentions[i], func(m prMention) bool { return m.ref.Owner == "" })
+		for _, m := range mentions[i] {
+			if m.ref.Owner == "" && !slices.Contains(bare, m.ref.Number) {
+				bare = append(bare, m.ref.Number)
+			}
+		}
 	}
-	var repos []refID
-	if bare {
-		repos = prRepos(ctx, scope, id.Config.PRLinks.Repos)
-	}
+	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
+	defer cancel()
+	holders := a.bareHolders(lookup, id, scope, bare)
 	var asked []refID
 	for _, m := range slices.Concat(mentions...) {
-		for _, r := range m.candidates(repos) {
+		for _, r := range m.candidates(holders) {
 			if !slices.Contains(asked, r) {
 				asked = append(asked, r)
 			}
@@ -144,8 +143,6 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 	if len(asked) == 0 {
 		return texts, nil
 	}
-	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
-	defer cancel()
 	found, err := a.cards.client.queryPRs(lookup, a.cards.host(refHostGitHub, id.Config).token, asked)
 	if err != nil {
 		a.poller.log.Printf("post goes out with its PR references unlinked: %v", err)
@@ -157,22 +154,65 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 		var out strings.Builder
 		at := 0
 		for _, m := range mentions[i] {
-			held := m.candidates(repos)
-			k := slices.IndexFunc(held, func(r refID) bool { _, ok := found[r.key()]; return ok })
-			if k < 0 {
+			held := slices.DeleteFunc(slices.Clone(m.candidates(holders)), func(r refID) bool { _, ok := found[r.key()]; return !ok })
+			if len(held) != 1 {
 				continue
 			}
+			pr := held[0]
 			out.WriteString(text[at:m.start])
-			out.WriteString(slackLink(cmp.Or(m.url, prURL(held[k])), fmt.Sprintf("#%d", held[k].Number)))
+			out.WriteString(slackLink(cmp.Or(m.url, prURL(pr)), fmt.Sprintf("#%d", pr.Number)))
 			at = m.end
-			if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == held[k] }) {
-				prs = append(prs, linkedPR{ref: held[k], state: found[held[k].key()].state()})
+			if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == pr }) {
+				prs = append(prs, linkedPR{ref: pr, state: found[pr.key()].state()})
 			}
 		}
 		out.WriteString(text[at:])
 		linked[i] = out.String()
 	}
 	return linked, prs
+}
+
+func (a *app) bareHolders(ctx context.Context, id identity, scope string, numbers []int) map[int][]refID {
+	holders := map[int][]refID{}
+	if len(numbers) == 0 {
+		return holders
+	}
+	command := id.Config.PRLinks.CardCommand
+	if len(command) == 0 {
+		repos := prRepos(ctx, scope, id.Config.PRLinks.Repos)
+		for _, n := range numbers {
+			for _, r := range repos {
+				r.Number = n
+				holders[n] = append(holders[n], r)
+			}
+		}
+		return holders
+	}
+	out, err := runCardCommand(ctx, command, map[string]any{"numbers": numbers})
+	if err != nil {
+		a.poller.log.Printf("bare PR numbers %v go out unlinked: %v", numbers, err)
+		return holders
+	}
+	var answer struct {
+		PRs []struct {
+			Repo   string `json:"repo"`
+			Number int    `json:"number"`
+		} `json:"prs"`
+	}
+	if err := json.Unmarshal(out, &answer); err != nil {
+		a.poller.log.Printf("bare PR numbers %v go out unlinked: decode %s: %v", numbers, command[0], err)
+		return holders
+	}
+	for _, pr := range answer.PRs {
+		r, ok := parseRepo(pr.Repo)
+		if !ok {
+			a.poller.log.Printf("%s named %q as the repo of #%d, not owner/name", command[0], pr.Repo, pr.Number)
+			continue
+		}
+		r.Number = pr.Number
+		holders[pr.Number] = append(holders[pr.Number], r)
+	}
+	return holders
 }
 
 func cardsAt(id identity, channelID string) bool {

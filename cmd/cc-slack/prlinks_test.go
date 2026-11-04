@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -104,19 +105,32 @@ const (
 )
 
 type cardCommand struct {
-	argv  []string
-	asked string
+	argv     []string
+	asked    string
+	resolved string
 }
 
-func fakeCardCommand(t *testing.T, cards ...providedCard) cardCommand {
+func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) cardCommand {
 	t.Helper()
 	dir := t.TempDir()
-	c := cardCommand{argv: []string{filepath.Join(dir, "card")}, asked: filepath.Join(dir, "asked")}
-	answer := filepath.Join(dir, "cards.json")
+	c := cardCommand{argv: []string{filepath.Join(dir, "card")}, asked: filepath.Join(dir, "asked"), resolved: filepath.Join(dir, "resolved")}
+	answer, holders := filepath.Join(dir, "cards.json"), filepath.Join(dir, "holders.json")
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": append([]providedCard{}, cards...)}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := fmt.Sprintf("#!/bin/sh\ncat >> '%s'\necho >> '%s'\ncat '%s'\n", c.asked, c.asked, answer)
+	held := make([]map[string]any, 0, len(drivePRs))
+	for _, pr := range drivePRs {
+		repo, number, _ := strings.Cut(pr, "#")
+		n, err := strconv.Atoi(number)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, map[string]any{"repo": repo, "number": n})
+	}
+	if err := os.WriteFile(holders, mustJSON(map[string]any{"prs": held}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo \"$in\" >> '%s'; cat '%s' ;;\n*) echo \"$in\" >> '%s'; cat '%s' ;;\nesac\n", c.resolved, holders, c.asked, answer)
 	if err := os.WriteFile(c.argv[0], []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +139,17 @@ func fakeCardCommand(t *testing.T, cards ...providedCard) cardCommand {
 
 func (c cardCommand) requests(t *testing.T) []string {
 	t.Helper()
-	raw, err := os.ReadFile(c.asked)
+	return readAsks(t, c.asked)
+}
+
+func (c cardCommand) resolves(t *testing.T) []string {
+	t.Helper()
+	return readAsks(t, c.resolved)
+}
+
+func readAsks(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -174,8 +198,8 @@ func TestPostLinksEachPRReferenceForm(t *testing.T) {
 		{"pr url", "see https://github.com/acme/app/pull/41.", "see <https://github.com/acme/app/pull/41|#41>."},
 		{"pr url with a path", "diff at https://github.com/Acme/App/pull/41/files", "diff at <https://github.com/Acme/App/pull/41/files|#41>"},
 		{"owner/repo", "acme/lib#7 landed", "<https://github.com/acme/lib/pull/7|#7> landed"},
-		{"bare, first listed repo wins", "(#41) is green", "(<https://github.com/acme/app/pull/41|#41>) is green"},
-		{"bare, later listed repo", "*#7* is green", "*<https://github.com/acme/lib/pull/7|#7>* is green"},
+		{"bare, two listed repos hold it", "(#41) is green", ""},
+		{"bare, one listed repo holds it", "*#7* is green", "*<https://github.com/acme/lib/pull/7|#7>* is green"},
 		{"already linked", "<https://github.com/acme/app/pull/41|the fix> in <#C1|general>", ""},
 		{"code span", "run `gh pr view #41`", ""},
 		{"code block", "```\nacme/app#41 and #7\n```", ""},
@@ -251,7 +275,7 @@ func TestPostReadsGitHubOnceHoweverManyPRs(t *testing.T) {
 	}
 }
 
-func TestPRReposTryTheSessionRepoFirst(t *testing.T) {
+func TestPRReposAddTheSessionRepoToTheListedOnes(t *testing.T) {
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:Acme/Lib.git"}} {
 		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
@@ -266,7 +290,7 @@ func TestPRReposTryTheSessionRepoFirst(t *testing.T) {
 }
 
 func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
-	cmd := fakeCardCommand(t, mergeRowCard())
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	var sent map[string]string
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green"}).Body, &sent); err != nil {
@@ -295,7 +319,7 @@ func TestAnOpenPRGetsItsMergeRowCardInThePostsThreadOnce(t *testing.T) {
 
 func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("merged", func(t *testing.T) {
-		cmd := fakeCardCommand(t, mergeRowCard())
+		cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 		l, gh := cardingDaemon(t, cmd.argv, "acme/app#41")
 		gh.mu.Lock()
 		gh.merged["acme/app#41"] = true
@@ -306,7 +330,7 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 		}
 	})
 	t.Run("not held", func(t *testing.T) {
-		cmd := fakeCardCommand(t)
+		cmd := fakeCardCommand(t, []string{"acme/app#41"})
 		l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 		l.do(opDMStatus, map[string]any{"text": "#41 is green"})
 		if got := l.slack.sentTo(testDM); len(got) != 1 || len(cmd.requests(t)) != 1 {
@@ -316,7 +340,7 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 }
 
 func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
-	cmd := fakeCardCommand(t, mergeRowCard())
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	var sent postResult
 	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green"}).Body, &sent); err != nil {
@@ -333,7 +357,7 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 }
 
 func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
-	cmd := fakeCardCommand(t, mergeRowCard())
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
 	card := prCards(l, testDM)[0]
@@ -363,7 +387,7 @@ func TestARefsOnlyCardOffersNoAckOrPause(t *testing.T) {
 }
 
 func TestPRCardRedrawsWhenItsPRLands(t *testing.T) {
-	cmd := fakeCardCommand(t, mergeRowCard())
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, gh := cardingDaemon(t, cmd.argv, "acme/app#41")
 	gh.mu.Lock()
 	gh.mergedAfter = 1
@@ -380,4 +404,38 @@ func TestPRCardRedrawsWhenItsPRLands(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("card edits %v never showed the PR landed", editsOf(l.slack.edited(), card.ts))
+}
+
+func TestABareNumberLinksToTheDrivePRItNamesOrStaysPlain(t *testing.T) {
+	const github = "https://github.com/yasyf/cc-skills/pull/2475"
+	for _, tc := range []struct {
+		name, text string
+		drivePRs   []string
+		want       string
+		resolves   int
+	}{
+		{"one drive PR holds it", "Merges #2475", []string{"yasyf/cc-skills#2475"}, "Merges <" + github + "|#2475>", 1},
+		{"no drive PR holds it", "Merges #2475", nil, "Merges #2475", 1},
+		{"two drive PRs hold it", "Merges #2475", []string{"yasyf/cc-skills#2475", "acme/app#2475"}, "Merges #2475", 1},
+		{"qualified", "Merges yasyf/cc-skills#2475", nil, "Merges <" + github + "|#2475>", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := fakeCardCommand(t, tc.drivePRs)
+			l, _ := cardingDaemon(t, cmd.argv, "acme/app#2475", "yasyf/cc-skills#2475")
+			l.do(opDMStatus, map[string]any{"text": tc.text})
+			if got := l.slack.sentTo(testDM)[0].text; got != tc.want {
+				t.Fatalf("posted %q, want %q", got, tc.want)
+			}
+			if got := cmd.resolves(t); len(got) != tc.resolves || tc.resolves == 1 && got[0] != `{"numbers":[2475]}` {
+				t.Fatalf("card command resolved %v, want %d asks for [2475]", got, tc.resolves)
+			}
+			wantCards := []string{}
+			if tc.want != tc.text {
+				wantCards = []string{`{"prs":[{"number":2475,"repo":"yasyf/cc-skills"}]}`}
+			}
+			if got := cmd.requests(t); len(got) != len(wantCards) || len(got) == 1 && got[0] != wantCards[0] {
+				t.Fatalf("card command asked %v, want %v", got, wantCards)
+			}
+		})
+	}
 }
