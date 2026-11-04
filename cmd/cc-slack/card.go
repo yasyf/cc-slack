@@ -259,7 +259,7 @@ func (c statusCard) checkPermissionWords() error {
 	var errs []error
 	for _, j := range cardJargon {
 		found := slices.DeleteFunc(j.pattern.FindAllString(text, -1), func(m string) bool {
-			return j.mixed && !(strings.ContainsAny(m, "0123456789") && strings.ContainsFunc(m, unicode.IsLetter))
+			return j.mixed && (!strings.ContainsAny(m, "0123456789") || !strings.ContainsFunc(m, unicode.IsLetter))
 		})
 		if len(found) > 0 {
 			errs = append(errs, fmt.Errorf("a Slack permission card says where and to whom in words: %q is %s", found[0], j.fix))

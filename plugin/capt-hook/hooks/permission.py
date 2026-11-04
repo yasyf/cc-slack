@@ -70,8 +70,7 @@ UNREAD = (
 )
 REFUSED = (
     "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
-    " `slack_dm_status` and the second card when cc-present is missing, then retry once they tap Yes. Open the card's"
-    " body with a `Why:` line saying in one sentence why this post is worth the user's tap."
+    " `slack_dm_status` and the second card when cc-present is missing, its body opened by a `Why:` line, then retry once they tap Yes."
     "\n```json\n{board}\n```\n```json\n{ask}\n```"
 )
 RULES = """
