@@ -683,6 +683,10 @@ write every post so a person can answer it, and answer each reply as it lands.
 - When you need something, end with one direct question to one mentioned
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
+- A message telling its reader something waits on their yes or no carries
+  the buttons, in that message or its thread, and only such a message may say
+  it. Link a card only when the post cannot carry one. When a card was removed
+  or went stale, say so in the same breath and name its replacement.
 - Keep answering as the thread continues. Once the user has told you to
   answer someone there, each new question gets its reply without asking again.
 
