@@ -41,6 +41,7 @@ DEADLINE_MARGIN = 5
 CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, AttributeError, subprocess.SubprocessError)
 UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
 GRANT_LABEL = "slack-grant:"
+EVERY_THREAD = "/threads"
 REVOKE_LABEL = "slack-revoke:"
 ROOM_OPENED = re.compile(r"Incident opened:\W*<#(C[A-Z0-9]+)")
 ROOM_PAGES = "10"
@@ -274,6 +275,8 @@ def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
     if thread and f"{REVOKE_LABEL}{channel}/{thread}" in tags:
         return False
     if thread and f"{GRANT_LABEL}{channel}/{thread}" in tags:
+        return True
+    if thread and f"{GRANT_LABEL}{channel}{EVERY_THREAD}" in tags:
         return True
     if any(tag.startswith((f"{GRANT_LABEL}{channel}/", f"{REVOKE_LABEL}{channel}/")) for tag in tags):
         return None
@@ -721,6 +724,11 @@ THREAD_GRANT = LABELED_GRANT | {
     "title": f"May the drive reply in {FOLLOWERS} thread {DANA_THREAD}, where a user reported the outage?",
     "tags": ["owner-ruling", "scope:durable", f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"],
 }
+EVERY_THREAD_GRANT = LABELED_GRANT | {
+    "id": "e3e3e3e3e3e3e3e3",
+    "title": "May bug-thread replies go out with no approval per thread?",
+    "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}{EVERY_THREAD}"],
+}
 KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 ROOM = "C0ROOM00001"
@@ -1069,6 +1077,10 @@ on(
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"channel_id": ROOM, "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(EVERY_THREAD_GRANT)) >> DENY,
             case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
             case(
