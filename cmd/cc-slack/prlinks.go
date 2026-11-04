@@ -282,6 +282,30 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 	cards.commit(t)
 }
 
+func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
+	prs := c.allPRs()
+	if len(prs) == 0 || id.Config.GitHub == nil {
+		return
+	}
+	refs := make([]refID, 0, len(prs))
+	for _, p := range prs {
+		r, _ := parseRef(p.URL)
+		refs = append(refs, r)
+	}
+	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
+	defer cancel()
+	found, err := a.cards.client.describePRs(lookup, a.cards.host(refHostGitHub, id.Config).token, refs)
+	if err != nil {
+		a.poller.log.Printf("card %q goes out without its PR descriptions: %v", c.Title, err)
+		return
+	}
+	for i, p := range prs {
+		if pr, ok := found[refs[i].key()]; ok {
+			p.Title, p.Description = cmp.Or(p.Title, pr.Title), prDescription(pr.Body)
+		}
+	}
+}
+
 func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()

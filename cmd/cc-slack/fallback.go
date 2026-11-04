@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/daemon"
 )
 
@@ -30,7 +32,7 @@ const (
 )
 
 func fallback(a action, err error) string {
-	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(sharedError)) {
+	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) {
 		return err.Error()
 	}
 	if a == actionEdit {
@@ -52,6 +54,9 @@ func fallback(a action, err error) string {
 		return fmt.Sprintf("%v; until then, fall back to %s", err, fallbackTool(a))
 	}
 	code := errorCode(err)
+	if resp, ok := errors.AsType[slack.SlackErrorResponse](err); ok && len(resp.ResponseMetadata.Messages) > 0 {
+		code += ": " + strings.Join(resp.ResponseMetadata.Messages, "; ")
+	}
 	switch a {
 	case actionWrite:
 		return fmt.Sprintf("cc-slack can't post here (%s); fall back to %s (posts as you, still needs permission)", code, mcpSend)

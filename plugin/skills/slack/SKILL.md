@@ -430,11 +430,16 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
 | `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
+| `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
+| `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, the lines it has as fields, and its description read from GitHub; a missing line is left out |
+| `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
-| `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, each with up to 4 buttons |
+| `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, or 8 carrying a `pr` shaped as in `prs`, each with up to 4 buttons |
 | `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
+
+A card's `body` takes markdown or Slack mrkdwn up to 40,000 characters and renders in Block Kit: bold, links, lists, one table block per message, sections split under Slack's 3,000 limit. A status card shows its first 400 characters and a waiting card its first 1,500, ending on a whole sentence. The rest stays behind Explain more, which posts it in the card's thread; nothing is cut.
 
 A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script

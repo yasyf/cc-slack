@@ -99,6 +99,9 @@ func cardButtons(t *testing.T, blocks []slack.Block) []*slack.ButtonBlockElement
 	t.Helper()
 	var buttons []*slack.ButtonBlockElement
 	for _, b := range blocks {
+		if row, ok := b.(*slack.SectionBlock); ok && row.Accessory != nil && row.Accessory.ButtonElement != nil {
+			buttons = append(buttons, row.Accessory.ButtonElement)
+		}
 		if a, ok := b.(*slack.ActionBlock); ok {
 			for _, e := range a.Elements.ElementSet {
 				button, ok := e.(*slack.ButtonBlockElement)
@@ -167,7 +170,7 @@ func blocksJSON(t *testing.T, blocks []slack.Block) string {
 	return string(raw)
 }
 
-func TestReplyCardOffersOptionsThenAckAndPauseUnderTheSessionTag(t *testing.T) {
+func TestReplyCardOffersOptionsThenAckAndPauseUnderAQuietFooter(t *testing.T) {
 	card := statusCard{Status: "incident", Title: "Origin errors are the PCI scanner", Body: "Monitor fix is green.",
 		Drive: "cloudflare-alert", Phase: "monitor fix", Options: []string{"ship it"},
 		Links: []cardLink{{Label: "PR", URL: "https://github.com/acme/app/pull/1"}}}
@@ -191,7 +194,7 @@ func TestReplyCardOffersOptionsThenAckAndPauseUnderTheSessionTag(t *testing.T) {
 		t.Fatalf("buttons = %v, want %v", actionIDs, want)
 	}
 	got := blocksJSON(t, blocks)
-	for _, part := range []string{"🚨 Origin errors are the PCI scanner", "*cloudflare-alert* · monitor fix · `app@dev` · worktree `cf-alert` · session `0123abcd` · 1:33am"} {
+	for _, part := range []string{"🚨 Origin errors are the PCI scanner", "cloudflare-alert · monitor fix · 1:33am"} {
 		if !strings.Contains(got, part) {
 			t.Fatalf("reply card %s lacks %q", got, part)
 		}
@@ -433,14 +436,15 @@ func TestPermissionCardSpeaksInWords(t *testing.T) {
 	}
 }
 
-func TestACardListsLongOptionsInFullAndNumbersItsButtons(t *testing.T) {
+func TestACardListsLongOptionsOnceEachBesideItsOwnButton(t *testing.T) {
 	long := []string{"Cap the run search at 200 sessions and drop the rest", "Run the whole search tonight on the pass box", "Skip the search and ship the fix as is"}
 	card := statusCard{Status: "needs_you", Title: "How should the run search pay for itself?", Options: long, Recommended: long[1], Waits: "cost-pick"}
 	at := time.Date(2026, 11, 4, 5, 30, 0, 0, time.UTC)
 	blocks := card.replyBlocks(cardView{at: at, now: at})
-	want := "*1.* Run the whole search tonight on the pass box _(Recommended)_\n*2.* Cap the run search at 200 sessions and drop the rest\n*3.* Skip the search and ship the fix as is"
-	if got := blocksJSON(t, blocks); !strings.Contains(got, string(mustJSON(want))) {
-		t.Fatalf("blocks %s, want every option in full, numbered in button order, the recommendation marked", got)
+	for _, want := range []string{"*1. Run the whole search tonight on the pass box* _(Recommended)_", "*2. Cap the run search at 200 sessions and drop the rest*", "*3. Skip the search and ship the fix as is*"} {
+		if got := blocksJSON(t, blocks); !strings.Contains(got, want) {
+			t.Fatalf("blocks %s, want every option in full, numbered in button order, the recommendation marked", got)
+		}
 	}
 	buttons := cardButtons(t, blocks)
 	labels := make([]string, 0, 3)
@@ -451,13 +455,13 @@ func TestACardListsLongOptionsInFullAndNumbersItsButtons(t *testing.T) {
 			t.Fatalf("button %q taps %+v, %v; want the full option as the answer", b.Text.Text, k, ok)
 		}
 	}
-	if !slices.Equal(labels, []string{"1 (Recommended)", "2", "3"}) || buttons[0].Style != slack.StylePrimary {
-		t.Fatalf("labels = %q, want numbers with the recommendation marked and primary", labels)
+	if !slices.Equal(labels, []string{cardPickLabel, cardPickLabel, cardPickLabel}) || buttons[0].Style != slack.StylePrimary {
+		t.Fatalf("labels = %q, want one pick button per option with the recommendation primary", labels)
 	}
 
 	steer := statusCard{Status: "info", Title: "Which first?", Options: long[:2]}
 	buttons = cardButtons(t, steer.replyBlocks(cardView{at: at, now: at}))
-	if buttons[0].Text.Text != "1" || buttons[0].Value != long[0] || buttons[1].ActionID != cardOptionAction+"1" {
-		t.Fatalf("option buttons %q=%q, %q; want a number that taps the full option", buttons[0].Text.Text, buttons[0].Value, buttons[1].ActionID)
+	if buttons[0].Text.Text != cardPickLabel || buttons[0].Value != long[0] || buttons[1].ActionID != cardOptionAction+"1" {
+		t.Fatalf("option buttons %q=%q, %q; want a pick button that taps the full option", buttons[0].Text.Text, buttons[0].Value, buttons[1].ActionID)
 	}
 }

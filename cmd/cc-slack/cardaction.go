@@ -55,6 +55,7 @@ type actionPayload struct {
 }
 
 type askTap struct {
+	Fold     bool     `json:"-"`
 	ID       string   `json:"id"`
 	Label    string   `json:"label"`
 	Expires  int64    `json:"exp,omitempty"`
@@ -109,6 +110,8 @@ func (a cardActionPush) tap() (askTap, bool) {
 		return askTap{Label: cardAckLabel}, true
 	case a.ActionID == cardPauseAction:
 		return askTap{Label: cardPauseLabel}, true
+	case a.ActionID == cardFoldAction:
+		return askTap{Label: cardExplainLabel, Fold: true}, true
 	case strings.HasPrefix(a.ActionID, cardOptionAction) && a.Value != "":
 		return askTap{Label: a.Value}, true
 	case strings.HasPrefix(a.ActionID, cardAskAction):
@@ -277,6 +280,21 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %q: dropped: not a status-card button", a.ActionID)
 		return nil
 	}
+	if done, err := p.unfold(ctx, id, a, k); done {
+		return err
+	}
+	return p.applyTap(ctx, id, a, k)
+}
+
+func (p *poller) unfold(ctx context.Context, id identity, a cardActionPush, k askTap) (bool, error) {
+	if !k.Fold && !k.Explain {
+		return false, nil
+	}
+	shown, err := p.showFold(ctx, id, a.ref())
+	return shown || k.Fold || err != nil, err
+}
+
+func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k askTap) error {
 	if k.expired(slackTime(a.ActionTS)) {
 		p.log.Printf("card action %s on %s: dropped: the ask expired", a.ActionID, a.MessageTS)
 		if err := p.markAsk(ctx, id, a, k); err != nil {
@@ -519,6 +537,25 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 	})
 }
 
+func (p *poller) showFold(ctx context.Context, id identity, r cardRef) (bool, error) {
+	pages := p.cards.fold(r.channel, r.thread, r.ts, p.now())
+	if len(pages) == 0 {
+		return false, nil
+	}
+	api := p.newAPI(id.Token)
+	for _, page := range pages {
+		if err := checkBlocks(page); err != nil {
+			return true, err
+		}
+		if _, _, err := api.PostMessageContext(ctx, r.channel, id.postOptions(cardExplainLabel, r.thread, slack.MsgOptionBlocks(page...))...); err != nil {
+			return true, fmt.Errorf("post the rest of card %s: %w", r.ts, err)
+		}
+	}
+	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) { m.Unfolded = true })
+	_, err := p.cards.redraw(ctx, api, r.channel, r.thread, r.ts, p.now())
+	return true, err
+}
+
 func (p *poller) markOption(ctx context.Context, id identity, r cardRef, line string) error {
 	if !p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) { m.Tapped = line }) {
 		return p.confirmTap(ctx, id, r, cardActionsBlock, line)
@@ -578,6 +615,9 @@ func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
 	for _, b := range blocks {
 		if blockID != cardWaitBlock && strings.HasSuffix(b.ID(), cardWaitBlock) {
 			continue
+		}
+		if row, ok := b.(*slack.SectionBlock); ok && blockID == cardActionsBlock && strings.HasPrefix(row.BlockID, cardOptionBlock) {
+			row.Accessory = nil
 		}
 		if b.ID() != blockID {
 			out = append(out, b)

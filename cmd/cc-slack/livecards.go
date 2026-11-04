@@ -42,6 +42,9 @@ type liveMessage struct {
 	At     time.Time  `json:"at"`
 	Tapped string     `json:"tapped,omitempty"`
 	Hint   string     `json:"hint,omitempty"`
+
+	Final    bool `json:"final,omitempty"`
+	Unfolded bool `json:"unfolded,omitempty"`
 }
 
 type liveThread struct {
@@ -147,7 +150,7 @@ func (t *liveThread) openAsks(now time.Time) []cardAsk {
 }
 
 func (t *liveThread) view(m *liveMessage, now time.Time, refs map[string]refState) cardView {
-	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint}
+	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint, final: m.Final, unfolded: m.Unfolded}
 	if m == t.Root {
 		v.asks, v.timeline = t.openAsks(now), t.Timeline
 	}
@@ -446,6 +449,22 @@ func (l *liveCards) markReply(channel, thread, ts string, mark func(*liveMessage
 		}
 	}
 	return marked
+}
+
+func (l *liveCards) fold(channel, thread, ts string, now time.Time) [][]slack.Block {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return nil
+	}
+	for _, m := range t.messages() {
+		if m != nil && m.TS == ts && !m.Unfolded {
+			_, pages := m.Card.layout(t.view(m, now, l.refs))
+			return pages
+		}
+	}
+	return nil
 }
 
 func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread, first string, now time.Time) (map[string]bool, error) {

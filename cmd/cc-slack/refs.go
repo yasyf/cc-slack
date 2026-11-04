@@ -228,6 +228,8 @@ func (c refClient) retryAt(h http.Header) time.Time {
 }
 
 type githubPR struct {
+	Title           string `json:"title"`
+	Body            string `json:"body"`
 	State           string `json:"state"`
 	IsDraft         bool   `json:"isDraft"`
 	MergeQueueEntry *struct {
@@ -286,11 +288,18 @@ func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID
 }
 
 func (c refClient) queryPRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
+	return c.selectPRs(ctx, tok, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }")
+}
+
+func (c refClient) describePRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
+	return c.selectPRs(ctx, tok, refs, "title body")
+}
+
+func (c refClient) selectPRs(ctx context.Context, tok *refToken, refs []refID, fields string) (map[string]githubPR, error) {
 	var q strings.Builder
 	q.WriteString("query {")
 	for i, r := range refs {
-		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { state isDraft mergeQueueEntry { state } "+
-			"commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number)
+		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { %s } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number, fields)
 	}
 	q.WriteString(" }")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.githubURL+"/graphql", bytes.NewReader(mustJSON(map[string]string{"query": q.String()})))
