@@ -6,13 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The Slack permission hook fails open again: a check that cannot finish lets the write through with a warning instead of refusing it.
+
 ### Added
 
 - A standing grant can cover every thread in a channel: the label `slack-grant:<channel>/threads` lets replies in any thread there go out with no per-thread approval, while a new top-level post still needs one.
 
 ### Changed
 
-- The Slack permission gate refuses a write when its check cannot finish, instead of letting it through unchecked. A timed-out `ccn` read, a transcript deadline, a judge error or a failed `dm-peer` call now returns a refusal that says nothing was sent and to send it again. A post, edit or delete that names no channel, such as one passing `channel` instead of `channel_id`, is refused with that fix before any check runs.
 - A card's footer is one quiet line, the drive or repo, the phase and the time. The branch, worktree and session no longer show.
 - A card lists an option with words to read once, beside its own Pick button, in place of a numbered list above a row of numbered buttons.
 
