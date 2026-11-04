@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -405,6 +406,145 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	}
 	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
 		t.Fatalf("card edits = %v, want the answer in place of the buttons", edits)
+	}
+}
+
+func refusingCardCommand(t *testing.T, reason string, cards ...providedCard) (cardCommand, string) {
+	t.Helper()
+	dir := t.TempDir()
+	c := cardCommand{argv: []string{filepath.Join(dir, "card")}, asked: filepath.Join(dir, "asked"), resolved: filepath.Join(dir, "resolved")}
+	answer := filepath.Join(dir, "cards.json")
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": cards}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\necho \"$in\" >> '%s'\ncase \"$in\" in\n*'\"answer\"'*) echo 'card: %s' >&2; exit 1 ;;\n*'\"numbers\"'*) echo '{\"prs\":[{\"repo\":\"acme/app\",\"number\":41}]}' ;;\n*) cat '%s' ;;\nesac\n", c.asked, reason, answer)
+	if err := os.WriteFile(c.argv[0], []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return c, answer
+}
+
+func tapMerge(t *testing.T, l *liveDaemon, card fakePost) identity {
+	t.Helper()
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: card.threadTS,
+		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0301"})
+	return id
+}
+
+func movedCard() providedCard {
+	moved := mergeRowCard()
+	moved.Card.Title, moved.Card.Waits = "Merge #41 at 09b10f1?", "merge:41:09b10f1"
+	return moved
+}
+
+func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "#41 moved to 09b10f1 since the card asked merge:41:e718a74", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tapMerge(t, l, card)
+
+	said := l.slack.sentTo(testDM)
+	last := said[len(said)-1]
+	if last.threadTS != card.threadTS || !strings.Contains(last.text, "Your *Merge* did not count: #41 moved to 09b10f1") || !strings.Contains(last.text, "shows where it stands now") {
+		t.Fatalf("last post = %+v, want the refusal in his thread", last)
+	}
+	edits := editsOf(l.slack.edited(), card.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "09b10f1") || !strings.Contains(edits[len(edits)-1], "merge:41:09b10f1") {
+		t.Fatalf("card edits = %v, want it redrawn at the new head", edits)
+	}
+	if posted := prCards(l, testDM); len(posted) != 1 {
+		t.Fatalf("PR cards = %+v, want the one card edited in place", posted)
+	}
+}
+
+func TestACardForAPRThatNoLongerWaitsGivesUpItsButtons(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "#41 no longer waits on his tap", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tapMerge(t, l, card)
+
+	edits := editsOf(l.slack.edited(), card.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], cardNoLongerWaits) {
+		t.Fatalf("card edits = %v, want the buttons gone", edits)
+	}
+}
+
+func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts := len(l.slack.sentTo(testDM))
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#40": true})
+	if edits := editsOf(l.slack.edited(), card.ts); slices.ContainsFunc(edits, func(edit string) bool { return strings.Contains(edit, "09b10f1") }) {
+		t.Fatalf("another PR's head redrew this card: %v", edits)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
+
+	edits := editsOf(l.slack.edited(), card.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "merge:41:09b10f1") {
+		t.Fatalf("card edits = %v, want it redrawn at the new head", edits)
+	}
+	if got := len(l.slack.sentTo(testDM)); got != posts {
+		t.Fatalf("posts went from %d to %d, want none new", posts, got)
+	}
+}
+
+func TestOnlyAKnownHeadThatChangesCountsAsMoved(t *testing.T) {
+	for _, tc := range []struct {
+		prior, next string
+		want        bool
+	}{{"", "a", false}, {"a", "", false}, {"a", "a", false}, {"a", "b", true}} {
+		if got := (refState{Head: tc.next}).movedFrom(refState{Head: tc.prior}); got != tc.want {
+			t.Errorf("%q to %q moved = %v, want %v", tc.prior, tc.next, got, tc.want)
+		}
+	}
+}
+
+func TestRedrawPRCardsRedrawsEveryOpenCardWithNoNewPost(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	full := mergeRowCard()
+	full.Card.Body += "\n*From the ledger:* the whole row"
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{full}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	posts := len(l.slack.sentTo(testDM))
+
+	l.do(opRedrawPRCards, map[string]any{})
+
+	eventually(t, "the redraw", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "From the ledger")
+	})
+	if got := len(l.slack.sentTo(testDM)); got != posts {
+		t.Fatalf("posts went from %d to %d, want none new", posts, got)
 	}
 }
 

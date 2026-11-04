@@ -83,6 +83,7 @@ func root() *cobra.Command {
 		fileCmd(d),
 		dmPeerCmd(d),
 		dmOwedCmd(d),
+		redrawPRCardsCmd(d),
 		channelsCmd(d),
 		usersCmd(d),
 		followCmd(d),

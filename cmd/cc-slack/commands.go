@@ -734,6 +734,20 @@ func dmPeerCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	c := &cobra.Command{
+		Use:   "redraw-pr-cards",
+		Short: "Redraw every open PR card in place from the card command, with no new posts",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opRedrawPRCards, map[string]any{})
+		},
+	}
+	f.bind(c)
+	return c
+}
+
 func dmOwedCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{

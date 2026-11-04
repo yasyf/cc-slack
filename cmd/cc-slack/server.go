@@ -112,6 +112,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		},
 	}
 	a.socket.hello = a.hello
+	p.recard, cards.recard = a.recardPR, a.recardPR
 	return a
 }
 

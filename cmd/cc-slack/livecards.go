@@ -215,6 +215,7 @@ type liveCards struct {
 	now    func() time.Time
 	plane  plane
 	newAPI func(token string) slackAPI
+	recard func(ctx context.Context, id identity, card cardRef, pr refID, refused string)
 	wakeCh chan struct{}
 
 	mu      sync.Mutex
@@ -671,7 +672,7 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 	now := l.now()
 	byHost, unknown, next := l.pending(now)
 	next = earliest(next, now.Add(refMaxBackoff))
-	changed := map[string]bool{}
+	changed, moved := map[string]bool{}, map[string]bool{}
 	for _, name := range slices.Sorted(maps.Keys(byHost)) {
 		h := l.host(name, id.Config)
 		if h == nil {
@@ -685,6 +686,7 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		l.mu.Lock()
 		for k, s := range states {
 			if l.refs[k] != s {
+				moved[k] = s.movedFrom(l.refs[k])
 				l.refs[k] = s
 				changed[k] = true
 			}
@@ -704,6 +706,7 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		next = earliest(next, h.due)
 	}
 	l.redrawChanged(ctx, l.newAPI(id.Token), changed, now)
+	l.recardMoved(ctx, id, moved)
 	return max(next.Sub(now), time.Second)
 }
 
@@ -729,6 +732,57 @@ func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map
 	if dirty {
 		l.save()
 	}
+}
+
+func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[string]bool) {
+	if len(id.Config.PRLinks.CardCommand) == 0 {
+		return
+	}
+	for _, open := range l.openPRCards() {
+		if moved[open.pr.key()] {
+			l.recard(ctx, id, open.card, open.pr, "")
+		}
+	}
+}
+
+type openPRCard struct {
+	card cardRef
+	pr   refID
+}
+
+// openPRCards lists each PR card still offering its buttons.
+func (l *liveCards) openPRCards() []openPRCard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var open []openPRCard
+	for _, t := range l.threads {
+		for _, m := range t.PRCards {
+			_, answered := t.Answers[m.Card.Waits]
+			if ids := m.Card.refIDs(); !answered && m.Tapped == "" && len(ids) > 0 {
+				open = append(open, openPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids[0]})
+			}
+		}
+	}
+	return open
+}
+
+// replacePRCard redraws a posted PR card in place from what its command says now.
+func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, now time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(card.channel, card.thread)]
+	if !ok {
+		return fmt.Errorf("no live thread %s/%s", card.channel, card.thread)
+	}
+	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == card.ts })
+	if i < 0 {
+		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
+	}
+	t.PRCards[i].Card = drawn
+	err := l.drawPRCard(ctx, api, t, i, now)
+	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
+	l.save()
+	return err
 }
 
 func (l *liveCards) threadCard(channel, thread string) (id, title string) {

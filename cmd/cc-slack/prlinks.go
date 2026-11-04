@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -243,17 +244,9 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channe
 }
 
 func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, asked []map[string]any) {
-	command := id.Config.PRLinks.CardCommand
-	out, err := runCardCommand(ctx, command, map[string]any{"prs": asked})
+	provided, err := askPRCards(ctx, id, asked)
 	if err != nil {
 		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, threadTS, err)
-		return
-	}
-	var answer struct {
-		Cards []providedCard `json:"cards"`
-	}
-	if err := json.Unmarshal(out, &answer); err != nil {
-		a.poller.log.Printf("PR cards for %s/%s: decode %s: %v", channelID, threadTS, command[0], err)
 		return
 	}
 	cards := a.cards
@@ -261,7 +254,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 	defer cards.mu.Unlock()
 	t := cards.draft(channelID, threadTS)
 	now := a.now()
-	for _, p := range answer.Cards {
+	for _, p := range provided {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
 			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
 			continue
@@ -280,6 +273,51 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 	}
 	t.Updated = now
 	cards.commit(t)
+}
+
+func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]providedCard, error) {
+	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
+	if err != nil {
+		return nil, err
+	}
+	var answer struct {
+		Cards []providedCard `json:"cards"`
+	}
+	if err := json.Unmarshal(out, &answer); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", id.Config.PRLinks.CardCommand[0], err)
+	}
+	return answer.Cards, nil
+}
+
+// recardPR redraws a PR card in place from what the card command says now, so
+// it never offers a head or a question that no longer stands; a card for a PR
+// that no longer waits gives up its buttons. A refused tap also answers in the
+// thread, since nothing else tells him.
+func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID, refused string) {
+	if err := a.redrawPRCard(ctx, id, card, pr); err != nil {
+		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)
+	}
+	if refused == "" {
+		return
+	}
+	line := refused + " " + slackLink(id.permalink(card.channel, card.ts, card.thread), "The card") + " shows where it stands now."
+	if _, err := a.post(ctx, a.poller.plane.DB(), id, card.channel, card.thread, line, nil, nil); err != nil {
+		a.poller.log.Printf("PR card %s: the refused tap went untold: %v", card.ts, err)
+	}
+}
+
+func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr refID) error {
+	provided, err := askPRCards(ctx, id, []map[string]any{{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number}})
+	if err != nil {
+		return err
+	}
+	if len(provided) == 0 {
+		return a.poller.markOption(ctx, id, card, cardNoLongerWaits)
+	}
+	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
+		return err
+	}
+	return a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now())
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
@@ -306,6 +344,24 @@ func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
 	}
 }
 
+type cardCommandError struct {
+	command string
+	err     error
+	said    string
+}
+
+func (e cardCommandError) Error() string { return e.command + ": " + e.err.Error() + ": " + e.said }
+
+func (e cardCommandError) Unwrap() error { return e.err }
+
+func refusalOf(err error) string {
+	failed, ok := errors.AsType[cardCommandError](err)
+	if !ok {
+		return err.Error()
+	}
+	return strings.TrimPrefix(failed.said, path.Base(failed.command)+": ")
+}
+
 func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
@@ -314,7 +370,7 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
-		return nil, fmt.Errorf("%s: %w: %s", command[0], err, bytes.TrimSpace(exit.Stderr))
+		return nil, cardCommandError{command[0], err, string(bytes.TrimSpace(exit.Stderr))}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", command[0], err)

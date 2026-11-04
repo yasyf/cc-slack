@@ -120,9 +120,9 @@ func (a cardActionPush) onCard() (cardActionPush, bool) {
 	return a, true
 }
 
-// markPreview replaces the tapped preview's buttons with what he tapped, so a
-// status he reads later never offers a question he already answered.
-func (p *poller) markPreview(ctx context.Context, id identity, a cardActionPush, label string) {
+// markPreview replaces the tapped preview's buttons with what he tapped and a
+// link to the card, which says whether the tap counted.
+func (p *poller) markPreview(ctx context.Context, id identity, a cardActionPush, card cardRef, label string) {
 	api := p.newAPI(id.Token)
 	post, err := messageAt(ctx, api, a.Channel, a.ThreadTS, a.MessageTS)
 	if err != nil {
@@ -132,7 +132,7 @@ func (p *poller) markPreview(ctx context.Context, id identity, a cardActionPush,
 	for _, preview := range post.Attachments {
 		for n, block := range preview.Blocks.BlockSet {
 			if tapped(block, a.ActionID) {
-				preview.Blocks.BlockSet[n] = mrkdwn(cardPreviewBlock, "✓ *"+mrkdwnEscapes.Replace(clipRunes(label, cardMaxDetailLen))+"*")
+				preview.Blocks.BlockSet[n] = mrkdwn(cardPreviewBlock, "Tapped *"+mrkdwnEscapes.Replace(clipRunes(label, cardMaxDetailLen))+"*: "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))
 			}
 		}
 	}

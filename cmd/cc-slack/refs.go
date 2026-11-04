@@ -73,6 +73,11 @@ func parseRef(raw string) (refID, bool) {
 type refState struct {
 	State  string `json:"state"`
 	Checks string `json:"checks,omitempty"`
+	Head   string `json:"head,omitempty"`
+}
+
+func (s refState) movedFrom(prior refState) bool {
+	return prior.Head != "" && s.Head != "" && s.Head != prior.Head
 }
 
 func (s refState) terminal() bool {
@@ -238,6 +243,7 @@ type githubPR struct {
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
+				OID               string `json:"oid"`
 				StatusCheckRollup *struct {
 					State string `json:"state"`
 				} `json:"statusCheckRollup"`
@@ -248,6 +254,9 @@ type githubPR struct {
 
 func (p githubPR) state() refState {
 	var s refState
+	if n := p.Commits.Nodes; len(n) > 0 {
+		s.Head = n[0].Commit.OID
+	}
 	if n := p.Commits.Nodes; len(n) > 0 && n[0].Commit.StatusCheckRollup != nil {
 		switch n[0].Commit.StatusCheckRollup.State {
 		case "SUCCESS":
@@ -288,7 +297,7 @@ func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID
 }
 
 func (c refClient) queryPRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
-	return c.selectPRs(ctx, tok, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }")
+	return c.selectPRs(ctx, tok, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }")
 }
 
 func (c refClient) describePRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
