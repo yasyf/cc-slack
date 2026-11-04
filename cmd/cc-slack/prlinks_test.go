@@ -917,3 +917,20 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 		t.Fatalf("cards = %+v, want the pick as the one offer", cards)
 	}
 }
+
+func TestAMarkdownLinkToAPRBecomesOneSlackLink(t *testing.T) {
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}}, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "Ported as [#41](https://github.com/acme/app/pull/41), see [the fix](https://github.com/acme/app/pull/41) and [the docs](https://example.com/docs)."})
+	want := "Ported as <https://github.com/acme/app/pull/41|#41>, see <https://github.com/acme/app/pull/41|the fix> and [the docs](https://example.com/docs)."
+	if got := lastText(l); got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
+func TestAMarkdownLinkInACardBodyRendersWithNoBrackets(t *testing.T) {
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}}, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Fixed", Body: "Ported as [#41](https://github.com/acme/app/pull/41)."}})
+	if got := shown(t, l.slack.sent()[0]); !strings.Contains(got, "Ported as <https://github.com/acme/app/pull/41|#41>.") || strings.Contains(got, "](") {
+		t.Fatalf("card shows %q, want one link", got)
+	}
+}

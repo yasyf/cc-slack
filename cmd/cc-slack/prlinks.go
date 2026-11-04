@@ -25,7 +25,8 @@ const (
 )
 
 var (
-	prUnscanned   = regexp.MustCompile("(?s)```.*?```|`[^`\n]+`|<[^<>\n]*>|https?://[^\\s<>]+")
+	prUnscanned   = regexp.MustCompile("(?s)```.*?```|`[^`\n]+`|\\[[^\\]\n]*\\]\\(https?://[^\\s)]+\\)|<[^<>\n]*>|https?://[^\\s<>]+")
+	markdownLink  = regexp.MustCompile(`^\[([^\]\n]*)\]\((https?://[^\s)]+)\)$`)
 	prMentioned   = regexp.MustCompile(`(^|[^A-Za-z0-9_.&#/-])(?:([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100}))?#([0-9]{1,9})\b`)
 	prURLTrailing = regexp.MustCompile(`[.,;:!?)\]'"]+$`)
 	githubRemote  = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
@@ -35,6 +36,7 @@ type prMention struct {
 	start, end int
 	ref        refID
 	url        string
+	label      string
 }
 
 type linkedPR struct {
@@ -82,6 +84,14 @@ func prMentions(text string) []prMention {
 		scan(skip[0])
 		at = skip[1]
 		raw := text[skip[0]:skip[1]]
+		if md := markdownLink.FindStringSubmatch(raw); md != nil {
+			if id, ok := parseRef(md[2]); ok && id.Kind == refPR {
+				ref := repoRef(id.Owner, id.Repo)
+				ref.Number = id.Number
+				out = append(out, prMention{start: skip[0], end: skip[1], ref: ref, url: md[2], label: md[1]})
+			}
+			continue
+		}
 		if !strings.HasPrefix(raw, "http") {
 			continue
 		}
@@ -163,7 +173,7 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 			}
 			pr := held[0]
 			out.WriteString(text[at:m.start])
-			out.WriteString(slackLink(cmp.Or(m.url, prURL(pr)), fmt.Sprintf("#%d", pr.Number)))
+			out.WriteString(slackLink(cmp.Or(m.url, prURL(pr)), cmp.Or(m.label, fmt.Sprintf("#%d", pr.Number))))
 			at = m.end
 			if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == pr }) {
 				prs = append(prs, linkedPR{ref: pr, state: found[pr.key()].state()})
