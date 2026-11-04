@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -339,5 +340,80 @@ func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{seen, other}) {
 		t.Fatalf("owed = %v, want only the thumbs-up in the DM to answer its reply", got)
+	}
+}
+
+func TestAReplyUnderAnotherSessionsCardTellsTheHolderWhoseItIs(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	lane := secondSession(t, f)
+	if err := f.app.openSessionThread(f.ctx, f.db(), lane, f.id.DMChannelID, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
+		Waiting: map[string]*liveMessage{"guardduty": {TS: thread, Card: statusCard{Title: "Try it once?", Waits: "guardduty"}}}}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "tag the engines instead")
+
+	var held *messagePayload
+	for _, got := range payloads(t, f) {
+		if got.Kind == kindChannel {
+			held = &got
+		}
+	}
+	want := threadOwner{Session: "sess-2", Card: "guardduty", Title: "Try it once?"}
+	if held == nil || held.ThreadOwner == nil || *held.ThreadOwner != want {
+		t.Fatalf("holder's payload = %+v, want thread owner %+v", held, want)
+	}
+	for _, d := range f.plane.directives {
+		if d.subjectID == testSubject && !strings.Contains(d.text, `the card "Try it once?" (card guardduty), which session sess-2 posted`) {
+			t.Fatalf("holder's directive = %q, want it to name the card and the session that owns it", d.text)
+		}
+	}
+}
+
+func TestAReplyUnderAnEndedSessionsCardTellsTheHolderItEnded(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	if _, err := storeSubjects(f).Create(f.ctx, stoodDownID, "", "sess-gone", scopeName, stoodDownPID, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := storeSubjects(f).Get(f.ctx, stoodDownID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.openSessionThread(f.ctx, f.db(), gone, f.id.DMChannelID, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	got := payloads(t, f)
+	if len(got) != 1 || got[0].ThreadOwner == nil || *got[0].ThreadOwner != (threadOwner{Session: "sess-gone", Ended: true}) {
+		t.Fatalf("delivered %+v, want the reply on the holder's watch naming the ended session", got)
+	}
+	if text := f.plane.directives[0].text; !strings.Contains(text, "session sess-gone posted; that session has ended") {
+		t.Fatalf("holder's directive = %q, want it to say the owning session ended", text)
+	}
+}
+
+func TestAReplyUnderTheHoldersOwnCardNamesNoOtherOwner(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	if err := f.app.openSessionThread(f.ctx, f.db(), subjectFor(t, f), f.id.DMChannelID, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	got := payloads(t, f)
+	if len(got) != 1 || got[0].ThreadOwner != nil {
+		t.Fatalf("delivered %+v, want the reply once with no other owner", got)
 	}
 }

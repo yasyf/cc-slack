@@ -298,6 +298,12 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
 
 - `slack.message` is a new message on a watch the top-level session owns. It also
   lands as a directive in the session's next tool result.
+  An operator reply in a DM thread that another session's card opened carries
+  `thread_owner`: that session's `session` id, the card's `card` id (its `waits`,
+  `group`, or `key`) and `title` while the card is live, and `ended` once the
+  session's process is gone. The directive names the card and the session, and
+  says when nobody else will act on the reply. The session that posted the card
+  gets no `thread_owner`.
 - `slack.message@<agent_id>` is a message on a subagent's watch. The daemon's
   subscription tee moves it into that agent's mailbox, and it never reaches the
   parent's channel.

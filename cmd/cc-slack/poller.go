@@ -567,7 +567,11 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		if err := p.deliver(ctx, db, w, p.messageDelivery(ctx, api, id, w, m)); err != nil {
+		d, err := p.messageDelivery(ctx, api, id, w, m)
+		if err != nil {
+			return err
+		}
+		if err := p.deliver(ctx, db, w, d); err != nil {
 			return err
 		}
 	}
