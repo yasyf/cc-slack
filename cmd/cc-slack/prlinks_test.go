@@ -589,6 +589,58 @@ func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
 	}
 }
 
+func TestAnAnsweredCardKeepsItsAnswerUnderTheWordsItsRowHasNow(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	id := tapMerge(t, l, card)
+	landed := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
+		Status: "done", Title: "#41 at e718a74",
+		Body: "*Fix the chat list*\n*Blocks landing:* nothing; it landed on dev",
+		Refs: []cardLink{{URL: "https://github.com/acme/app/pull/41", Label: "acme/app#41"}},
+	}}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{landed}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
+
+	edits := editsOf(l.slack.edited(), card.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "it landed on dev") || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
+		t.Fatalf("card edits = %v, want the landed words with his answer kept", edits)
+	}
+	if last := edits[len(edits)-1]; strings.Contains(last, "your approval") || strings.Contains(last, cardNoLongerWaits) {
+		t.Fatalf("last edit = %s, want neither the old blocker nor the no-longer-waits line", last)
+	}
+}
+
+func TestACardNobodyAnsweredGivesUpItsButtonsUnderItsRowsWords(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	card := awaitPRCards(t, l, testDM)[0]
+	red := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
+		Status: "info", Title: "#41 at e718a74",
+		Body: "*Fix the chat list*\n*Blocks landing:* CI is red at this head",
+		Refs: []cardLink{{URL: "https://github.com/acme/app/pull/41", Label: "acme/app#41"}},
+	}}
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{red}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
+
+	edits := editsOf(l.slack.edited(), card.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "CI is red at this head") || !strings.Contains(edits[len(edits)-1], cardNoLongerWaits) {
+		t.Fatalf("card edits = %v, want the row's words and its buttons gone", edits)
+	}
+}
+
 func TestOnlyAKnownHeadThatChangesCountsAsMoved(t *testing.T) {
 	for _, tc := range []struct {
 		prior, next string

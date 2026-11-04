@@ -1248,13 +1248,13 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return fail("redraw-pr-cards needs a [pr_links] card_command on this machine")
 	}
-	open := a.cards.openPRCards()
+	posted := a.cards.postedPRCards()
 	go func(ctx context.Context) {
-		for _, card := range open {
+		for _, card := range posted {
 			a.recardPR(ctx, id, card.card, card.pr, "")
 		}
 	}(context.WithoutCancel(hc.Ctx))
-	return ok(map[string]int{"redrawing": len(open)})
+	return ok(map[string]int{"redrawing": len(posted)})
 }
 
 func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
