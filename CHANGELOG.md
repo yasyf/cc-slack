@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The session holding the DM learns whose card an operator's thread reply answers: the `slack.message` payload carries `thread_owner` with the posting session's id, the card's id and title, and whether that session has ended, and the directive names them.
 - A resumed session gets its Slack watches back with no re-arming: the `session-start` hook brings back what the restart orphaned, says so in the session's context, and catches up on anything sent while it was down. A DM another session took meanwhile stays with that session.
 - `cc-slack card-answer --withdrawn --label "<reason>"` closes a waiting card whose question was withdrawn. The card keeps its title and shows `Withdrawn: <reason>` in place of its buttons. No session receives a tap, and later answers are refused.
 - An answered, settled, or withdrawn waiting card gets a reaction: `white_check_mark` for an answer, `x` for a withdrawal.

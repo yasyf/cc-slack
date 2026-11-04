@@ -23,17 +23,25 @@ const (
 func ownedType(base, agentID string) string { return base + "@" + agentID }
 
 type messagePayload struct {
-	Type       string `json:"type"`
-	WatchID    int64  `json:"watch_id"`
-	Kind       string `json:"kind"`
-	ChannelID  string `json:"channel_id"`
-	ThreadTS   string `json:"thread_ts"`
-	TS         string `json:"ts"`
-	User       string `json:"user"`
-	UserName   string `json:"user_name"`
-	FromClaude bool   `json:"from_claude"`
-	Text       string `json:"text"`
-	Permalink  string `json:"permalink"`
+	Type        string       `json:"type"`
+	WatchID     int64        `json:"watch_id"`
+	Kind        string       `json:"kind"`
+	ChannelID   string       `json:"channel_id"`
+	ThreadTS    string       `json:"thread_ts"`
+	TS          string       `json:"ts"`
+	User        string       `json:"user"`
+	UserName    string       `json:"user_name"`
+	FromClaude  bool         `json:"from_claude"`
+	Text        string       `json:"text"`
+	Permalink   string       `json:"permalink"`
+	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
+}
+
+type threadOwner struct {
+	Session string `json:"session"`
+	Card    string `json:"card,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Ended   bool   `json:"ended,omitempty"`
 }
 
 type watchErrorPayload struct {
@@ -74,7 +82,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message) delivery {
+func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message) (delivery, error) {
 	thread := m.ThreadTimestamp
 	if thread == "" {
 		thread = m.Timestamp
@@ -83,6 +91,13 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
 		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread),
+	}
+	if w.ChannelID == id.DMChannelID && thread != m.Timestamp {
+		owner, err := p.threadOwner(ctx, w, thread)
+		if err != nil {
+			return delivery{}, err
+		}
+		msg.ThreadOwner = owner
 	}
 	origin := event.OriginHuman
 	if msg.FromClaude {
@@ -97,7 +112,41 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 			msg.Type = typ
 			return mustJSON(msg)
 		},
+	}, nil
+}
+
+func (p *poller) threadOwner(ctx context.Context, w watch, thread string) (*threadOwner, error) {
+	var (
+		subjectID string
+		owner     threadOwner
+		pid       int
+	)
+	err := p.plane.DB().QueryRowContext(ctx, `SELECT w.subject_id, COALESCE(s.session_id, ''), s.claude_pid FROM watches w
+		JOIN subjects s ON s.id = w.subject_id WHERE w.kind = 'dm' AND w.channel_id = ? AND w.thread_ts = ? ORDER BY w.id DESC LIMIT 1`,
+		w.ChannelID, thread).Scan(&subjectID, &owner.Session, &pid)
+	if errors.Is(err, sql.ErrNoRows) || subjectID == w.SubjectID {
+		return nil, nil
 	}
+	if err != nil {
+		return nil, fmt.Errorf("find the session that owns %s/%s: %w", w.ChannelID, thread, err)
+	}
+	owner.Card, owner.Title = p.cards.threadCard(w.ChannelID, thread)
+	owner.Ended = pid == 0 || !p.alive(pid)
+	return &owner, nil
+}
+
+func (o threadOwner) line() string {
+	card := "a message"
+	if o.Title != "" {
+		card = fmt.Sprintf("the card %q", o.Title)
+	}
+	if o.Card != "" {
+		card += " (card " + o.Card + ")"
+	}
+	if o.Ended {
+		return fmt.Sprintf(" It replies under %s, which session %s posted; that session has ended, so no session acts on this reply unless you do.", card, o.Session)
+	}
+	return fmt.Sprintf(" It replies under %s, which session %s posted: the reply is that session's to act on.", card, o.Session)
 }
 
 func messageLine(m messagePayload, operator bool) string {
@@ -106,9 +155,13 @@ func messageLine(m messagePayload, operator bool) string {
 			"Act on it as operator steering, and post status back with slack_dm_status.", m.UserName, m.TS, m.Permalink, m.Text)
 	}
 	if operator {
-		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q. "+
+		owned := ""
+		if m.ThreadOwner != nil {
+			owned = m.ThreadOwner.line()
+		}
+		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q.%s "+
 			"Act on it as operator steering; a Slack reply still needs the operator's approval.",
-			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text)
+			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned)
 	}
 	who := m.UserName
 	if m.FromClaude {
@@ -252,7 +305,11 @@ func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int
 
 func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message) error {
 	if len(sessions) == 1 {
-		return p.deliver(ctx, db, sessions[0], p.messageDelivery(ctx, api, id, sessions[0], m))
+		d, err := p.messageDelivery(ctx, api, id, sessions[0], m)
+		if err != nil {
+			return err
+		}
+		return p.deliver(ctx, db, sessions[0], d)
 	}
 	links := make([]string, 0, len(sessions))
 	for _, w := range sessions {

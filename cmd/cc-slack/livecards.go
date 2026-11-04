@@ -712,6 +712,21 @@ func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map
 	}
 }
 
+func (l *liveCards) threadCard(channel, thread string) (id, title string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return "", ""
+	}
+	for _, m := range append(t.messages(), t.Root) {
+		if m != nil && m.TS == thread {
+			return cmp.Or(m.Card.Waits, m.Card.Group, m.Card.Key), m.Card.Title
+		}
+	}
+	return "", ""
+}
+
 func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
