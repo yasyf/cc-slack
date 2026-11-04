@@ -166,7 +166,11 @@ func (l *liveDaemon) deliver(owner, ts, text string) {
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 	w := watch{ID: 7, SubjectID: l.subID, Owner: owner, Kind: kindThread, ChannelID: testChannel, ThreadTS: testThread}
 	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: testThread, User: "UOTHER", Username: "teammate", Text: text}}
-	if err := l.app.poller.deliver(l.ctx, l.srv.DB(), w, l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m)); err != nil {
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := l.app.poller.deliver(l.ctx, l.srv.DB(), w, d); err != nil {
 		l.t.Fatal(err)
 	}
 }
