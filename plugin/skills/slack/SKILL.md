@@ -660,7 +660,13 @@ message or use a reaction to replace a reply you owe.
 
 ## Keep the conversation going
 
-Write every post so a person can answer it, and answer each reply as it lands.
+Post to a person unprompted only when they must act or the fix they reported
+is live, and only once per fix. Your own tests, progress, and "a follow-up" are
+never posts. Hold that one post until the fix is live and checked, and put the
+check's result and whatever they must do in it, such as starting a new run.
+Fix a mistake or a gap in it by editing it. This narrows what a lane asks to
+send and changes no permission rule. Questions they ask are not limited:
+write every post so a person can answer it, and answer each reply as it lands.
 
 - React `eyes` the moment you start on a message, as above.
 - Answer every question in a watched thread the moment it lands, in that
@@ -718,8 +724,8 @@ Fit the shape to the post. A reply in a conversation is one to three
 sentences, about 50 words at most. A context post, one that brings someone
 into a situation they were not following, uses the labeled paragraphs in
 "Give context in labeled paragraphs". Do not restate context the thread
-already has. Omit "will confirm when…" and "updates to follow" trailers
-unless you owe that follow-up and post it.
+already has. Omit "will confirm when…" and "updates to follow" trailers: no
+such post follows, as "Keep the conversation going" says.
 
 Talk like a human teammate. Where it fits, open with a thank-you or
 greeting. Address people directly by mention, use full sentences and
