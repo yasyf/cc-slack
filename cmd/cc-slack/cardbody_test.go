@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -351,7 +352,7 @@ func TestAReplacementCardCarriesNoButtons(t *testing.T) {
 	for name, bad := range map[string]statusCard{
 		"no permalink": {Status: "done", Title: "x", Replaces: "1793635190.051179"},
 		"with options": {Status: "done", Title: "x", Replaces: posted, Options: []string{"go"}},
-		"with waits":   {Status: "done", Title: "x", Replaces: posted, Waits: "w", Options: []string{"go"}, Recommended: "go"},
+		"with a key":   {Status: "done", Title: "x", Replaces: posted, Key: "k"},
 	} {
 		if err := bad.check(bodyAt, false, ""); err == nil {
 			t.Fatalf("%s passed its check", name)
@@ -383,6 +384,70 @@ func TestAnEditOfAnAskReplacesTheSlackCopyInPlaceAndPostsNothingNew(t *testing.T
 	last := edits[len(edits)-1].blocks
 	if !strings.Contains(last, "The relay fix landed") || !strings.Contains(last, "*merged*") || strings.Contains(last, cardWaitAction) || strings.Contains(last, "Land the relay fix?") {
 		t.Fatalf("edit %s, want the new title and body rendered and the buttons gone", last)
+	}
+}
+
+func TestAWaitingCardThatReplacesAPostTakesItsPlaceWithItsButtons(t *testing.T) {
+	for name, parent := range map[string]bool{"at the root": false, "in a thread": true} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			body := map[string]any{"text": "The relay fix is ready."}
+			thread := ""
+			if parent {
+				var root map[string]string
+				if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "The relay fix."}).Body, &root); err != nil {
+					t.Fatal(err)
+				}
+				thread = root["ts"]
+				body["thread_ts"] = thread
+			}
+			var first map[string]string
+			if err := json.Unmarshal(l.do(opDMStatus, body).Body, &first); err != nil {
+				t.Fatal(err)
+			}
+			before := len(l.slack.sent())
+			id, err := loadIdentity(l.ctx, l.srv.DB())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ask := statusCard{Status: "needs_you", Title: "Land the relay fix?", Options: []string{"Land", "Hold"}, Recommended: "Land", Waits: "card-r6", Replaces: id.permalink(id.DMChannelID, first["ts"], thread)}
+			var drawn map[string]string
+			if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": ask}).Body, &drawn); err != nil {
+				t.Fatal(err)
+			}
+			if drawn["ts"] != first["ts"] {
+				t.Fatalf("card at %s, want it on the first message %s", drawn["ts"], first["ts"])
+			}
+			edits := l.slack.edited()
+			if len(edits) == 0 || edits[len(edits)-1].ts != first["ts"] || !strings.Contains(edits[len(edits)-1].blocks, cardWaitAction) {
+				t.Fatalf("edits = %+v, want the first message edited to carry the buttons", edits)
+			}
+
+			ask.Title = "Land the relay fix tonight?"
+			l.do(opDMStatus, map[string]any{"card": ask})
+			edits = l.slack.edited()
+			if len(l.slack.sent()) != before || edits[len(edits)-1].ts != first["ts"] || !strings.Contains(edits[len(edits)-1].blocks, "tonight") {
+				t.Fatalf("posts = %d, want %d; edits = %+v, want the waiting card kept on the first message", len(l.slack.sent()), before, edits)
+			}
+		})
+	}
+}
+
+func TestAWaitingCardThatReplacesAMessageGoneFromSlackFailsAndPostsNothing(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.slack.fail("chat.update", slack.SlackErrorResponse{Err: "message_not_found"})
+	ask := statusCard{Status: "needs_you", Title: "Land the relay fix?", Options: []string{"Land", "Hold"}, Recommended: "Land", Waits: "card-r7", Replaces: id.permalink(id.DMChannelID, "1800000000.000100", "")}
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"card": ask})); err == nil || !strings.Contains(err.Error(), "message_not_found") {
+		t.Fatalf("err = %v, want the edit's failure returned", err)
+	}
+	if posts := l.slack.sent(); len(posts) != 0 {
+		t.Fatalf("posts = %+v, want a failed edit to post nothing", posts)
 	}
 }
 

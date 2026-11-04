@@ -350,8 +350,8 @@ func (c statusCard) checkReplaces() error {
 	if ref, err := parsePermalink(c.Replaces); err != nil || ref.ts == "" {
 		return fmt.Errorf("card replaces %q, which is not a Slack message permalink", c.Replaces)
 	}
-	if c.Waits != "" || c.Group != "" || c.Key != "" || len(c.Options)+len(c.Asks)+len(c.Rows) > 0 {
-		return errors.New("a card that replaces a posted card carries no buttons: no waits, group, key, options, asks, or rows")
+	if c.Group != "" || c.Key != "" || len(c.Asks)+len(c.Rows) > 0 || c.Waits == "" && len(c.Options) > 0 {
+		return errors.New("a card that replaces a posted message carries buttons only as a waiting card: no group, key, asks, or rows, and options need waits")
 	}
 	return nil
 }

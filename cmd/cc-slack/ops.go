@@ -1778,7 +1778,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionWrite, err))
 	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
-	if b.Card != nil && b.Card.Replaces != "" {
+	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, msg.tag)
 		if err != nil {
 			return fail(fallback(actionWrite, err))
@@ -2002,25 +2002,22 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		return a.rootCard(ctx, db, sub, id, threads, msg)
 	}
 	card := *msg.card
-	prior := cards.holding(id.DMChannelID, threads, card)
-	t := cards.draft(id.DMChannelID, under)
-	var asked, superseded *liveMessage
-	if prior != nil {
-		if answer, done := prior.Answers[card.Waits]; card.Waits != "" && done {
-			return "", "", false, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
-				card.Waits, answer.Label, answer.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
+	replaces := ""
+	if card.Replaces != "" {
+		ref, err := parsePermalink(card.Replaces)
+		if err != nil {
+			return "", "", false, err
 		}
-		asked = prior.kept(card)
+		under, replaces, card.Replaces = cmp.Or(ref.threadTS, ref.ts), ref.ts, ""
 	}
-	switch {
-	case asked != nil && ((under == "" && asked.TS != prior.Thread) || card.gainsRows(asked.Card)):
-		superseded, asked = asked, nil
-		t.Answers = maps.Clone(prior.Answers)
-	case asked != nil:
-		t = cards.draft(prior.Channel, prior.Thread)
-	case card.Group != "" && len(card.Rows) == 0:
+	place, err := cards.placeFor(id.DMChannelID, under, replaces, threads, card)
+	if err != nil {
+		return "", "", false, err
+	}
+	if place.nothing {
 		return "", "", false, nil
 	}
+	t, prior, asked, superseded := place.thread, place.prior, place.asked, place.superseded
 	t.apply(card, msg.tag, a.now(), false)
 	placed, err := a.placeCard(ctx, db, id, t, asked)
 	if err != nil {
@@ -2040,13 +2037,44 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		a.poller.noteSuperseded(ctx, id, card.Supersedes, "↪ *"+mrkdwnEscapes.Replace(card.Title)+"* is asked again as a card with buttons: "+
 			slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer it there"))
 	}
-	if asked != nil {
+	if prior != nil && asked != nil {
 		return t.Thread, placed.TS, true, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, t.Thread); err != nil {
 		return "", placed.TS, true, err
 	}
 	return t.Thread, placed.TS, true, nil
+}
+
+type cardPlace struct {
+	thread            *liveThread
+	prior             *liveThread
+	asked, superseded *liveMessage
+	nothing           bool
+}
+
+func (l *liveCards) placeFor(channel, under, replaces string, threads []string, card statusCard) (cardPlace, error) {
+	place := cardPlace{thread: l.draft(channel, under), prior: l.holding(channel, threads, card)}
+	if place.prior != nil {
+		if answer, done := place.prior.Answers[card.Waits]; card.Waits != "" && done {
+			return place, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
+				card.Waits, answer.Label, answer.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
+		}
+		place.asked = place.prior.kept(card)
+	}
+	switch {
+	case place.asked != nil && ((under == "" && place.asked.TS != place.prior.Thread) || card.gainsRows(place.asked.Card)):
+		place.superseded, place.asked = place.asked, nil
+		place.thread.Answers = maps.Clone(place.prior.Answers)
+	case place.asked != nil:
+		place.thread = l.draft(place.prior.Channel, place.prior.Thread)
+	case card.Group != "" && len(card.Rows) == 0:
+		place.nothing = true
+	}
+	if place.asked == nil && place.superseded == nil && replaces != "" {
+		place.asked = &liveMessage{TS: replaces}
+	}
+	return place, nil
 }
 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
