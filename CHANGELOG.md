@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cc-slack watch --only-delivery` makes the stream the only path for the session's Slack messages while it runs, with no channel tag or directive for them.
 - A standing grant can cover every thread in a channel: the label `slack-grant:<channel>/threads` lets replies in any thread there go out with no per-thread approval, while a new top-level post still needs one.
 
 ### Changed

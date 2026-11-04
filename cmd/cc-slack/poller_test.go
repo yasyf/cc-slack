@@ -464,6 +464,34 @@ func TestPollerRoutesDMsFromTheOperatorOnly(t *testing.T) {
 	}
 }
 
+func TestAHeldStreamAloneCarriesTheMessageWhileItRuns(t *testing.T) {
+	f := newFixture(t)
+	f.watch(agent.TopLevel, testThread)
+	const stream = testPID + 1
+	f.alive[stream] = true
+	f.poller.holdDelivery(testSubject, stream)
+
+	f.slack.add(testChannel, reply("1800000000.000200", "while it runs"))
+	f.tick()
+	if len(f.plane.directives) != 0 {
+		t.Fatalf("directives = %+v, want none while the stream holds delivery", f.plane.directives)
+	}
+	last := f.plane.events[len(f.plane.events)-1]
+	if last.Type != eventStreamed || !strings.Contains(string(last.Payload), "while it runs") {
+		t.Fatalf("event = %s %s, want the streamed message", last.Type, last.Payload)
+	}
+
+	f.alive[stream] = false
+	f.slack.add(testChannel, reply("1800000000.000300", "after it exits"))
+	f.tick()
+	if len(f.plane.directives) != 1 {
+		t.Fatalf("directives = %+v, want the message once the stream is gone", f.plane.directives)
+	}
+	if last := f.plane.events[len(f.plane.events)-1]; last.Type != eventMessage {
+		t.Fatalf("event type = %s, want a channel message once the stream is gone", last.Type)
+	}
+}
+
 func TestPollerFramesTheOperatorsThreadRepliesAsSteering(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)

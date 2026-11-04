@@ -64,6 +64,7 @@ type poller struct {
 	marks   uint64
 	pending map[cursorKey]uint64
 	since   map[cursorKey]string
+	streams map[string]int
 }
 
 type messageNudge struct {

@@ -16,6 +16,7 @@ import (
 
 const (
 	eventMessage      = "slack.message"
+	eventStreamed     = "slack.message.streamed"
 	eventWatchError   = "slack.watch_error"
 	eventOwnerStopped = "slack.owner_stopped"
 )
@@ -196,6 +197,9 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 		return err
 	}
 	if w.Owner == agent.TopLevel {
+		if d.base == eventMessage && p.streamed(w.SubjectID) {
+			return p.appendEvent(ctx, w.SubjectID, d.origin, eventStreamed, d.payload(eventStreamed), d.dedup)
+		}
 		if err := p.appendEvent(ctx, w.SubjectID, d.origin, d.base, d.payload(d.base), d.dedup); err != nil {
 			return err
 		}
@@ -220,6 +224,19 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 		return fmt.Errorf("direct finished owner %s: %w", w.Owner, err)
 	}
 	return p.ownerStopped(ctx, db, w.SubjectID, w.Owner, endedAt)
+}
+
+func (p *poller) holdDelivery(subjectID string, pid int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.streams[subjectID] = pid
+}
+
+func (p *poller) streamed(subjectID string) bool {
+	p.mu.Lock()
+	pid, held := p.streams[subjectID]
+	p.mu.Unlock()
+	return held && p.alive(pid)
 }
 
 func (p *poller) ownerStopped(ctx context.Context, db *sql.DB, subjectID, agentID string, endedAt int64) error {
