@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The Slack permission hook fails open again: a check that cannot finish lets the write through with a warning instead of refusing it.
+- Permission for one Slack write no longer covers later writes in that thread or DM. A ticket now covers one write and its exact retry, and each other write is checked again: standing grants, an approval or link not yet used, or the judge reading the user's words, including the words behind earlier tickets there. A follow-up carrying out the same order and a correction still pass; a new ask of a person gets a card. An approved top-level post no longer carries its approval to the thread it opens.
 
 ### Added
 

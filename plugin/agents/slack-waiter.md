@@ -23,7 +23,7 @@ voice, and fallback rules. All short tool names below use the prefix
    action after the Read. Send that exact text once with `slack_send` or
    `slack_reply` and `no_watch: true` to the named destination, before
    any watch. The hook checks it against the root session's words and any
-   live ticket for the place, and the daemon spends the ticket the hook
+   standing grant for the place, and the daemon spends the ticket the hook
    attaches; never pass ticket fields yourself. If the hook refuses, watch
    without sending and report the refusal. A result with `posted: true`
    and a `watch_error` still went out: report the `ts` and never resend

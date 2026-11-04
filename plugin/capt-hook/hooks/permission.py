@@ -15,10 +15,11 @@ from typing import Any
 from loguru import logger
 from spawnllm import LabelAnswer
 
-from captain_hook import Allow, Ask, Block, Event, HookResult, Input, PostToolUseEvent, PreToolUseEvent, Rewrite, T, Warn, on
+from captain_hook import Allow, Ask, Block, Event, HookResult, Input, PreToolUseEvent, Rewrite, T, on
 from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
 from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, UserRuled, holds, store
+from captain_hook.tickets.conditions import found
 from captain_hook.tickets.context import ccn_answers, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
@@ -35,7 +36,6 @@ JUDGED_TURNS = 12
 SHOWN = 300
 LATEST_SHOWN = 3
 SHORTCUT_BRIEF = "[cc-slack shortcut brief]"
-CARRY = "thread-carry"
 CHECK_SECONDS = 40
 DEADLINE_MARGIN = 5
 CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, AttributeError, subprocess.SubprocessError)
@@ -66,6 +66,7 @@ SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
 SLACK_ID = re.compile(r"[CDGU][A-Z0-9]{8,}")
 BOARD_ANSWER = "board-answer"
+HIS_WORDS = frozenset({"prompt", "queued", "plan", "ask", "card", "board", "owner-ledger"})
 BOARD_CARD = "board-card:"
 BOARD_SESSION = "board-session:"
 APPROVED = "Yes"
@@ -87,7 +88,12 @@ RULES = """
     The agent is about to make one Slack write, sent to <destination>. Allow it when the user's own words or
     answers permit a write there, explicitly or by implication: telling the agent to reply, answer, update,
     tell, or explain something to someone there, or approving a post the agent proposed for that place, is
-    permission; so is permission given earlier in the same thread. The words need not quote the text.
+    permission. The words need not quote the text.
+    - Permission for one write is not permission for the next thing in that place. Words that permitted an
+      earlier write there permit this one only when it carries out the same instruction: the next reply to the
+      person the user told the agent to answer, a follow-up on what was asked, or a correction. A new request or
+      question to a person, which the agent, another agent, or a lane thought of and the user's words do not ask
+      for, is not permitted, however recently the agent wrote there.
     - Scolding the agent for not replying to someone, or for not doing something, is an instruction to do it
       now, where that person is waiting: "why did you not respond to him?" permits responding to him, "you
       never shared the doc there, do that" permits sharing it there, and "why haven't you started?" permits
@@ -350,13 +356,32 @@ class NotRevoked(CustomTicketCondition):
         return None if found.answer is not None and not found.grants else []
 
 
+def written_here(ctx: Context) -> list[Ticket]:
+    return [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
+
+
+@dataclass(frozen=True, slots=True)
+class Unspent(CustomTicketCondition):
+    within: UserSaid | UserAnswered
+
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        spent = {item.id for ticket in store.tickets(KIND, ctx.trees) for item in ticket.evidence}
+        return [item for item in found(self.within, ctx) or () if item.id not in spent] or None
+
+
+@dataclass(frozen=True, slots=True)
+class EarlierWords(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        return [item for ticket in written_here(ctx) for item in ticket.evidence if item.source in HIS_WORDS] or None
+
+
 @dataclass(frozen=True, slots=True)
 class OwnPost(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         write = pending(live(ctx))[0]
         if write.verb not in ("edit", "delete"):
             return None
-        written = [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
+        written = written_here(ctx)
         conv = conversation_of(ctx)
         if not written and not conv.own:
             return None
@@ -473,13 +498,13 @@ class OwnerOrdered(CustomTicketCondition):
 SLACK = Tickets(
     KIND,
     ("channel", "thread"),
-    Reach.PLACE,
+    Reach.ONCE,
     rules=(
         Rule("standing-grant", StandingGrant()),
-        Rule("user-linked", UserSaid(Linked())),
-        Rule("asked-user", Or(UserAnswered(Named(), Holds("text"), approved=True), And(TopLevel(), NotRevoked(), UserRuled("channel")), And(NotRevoked(), BoardTapped()))),
+        Rule("user-linked", Unspent(UserSaid(Linked()))),
+        Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(TopLevel(), NotRevoked(), UserRuled("channel")), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
-        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
+        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -606,46 +631,6 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     if not write.daemon:
         return evt.allow()
     return named_ticket(evt, ctx, verdict)
-
-
-def json_objects(value: object) -> Iterator[dict[str, Any]]:
-    if isinstance(value, dict):
-        yield value
-        for inner in value.values():
-            yield from json_objects(inner)
-    elif isinstance(value, list):
-        for inner in value:
-            yield from json_objects(inner)
-    elif isinstance(value, str) and (start := value.find("{")) >= 0:
-        try:
-            yield from json_objects(json.loads(value[start : value.rfind("}") + 1]))
-        except ValueError:
-            return
-
-
-def posted(evt: PostToolUseEvent) -> dict[str, Any] | None:
-    return next((found for found in json_objects(evt.tool_response) if found.get("thread_ts") or found.get("ts")), None)
-
-
-def ticket_behind(evt: PostToolUseEvent, write: Write, result: dict[str, Any]) -> Ticket | None:
-    if result.get("ticket_id"):
-        return store.load(str(result["ticket_id"]))
-    ctx = context_of(evt, write, Conversation(write.channel, write.thread))
-    return store.covering(KIND, ctx.trees, ctx.place, ctx.action.fingerprint)
-
-
-def slack_posts_carry_their_thread(evt: PostToolUseEvent) -> HookResult | None:
-    writes = pending(evt)
-    if len(writes) != 1 or writes[0].verb != "post" or writes[0].thread or (result := posted(evt)) is None or (ticket := ticket_behind(evt, writes[0], result)) is None:
-        return None
-    place = {"channel": str(result.get("channel_id") or result.get("channel") or ticket.place["channel"]), "thread": str(result.get("thread_ts") or result["ts"])}
-    if ticket.kind != KIND or ticket.rule == UNCHECKED or ticket.place["thread"] or ticket.place["channel"] != place["channel"]:
-        return None
-    ctx = SLACK.context(evt, Proposal(place, summary=f"replies in {place['channel']}, thread {place['thread']}"))
-    if store.covering(KIND, ctx.trees, place, ctx.action.fingerprint) is not None:
-        return None
-    carried = SLACK.mint(ctx, CARRY, ticket.evidence)
-    return evt.context(f"{GATE}: ticket `{carried.id}` carries ticket `{ticket.id}` to the thread this post opened.")
 
 
 class WritesSlack:
@@ -797,8 +782,14 @@ def covering(place: dict[str, str] | None = None, *, rule: str = "asked-user", r
     )
 
 
-def posted_once(place: dict[str, str] | None = None) -> Ticket:
-    return covering(place, rule=UNCHECKED).model_copy(update={"reach": Reach.ONCE, "fingerprint": "0" * 16})
+def posted_once(place: dict[str, str] | None = None, evidence: tuple[Evidence, ...] = ()) -> Ticket:
+    return covering(place, rule=UNCHECKED).model_copy(update={"reach": Reach.ONCE, "fingerprint": "0" * 16, "evidence": list(evidence)})
+
+
+def retrying(write: dict[str, Any], *, verb: str = "post", place: dict[str, str] | None = None) -> Ticket:
+    written = Write(verb, write, daemon=True)
+    at = place or {"channel": written.channel, "thread": written.thread}
+    return covering(at).model_copy(update={"reach": Reach.ONCE, "fingerprint": Proposal(at, written.payload).fingerprint})
 
 
 @dataclass(frozen=True, slots=True)
@@ -839,6 +830,13 @@ def case(write: dict[str, Any] | None = None, **fields: Any) -> Case:
     return Case(write or DANA | {"text": DANA_TEXT}, **fields)
 
 
+NEW_ASK = DANA | {"text": "Could you send the raw log from last night?"}
+TOP_LEVEL = {"channel_id": FOLLOWERS, "text": "a top-level post", "no_watch": True}
+PRIYA_THREAD = {"channel_id": PRIYA_USER, "thread_ts": "1791900000.000400", "text": "and one more thing"}
+LINKED_WORDS = said_evidence(f"respond to this asap {DANA_URL}", PROMPTED_AT, "prompt")
+TAPPED = Evidence(id="ask:dana#0", source="ask", quote="Yes", detail=DANA_ASKED)
+ORDERED = Evidence(id="words:keepanswering", source="prompt", quote="keep answering dana in her thread")
+TOUCHED = Evidence(id="touch:0", source="touch", quote="an earlier call in the thread")
 DANA_CARD_ID = card_id(Write("post", DANA | {"text": DANA_TEXT}, daemon=True), {"channel": FOLLOWERS, "thread": DANA_THREAD})
 BOARD_SESSION_ID = "7c1f00e2-board"
 BOARD_ROW = {
@@ -1011,30 +1009,46 @@ on(
             case(**said("let dana know the fix landed, in her thread"), llm={"reason": "the user named another thread", "allow": False, "refusal": "The user asked for a reply elsewhere."}) >> DENY,
             case(**said("let dana know the fix landed, in her thread"), decide={"error": TimeoutError("jev down")}) >> DENY,
             case(**said("status?")) >> DENY,
-            case(tickets=[covering()]) >> Rewrite(ticket_id="0123456789ab"),
-            case(DANA | {"text": "another reply"}, tickets=[covering()]) >> Rewrite(ticket_id="0123456789ab"),
+            case(tickets=[retrying(DANA | {"text": DANA_TEXT})]) >> Rewrite(ticket_id="0123456789ab"),
+            case(NEW_ASK, tickets=[posted_once()]) >> DENY,
+            case(NEW_ASK, **said(f"respond to this asap {DANA_URL}"), tickets=[posted_once(evidence=(LINKED_WORDS,))]) >> DENY,
+            case(NEW_ASK, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana"), tickets=[posted_once(evidence=(TAPPED,))]) >> DENY,
+            case(NEW_ASK, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana"), tickets=[posted_once({"channel": FOLLOWERS, "thread": "1791866612.381629"}, evidence=(TAPPED,))]) >> DENY,
+            case(NEW_ASK, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana"), tickets=[posted_once(evidence=(TAPPED,))], llm={"reason": "the earlier yes", "allow": True, "relied_on": [TAPPED.id]}) >> ALLOW,
+            case(NEW_ASK, **said("status?"), tickets=[posted_once(evidence=(ORDERED,))], llm={"reason": "the same order", "allow": True, "relied_on": [ORDERED.id]}) >> ALLOW,
+            case(NEW_ASK, **said("status?"), tickets=[posted_once(evidence=(ORDERED,))], decide=jev(ORDERED.id)) >> ALLOW,
+            case(NEW_ASK, **said("status?"), tickets=[posted_once(evidence=(TOUCHED,))], llm={"reason": "an earlier call", "allow": True, "relied_on": [TOUCHED.id]}) >> DENY,
+            case(NEW_ASK, **said("status?"), tickets=[posted_once(evidence=(ORDERED,)).model_copy(update={"revoked": datetime(2026, 10, 14, tzinfo=UTC)})], llm={"reason": "the same order", "allow": True, "relied_on": [ORDERED.id]}) >> DENY,
+            case(NEW_ASK, **said("keep answering dana in her thread"), decide=jev(said_evidence("keep answering dana in her thread", PROMPTED_AT, "prompt").id), tickets=[posted_once()]) >> ALLOW,
+            case(NEW_ASK, **said("that reply was wrong, post a correction"), decide=jev(said_evidence("that reply was wrong, post a correction", PROMPTED_AT, "prompt").id), tickets=[posted_once()]) >> ALLOW,
+            case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), tickets=[posted_once()]) >> ALLOW,
+            case(NEW_ASK, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), tickets=[posted_once()]) >> ALLOW,
+            case(NEW_ASK, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana"), tickets=[posted_once(evidence=(TAPPED,))], decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
+            case(NEW_ASK, **said("status?"), commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}, tickets=[posted_once()]) >> ALLOW,
             case(tickets=[covering({"channel": FOLLOWERS, "thread": "1791866612.381629"})]) >> DENY,
             case(tickets=[covering({"channel": FOLLOWERS, "thread": ""})]) >> DENY,
             case(tickets=[covering(revoked=datetime(2026, 10, 14, tzinfo=UTC))]) >> DENY,
             case(tickets=[covering(tree="another-tree")]) >> DENY,
-            case({"channel_id": FOLLOWERS, "text": "a top-level post", "no_watch": True}, tool="slack_send", tickets=[covering({"channel": FOLLOWERS, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
-            case({"channel_id": PRIYA_USER, "thread_ts": "1791900000.000400", "text": "and one more thing"}, commands=PRIYA_DM, tickets=[covering({"channel": PRIYA_USER, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
-            case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[covering()]) >> Rewrite(pattern="--ticket 0123456789ab --ticket-tree fixture --ticket-agent main"),
+            case(TOP_LEVEL, tool="slack_send", tickets=[retrying(TOP_LEVEL)]) >> Rewrite(ticket_id="0123456789ab"),
+            case(TOP_LEVEL | {"text": "another top-level post"}, tool="slack_send", tickets=[retrying(TOP_LEVEL)]) >> DENY,
+            case(PRIYA_THREAD, commands=PRIYA_DM, tickets=[retrying(PRIYA_THREAD, place={"channel": PRIYA_USER, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
+            case(PRIYA_THREAD | {"text": "and a new ask"}, commands=PRIYA_DM, tickets=[retrying(PRIYA_THREAD, place={"channel": PRIYA_USER, "thread": ""})]) >> DENY,
+            case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[retrying({"channel_id": FOLLOWERS, "thread_ts": DANA_THREAD, "text": "any reply"})]) >> Rewrite(pattern="--ticket 0123456789ab --ticket-tree fixture --ticket-agent main"),
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'") >> DENY,
-            case(command=f"{CLI} reply --agent claude --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[covering()]) >> Rewrite(pattern="--ticket 0123456789ab"),
+            case(command=f"{CLI} reply --agent claude --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", tickets=[retrying({"channel_id": FOLLOWERS, "thread_ts": DANA_THREAD, "text": "any reply"})]) >> Rewrite(pattern="--ticket 0123456789ab"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text 'a post' --ticket 0123456789ab") >> Block(pattern="literal values"),
             case(command=f'{CLI} send --channel {FOLLOWERS} --text "$(cat reply.txt)"') >> Block(pattern="literal values"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text a && {CLI} reply --channel {FOLLOWERS} --thread 1 --text b") >> Block(pattern="one write per command"),
-            case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'", tickets=[covering()]) >> Allow(explicit=True),
+            case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'", tickets=[retrying(DANA | {"text": DANA_TEXT})]) >> Allow(explicit=True),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'") >> DENY,
-            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", tickets=[covering()]) >> Allow(explicit=True),
+            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", tickets=[retrying(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"})]) >> Allow(explicit=True),
             case(DANA | {"text": DANA_TEXT}, tool="mcp__slack__slack_send_message") >> DENY,
-            case({"url": DANA_URL}, tool="slack_delete", tickets=[covering({"channel": FOLLOWERS, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
+            case({"url": DANA_URL}, tool="slack_delete", tickets=[retrying({"url": DANA_URL}, verb="delete", place={"channel": FOLLOWERS, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
             case({"url": DANA_URL}, tool="slack_delete") >> Block(pattern="Delete the bot's Slack message"),
-            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[covering()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Rewrite(ticket_id="0123456789ab"),
-            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[covering({"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Delete the bot's Slack message"),
-            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[covering({"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | {f"{CC_SLACK} thread": ""}) >> Rewrite(ticket_id="0123456789ab"),
-            case(PRIYA_EDIT, tool="slack_edit", tickets=[covering({"channel": PRIYA_USER, "thread": ""})], commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Rewrite(ticket_id="0123456789ab"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": DANA_THREAD})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Rewrite(ticket_id="0123456789ab"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[posted_once({"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Delete the bot's Slack message"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | {f"{CC_SLACK} thread": ""}) >> Rewrite(ticket_id="0123456789ab"),
+            case(PRIYA_EDIT, tool="slack_edit", tickets=[retrying(PRIYA_EDIT, verb="edit", place={"channel": PRIYA_USER, "thread": ""})], commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Rewrite(ticket_id="0123456789ab"),
             case(PRIYA_EDIT, tool="slack_edit", commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern="Edit the bot's message to this"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
@@ -1101,8 +1115,8 @@ on(
             case(**said("status?"), commands=board_tapped("yes", title=f"Post this in {PETS}?")) >> DENY,
             case(**said("status?"), commands=board_tapped("yes", yes="No")) >> DENY,
             case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT, BOARD_GRANT | {"id": "b1b1b1b1", "updated_at": "2026-11-03T06:10:00Z", "tags": [*BOARD_ROW["tags"], f"slack-revoke:{FOLLOWERS}/{DANA_THREAD}"]}) | thread_read(DANA_OPENED)) >> DENY,
-            case(tickets=[covering()], commands=ruled(THREAD_REVOKED)) >> DENY,
-            case(tickets=[covering()], commands=ruled(THREAD_REVOKED | {"updated_at": "2026-10-01T00:00:00Z"})) >> Rewrite(ticket_id="0123456789ab"),
+            case(tickets=[retrying(DANA | {"text": DANA_TEXT})], commands=ruled(THREAD_REVOKED)) >> DENY,
+            case(tickets=[retrying(DANA | {"text": DANA_TEXT})], commands=ruled(THREAD_REVOKED | {"updated_at": "2026-10-01T00:00:00Z"})) >> Rewrite(ticket_id="0123456789ab"),
             case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT | {"title": f"Post this in {PETS}?"}) | thread_read(DANA_OPENED)) >> DENY,
             case(**said("status?"), commands=board_tapped("yes") | {"ccn answer search": json.dumps([BOARD_ROW, THREAD_REVOKED])}) >> DENY,
@@ -1122,60 +1136,3 @@ on(
         ]
     ),
 )(slack_writes_need_permission)
-
-
-on(
-    Event.PostToolUse,
-    only_if=[WritesSlack()],
-    tests={
-        Input(
-            env=ENABLED,
-            tool=P + "slack_send",
-            tool_input={"channel_id": FOLLOWERS, "text": "a top-level post"},
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000100", "thread_ts": "1791950000.000100", "ticket_id": "0123456789ab"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
-        Input(
-            env=ENABLED,
-            tool=P + "slack_reply",
-            tool_input=DANA | {"text": "a reply"},
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000200", "thread_ts": DANA_THREAD, "ticket_id": "0123456789ab"}),
-            tickets=[covering()],
-        ): Allow(),
-        Input(
-            env=ENABLED,
-            command=f"{CLI} send --channel {FOLLOWERS} --text 'a top-level post' --ticket 0123456789ab",
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000300", "thread_ts": "1791950000.000300", "ticket_id": "0123456789ab"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
-        Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": FOLLOWERS, "text": "a post"}, output="rate limited; nothing was sent", tickets=[covering({"channel": FOLLOWERS, "thread": ""})]): Allow(),
-        Input(
-            env=ENABLED,
-            tool=P + "slack_send",
-            tool_input={"channel_id": FOLLOWERS, "text": "a top-level post"},
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000700", "thread_ts": "1791950000.000700", "ticket_id": "0123456789ab"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""}, rule=UNCHECKED)],
-        ): Allow(),
-        Input(
-            env=ENABLED,
-            command=f"{SLACK_POST} send --channel {FOLLOWERS} --text 'a top-level post'",
-            output=json.dumps({"channel_id": FOLLOWERS, "ts": "1791950000.000400", "thread_ts": "1791950000.000400", "permalink": f"https://acme.slack.com/archives/{FOLLOWERS}/p1791950000000400", "username": "Alex (claude)"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
-        Input(
-            env=ENABLED,
-            tool="mcp__slack__slack_send_message",
-            tool_input={"channel_id": FOLLOWERS, "text": "_(Alex's Claude)_ a top-level post"},
-            output=json.dumps({"ok": True, "channel": FOLLOWERS, "ts": "1791950000.000500"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Warn(pattern="carries ticket `0123456789ab` to the thread this post opened"),
-        Input(env=ENABLED, tool="mcp__slack__slack_send_message", tool_input={"channel_id": FOLLOWERS, "text": "_(Alex's Claude)_ a top-level post"}, output=json.dumps({"ok": True, "channel": FOLLOWERS, "ts": "1791950000.000600"})): Allow(),
-        Input(
-            env=DISABLED,
-            tool=P + "slack_send",
-            tool_input={"channel_id": FOLLOWERS, "text": "a top-level post"},
-            output=json.dumps({"posted": True, "channel_id": FOLLOWERS, "ts": "1791950000.000800", "thread_ts": "1791950000.000800", "ticket_id": "0123456789ab"}),
-            tickets=[covering({"channel": FOLLOWERS, "thread": ""})],
-        ): Allow(),
-    },
-)(slack_posts_carry_their_thread)

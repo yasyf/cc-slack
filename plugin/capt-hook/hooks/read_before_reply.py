@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from captain_hook import Allow, Block, Event, HookResult, Input, PostToolUseEvent, PreToolUseEvent, on
 from captain_hook.events import ToolHookEvent
 
-from .permission import json_objects
 from .plain_words import CLI, P, THREAD, THREAD_LINK
 from .writes import Write, pending, read_threads
 
@@ -36,6 +37,21 @@ def reads(*threads: str, agent: str = "main", age: timedelta = timedelta()) -> T
 
 def replies(evt: ToolHookEvent) -> list[Write]:
     return [write for write in pending(evt) if write.verb == "post" and write.readable and write.thread]
+
+
+def json_objects(value: object) -> Iterator[dict[str, Any]]:
+    if isinstance(value, dict):
+        yield value
+        for inner in value.values():
+            yield from json_objects(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from json_objects(inner)
+    elif isinstance(value, str) and (start := value.find("{")) >= 0:
+        try:
+            yield from json_objects(json.loads(value[start : value.rfind("}") + 1]))
+        except ValueError:
+            return
 
 
 def read_in_full(evt: PostToolUseEvent) -> bool:
