@@ -229,6 +229,11 @@ func prCardThread(id identity, channelID, postThread string) string {
 	return postThread
 }
 
+func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) []linkedPR {
+	_, prs := a.linkPRs(ctx, id, scope, strings.Join(b.TapPRs, "\n"))
+	return prs
+}
+
 func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread string, prs []linkedPR) {
 	command := id.Config.PRLinks.CardCommand
 	if len(command) == 0 || !cardsAt(id, channelID) {
@@ -271,7 +276,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		}
 		sameAsk := func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }
 		t := cards.draft(channelID, thread)
-		if slices.ContainsFunc(t.PRCards, sameAsk) || cards.rootPRCard(channelID, func(_ *liveThread, m *liveMessage) bool { return sameAsk(m) }) {
+		if slices.ContainsFunc(t.PRCards, sameAsk) || cards.rootPRCard(channelID, func(_ *liveThread, m *liveMessage) bool { return sameAsk(m) }) || cards.pickOffers(channelID, p.Card.offer()) {
 			continue
 		}
 		m := &liveMessage{Card: p.Card, At: now}

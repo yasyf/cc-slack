@@ -213,6 +213,8 @@ var (
 			},
 		},
 	}
+	tapPRsProp = map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+		"description": "URLs of pull requests waiting on the user's tap, each drawing its one card with buttons; a link in the text draws none"}
 	toolSpecList = []toolSpec{
 		{
 			name: "slack_send",
@@ -222,7 +224,7 @@ var (
 			op: opSend, failure: actionWrite,
 			properties: withTicket(map[string]any{
 				"channel_id": channelProp, "text": textProp, "thread_ts": threadProp, "url": urlProp, "files": filesProp, "blocks": blocksProp,
-				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp,
+				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp,
 			}),
 		},
 		{
@@ -231,7 +233,7 @@ var (
 			op:          opReply, failure: actionWrite,
 			properties: withTicket(map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "text": textProp, "url": urlProp, "files": filesProp, "blocks": blocksProp,
-				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp,
+				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp,
 			}),
 		},
 		{
@@ -429,7 +431,8 @@ var (
 				"root_only": map[string]any{"type": "boolean", "description": "redraw this session's one root card with this card, posting it at the DM root the first time"},
 				"about": map[string]any{"type": "string", "pattern": askIDPattern.String(),
 					"description": "waits id of a waiting card this text reply is about, such as an Explain more answer; the reply lands in that card's thread"},
-				"agent": agentProp,
+				"tap_prs": tapPRsProp,
+				"agent":   agentProp,
 			},
 		},
 	}

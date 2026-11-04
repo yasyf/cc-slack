@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/yasyf/cc-interact/agent"
 )
 
 var prAlias = regexp.MustCompile(`p(\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{ pullRequest\(number: (\d+)\)`)
@@ -165,6 +166,10 @@ func readAsks(t *testing.T, path string) []string {
 	}
 	return strings.Fields(string(raw))
 }
+
+const testPick = "card-41"
+
+var tapPR41 = []string{"https://github.com/acme/app/pull/41"}
 
 func mergeRowCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
@@ -318,7 +323,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	var sent map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green"}).Body, &sent); err != nil {
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
 		t.Fatal(err)
 	}
 	cards := awaitPRCards(t, l, testDM)
@@ -336,9 +341,9 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	if got := cmd.requests(t); !reflect.DeepEqual(got, []string{`{"prs":[{"number":41,"repo":"acme/app"}]}`}) {
 		t.Fatalf("card command asked %v", got)
 	}
-	l.do(opDMStatus, map[string]any{"thread_ts": sent["thread_ts"], "text": "acme/app#41 again"})
-	l.do(opDMStatus, map[string]any{"text": "acme/app#41 elsewhere"})
-	l.do(opDMStatus, map[string]any{"thread_ts": cards[0].ts, "text": "acme/app#41 under its own card"})
+	l.do(opDMStatus, map[string]any{"thread_ts": sent["thread_ts"], "text": "acme/app#41 again", "tap_prs": tapPR41})
+	l.do(opDMStatus, map[string]any{"text": "acme/app#41 elsewhere", "tap_prs": tapPR41})
+	l.do(opDMStatus, map[string]any{"thread_ts": cards[0].ts, "text": "acme/app#41 under its own card", "tap_prs": tapPR41})
 	if cards := prCards(l, testDM); len(cards) != 1 || len(cmd.requests(t)) != 1 {
 		t.Fatalf("later mentions drew cards %+v after %d asks, want the one card and one ask", cards, len(cmd.requests(t)))
 	}
@@ -348,7 +353,7 @@ func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41})
 	cards := awaitPRCards(t, l, testDM)
 	if len(cards) != 1 || cards[0].threadTS != "" {
 		t.Fatalf("cards = %+v, want one at the DM root, not in his thread %s", cards, hisThread)
@@ -363,10 +368,10 @@ func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 func TestAPRAskedAgainAtANewHeadGetsANewRootCard(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	tapMerge(t, l, awaitPRCards(t, l, testDM)[0])
 	asks := len(cmd.requests(t))
-	l.do(opDMStatus, map[string]any{"text": "#41 at the head he answered"})
+	l.do(opDMStatus, map[string]any{"text": "#41 at the head he answered", "tap_prs": tapPR41})
 	eventually(t, "the ask after his answer", func() bool { return len(cmd.requests(t)) > asks })
 	if got := prCards(l, testDM); len(got) != 1 {
 		t.Fatalf("PR cards = %+v, want no second card for the head he answered", got)
@@ -375,7 +380,7 @@ func TestAPRAskedAgainAtANewHeadGetsANewRootCard(t *testing.T) {
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l.do(opDMStatus, map[string]any{"text": "#41 moved"})
+	l.do(opDMStatus, map[string]any{"text": "#41 moved", "tap_prs": tapPR41})
 	eventually(t, "the new head's card at the DM root", func() bool {
 		return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
 			return strings.Contains(p.blocks, "merge:41:09b10f1") && p.threadTS == ""
@@ -408,7 +413,7 @@ func TestAPostReturnsBeforeItsPRCardCommandAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	if got := l.slack.sentTo(testDM); len(got) != 1 {
 		t.Fatalf("posted %+v while the card command ran, want the post alone", got)
 	}
@@ -427,7 +432,7 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 		gh.mu.Lock()
 		gh.merged["acme/app#41"] = true
 		gh.mu.Unlock()
-		l.do(opDMStatus, map[string]any{"text": "#41 landed"})
+		l.do(opDMStatus, map[string]any{"text": "#41 landed", "tap_prs": tapPR41})
 		if got := l.slack.sentTo(testDM); len(got) != 1 || got[0].text != "<https://github.com/acme/app/pull/41|#41> landed" || len(cmd.requests(t)) != 0 {
 			t.Fatalf("posted %+v and asked %v, want the link alone and no ask", got, cmd.requests(t))
 		}
@@ -435,7 +440,7 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("not held", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"})
 		l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-		l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+		l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 		eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
 		if got := l.slack.sentTo(testDM); len(got) != 1 {
 			t.Fatalf("posted %+v after %d asks, want the linked post alone after one ask", got, len(cmd.requests(t)))
@@ -447,15 +452,15 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green"}).Body, &sent); err != nil {
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
 		t.Fatal(err)
 	}
-	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "#41 is green"})
+	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "#41 is green", "tap_prs": tapPR41})
 	if got := l.slack.sentTo(testChannel); len(got) != 2 || len(cmd.requests(t)) != 0 {
 		t.Fatalf("unlisted channel got %+v after %d asks, want two linked posts, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
 	}
 	var room postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green"}).Body, &room); err != nil {
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green", "tap_prs": tapPR41}).Body, &room); err != nil {
 		t.Fatal(err)
 	}
 	if cards := awaitPRCards(t, l, testRoom); len(cards) != 1 || cards[0].threadTS != room.TS {
@@ -466,7 +471,7 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
@@ -520,7 +525,7 @@ func movedCard() providedCard {
 func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "#41 moved to 09b10f1 since the card asked merge:41:e718a74", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
@@ -545,7 +550,7 @@ func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T)
 func TestACardForAPRThatNoLongerWaitsGivesUpItsButtons(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "#41 no longer waits on his tap", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{}}), 0o600); err != nil {
 		t.Fatal(err)
@@ -562,7 +567,7 @@ func TestACardForAPRThatNoLongerWaitsGivesUpItsButtons(t *testing.T) {
 func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
@@ -592,7 +597,7 @@ func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
 func TestAnAnsweredCardKeepsItsAnswerUnderTheWordsItsRowHasNow(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	id := tapMerge(t, l, card)
 	landed := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
@@ -618,7 +623,7 @@ func TestAnAnsweredCardKeepsItsAnswerUnderTheWordsItsRowHasNow(t *testing.T) {
 func TestACardNobodyAnsweredGivesUpItsButtonsUnderItsRowsWords(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	red := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "info", Title: "#41 at e718a74",
@@ -655,7 +660,7 @@ func TestOnlyAKnownHeadThatChangesCountsAsMoved(t *testing.T) {
 func TestRedrawPRCardsRedrawsEveryOpenCardWithNoNewPost(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	full := mergeRowCard()
 	full.Card.Body += "\n*From the ledger:* the whole row"
@@ -688,9 +693,9 @@ func TestPRCardRedrawsWhenItsPRLands(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, gh := cardingDaemon(t, cmd.argv, "acme/app#41")
 	gh.mu.Lock()
-	gh.mergedAfter = 1
+	gh.mergedAfter = 2
 	gh.mu.Unlock()
-	l.do(opDMStatus, map[string]any{"text": "#41 is green"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -727,14 +732,188 @@ func TestABareNumberLinksToTheDrivePRItNamesOrStaysPlain(t *testing.T) {
 			if got := cmd.resolves(t); len(got) != tc.resolves || tc.resolves == 1 && got[0] != `{"numbers":[2475]}` {
 				t.Fatalf("card command resolved %v, want %d asks for [2475]", got, tc.resolves)
 			}
-			wantCards := []string{}
-			if tc.want != tc.text {
-				wantCards = []string{`{"prs":[{"number":2475,"repo":"yasyf/cc-skills"}]}`}
-			}
-			eventually(t, "the asks", func() bool { return len(cmd.requests(t)) == len(wantCards) })
-			if got := cmd.requests(t); len(got) == 1 && got[0] != wantCards[0] {
-				t.Fatalf("card command asked %v, want %v", got, wantCards)
+			if got := cmd.requests(t); len(got) != 0 {
+				t.Fatalf("card command asked %v, want no card from a link", got)
 			}
 		})
+	}
+}
+
+func headRowCard() providedCard {
+	card := mergeRowCard()
+	card.Card.Refs, card.Card.PRs = nil, []cardPR{{URL: tapPR41[0], Head: "e718a74"}}
+	return card
+}
+
+func pickFor41(head string, options ...string) map[string]any {
+	return map[string]any{"card": statusCard{Status: "needs_you", Title: "Tap: #41", Body: "Fixes the chat list.", Options: options, Recommended: options[0], Waits: testPick,
+		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Description: "Chats load faster.", Head: head}}}}
+}
+
+func postPick(t *testing.T, l *liveDaemon, body map[string]any) fakePost {
+	t.Helper()
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, body).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	return fakePost{ts: res["ts"], threadTS: res["thread_ts"]}
+}
+
+func tapMergeOnPick(t *testing.T, l *liveDaemon, card fakePost) {
+	t.Helper()
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
+		ActionID: cardWaitAction + "0:" + testPick, Value: string(mustJSON(askTap{ID: testPick, Label: "Merge", Question: "Tap: #41", Options: []string{"Merge", "Hold"}})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0" + card.ts[len(card.ts)-3:]})
+}
+
+func seedThreadCard(l *liveDaemon, thread, ts string, card statusCard) {
+	l.app.cards.mu.Lock()
+	defer l.app.cards.mu.Unlock()
+	l.app.cards.threads[threadKey(testDM, thread)] = &liveThread{Channel: testDM, Thread: thread, Updated: time.Now(),
+		PRCards: []*liveMessage{{TS: ts, Card: card, At: time.Now()}}}
+}
+
+func answersOf(requests []string) []string {
+	return slices.DeleteFunc(requests, func(r string) bool { return !strings.Contains(r, `"answer"`) })
+}
+
+func TestALinkInAPostDrawsNoTapCardAndKeepsItsLink(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 and " + tapPR41[0] + " are green"})
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "#41 is green", Body: tapPR41[0]}})
+	l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 again"})
+	if asked := cmd.requests(t); len(asked) != 0 {
+		t.Fatalf("card command asked %v, want no ask from a link", asked)
+	}
+	first := l.slack.sentTo(testDM)[0]
+	if !strings.Contains(first.text, "<https://github.com/acme/app/pull/41|#41>") {
+		t.Fatalf("post = %q, want the PR still linked", first.text)
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap", "tap_prs": tapPR41})
+	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
+		t.Fatalf("cards = %+v, want the one card tap_prs asked for", cards)
+	}
+}
+
+func TestTapPRsTakesOnlyPullRequestURLs(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	raw := mustJSON(map[string]any{"text": "not a PR", "tap_prs": []string{"#41"}})
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "tap_prs takes pull request URLs") {
+		t.Fatalf("a bare number in tap_prs: %v", err)
+	}
+}
+
+func TestATapClosesEveryOtherCardOfThatPRAndHeadAndAppliesOnce(t *testing.T) {
+	const oldThread, oldCard, otherHead = "1793000000.000100", "1793000000.000200", "1793000000.000300"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	seedThreadCard(l, oldThread, oldCard, mergeRowCard().Card)
+	seedThreadCard(l, oldThread+"9", otherHead, movedCard().Card)
+	tapMerge(t, l, card)
+	if answers := answersOf(cmd.requests(t)); len(answers) != 1 {
+		t.Fatalf("card command answers = %v, want the one tap applied once", answers)
+	}
+	if edits := editsOf(l.slack.edited(), oldCard); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") || !strings.Contains(edits[len(edits)-1], "the other card") {
+		t.Fatalf("the open copy's edits = %v, want the answer and a link to the card he tapped", edits)
+	}
+	if edits := editsOf(l.slack.edited(), otherHead); len(edits) != 0 {
+		t.Fatalf("the card at another head was edited: %v", edits)
+	}
+	if !l.app.cards.answered(testDM, oldThread, testWaits) {
+		t.Fatal("the copy's own thread does not hold the answer, so a late tap on it would apply again")
+	}
+}
+
+func TestATapOnAPickForThatPRAndHeadClosesItsCardAndCountsInTheLedger(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	tapMergeOnPick(t, l, pick)
+	want := `{"answer":{"label":"Merge","number":41,"repo":"acme/app","waits":"merge:41:e718a74"}}`
+	if answers := answersOf(cmd.requests(t)); len(answers) != 1 || answers[0] != want {
+		t.Fatalf("card command answers = %v, want %s", answers, want)
+	}
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
+		t.Fatalf("the PR card's edits = %v, want the answer from the pick", edits)
+	}
+}
+
+func TestATapOnThePRCardAnswersItsPickAndTellsTheLaneWaitingOnIt(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	tapMerge(t, l, card)
+	if edits := editsOf(l.slack.edited(), pick.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
+		t.Fatalf("the pick's edits = %v, want the answer from the PR card", edits)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "Merge") {
+		t.Fatalf("the waiting lane heard %q, want the pick's answer", got)
+	}
+}
+
+func TestAPickSettledByWhatHappenedWritesNoLedgerAnswer(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.do(opCardAnswer, map[string]any{"waits": testPick, "url": id.permalink(testDM, pick.ts, pick.threadTS), "label": "It landed", "other": true, "via": "http://127.0.0.1:7000/p/asks--ab12", "settled": true})
+	if answers := answersOf(cmd.requests(t)); len(answers) != 0 {
+		t.Fatalf("card command answers = %v, want none from a settled pick", answers)
+	}
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) != 0 {
+		t.Fatalf("the PR card was edited: %v", edits)
+	}
+}
+
+func TestAPickThatIsNotTheSameOfferLeavesTheCardOpen(t *testing.T) {
+	for name, pick := range map[string]map[string]any{
+		"another head":  pickFor41("09b10f1", "Merge", "Hold"),
+		"other answers": pickFor41("e718a74", "Accept the numbers", "Keep the bar"),
+		"no head":       pickFor41("", "Merge", "Hold"),
+		"only names it": {"card": statusCard{Status: "needs_you", Title: "Tap all ready fixes?", Body: "#41 is one of them.", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testPick}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+			l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+			l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+			card := awaitPRCards(t, l, testDM)[0]
+			posted := postPick(t, l, pick)
+			tapMergeOnPick(t, l, posted)
+			if answers := answersOf(cmd.requests(t)); len(answers) != 0 {
+				t.Fatalf("card command answers = %v, want none", answers)
+			}
+			if edits := editsOf(l.slack.edited(), card.ts); len(edits) != 0 {
+				t.Fatalf("the PR card was edited: %v", edits)
+			}
+		})
+	}
+}
+
+func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
+	eventually(t, "the post settling", func() bool { return len(l.slack.sentTo(testDM)) == 2 })
+	if cards := prCards(l, testDM); len(cards) != 0 {
+		t.Fatalf("cards = %+v, want the pick as the one offer", cards)
 	}
 }

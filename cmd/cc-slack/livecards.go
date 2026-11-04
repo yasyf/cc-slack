@@ -371,6 +371,55 @@ func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMe
 	return false
 }
 
+func (l *liveCards) pickOffers(channel string, offer cardOffer) bool {
+	for _, t := range l.threads {
+		if t.Channel == channel && slices.ContainsFunc(slices.Collect(maps.Values(t.Waiting)), func(m *liveMessage) bool { return offer.same(m.Card.offer()) }) {
+			return true
+		}
+	}
+	return false
+}
+
+type offeredCard struct {
+	ref      cardRef
+	waits    string
+	question string
+	options  []string
+	pr       refID
+}
+
+func (l *liveCards) otherOffers(tapped cardRef) (prs, picks []offeredCard) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(tapped.channel, tapped.thread)]
+	if !ok {
+		return nil, nil
+	}
+	at := slices.IndexFunc(t.messages(), func(m *liveMessage) bool { return m != nil && m.TS == tapped.ts })
+	if at < 0 {
+		return nil, nil
+	}
+	asked := t.messages()[at].Card
+	offer := asked.offer()
+	for _, o := range l.threads {
+		if o.Channel != tapped.channel {
+			continue
+		}
+		for _, m := range o.PRCards {
+			ids := m.Card.refIDs()
+			if m.TS != tapped.ts && o.open(m) && len(ids) > 0 && (m.Card.Waits == asked.Waits || offer.same(m.Card.offer())) {
+				prs = append(prs, offeredCard{cardRef{o.Channel, o.Thread, m.TS}, m.Card.Waits, m.Card.Title, m.Card.answers(), ids[0]})
+			}
+		}
+		for _, m := range o.Waiting {
+			if m.TS != tapped.ts && o.open(m) && offer.same(m.Card.offer()) {
+				picks = append(picks, offeredCard{ref: cardRef{o.Channel, o.Thread, m.TS}, waits: m.Card.Waits, question: m.Card.Title, options: m.Card.answers()})
+			}
+		}
+	}
+	return prs, picks
+}
+
 func (l *liveCards) forget(t *liveThread, ts string) {
 	if t.Reply != nil && t.Reply.TS == ts {
 		t.Reply = nil
