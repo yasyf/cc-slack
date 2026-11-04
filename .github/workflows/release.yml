@@ -79,12 +79,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for workflow in ci.yml guides.yml; do
-            response="$(
-              jq -n --arg commit "$COMMIT" '{ref: "main", inputs: {commit: $commit}}' |
-                gh api --method POST \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches" \
-                  --input -
-            )"
+            for attempt in 1 2 3; do
+              if response="$(
+                jq -n --arg commit "$COMMIT" '{ref: "main", inputs: {commit: $commit}}' |
+                  gh api --method POST \
+                    -H "X-GitHub-Api-Version: 2026-03-10" \
+                    "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches" \
+                    --input -
+              )"; then
+                break
+              fi
+              [ "$attempt" -lt 3 ] || exit 1
+              sleep 20
+            done
             echo "${workflow}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$(jq -er '.workflow_run_id' <<<"$response")"
           done
