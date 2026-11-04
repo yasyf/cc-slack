@@ -546,6 +546,7 @@ DANA_THREAD = "1791859635.513139"
 DANA = {"channel_id": FOLLOWERS, "thread_ts": DANA_THREAD, "no_watch": True}
 DANA_TEXT = "Good catch Dana! The SQL viewer now stops this before it runs and tells you why, plus the deleted_at soft-delete fix: https://github.com/acme/app/pull/36126"
 DANA_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p{DANA_THREAD.replace('.', '')}"
+LINKED_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p1791900000000300?thread_ts={DANA_THREAD}&cid={FOLLOWERS}"
 DANA_ASKED = f'Post this in {FOLLOWERS}, thread {DANA_THREAD}? "{DANA_TEXT}"'
 DANA_CARD = f"Post this in {FOLLOWERS}, thread {DANA_THREAD}?"
 DANA_OPENED = {"ts": DANA_THREAD, "user": "U0DANA00001", "user_name": "Dana", "text": "the SQL viewer ran a delete with no soft-delete filter"}
@@ -579,6 +580,8 @@ JEV_NONE = {"permits": LabelAnswer(NONE, {NONE: 1.0}, 0.9)}
 LLM_SILENT = {"error": TimeoutError("the llm judge timed out")}
 LLM_REFUSES = {"reason": "nothing the user said permits this write", "allow": False, "refusal": "Ask the user."}
 FIXTURES = Path(__file__).with_name("fixtures")
+LINKED_LONG_AGO = FIXTURES / "linked_long_ago.jsonl"
+LINKED_LONG_AGO_BY_OTHERS = FIXTURES / "linked_long_ago_by_others.jsonl"
 ENABLED = {"CLAUDE_PROJECT_DIR": str(FIXTURES / "enabled")}
 DISABLED = {"CLAUDE_PROJECT_DIR": str(FIXTURES / "disabled")}
 LANDED = {"channel_id": FOLLOWERS, "text": "#38538 landed: Slack writes now run on tickets", "no_watch": True}
@@ -681,7 +684,7 @@ class Case:
     write: dict[str, Any]
     tool: str = "slack_reply"
     command: str | None = None
-    transcript: list[dict[str, Any]] | None = None
+    transcript: list[dict[str, Any]] | Path | None = None
     root_transcript: list[dict[str, Any]] | None = None
     agent_id: str | None = None
     commands: dict[str, str | tuple[int, str]] | None = None
@@ -789,6 +792,9 @@ on(
             case(**said(f"respond to this asap {DANA_URL}", agent_id="a-lane")) >> Rewrite(ticket_agent="a-lane"),
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[0], id="digest")) >> ALLOW,
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[1], id="digest")) >> DENY,
+            case(transcript=LINKED_LONG_AGO) >> ALLOW,
+            case({"url": LINKED_URL, "text": DANA_TEXT, "no_watch": True}, transcript=LINKED_LONG_AGO) >> ALLOW,
+            case(transcript=LINKED_LONG_AGO_BY_OTHERS) >> DENY,
             case(**said(f'<pasted_content id="a1">{DANA_URL}</pasted_content> what is this')) >> DENY,
             case(**said(f'<channel source="cc-slack" type="slack.message">{DANA_URL}</channel>')) >> DENY,
             case(**said(f"respond to this asap {DANA_URL.replace(FOLLOWERS, PETS)}")) >> DENY,
