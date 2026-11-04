@@ -505,7 +505,8 @@ the top-level session as a `slack.action` whose payload carries the `id`,
 `waits: true`, the `question`, the chosen `label`, `other: true` for a
 written-in answer, and a `capture` line. The top-level session hands the
 answer to the lane the id names, by `SendMessage`, and records the capture
-line in cc-notes as the user's answer. A Claude lane parks on its mailbox
+line in cc-notes as the user's answer, with the `slack-grant:` label the
+line names for a permission card. A Claude lane parks on its mailbox
 wait until that message arrives. Only the first answer counts; a later
 tap is dropped.
 

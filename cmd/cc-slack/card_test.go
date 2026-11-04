@@ -401,10 +401,12 @@ func TestPermissionCardSpeaksInWords(t *testing.T) {
 		"session hash": {plain.Title, "Why: session 144ffadb3d797d00 asked for it.", "say what it stands for"},
 		"lane name":    {plain.Title, "Why: bugs-comms-2 owes the thread an update.", "what that agent is doing"},
 	} {
-		card := plain
-		card.Title, card.Body = tc.title, tc.body
-		if err := card.check(time.Now(), false, ""); err == nil || !strings.Contains(err.Error(), tc.fix) {
-			t.Errorf("%s: want a refusal saying %q, got %v", name, tc.fix, err)
+		for _, waits := range []string{plain.Waits, "slack:C0C5SEUJK5L:1793760152.086369:e11b7b897370"} {
+			card := plain
+			card.Title, card.Body, card.Waits = tc.title, tc.body, waits
+			if err := card.check(time.Now(), false, ""); err == nil || !strings.Contains(err.Error(), tc.fix) {
+				t.Errorf("%s under %s: want a refusal saying %q, got %v", name, waits, tc.fix, err)
+			}
 		}
 	}
 	other := plain
