@@ -324,6 +324,15 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	return nil
 }
 
+func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool) {
+	if !id.fromOperator(m) || m.SubType != "" || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
+		return cardActionPush{}, false
+	}
+	ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, strings.TrimSpace(m.Text))
+	return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
+		ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp}, ok
+}
+
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
 	won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
 	if !won {

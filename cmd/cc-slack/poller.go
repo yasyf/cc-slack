@@ -501,8 +501,12 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		if g.key.channelID == id.DMChannelID {
-			if err := p.trackOwed(ctx, id, m); err != nil {
+			tapped, err := p.dmMessage(ctx, id, m)
+			if err != nil {
 				return c, err
+			}
+			if tapped {
+				continue
 			}
 		}
 		if g.idle() {
@@ -568,6 +572,13 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 		}
 	}
 	return nil
+}
+
+func (p *poller) dmMessage(ctx context.Context, id identity, m slack.Message) (bool, error) {
+	if tap, ok := p.numberedTap(id, m); ok {
+		return true, p.cardAction(ctx, id, tap)
+	}
+	return false, p.trackOwed(ctx, id, m)
 }
 
 func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) error {

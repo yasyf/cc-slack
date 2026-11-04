@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -26,6 +27,7 @@ const (
 	cardWaitBlock     = "card-wait"
 	cardTappedBlock   = "card-tapped-"
 	cardRowBlock      = "card-row-"
+	cardOptionsBlock  = "card-options"
 	cardAckAction     = cardActionPrefix + ":ack"
 	cardPauseAction   = cardActionPrefix + ":pause"
 	cardOptionAction  = cardActionPrefix + ":opt:"
@@ -44,6 +46,7 @@ const (
 	cardPauseLabel    = "Pause"
 	cardMaxOptions    = 4
 	cardMaxOptionLen  = cardMaxLabelLen - len(" "+cardRecommended)
+	cardMaxShortWords = 2
 	cardMaxLinks      = 5
 	cardMaxRefs       = 10
 	cardMaxSupersedes = 5
@@ -68,7 +71,7 @@ const (
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
 	cardPermission    = "slack-"
-	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or tap Other to write your own answer."
+	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
 )
 
@@ -691,10 +694,51 @@ func button(actionID, label string) *slack.ButtonBlockElement {
 	return slack.NewButtonBlockElement(actionID, label, slack.NewTextBlockObject(slack.PlainTextType, label, true, false))
 }
 
+type cardPick struct {
+	actionID, value, option, label string
+}
+
+func (c statusCard) picks() []cardPick {
+	answers := c.answers()
+	short := !slices.ContainsFunc(answers, func(o string) bool { return len(strings.Fields(o)) > cardMaxShortWords })
+	picks := make([]cardPick, 0, len(answers))
+	for i, o := range answers {
+		p := cardPick{actionID: fmt.Sprintf("%s%d", cardOptionAction, i), value: o, option: o, label: strconv.Itoa(i + 1)}
+		if c.Waits != "" {
+			p.actionID = fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits)
+			p.value = string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: answers}))
+		}
+		if short {
+			p.label = o
+		}
+		if o == c.Recommended {
+			p.label += " " + cardRecommended
+		}
+		picks = append(picks, p)
+	}
+	return picks
+}
+
+func (c statusCard) optionList() []slack.Block {
+	if len(c.Options) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(c.Options))
+	for i, p := range c.picks() {
+		line := fmt.Sprintf("*%d.* %s", i+1, mrkdwnEscapes.Replace(p.option))
+		if p.option == c.Recommended {
+			line += " _" + cardRecommended + "_"
+		}
+		lines = append(lines, line)
+	}
+	return []slack.Block{section(cardOptionsBlock, strings.Join(lines, "\n"))}
+}
+
 func (c statusCard) actions() slack.Block {
-	buttons := make([]slack.BlockElement, 0, len(c.Options)+2)
-	for i, o := range c.Options {
-		buttons = append(buttons, button(fmt.Sprintf("%s%d", cardOptionAction, i), o))
+	picks := c.picks()
+	buttons := make([]slack.BlockElement, 0, len(picks)+2)
+	for _, p := range picks {
+		buttons = append(buttons, slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, p.label, true, false)))
 	}
 	pause := button(cardPauseAction, cardPauseLabel)
 	pause.Style = slack.StyleDanger
@@ -711,17 +755,12 @@ func (c statusCard) answers() []string {
 }
 
 func (c statusCard) waitActions() slack.Block {
+	picks := c.picks()
 	answers := c.answers()
-	buttons := make([]slack.BlockElement, 0, len(answers)+2)
-	for i, o := range answers {
-		value := string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: answers}))
-		text := o
-		if o == c.Recommended {
-			text = o + " " + cardRecommended
-		}
-		b := slack.NewButtonBlockElement(fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits), value,
-			slack.NewTextBlockObject(slack.PlainTextType, text, true, false))
-		if o == c.Recommended {
+	buttons := make([]slack.BlockElement, 0, len(picks)+2)
+	for _, p := range picks {
+		b := slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, p.label, true, false))
+		if p.option == c.Recommended {
 			b.Style = slack.StylePrimary
 		}
 		buttons = append(buttons, b)
@@ -943,6 +982,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks = append(blocks, c.rollup(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
+	blocks = append(blocks, c.optionList()...)
 	if c.Group != "" {
 		for _, r := range c.Rows {
 			blocks = append(blocks, r.blocks(v)...)

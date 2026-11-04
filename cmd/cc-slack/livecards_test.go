@@ -483,6 +483,48 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	}
 }
 
+func TestABareNumberReplyAnswersTheWaitingCardAsItsButtonWould(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	options := []string{"Cap the run search at 200 sessions", "Run the whole search tonight"}
+	card := statusCard{Status: "needs_you", Title: "How should the run search pay for itself?", Options: options, Recommended: options[0], Waits: "cost-pick"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steered string
+	say := func(n int, text string) {
+		t.Helper()
+		ts := fmt.Sprintf("%d.%06d", slackTime(reply.ts).Unix()+1, n)
+		l.slack.add(id.DMChannelID, slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: reply.ts, User: testUser, Text: text}})
+		l.app.poller.nudged(messageNudge{Channel: id.DMChannelID, TS: ts, ThreadTS: reply.ts})
+		steered = ""
+		eventually(t, "the reply to reach the session", func() bool {
+			steered += l.inject(agent.TopLevel)
+			return steered != ""
+		})
+	}
+
+	say(1, "+1")
+	if strings.Contains(steered, "answered the waiting ask") || l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
+		t.Fatalf("+1 answered the card: %q", steered)
+	}
+	say(2, " 2 ")
+	if !strings.Contains(steered, `answered the waiting ask "cost-pick" with "Run the whole search tonight"`) {
+		t.Fatalf("directive = %q, want the second listed option as the answer", steered)
+	}
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Run the whole search tonight* · answered") ||
+		strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the card marked answered", edits)
+	}
+	say(3, "1")
+	if strings.Contains(steered, "answered the waiting ask") {
+		t.Fatalf("a number after the answer answered again: %q", steered)
+	}
+}
+
 func TestRedrawsKeepATappedOptionAndAWhoamiHidesRefTokens(t *testing.T) {
 	at := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
 	thread := &liveThread{Channel: "D1", Thread: "1.1"}

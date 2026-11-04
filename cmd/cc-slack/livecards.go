@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -384,6 +385,35 @@ func (l *liveCards) answered(channel, thread, askID string) bool {
 	}
 	_, done := t.Answers[askID]
 	return done
+}
+
+func (l *liveCards) numberedPick(channel, thread, text string) (string, cardPick, bool) {
+	n, err := strconv.Atoi(text)
+	if err != nil || strconv.Itoa(n) != text {
+		return "", cardPick{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return "", cardPick{}, false
+	}
+	var open *liveMessage
+	for _, m := range t.messages() {
+		if m == nil || m.TS == "" || m.Tapped != "" || m.Card.Group != "" || len(m.Card.Options) == 0 {
+			continue
+		}
+		if _, done := t.Answers[m.Card.Waits]; m.Card.Waits != "" && done {
+			continue
+		}
+		if open == nil || m.At.After(open.At) {
+			open = m
+		}
+	}
+	if open == nil || n < 1 || n > len(open.Card.Options) {
+		return "", cardPick{}, false
+	}
+	return open.TS, open.Card.picks()[n-1], true
 }
 
 func (l *liveCards) supersedes(channel, thread, ts string) []string {
