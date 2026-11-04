@@ -79,6 +79,11 @@ func linkingDaemon(t *testing.T, held ...string) (*liveDaemon, *fakeGitHub) {
 
 func cardingDaemon(t *testing.T, cardCommand []string, held ...string) (*liveDaemon, *fakeGitHub) {
 	t.Helper()
+	return prLinksDaemon(t, map[string]any{"repos": []string{"acme/app", "acme/lib"}, "card_channels": []string{testRoom}, "card_command": cardCommand}, held...)
+}
+
+func prLinksDaemon(t *testing.T, prLinks map[string]any, held ...string) (*liveDaemon, *fakeGitHub) {
+	t.Helper()
 	gh := &fakeGitHub{held: map[string]bool{}, merged: map[string]bool{}}
 	for _, h := range held {
 		gh.held[h] = true
@@ -94,7 +99,7 @@ func cardingDaemon(t *testing.T, cardCommand []string, held ...string) (*liveDae
 	l.do(opLogin, map[string]any{
 		"token": "xoxb-test", "email": "ym@example.com", "socket_url": "ws://127.0.0.1:1/live", "repo_root": "/repo", "capt_hook_path": testCaptHook,
 		"avatar_key_id": "r2-key", "avatar_secret": "r2-secret",
-		"config": map[string]any{"github": map[string]string{"token": "ghp-test"}, "pr_links": map[string]any{"repos": []string{"acme/app", "acme/lib"}, "card_channels": []string{testRoom}, "card_command": cardCommand}},
+		"config": map[string]any{"github": map[string]string{"token": "ghp-test"}, "pr_links": prLinks},
 	})
 	return l, gh
 }

@@ -34,9 +34,10 @@ type config struct {
 }
 
 type prLinksConfig struct {
-	Repos        []string `toml:"repos" json:"repos,omitempty"`
-	CardChannels []string `toml:"card_channels" json:"card_channels,omitempty"`
-	CardCommand  []string `toml:"card_command" json:"card_command,omitempty"`
+	Repos          []string `toml:"repos" json:"repos,omitempty"`
+	CardChannels   []string `toml:"card_channels" json:"card_channels,omitempty"`
+	CardCommand    []string `toml:"card_command" json:"card_command,omitempty"`
+	PreviewCommand []string `toml:"preview_command" json:"preview_command,omitempty"`
 }
 
 type permissions struct {
@@ -174,19 +175,27 @@ func (c *config) resolveTokens() error {
 	if err := c.Buildkite.resolve("buildkite"); err != nil {
 		return err
 	}
-	if len(c.PRLinks.CardCommand) == 0 {
-		return nil
+	var err error
+	if c.PRLinks.CardCommand, err = resolveCommand("card_command", c.PRLinks.CardCommand); err != nil {
+		return err
 	}
-	bin, err := exec.LookPath(c.PRLinks.CardCommand[0])
+	c.PRLinks.PreviewCommand, err = resolveCommand("preview_command", c.PRLinks.PreviewCommand)
+	return err
+}
+
+func resolveCommand(name string, command []string) ([]string, error) {
+	if len(command) == 0 {
+		return nil, nil
+	}
+	bin, err := exec.LookPath(command[0])
 	if errors.Is(err, exec.ErrNotFound) {
-		c.PRLinks.CardCommand = nil
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("[pr_links] card_command: %w", err)
+		return nil, fmt.Errorf("[pr_links] %s: %w", name, err)
 	}
-	c.PRLinks.CardCommand[0] = bin
-	return nil
+	command[0] = bin
+	return command, nil
 }
 
 func configPath(flag, repo string) (path string, required bool, err error) {

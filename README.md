@@ -110,6 +110,7 @@ token_command = ["gh", "auth", "token"]
 repos = ["acme/app", "acme/lib"]
 card_channels = ["C0TEAMROOM"]
 card_command = ["lr", "board", "card", "--lane", "pr-cards"]
+preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--json"]
 ```
 
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps

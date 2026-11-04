@@ -236,7 +236,10 @@ holds stays plain text. Code spans and text already inside `<...>` are left
 alone. With `card_command` set, a PR the user has to decide on also gets its
 card, with the buttons that program draws, in the post's thread in the user's
 DM, once per thread. Never post a PR card or add a `refs` entry by hand for a
-PR your text names.
+PR your text names. With `preview_command` set, a PR link in a post to the
+user's DM also shows a preview under the text saying what it changes and where
+it stands, and a line that only repeats a link is dropped, so name each PR once
+and never draw its state yourself.
 
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
@@ -285,9 +288,8 @@ MCP instead.
 session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
-A post to the user's DM that links a card in that DM shows the card's preview below
-the text, with its answer buttons, so never paste a card's title or options beside
-its link.
+A post that links a Slack message shows Slack's own preview of it, so post the
+permalink and never draw a preview of a card by hand.
 
 ## Receive watched messages
 
