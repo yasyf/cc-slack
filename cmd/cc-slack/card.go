@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/slack-go/slack"
@@ -66,6 +67,7 @@ const (
 	cardProgressCells = 10
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
+	cardPermission    = "slack-"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
 )
@@ -81,6 +83,17 @@ var (
 	cardAskStyles = map[string]slack.Style{"": slack.StyleDefault, "primary": slack.StylePrimary, "danger": slack.StyleDanger}
 	askIDPattern  = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 	mrkdwnEscapes = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "¦")
+	slackToken    = regexp.MustCompile(`<[^<>\s][^<>]*>`)
+	cardJargon    = []struct {
+		pattern *regexp.Regexp
+		mixed   bool
+		fix     string
+	}{
+		{regexp.MustCompile(`\b[CDG][A-Z0-9]{8,}\b`), true, "a Slack channel id; name the channel as #name, or the person a direct message goes to"},
+		{regexp.MustCompile(`\b\d{10}\.\d{6}\b|\bp\d{16}\b`), false, "a thread ts; say who started the thread, when, and what it is about"},
+		{regexp.MustCompile(`\b[0-9a-f]{8,}\b`), true, "a hash; say what it stands for"},
+		{regexp.MustCompile(`\b[a-z]+(?:-[a-z0-9]+)+-\d+\b`), false, "a lane name; say what that agent is doing for the user"},
+	}
 )
 
 type statusCard struct {
@@ -230,7 +243,29 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkRollup(),
 		c.checkRows(rootOnly),
 		c.checkSupersedes(),
+		c.checkPermissionWords(),
 	)
+}
+
+func (c statusCard) checkPermissionWords() error {
+	if !strings.HasPrefix(c.Waits, cardPermission) {
+		return nil
+	}
+	shown := []string{c.Title, c.Body}
+	for _, f := range c.Facts {
+		shown = append(shown, f.Label, f.Value)
+	}
+	text := slackToken.ReplaceAllString(strings.Join(shown, "\n"), " ")
+	var errs []error
+	for _, j := range cardJargon {
+		found := slices.DeleteFunc(j.pattern.FindAllString(text, -1), func(m string) bool {
+			return j.mixed && !(strings.ContainsAny(m, "0123456789") && strings.ContainsFunc(m, unicode.IsLetter))
+		})
+		if len(found) > 0 {
+			errs = append(errs, fmt.Errorf("a Slack permission card says where and to whom in words: %q is %s", found[0], j.fix))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (c statusCard) checkHeading(rootOnly bool) error {
