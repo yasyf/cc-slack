@@ -418,11 +418,11 @@ var (
 		{
 			name: "slack_dm_status",
 			description: "Post a status update to your own DM with the Claude app, as a top-level message with its own thread; send updates as a card, plain text only for short conversational replies. " +
-				"The user's replies in that message's thread, and taps on it, arrive as directives to this session. thread_ts replies under a DM message such as a shortcut brief's dm_ts; a card always posts at the DM root.",
+				"The user's replies in that message's thread, and taps on it, arrive as directives to this session. thread_ts posts it, card or text, under a DM message: the thread a directive names, or a shortcut brief's dm_ts.",
 			op: opDMStatus, failure: actionWrite,
 			properties: map[string]any{
 				"text":      textProp,
-				"thread_ts": map[string]any{"type": "string", "description": "ts of a DM message to reply under; its replies reach this session, and a card still posts at the DM root"},
+				"thread_ts": map[string]any{"type": "string", "description": "ts of a DM message to post under, card or text; its replies reach this session"},
 				"files":     filesProp,
 				"blocks":    blocksProp,
 				"card":      cardProp,

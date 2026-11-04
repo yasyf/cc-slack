@@ -1845,7 +1845,7 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		}
 	}
 	if msg.card != nil {
-		return a.cardStatus(ctx, db, sub, id, msg)
+		return a.cardStatus(ctx, db, sub, id, under, msg)
 	}
 	res, err := a.post(ctx, db, id, id.DMChannelID, under, msg.text, msg.blocks, msg.files)
 	if err != nil {
@@ -1860,7 +1860,7 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	return res.TS, res.TS, true, nil
 }
 
-func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, msg dmMessage) (string, string, bool, error) {
+func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
@@ -1873,7 +1873,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	}
 	card := *msg.card
 	prior := cards.holding(id.DMChannelID, threads, card)
-	t := &liveThread{Channel: id.DMChannelID}
+	t := cards.draft(id.DMChannelID, under)
 	var asked, superseded *liveMessage
 	if prior != nil {
 		if answer, done := prior.Answers[card.Waits]; card.Waits != "" && done {
@@ -1883,7 +1883,7 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 		asked = prior.kept(card)
 	}
 	switch {
-	case asked != nil && (asked.TS != prior.Thread || card.gainsRows(asked.Card)):
+	case asked != nil && ((under == "" && asked.TS != prior.Thread) || card.gainsRows(asked.Card)):
 		superseded, asked = asked, nil
 		t.Answers = maps.Clone(prior.Answers)
 	case asked != nil:
@@ -1939,12 +1939,12 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
+		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil)
 		return err
 	}); err != nil {
 		return nil, err
 	}
-	placed.TS, t.Thread = res.TS, res.TS
+	placed.TS, t.Thread = res.TS, cmp.Or(t.Thread, res.TS)
 	return placed, nil
 }
 

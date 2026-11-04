@@ -379,8 +379,8 @@ permission to send; every resulting write needs a ticket like any other.
 ## Take steering in the user's DM
 
 Call `slack_dm_status(card)` to post an update in the user's DM with the
-app. Every card and every update lands as its own message at the DM root,
-never inside another message's thread. It returns `{channel_id, thread_ts, ts}`,
+app. A card or update lands as its own message at the DM root, unless a
+directive names the thread the user wrote in: pass that as `thread_ts`. It returns `{channel_id, thread_ts, ts}`,
 and `thread_ts` is that message's own timestamp. Receive the user's replies
 in that message's thread, and taps on it, as directives through the same
 receive protocol, deduplicate them, and post status back with
@@ -436,7 +436,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, each with up to 4 buttons |
 | `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
 
-Every card posts as its own message at the DM root. `root_only`
+A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script
 that keeps a drive's rollup current: the first call posts it, and each later
 call redraws it, keeping the last progress, times, facts, refs, links, and

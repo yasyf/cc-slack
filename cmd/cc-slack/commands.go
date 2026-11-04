@@ -815,7 +815,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		},
 	}
 	f.bind(c)
-	c.Flags().StringVar(&thread, "thread", "", "ts of a DM message to reply under; its replies reach this session, and a card still posts at the DM root")
+	c.Flags().StringVar(&thread, "thread", "", "ts of a DM message to post under, card or text; its replies reach this session")
 	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
 	c.Flags().StringVar(&card, "card", "", "status card as a JSON object, or @path to a file holding one, in place of text")

@@ -258,3 +258,14 @@ func TestSessionStartIsIdempotentPerWindow(t *testing.T) {
 		t.Fatalf("second session-start subject %q, want %q", again.SubjectID, l.subID)
 	}
 }
+
+func TestADMDirectiveNamesTheThreadItsMessageIsIn(t *testing.T) {
+	const root = "1800000000.000100"
+	if got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: root, Text: "hi"}, true); strings.Contains(got, "thread_ts") {
+		t.Fatalf("root message directive = %q, want no thread", got)
+	}
+	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi"}, true)
+	if !strings.Contains(got, "slack_dm_status and thread_ts "+root) {
+		t.Fatalf("thread message directive = %q, want it to name thread %s", got, root)
+	}
+}
