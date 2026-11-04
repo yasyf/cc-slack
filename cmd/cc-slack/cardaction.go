@@ -275,15 +275,20 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
 	}
-	k, ok := a.tap()
+	card, previewed := a.onCard()
+	k, ok := card.tap()
 	if !ok {
 		p.log.Printf("card action %q: dropped: not a status-card button", a.ActionID)
 		return nil
 	}
-	if done, err := p.unfold(ctx, id, a, k); done {
+	if done, err := p.unfold(ctx, id, card, k); done {
 		return err
 	}
-	return p.applyTap(ctx, id, a, k)
+	err := p.applyTap(ctx, id, card, k)
+	if previewed && err == nil {
+		p.markPreview(ctx, id, a, k.Label)
+	}
+	return err
 }
 
 func (p *poller) unfold(ctx context.Context, id identity, a cardActionPush, k askTap) (bool, error) {
