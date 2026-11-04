@@ -84,7 +84,7 @@ jobs:
       - name: Plugin manifests parse and the descriptor template renders
         run: |
           jq -e .name plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-          jq -e '.hooks.SessionStart | length == 1' plugin/hooks/hooks.json
+          jq -e '.hooks.SessionStart | length == 2' plugin/hooks/hooks.json
           test -L plugin/bin/cc-slack
           tail -n +2 plugin/descriptor/cc-slack.binrun.tmpl | sed -E 's/__SIZE_[A-Z0-9_]+__/1/g' | jq -e '.platforms | length == 2'
       - name: check-post
