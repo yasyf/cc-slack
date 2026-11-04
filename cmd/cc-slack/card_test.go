@@ -380,3 +380,36 @@ func TestFillLeavesAnUnmarkedOptionAlone(t *testing.T) {
 		t.Fatalf("filled options %q recommended %q, want them untouched", c.Options, c.Recommended)
 	}
 }
+
+func TestPermissionCardSpeaksInWords(t *testing.T) {
+	plain := statusCard{
+		Status: "needs_you", Title: "Post this in the #alerts thread the alert bot started?", Waits: "slack-e11b7b897370",
+		Body: "Why: the alert bot's thread still says investigating, and the likely cause is in.\n" +
+			"Where: the #alerts thread the alert bot started at 6:42pm: runners refusing runs on the GOVERNANCE cluster\n\n" +
+			"Thanks <@U0DANA00001>, the cause is in <https://acme.slack.com/archives/C0C5SEUJK5L/p1793760152086369|the alert thread>.",
+		Options: []string{"Yes", "No"}, Recommended: "Yes",
+	}
+	if err := plain.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("a permission card in plain words: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		title, body string
+		fix         string
+	}{
+		"channel id":   {"Post this in C0C5SEUJK5L?", plain.Body, "name the channel as #name"},
+		"thread ts":    {"Post this in #alerts, thread 1793760152.086369?", plain.Body, "who started the thread"},
+		"session hash": {plain.Title, "Why: session 144ffadb3d797d00 asked for it.", "say what it stands for"},
+		"lane name":    {plain.Title, "Why: bugs-comms-2 owes the thread an update.", "what that agent is doing"},
+	} {
+		card := plain
+		card.Title, card.Body = tc.title, tc.body
+		if err := card.check(time.Now(), false, ""); err == nil || !strings.Contains(err.Error(), tc.fix) {
+			t.Errorf("%s: want a refusal saying %q, got %v", name, tc.fix, err)
+		}
+	}
+	other := plain
+	other.Title, other.Waits = "Post this in C0C5SEUJK5L, thread 1793760152.086369?", "step-3:merge"
+	if err := other.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("only a permission card is held to plain words: %v", err)
+	}
+}

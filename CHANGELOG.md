@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Slack permission card says in words where the post goes: the channel by `#name`, a direct message by the person's name, and a thread by who started it, when, and its opening words, above the text to be posted. The asking agent opens the body with a `Why:` line. A permission card whose title or body still shows a channel id, thread ts, hash, or lane name is refused before it reaches Slack or the board, with what to write instead.
 - A session posting under an old thread no longer replays that thread. Opening a DM thread reset its shared cursor to the thread's root, so every reply came back as new operator steering, for the session and for anyone following the thread. A cursor now stays where it is.
 - One Slack message reaches a session once, keyed by its own timestamp. A new watch on the same thread used to pass the delivery check.
 - A resumed session's channel carries Slack tags again (cc-interact 0.40.2).

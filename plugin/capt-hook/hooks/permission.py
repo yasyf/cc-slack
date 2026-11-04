@@ -59,6 +59,7 @@ OTHER_VERBS = {
     "workflow": "Save this Slack workflow",
 }
 CARD_BODY = 2800
+OPENER_SHOWN = 120
 LINKED_VERBS = {"post", "edit", "delete", "join"}
 SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
@@ -69,7 +70,7 @@ UNREAD = (
 )
 REFUSED = (
     "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
-    " `slack_dm_status` and the second card when cc-present is missing, then retry once they tap Yes."
+    " `slack_dm_status` and the second card when cc-present is missing, its body opened by a `Why:` line, then retry once they tap Yes."
     "\n```json\n{board}\n```\n```json\n{ask}\n```"
 )
 RULES = """
@@ -415,12 +416,43 @@ def card_body(text: str) -> str:
     return f"{text[:kept]}\n… {len(text) - kept} more characters"
 
 
-def ask(write: Write, conv: Conversation) -> dict[str, Any]:
+def clock(ts: str) -> str:
+    at = datetime.fromtimestamp(float(ts))
+    day = "" if at.date() == datetime.now().date() else f"{at:%b} {at.day} at "
+    return day + at.strftime("%I:%M%p").lstrip("0").lower()
+
+
+@dataclass(frozen=True, slots=True)
+class Place:
+    name: str
+    detail: str = ""
+
+
+def place_words(ctx: Context) -> Place:
+    conv = conversation_of(ctx)
+    if conv.peer:
+        return Place(f"a direct message to {', '.join(conv.peer_names) or conv.peer_name or conv.peer}")
+    try:
+        channel = channels_of(ctx).get(conv.channel)
+    except CHECK_FAILURES:
+        channel = None
+    named = conv.channel if channel is None else f"#{channel['name']}"
+    if not conv.thread:
+        return Place(named)
+    opener = next((message for message in thread_of(ctx).messages if message.ts == conv.thread), None)
+    if opener is None:
+        return Place(f"{named}, thread {conv.thread}")
+    name = f"the {named} thread {opener.user_name} started"
+    return Place(name, f"{name} at {clock(conv.thread)}: {' '.join(opener.text.split())[:OPENER_SHOWN]}")
+
+
+def ask(write: Write, place: Place) -> dict[str, Any]:
     if write.verb in TEXT_VERBS:
-        title, body = f"{TEXT_VERBS[write.verb]} in {conv.where}?", shown(write)
+        title, body = f"{TEXT_VERBS[write.verb]} in {place.name}?", shown(write)
     else:
-        title = f"{OTHER_VERBS[write.verb]} ({conv.where})?" if conv.where else f"{OTHER_VERBS[write.verb]}?"
+        title = f"{OTHER_VERBS[write.verb]} ({place.name})?" if place.name else f"{OTHER_VERBS[write.verb]}?"
         body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
+    body = f"Where: {place.detail}\n\n{body}" if place.detail else body
     waits = "slack-" + hashlib.sha256(json.dumps([write.verb, write.fields, write.users], sort_keys=True, default=str).encode()).hexdigest()[:12]
     return {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "recommended": "Yes", "waits": waits}
 
@@ -431,8 +463,8 @@ def board_card(card: dict[str, Any]) -> dict[str, Any]:
     return {"id": card["waits"], "type": "card", "title": card["title"], "children": [*context, answers]}
 
 
-def refused(write: Write, conv: Conversation) -> str:
-    card = ask(write, conv)
+def refused(write: Write, ctx: Context) -> str:
+    card = ask(write, place_words(ctx))
     return REFUSED.format(board=json.dumps(board_card(card), ensure_ascii=False, indent=2), ask=json.dumps(card, ensure_ascii=False, indent=2))
 
 
@@ -485,7 +517,7 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     verdict = decided if isinstance(decided, Deny) else decided.ticket
     logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=isinstance(verdict, Ticket), detail=verdict.detail if isinstance(verdict, Deny) else f"{verdict.id} ({verdict.rule})").info("slack write checked")
     if isinstance(verdict, Deny):
-        return evt.block(refused(write, conv), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
+        return evt.block(refused(write, ctx), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
     if not write.daemon:
         return evt.allow()
     return named_ticket(evt, ctx, verdict)
@@ -548,7 +580,7 @@ DANA_TEXT = "Good catch Dana! The SQL viewer now stops this before it runs and t
 DANA_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p{DANA_THREAD.replace('.', '')}"
 LINKED_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p1791900000000300?thread_ts={DANA_THREAD}&cid={FOLLOWERS}"
 DANA_ASKED = f'Post this in {FOLLOWERS}, thread {DANA_THREAD}? "{DANA_TEXT}"'
-DANA_CARD = f"Post this in {FOLLOWERS}, thread {DANA_THREAD}?"
+DANA_CARD = "Post this in the #app-followers thread Dana started?"
 DANA_OPENED = {"ts": DANA_THREAD, "user": "U0DANA00001", "user_name": "Dana", "text": "the SQL viewer ran a delete with no soft-delete filter"}
 DANA_FOLLOWED_UP = {"ts": "1791900000.000100", "user": "U0DANA00001", "user_name": "Dana", "text": "any update on this?"}
 BOT_ANSWERED = {"ts": "1791900000.000200", "user": "U0BOT000001", "user_name": "Alex (claude)", "text": "fix is out", "from_claude": True}
@@ -810,10 +842,17 @@ on(
             case(transcript=card_tapped(DANA_CARD, "No")) >> DENY,
             case(transcript=card_tapped(DANA_CARD, "No", options=("No", "Yes"))) >> DENY,
             case(transcript=card_tapped(f"Post this in {PETS}?", "Yes")) >> DENY,
-            case(DANA | {"text": "x" * 3000}) >> Block(pattern="… 240 more characters"),
+            case(DANA | {"text": "x" * 3000}) >> Block(pattern=r"x\\n… \d+ more characters"),
             case(transcript=[T.user("status?")], root_transcript=card_tapped(DANA_CARD, "Yes"), agent_id="a-lane") >> Rewrite(ticket_agent="a-lane"),
             case(transcript=card_tapped(DANA_CARD, "Yes"), root_transcript=[T.user("status?")], agent_id="a-lane") >> DENY,
-            case() >> Block(pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "slack-')),
+            case() >> Block(
+                pattern=re.escape(f'"title": "{DANA_CARD}",\n  "body": "Where: the #app-followers thread Dana started at ')
+                + r"(?:\w+ \d+ at )?\d{1,2}:\d{2}[ap]m: "
+                + re.escape(f'{DANA_OPENED["text"]}\\n\\n{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "slack-')
+            ),
+            case(commands=NOT_DM | {f"{CC_SLACK} channels": json.dumps({"channels": []})}) >> Block(pattern=re.escape(f'"title": "Post this in the {FOLLOWERS} thread Dana started?"')),
+            case(commands=NOT_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern=re.escape(f'"title": "Post this in #app-followers, thread {DANA_THREAD}?"')),
+            case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=re.escape('"title": "Post this in a direct message to priya?",\n  "body": "Hey Priya')),
             case() >> Block(pattern=re.escape(f'then retry once they tap Yes.\n```json\n{{\n  "id": "slack-') + r'[0-9a-f]{12}' + re.escape(f'",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "slack-')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
             case({"channel_id": FOLLOWERS}, tool="slack_channel_join", **said(f"join this and read it {DANA_URL}")) >> ALLOW,
