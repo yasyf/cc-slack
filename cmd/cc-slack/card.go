@@ -80,6 +80,7 @@ const (
 	cardPermission    = "slack-"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
+	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
 
 var (
@@ -885,6 +886,9 @@ func (c statusCard) waitActions() slack.Block {
 }
 
 func (c statusCard) waitHint() string {
+	if len(c.allPRs()) > 0 {
+		return cardPRHint
+	}
 	if len(c.Options) == 0 {
 		return cardWriteHint
 	}
