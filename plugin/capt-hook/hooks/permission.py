@@ -67,7 +67,7 @@ SLACK_ID = re.compile(r"[CDGU][A-Z0-9]{8,}")
 BOARD_ANSWER = "board-answer"
 BOARD_CARD = "board-card:"
 BOARD_SESSION = "board-session:"
-APPROVED = ["yes"]
+APPROVED = "Yes"
 OWNER_ROW = re.compile(r"\bowner:(m\d+(?:\.\d+)?)\b")
 LEDGER_ROW = re.compile(r"^\| (m\d+(?:\.\d+)?) \| [^|]* \| (.*) \| [^|]* \| (?:open|responded|addressed|no-order|due [^|]*) \|$", re.MULTILINE)
 DRIVES = Path("long-running") / "drives"
@@ -296,11 +296,12 @@ class Standing:
 
 
 def decided(ctx: Context, channel: str, thread: str) -> Standing:
-    live_answers = sorted(
-        (answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by") and (BOARD_ANSWER not in answer.get("tags", ()) or Named().matches(answer["title"], ctx))),
-        key=written_at,
-    )
-    found = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel, thread)) is not None]
+    live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
+    found = [
+        Standing(answer, grants)
+        for answer in live_answers
+        if (grants := standing(answer, channel, thread)) is not None and (not grants or BOARD_ANSWER not in answer.get("tags", ()) or Named().matches(answer["title"], ctx))
+    ]
     return found[-1] if found else Standing()
 
 
@@ -422,7 +423,9 @@ def board_tap(ctx: Context) -> Evidence | None:
         return None
     text = "\n".join([drawn.get("title", ""), *(child["md"] for child in drawn.get("children", ()) if child.get("type") == "markdown")])
     picks = [answer["payload"] for answer in shown.get("answers") or () if answer["origin"] == "human" and answer["type"] == "choice.selected" and answer["payload"]["blockId"] == f"{card}-answer"]
-    if not picks or picks[0].get("optionIds") != APPROVED or not Named().matches(text, ctx):
+    choice = next((child for child in drawn.get("children", ()) if child["id"] == f"{card}-answer"), {})
+    labels = {option["id"]: option["label"] for option in choice.get("options", ())}
+    if not picks or [labels.get(option) for option in picks[0].get("optionIds") or ()] != [APPROVED] or not Named().matches(text, ctx):
         return None
     return Evidence(id=f"board:{session}:{card}", source="board", quote="Yes", detail=f"board card: {text}")
 
@@ -588,9 +591,12 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
             conv = conversation(write)
             ctx = context_of(evt, write, conv)
             decided = SLACK.decide(ctx)
+            verdict = decided if isinstance(decided, Deny) else decided.ticket
+            withdrawn = isinstance(verdict, Ticket) and (found := standing_of(ctx)).answer is not None and not found.grants and written_at(found.answer) > verdict.created
     except CHECK_FAILURES as exc:
         return unchecked(evt, write, conv, exc)
-    verdict = decided if isinstance(decided, Deny) else decided.ticket
+    if withdrawn:
+        return evt.block(refused(write, ctx), system_message=f"{GATE}: a revocation newer than ticket {verdict.id} withdraws it.")
     logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=isinstance(verdict, Ticket), detail=verdict.detail if isinstance(verdict, Deny) else f"{verdict.id} ({verdict.rule})").info("slack write checked")
     if isinstance(verdict, Deny):
         return evt.block(refused(write, ctx), system_message=f"{GATE}: {verdict.detail}" if verdict.detail else None)
@@ -844,8 +850,9 @@ LEDGER_CITED = {"reason": "the owner's ledger row asks for this reply", "allow":
 LEDGER_ENV = ENABLED | {"CLAUDE_CONFIG_DIR": str(FIXTURES / "config"), "CLAUDE_LONG_RUNNING_DRIVE": "brook"}
 
 
-def board_tapped(*picked: str, title: str = DANA_CARD) -> dict[str, str]:
-    drawn = {"id": DANA_CARD_ID, "type": "card", "title": title, "children": [{"id": f"{DANA_CARD_ID}-context", "type": "markdown", "md": DANA_TEXT}]}
+def board_tapped(*picked: str, title: str = DANA_CARD, yes: str = "Yes") -> dict[str, str]:
+    choice = {"id": f"{DANA_CARD_ID}-answer", "type": "choice", "options": [{"id": "yes", "label": yes}, {"id": "no", "label": "No"}]}
+    drawn = {"id": DANA_CARD_ID, "type": "card", "title": title, "children": [{"id": f"{DANA_CARD_ID}-context", "type": "markdown", "md": DANA_TEXT}, choice]}
     answers = [{"origin": "human", "type": "choice.selected", "seq": 9, "payload": {"blockId": f"{DANA_CARD_ID}-answer", "optionIds": list(picked)}}]
     return ruled(BOARD_ROW) | {"cc-present outcomes --block": json.dumps({"doc": {"blocks": [drawn]}, "answers": answers})}
 
@@ -1080,6 +1087,10 @@ on(
             case(DANA | {"text": "another reply"}, **said("status?"), commands=board_tapped("yes")) >> DENY,
             case(**said("status?"), commands=ruled(BOARD_ROW)) >> DENY,
             case(**said("status?"), commands=board_tapped("yes", title=f"Post this in {PETS}?")) >> DENY,
+            case(**said("status?"), commands=board_tapped("yes", yes="No")) >> DENY,
+            case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT, BOARD_GRANT | {"id": "b1b1b1b1", "updated_at": "2026-11-03T06:10:00Z", "tags": [*BOARD_ROW["tags"], f"slack-revoke:{FOLLOWERS}/{DANA_THREAD}"]}) | thread_read(DANA_OPENED)) >> DENY,
+            case(tickets=[covering()], commands=ruled(THREAD_REVOKED)) >> DENY,
+            case(tickets=[covering()], commands=ruled(THREAD_REVOKED | {"updated_at": "2026-10-01T00:00:00Z"})) >> Rewrite(ticket_id="0123456789ab"),
             case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT | {"title": f"Post this in {PETS}?"}) | thread_read(DANA_OPENED)) >> DENY,
             case(**said("status?"), commands=board_tapped("yes") | {"ccn answer search": json.dumps([BOARD_ROW, THREAD_REVOKED])}) >> DENY,

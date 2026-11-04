@@ -251,7 +251,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 }
 
 func (c statusCard) checkPermissionWords() error {
-	if !strings.HasPrefix(c.Waits, cardPermission) {
+	if !strings.HasPrefix(c.Waits, cardPermission) && !permissionCard.MatchString(c.Waits) {
 		return nil
 	}
 	shown := []string{c.Title, c.Body}

@@ -184,7 +184,7 @@ func tapLine(who, permalink string, k askTap, capture string) string {
 	}
 	if k.Waits {
 		record := "record the capture in cc-notes"
-		if label := grantLabel(k); label != "" {
+		if label := slackLabel(k); label != "" {
 			record += " with the label " + label
 		}
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. The lane that asked is stopped on this answer: hand it to that lane now, "+
@@ -205,15 +205,19 @@ func tapLine(who, permalink string, k askTap, capture string) string {
 		who, k.Label)
 }
 
-func grantLabel(k askTap) string {
+func slackLabel(k askTap) string {
 	place := permissionCard.FindStringSubmatch(k.ID)
-	if place == nil || k.Other || len(k.Options) < 2 || k.Label == k.Options[len(k.Options)-1] {
+	if place == nil || k.Other {
 		return ""
 	}
-	if place[2] == "" {
-		return "slack-grant:" + place[1]
+	prefix := map[string]string{"Yes": "slack-grant:", "No": "slack-revoke:"}[k.Label]
+	switch {
+	case prefix == "":
+		return ""
+	case place[2] == "":
+		return prefix + place[1]
 	}
-	return "slack-grant:" + place[1] + "/" + place[2]
+	return prefix + place[1] + "/" + place[2]
 }
 
 func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
