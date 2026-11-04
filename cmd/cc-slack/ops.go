@@ -42,6 +42,7 @@ const (
 	opDMOwed        daemon.Op = "dm-owed"
 	opRedrawPRCards daemon.Op = "redraw-pr-cards"
 	opFollow        daemon.Op = "follow"
+	opHoldDelivery  daemon.Op = "hold-delivery"
 	opUnfollow      daemon.Op = "unfollow"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
@@ -68,6 +69,7 @@ const (
 )
 
 type opBody struct {
+	StreamPID int               `json:"stream_pid"`
 	ChannelID string            `json:"channel_id"`
 	ThreadTS  string            `json:"thread_ts"`
 	TS        string            `json:"ts"`
@@ -281,6 +283,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opDMOwed, a.handleDMOwed)
 	s.Register(opRedrawPRCards, a.handleRedrawPRCards)
 	s.Register(opFollow, a.handleFollow)
+	s.Register(opHoldDelivery, a.handleHoldDelivery)
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
@@ -1255,6 +1258,22 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		}
 	}(context.WithoutCancel(hc.Ctx))
 	return ok(map[string]int{"redrawing": len(open)})
+}
+
+func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	sub, found, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if !found {
+		return fail("no cc-slack session for this Claude window, so it has no messages to hold")
+	}
+	a.poller.holdDelivery(sub.ID, b.StreamPID)
+	return ok(map[string]any{"held": sub.ID})
 }
 
 func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {

@@ -30,17 +30,20 @@ const (
 )
 
 var watchedTypes = map[string]bool{
-	eventMessage: true, eventAction: true, eventWatchError: true, eventOwnerStopped: true, agent.EventRelay: true,
+	eventMessage: true, eventStreamed: true, eventAction: true, eventWatchError: true, eventOwnerStopped: true, agent.EventRelay: true,
 }
 
-func channelEvent(typ string) bool { return watchedTypes[typ] || typ == daemon.ProbeEventType }
+func channelEvent(typ string) bool {
+	return (watchedTypes[typ] && typ != eventStreamed) || typ == daemon.ProbeEventType
+}
 
 func watchCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f           sessionFlags
-		once        bool
-		lifecycle   bool
-		untilProven bool
+		f            sessionFlags
+		once         bool
+		lifecycle    bool
+		untilProven  bool
+		onlyDelivery bool
 	)
 	c := &cobra.Command{
 		Use:   "watch",
@@ -50,7 +53,9 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 			"Code Monitor, so it never replays earlier events and leaves agent lifecycle events out;\n" +
 			"--lifecycle prints every event for debugging. With --once it exits after the first\n" +
 			"printed event. With --until-proven it prints " + provenEvent + " and exits once this\n" +
-			"window has run channel-ack, so channel tags carry the session from then on.",
+			"window has run channel-ack, so channel tags carry the session from then on. With\n" +
+			"--only-delivery this stream alone carries the session's Slack messages while it runs:\n" +
+			"no channel tag and no directive for them, until the process exits.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			ctx := c.Context()
@@ -77,13 +82,26 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 			if err := consume.SeedCursor(d.Paths, subjectID, watchConsumer, consumer); err != nil {
 				return err
 			}
+			holdDelivery := func() error {
+				if !onlyDelivery {
+					return nil
+				}
+				_, err := callOp(c, d, f, opHoldDelivery, map[string]any{"stream_pid": os.Getpid()})
+				return err
+			}
+			if err := holdDelivery(); err != nil {
+				return err
+			}
 			src := consume.StreamSource{
 				Port: port, SubjectID: subjectID, Consumer: consumer, ClaudePID: d.ClaudePID(),
 				ExcludeOrigin: event.OriginAgent,
 				Paths:         d.Paths, WindowAlive: d.WindowAlive,
 				Refresh: func(ctx context.Context) (int, error) {
 					_, port, err := resolveSubjectPort(ctx, d, f.session, scope, consumer)
-					return port, err
+					if err != nil {
+						return port, err
+					}
+					return port, holdDelivery()
 				},
 			}
 			streamCtx, stop := context.WithCancel(ctx)
@@ -108,6 +126,7 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&once, "once", false, "exit after the first printed event")
 	c.Flags().BoolVar(&lifecycle, "lifecycle", false, "also print agent lifecycle events, for debugging")
 	c.Flags().BoolVar(&untilProven, "until-proven", false, "exit once this window's channel delivery is proven")
+	c.Flags().BoolVar(&onlyDelivery, "only-delivery", false, "while this runs, deliver the session's Slack messages here alone, with no channel tag or directive")
 	return c
 }
 
@@ -143,6 +162,9 @@ func watchHandler(out io.Writer, head int64, lifecycle, once bool, terminal func
 		typ := eventType(data)
 		if seq <= head || (!lifecycle && !watchedTypes[typ]) {
 			return false, nil
+		}
+		if typ == eventStreamed {
+			data = strings.Replace(data, `"type":"`+eventStreamed+`"`, `"type":"`+eventMessage+`"`, 1)
 		}
 		if _, err := fmt.Fprintln(out, data); err != nil {
 			return false, err

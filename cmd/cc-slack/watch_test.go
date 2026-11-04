@@ -49,6 +49,23 @@ func TestWatchHandlerPrintsOnlySlackEvents(t *testing.T) {
 	}
 }
 
+func TestAStreamedMessagePrintsAsASlackMessageAndReachesNoChannel(t *testing.T) {
+	var out bytes.Buffer
+	handle := watchHandler(&out, 10, false, false, func(string) bool { return false })
+	if _, err := handle(11, `{"type":"`+eventStreamed+`","ts":"1.0"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), `{"type":"`+eventMessage+`","ts":"1.0"}`+"\n"; got != want {
+		t.Fatalf("printed %q, want %q", got, want)
+	}
+	if channelEvent(eventStreamed) {
+		t.Fatal("a streamed message reached the channel")
+	}
+	if !channelEvent(eventMessage) {
+		t.Fatal("a plain message left the channel")
+	}
+}
+
 func TestWatchStartsAtTheLogHead(t *testing.T) {
 	l := startDaemon(t)
 	l.startAgent("agent-before")
