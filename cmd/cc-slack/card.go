@@ -1065,7 +1065,7 @@ func (p cardPR) blocks(v cardView, limit int) []slack.Block {
 	if p.Head != "" {
 		line += " `" + p.Head[:min(len(p.Head), cardShortHead)] + "`"
 	}
-	if live := v.refs[id.key()].text(); live != "" {
+	if live := v.refs[id.key()].text(); live != "" && p.Review == "" {
 		line += " · " + live
 	}
 	if p.Review != "" {

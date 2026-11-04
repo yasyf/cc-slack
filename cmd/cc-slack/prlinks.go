@@ -321,7 +321,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
-	prs := c.allPRs()
+	prs := slices.DeleteFunc(c.allPRs(), func(p *cardPR) bool { return p.Title != "" && p.Description != "" })
 	if len(prs) == 0 || id.Config.GitHub == nil {
 		return
 	}
@@ -339,7 +339,7 @@ func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
 	}
 	for i, p := range prs {
 		if pr, ok := found[refs[i].key()]; ok {
-			p.Title, p.Description = cmp.Or(p.Title, pr.Title), prDescription(pr.Body)
+			p.Title, p.Description = cmp.Or(p.Title, pr.Title), cmp.Or(p.Description, prDescription(pr.Body))
 		}
 	}
 }

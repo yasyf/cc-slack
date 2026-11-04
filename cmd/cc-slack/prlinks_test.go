@@ -227,6 +227,18 @@ func TestPostLinksEachPRReferenceForm(t *testing.T) {
 	}
 }
 
+func TestACardPRCarryingItsDescriptionKeepsItOverGitHubs(t *testing.T) {
+	l, _ := linkingDaemon(t, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "Approve it?", "card": map[string]any{"title": "Approve it?", "prs": []map[string]any{{
+		"url": "https://github.com/acme/app/pull/41", "title": "One credential per team", "description": "The ledger's description.",
+		"change": "Launches stop waiting", "plan": "Nothing differed", "risk": "None", "blocks": "Your approval",
+	}}}})
+	posts := l.slack.sent()
+	if len(posts) == 0 || !strings.Contains(posts[len(posts)-1].blocks, "The ledger's description.") {
+		t.Fatalf("posts = %+v, want the card's own description", posts)
+	}
+}
+
 func TestReplyEditAndDMStatusLinkPRs(t *testing.T) {
 	l, _ := linkingDaemon(t, "acme/app#41")
 	const linked = "<https://github.com/acme/app/pull/41|#41> is green"
