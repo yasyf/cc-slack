@@ -101,13 +101,14 @@ func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
 type dmHold struct {
 	subject string
 	session string
+	pid     int
 }
 
 func dmHolder(ctx context.Context, db *sql.DB, dmChannelID string) (dmHold, error) {
 	var hold dmHold
-	err := db.QueryRowContext(ctx, `SELECT s.id, s.session_id FROM watches w JOIN subjects s ON s.id = w.subject_id
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.session_id, s.claude_pid FROM watches w JOIN subjects s ON s.id = w.subject_id
 		WHERE w.channel_id = ? AND w.thread_ts = '' AND w.kind = 'channel' AND w.status = 'active'
-		ORDER BY w.id LIMIT 1`, dmChannelID).Scan(&hold.subject, &hold.session)
+		ORDER BY w.id LIMIT 1`, dmChannelID).Scan(&hold.subject, &hold.session, &hold.pid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return dmHold{}, nil
 	}
@@ -115,4 +116,26 @@ func dmHolder(ctx context.Context, db *sql.DB, dmChannelID string) (dmHold, erro
 		return dmHold{}, fmt.Errorf("find the DM's holder: %w", err)
 	}
 	return hold, nil
+}
+
+func othersCardThreads(ctx context.Context, db *sql.DB, dmChannelID string, hold dmHold) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT w.thread_ts FROM watches w JOIN subjects s ON s.id = w.subject_id
+		WHERE w.channel_id = ? AND w.kind = 'dm' AND w.status = 'active'
+		GROUP BY w.thread_ts HAVING SUM(w.subject_id = ? OR s.claude_pid = ?) = 0`, dmChannelID, hold.subject, hold.pid)
+	if err != nil {
+		return nil, fmt.Errorf("find other sessions' card threads: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	threads := map[string]bool{}
+	for rows.Next() {
+		var thread string
+		if err := rows.Scan(&thread); err != nil {
+			return nil, fmt.Errorf("scan card thread: %w", err)
+		}
+		threads[thread] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate card threads: %w", err)
+	}
+	return threads, nil
 }

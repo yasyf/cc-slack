@@ -80,6 +80,7 @@ type watch struct {
 	Kind      string
 	ChannelID string
 	ThreadTS  string
+	PID       int
 }
 
 type cursorKey struct {
@@ -352,15 +353,12 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
 	}
 	var live, dead []watch
 	for rows.Next() {
-		var (
-			w   watch
-			pid int
-		)
-		if err := rows.Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS, &pid); err != nil {
+		var w watch
+		if err := rows.Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS, &w.PID); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan watch: %w", err)
 		}
-		if pid == 0 || !p.alive(pid) {
+		if w.PID == 0 || !p.alive(w.PID) {
 			dead = append(dead, w)
 			continue
 		}
@@ -378,6 +376,20 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
 		}
 	}
 	return live, nil
+}
+
+func onAnotherSessionsCard(w watch, inThread []watch) bool {
+	carded := false
+	for _, o := range inThread {
+		if o.Kind != kindDM {
+			continue
+		}
+		if o.SubjectID == w.SubjectID || o.PID == w.PID {
+			return false
+		}
+		carded = true
+	}
+	return carded
 }
 
 func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string) []cursorGroup {
@@ -400,6 +412,10 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 			channels[w.ChannelID] = append(channels[w.ChannelID], w)
 		}
 	}
+	for i := range groups {
+		inThread := slices.Clone(groups[i].watches)
+		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return onAnotherSessionsCard(w, inThread) })
+	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
 		if !own && len(channels[key.channelID]) == 0 && key.channelID != dmChannelID {
@@ -408,7 +424,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		g := group(key)
 		g.since = since[key]
 		for _, w := range channels[key.channelID] {
-			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) {
+			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !onAnotherSessionsCard(w, g.watches) {
 				g.covering = append(g.covering, w)
 			}
 		}

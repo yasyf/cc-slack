@@ -389,14 +389,18 @@ session when it is the only one live; with several live, cc-slack answers
 with a link to each session's newest message.
 
 A session holds the DM by calling `slack_watch` with the DM's channel id and no
-`thread_ts`. Every reply the user writes in any DM thread then reaches it as
-well as any session watching that thread, and a message at the DM root goes to
-it without the session list. Other bots' messages stay out of it.
+`thread_ts`. Every reply the user writes in a DM thread then reaches it as well
+as any session watching that thread, and a message at the DM root goes to it
+without the session list. The exception is the thread of a status card or
+`slack_dm_status` update another live session posted: a reply there reaches only
+that session, the holder neither sees nor owes it, and any other session's watch
+on the thread stays quiet. Once the posting session ends, the holder has that
+thread back. Other bots' messages stay out of it.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
-no bot or agent has answered in its thread yet, from stored state with no Slack
-call, including replies written while no session was live, and the session that
-owes them as `holder_session`. A post in that thread answers every earlier reply there; a
+no bot or agent has answered in its thread yet, leaving out another live session's
+card threads, from stored state with no Slack call, including replies written while
+no session was live, and the session that owes them as `holder_session`. A post in that thread answers every earlier reply there; a
 post elsewhere answers none. The daemon posts nothing of its own in reply, so the
 session holding the DM acknowledges each reply itself. A DM message or card tap
 that needs nothing back gets a `+1` reaction on it and no reply, which also clears
