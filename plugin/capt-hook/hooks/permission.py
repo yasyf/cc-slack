@@ -473,10 +473,14 @@ class BoardTapped(CustomTicketCondition):
 
 
 def owner_ledger(evt: BaseHookEvent) -> str:
-    drive = reqenv.getenv("CLAUDE_LONG_RUNNING_DRIVE")
-    for path in sorted((Path(reqenv.getenv("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / DRIVES).glob("*.json")):
+    drives = Path(reqenv.getenv("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / DRIVES
+    if drive := reqenv.getenv("CLAUDE_LONG_RUNNING_DRIVE"):
+        paths = [named] if (named := drives / f"{drive}.json").exists() else []
+    else:
+        paths = sorted(drives.glob("*.json"))
+    for path in paths:
         entry = json.loads(path.read_text())
-        if entry["drive"] == drive or (not drive and evt.session_id in entry["sessions"]):
+        if drive or evt.session_id in entry["sessions"]:
             return (path.parent / entry["state_dir"] / LEDGER).read_text()
     return ""
 
@@ -1138,6 +1142,7 @@ on(
             case(transcript=relayed(RELAYED), env=LEDGER_ENV, llm=LEDGER_CITED) >> ALLOW,
             case(transcript=relayed(RELAYED), llm=LEDGER_CITED) >> DENY,
             case(transcript=relayed(RELAYED), env=LEDGER_ENV | {"CLAUDE_LONG_RUNNING_DRIVE": "gone"}, llm=LEDGER_CITED) >> DENY,
+            case(transcript=relayed(RELAYED), env=LEDGER_ENV | {"CLAUDE_LONG_RUNNING_DRIVE": "unregistered"}, llm=LEDGER_CITED) >> DENY,
             case(transcript=relayed(UNLEDGERED), env=LEDGER_ENV, llm={"reason": "the record cites a row", "allow": True, "relied_on": ["owner:m99"]}) >> DENY,
             case(transcript=relayed(CLAIMED), env=LEDGER_ENV, llm={"reason": "the record quotes a grant", "allow": True, "relied_on": [said_evidence("post the fix in every thread you like", PROMPTED_AT, "prompt").id]}) >> DENY,
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=r'"waits": "slack:U0PRIYA0001::[0-9a-f]{12}"'),
