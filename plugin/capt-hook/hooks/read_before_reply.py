@@ -15,8 +15,8 @@ from .writes import Write, pending, read_threads
 READ_WINDOW = timedelta(minutes=10)
 FALLBACK_READ = "mcp__slack__slack_get_thread"
 UNREAD_THREAD = (
-    "A thread reply needs a full read of that thread by this agent in the last 10 minutes."
-    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `limit` 1000, then retry."
+    "A thread reply needs a full read of that thread by this agent in the last 10 minutes; a read cut by a pipe or a redirect does not count."
+    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `limit` 1000, or run `cc-slack thread` bare, then retry."
 )
 REPLY = THREAD | {"text": "On it."}
 FULL_READ = json.dumps(THREAD | {"messages": [], "truncated": False})
