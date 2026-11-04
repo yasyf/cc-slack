@@ -234,12 +234,14 @@ link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
 this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. Code spans and text already inside `<...>` are left
 alone. With `card_command` set, a PR the user has to decide on also gets its
-card, with the buttons that program draws, in the post's thread in the user's
-DM, once per thread. Never post a PR card or add a `refs` entry by hand for a
-PR your text names. With `preview_command` set, a PR link in a post to the
-user's DM also shows a preview under the text saying what it changes and where
-it stands, and a line that only repeats a link is dropped, so name each PR once
-and never draw its state yourself.
+card, with the buttons that program draws, once. In the user's DM the card
+opens at the root in its own thread, wherever the post naming the PR sits; a
+post lands in a DM thread only when its call names that thread. In a listed
+channel the card goes in the post's thread. Never post a PR card or add a
+`refs` entry by hand for a PR your text names. With `preview_command` set, a PR
+link in a post to the user's DM also shows a preview under the text saying what
+it changes and where it stands, and a line that only repeats a link is dropped,
+so name each PR once and never draw its state yourself.
 
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
