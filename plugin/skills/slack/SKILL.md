@@ -131,9 +131,13 @@ A ticket covers one write and its exact retry, for seven days unless revoked;
 permission for one post does not cover the next thing in that thread or DM.
 Each later write is checked again against standing grants and the user's own
 words. A follow-up that carries out what they asked and a correction they
-asked for pass, as does an edit or delete of your own post. A new ask of a
-person, or any post a lane or root requests that is neither their words nor
-a standing grant, goes to them as a card first, never to the person.
+asked for pass, as does an edit or delete of your own post. A thread post under
+a standing grant is judged against the grant's words: a reply about what was
+reported there passes, questions about that report included, and an ask about
+anything else passes only when those words name it.
+A new ask of a person, or any post a lane or root requests that is neither
+their words nor a standing grant's, goes to them as a card first, never to the
+person.
 The hook fails open: a hook error, a missing grant file, an unreadable ticket
 or a timeout warns and lets the write through, and never refuses it.
 
