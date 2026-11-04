@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1434,4 +1435,63 @@ func TestPostsAndEditsCarryBlocksWithTheirText(t *testing.T) {
 
 	l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "files": []string{"/tmp/x.png"}, "blocks": card}), "blocks need text")
 	l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": "x", "blocks": []map[string]any{{"text": "untyped"}}}), "not a Block Kit block")
+}
+
+type slowSecondPage struct {
+	slackAPI
+	pages int
+	limit bool
+}
+
+func (s *slowSecondPage) GetConversationHistoryContext(ctx context.Context, _ *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
+	s.pages++
+	if s.pages > 1 && s.limit {
+		return nil, &slack.RateLimitedError{RetryAfter: time.Minute}
+	}
+	if s.pages > 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	resp := &slack.GetConversationHistoryResponse{HasMore: true}
+	resp.ResponseMetaData.NextCursor = "next"
+	resp.Messages = []slack.Message{{Msg: slack.Msg{Timestamp: "1800000002.000000"}}, {Msg: slack.Msg{Timestamp: "1800000001.000000"}}}
+	return resp, nil
+}
+
+func TestADeepHistoryReadKeepsWhatItHasAtItsDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	msgs, partial, err := fetchRecentTopLevel(ctx, &slowSecondPage{}, testChannel, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !partial || len(msgs) != 2 || msgs[0].Timestamp != "1800000002.000000" {
+		t.Fatalf("partial = %v, msgs = %+v, want the first page's two messages newest first and marked partial", partial, msgs)
+	}
+}
+
+func TestADeepHistoryReadKeepsWhatItHasWhenSlackRateLimitsIt(t *testing.T) {
+	msgs, partial, err := fetchRecentTopLevel(context.Background(), &slowSecondPage{limit: true}, testChannel, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !partial || len(msgs) != 2 {
+		t.Fatalf("partial = %v, msgs = %+v, want the first page marked partial", partial, msgs)
+	}
+}
+
+func TestAHistoryReadWithNothingAtItsDeadlineFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, _, err := fetchRecentTopLevel(ctx, &slowSecondPage{pages: 1}, testChannel, 400); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+}
+
+func TestPartialHistorySaysSo(t *testing.T) {
+	var out bytes.Buffer
+	renderHistory(&out, historyResult{Partial: true})
+	if !strings.Contains(out.String(), "partial") {
+		t.Fatalf("rendered %q, want the partial mark", out.String())
+	}
 }

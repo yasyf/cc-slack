@@ -618,6 +618,11 @@ func historyCmd(d cmd.Deps) *cobra.Command {
 }
 
 func renderHistory(w io.Writer, res historyResult) {
+	defer func() {
+		if res.Partial {
+			_, _ = fmt.Fprintf(w, "partial: ran out of time after the newest %d messages; ask for fewer\n", len(res.Messages))
+		}
+	}()
 	for _, m := range res.Messages {
 		replies := ""
 		if m.ReplyCount > 0 {

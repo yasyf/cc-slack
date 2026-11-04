@@ -233,15 +233,21 @@ func fetchHistory(ctx context.Context, api slackAPI, channelID, oldest string, l
 	return sortByTS(out), nil
 }
 
-func fetchRecentTopLevel(ctx context.Context, api slackAPI, channelID string, limit int) ([]slack.Message, error) {
+func fetchRecentTopLevel(ctx context.Context, api slackAPI, channelID string, limit int) ([]slack.Message, bool, error) {
 	var out []slack.Message
 	cursor := ""
+	partial := false
 	for range maxPages {
 		resp, err := api.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: channelID, Cursor: cursor, Limit: min(limit, pageLimit),
 		})
 		if err != nil {
-			return nil, err
+			var rate *slack.RateLimitedError
+			if len(out) == 0 || !(errors.Is(err, context.DeadlineExceeded) || errors.As(err, &rate)) {
+				return nil, false, err
+			}
+			partial = true
+			break
 		}
 		for _, m := range resp.Messages {
 			if m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
@@ -255,7 +261,7 @@ func fetchRecentTopLevel(ctx context.Context, api slackAPI, channelID string, li
 	}
 	out = sortByTS(out)
 	slices.Reverse(out)
-	return out[:min(limit, len(out))], nil
+	return out[:min(limit, len(out))], partial, nil
 }
 
 func fetchChannels(ctx context.Context, api slackAPI) ([]slack.Channel, error) {

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session posting under an old thread no longer replays that thread. Opening a DM thread reset its shared cursor to the thread's root, so every reply came back as new operator steering, for the session and for anyone following the thread. A cursor now stays where it is.
 - One Slack message reaches a session once, keyed by its own timestamp. A new watch on the same thread used to pass the delivery check.
 - A resumed session's channel carries Slack tags again (cc-interact 0.40.2).
+- `cc-slack history` with a large `--limit` prints what it read before its deadline, marked `partial`, instead of failing with no output.
 - A Slack call answered 429 or 5xx, or whose connection drops, tries again, up to four tries in all, instead of failing on the first. Posts, file shares, and channel creates retry only a 429, so a retry never posts twice. A 5xx or dropped connection that outlasts its retries says how many tries it took.
 - A `+1` reaction from the bot on your DM message answers it: `cc-slack dm-owed` stops listing it, and only that message. `eyes` and other reactions still leave it owed.
 - `cc-slack login` no longer fails when the program `card_command` names is missing from this machine. PR cards stay off there and PR links still work, so a shared config can name a tool only some people have.

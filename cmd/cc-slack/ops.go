@@ -63,6 +63,7 @@ const (
 
 	defaultThreadLimit  = 50
 	defaultHistoryLimit = 20
+	historyBudget       = 25 * time.Second
 )
 
 type opBody struct {
@@ -192,6 +193,7 @@ type historyMessage struct {
 type historyResult struct {
 	ChannelID string           `json:"channel_id"`
 	Messages  []historyMessage `json:"messages"`
+	Partial   bool             `json:"partial,omitempty"`
 }
 
 type channelInfo struct {
@@ -1029,24 +1031,30 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
-	msgs, err := fetchRecentTopLevel(hc.Ctx, api, channelID, limit)
+	ctx, cancel := context.WithTimeout(hc.Ctx, historyBudget)
+	defer cancel()
+	msgs, partial, err := fetchRecentTopLevel(ctx, api, channelID, limit)
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
-		files, err := messageFiles(hc.Ctx, api, m)
+		files, err := messageFiles(ctx, api, m)
+		if errors.Is(err, context.DeadlineExceeded) {
+			partial = true
+			break
+		}
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
 		out = append(out, historyMessage{
-			TS: m.Timestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m), FromUser: m.User == id.UserID,
+			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
 			FromClaude: id.fromClaude(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files, Shares: a.sharedMessages(hc.Ctx, api, m),
+			Files: files, Shares: a.sharedMessages(ctx, api, m),
 		})
 	}
-	return ok(historyResult{ChannelID: channelID, Messages: out})
+	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})
 }
 
 func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]messageFile, error) {
