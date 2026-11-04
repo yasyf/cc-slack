@@ -154,13 +154,17 @@ engineer that links a PR runs it once, whatever the number of PRs, with
 `{"prs": [{"repo", "number"}]}` on stdin; it prints a JSON array of rows with
 `repo`, `number`, `title`, `for_users`, `waits_on`, `ready_for_tap`, `state`, `ci`
 and `hold`, and may print more rows than it was asked for. Up to five linked PRs
-with a row get a preview under the text: the title as the link, the first sentence
-of `for_users`, and one line that says it landed, closed, is ready for a tap, is
-on hold, or what it waits on, with its `ci`. A hold's reason stays out, since it is
-written for whoever holds the PR. `state` `landed` and `closed` end it, and only
-`state` `open` with `ready_for_tap` reads as ready. A ready PR with an unanswered
-card links that card. A status card carries its previews in a reply in its thread.
-Anything past the limit is counted in a last line and keeps its link. Once the rows
+with a row get a Work Object card, one `slack#/entities/item` per PR: Merge, CI,
+Review and Grade as colored tags, then `for_users`, what it waits on, `risk`,
+findings, `lane` and `description`, with an `Open on GitHub` button that goes straight
+to the PR. A hold's reason stays out, since it is written for whoever holds the PR.
+`state` `landed` and `closed` end it, and only `state` `open` with `ready_for_tap`
+reads as ready. A ready PR with an unanswered card links that card. A status card
+carries its previews in a reply in its thread, and a card whose `prs` entry carries
+the ledger `row` draws that Work Object on the card itself in place of its field
+blocks. A tap on a card's body opens Slack's side panel, which the backend fills for
+`external_ref.type` `github-pr`. Anything past the limit is counted in a last line
+and keeps its link. Once the rows
 read, a line holding only PR links is dropped when each one has a preview or the
 rest of the text names it, so a PR shows once. A PR with no row stays a link. When
 the program fails or runs past 5 s, the post goes out as written and the daemon

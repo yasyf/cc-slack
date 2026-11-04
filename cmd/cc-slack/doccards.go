@@ -47,7 +47,7 @@ func (c *apiClient) DocCardsContext(ctx context.Context, serviceURL, channelID, 
 	return answer.Entities, nil
 }
 
-func docCards(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCardsConfig, channelID, text string) []slack.MsgOption {
+func docEntities(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCardsConfig, channelID, text string) []slack.WorkObjectEntity {
 	if !cfg.enabled() || !strings.Contains(text, cfg.Link) {
 		return nil
 	}
@@ -56,8 +56,17 @@ func docCards(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCard
 		logger.Printf("post to %s goes out without its design-doc cards: %v", channelID, err)
 		return nil
 	}
-	if len(entities) == 0 {
+	return entities
+}
+
+func docCards(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCardsConfig, channelID, text string) []slack.MsgOption {
+	return entitiesOption(docEntities(ctx, api, logger, cfg, channelID, text))
+}
+
+// Slack keeps one metadata per message, so a post carrying PR cards puts its doc cards among them.
+func withDocCards(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCardsConfig, channelID, text string, prs []slack.WorkObjectEntity) []slack.MsgOption {
+	if len(prs) == 0 {
 		return nil
 	}
-	return []slack.MsgOption{slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: entities})}
+	return entitiesOption(append(docEntities(ctx, api, logger, cfg, channelID, text), prs...))
 }
