@@ -6,8 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A link to a PR in a post no longer draws an Approve card. It keeps its link and ledger preview, and a card with buttons is drawn only for a PR the call lists in `tap_prs` (`dm-status --tap-pr`). Callers that relied on a link to draw the card need `tap_prs`.
+
 ### Fixed
 
+- A PR at one head now shows as one open offer. A tap on its card, or on a pick card whose `prs` names that one PR at that head with the same answers, closes every other such card, cards already open included, and the ledger takes the answer once.
 - A thread post under a standing grant is judged against the grant's words, so a grant for replies in a thread or a channel's threads covers what was reported there, and no longer carries a request to a person about anything else. Top-level posts and direct messages under a grant naming that channel or person still pass without a judge.
 - A PR card in the user's DM opens at the root in its own thread, instead of following the post that named the PR into whatever thread that post sits in, where the user never saw it. The session whose post named the PR keeps the card's thread watched, a PR at one head gets one card across the DM, and a new head gets a new card once the old one is answered. Listed channels keep the card in the post's thread.
 - The Slack permission hook fails open again: a check that cannot finish lets the write through with a warning instead of refusing it.

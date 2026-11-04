@@ -610,6 +610,26 @@ func (c statusCard) allPRs() []*cardPR {
 	return prs
 }
 
+type cardOffer struct {
+	pr, head, answers string
+}
+
+func (c statusCard) offer() cardOffer {
+	prs := c.allPRs()
+	if len(prs) != 1 || prs[0].Head == "" {
+		return cardOffer{}
+	}
+	id, ok := parseRef(prs[0].URL)
+	if !ok || id.Kind != refPR {
+		return cardOffer{}
+	}
+	return cardOffer{id.key(), prs[0].Head, string(mustJSON(slices.Sorted(slices.Values(c.answers()))))}
+}
+
+func (o cardOffer) same(other cardOffer) bool {
+	return o != cardOffer{} && o == other
+}
+
 func (c statusCard) merged(next statusCard) statusCard {
 	if next.Title != "" {
 		c.Status, c.Title, c.Body = next.Status, next.Title, next.Body

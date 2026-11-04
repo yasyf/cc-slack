@@ -259,13 +259,16 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 		p.log.Printf("card action %s on %s: dropped: the card was redrawn with another question after this answer was drawn", a.ActionID, a.MessageTS)
 		return nil
 	}
-	_, err := p.answerWaits(ctx, id, waitsAnswer{
+	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
 		dedup: fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
 	})
 	if errors.Is(err, errNoStatusSession) {
 		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
 		return nil
+	}
+	if err == nil && res.Answered && !k.Other {
+		p.answerCopies(ctx, id, a.ref(), k.Label, false, at)
 	}
 	return err
 }
@@ -374,22 +377,61 @@ func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool
 }
 
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
-	won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
-	if !won {
-		p.log.Printf("PR card %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
-		return nil
-	}
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
-		p.cards.release(a.Channel, a.ThreadTS, k.ID)
-		p.log.Printf("PR card %s: %q not applied: %v", k.ID, k.Label, err)
-		p.recard(ctx, id, a.ref(), pr, "Your *"+mrkdwnEscapes.Replace(k.Label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
-		return nil
-	}
-	if err := p.markOption(ctx, id, a.ref(), "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now())); err != nil {
-		p.log.Printf("PR card %s: %q applied, but the card still shows its buttons: %v", k.ID, k.Label, err)
+	card := offeredCard{ref: a.ref(), waits: k.ID, pr: pr}
+	if p.answerPRCard(ctx, id, card, k.Label, at, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), false) {
+		p.answerCopies(ctx, id, a.ref(), k.Label, true, at)
 	}
 	return nil
+}
+
+func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool) bool {
+	won, prior := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, askAnswer{At: at, Label: label})
+	if !won {
+		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
+		return applied
+	}
+	if !applied {
+		answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label}
+		if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+			p.cards.release(c.ref.channel, c.ref.thread, c.waits)
+			p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
+			p.recard(ctx, id, c.ref, c.pr, "Your *"+mrkdwnEscapes.Replace(label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
+			return false
+		}
+	}
+	if err := p.markOption(ctx, id, c.ref, line); err != nil {
+		p.log.Printf("PR card %s: %q applied, but the card still shows its buttons: %v", c.waits, label, err)
+	}
+	return true
+}
+
+func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time) {
+	prs, picks := p.cards.otherOffers(tapped)
+	if len(id.Config.PRLinks.CardCommand) == 0 {
+		prs = nil
+	}
+	link := id.permalink(tapped.channel, tapped.ts, tapped.thread)
+	line := "✓ *" + mrkdwnEscapes.Replace(label) + "* · answered " + clock(at, p.now()) + " on " + slackLink(link, "the other card")
+	for _, c := range prs {
+		if applied = p.answerPRCard(ctx, id, c, label, at, line, applied); !applied {
+			break
+		}
+	}
+	for _, c := range picks {
+		copied := waitsAnswer{
+			card: c.ref, tap: askTap{ID: c.waits, Label: label, Question: c.question, Options: c.options, Waits: true}, at: at,
+			source: cardSource(id, "Slack tap", at.In(pacific).Format(cardTimeLayout), link), where: "Slack card " + link,
+			dedup: fmt.Sprintf("slack-copy:%s:%s:%s", c.ref.channel, c.ref.ts, c.waits),
+		}
+		_, err := p.answerWaits(ctx, id, copied)
+		if errors.Is(err, errNoStatusSession) {
+			copied.settled, copied.via = true, link
+			_, err = p.answerWaits(ctx, id, copied)
+		}
+		if err != nil {
+			p.log.Printf("waiting ask %s stays open after the tap on %s: %v", c.waits, tapped.ts, err)
+		}
+	}
 }
 
 func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, permalink string) error {
@@ -524,7 +566,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 	if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
 		kind, surface, name = "Answer relayed", "Slack message", "Slack"
 	}
-	return p.answerWaits(ctx, id, waitsAnswer{
+	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card:      cardRef{id.DMChannelID, thread, m.TS},
 		tap:       askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
 		other:     other,
@@ -537,6 +579,10 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, 
 		settled:   settled,
 		withdrawn: withdrawn,
 	})
+	if err == nil && res.Answered && !other && !withdrawn {
+		p.answerCopies(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, label, false, at)
+	}
+	return res, err
 }
 
 func (p *poller) showFold(ctx context.Context, id identity, r cardRef) (bool, error) {

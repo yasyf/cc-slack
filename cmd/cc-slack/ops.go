@@ -110,6 +110,7 @@ type opBody struct {
 	Withdrawn bool              `json:"withdrawn"`
 	Via       string            `json:"via"`
 	About     string            `json:"about"`
+	TapPRs    []string          `json:"tap_prs"`
 	ticketSpend
 }
 
@@ -535,7 +536,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
+		texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 		text, previews := a.linkPreviews(hc.Ctx, id, channelID, texts[0])
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
@@ -558,7 +559,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		a.attachPRCards(hc.Ctx, hc.DB, sub, id, res.ChannelID, res.ThreadTS, prs)
+		a.attachPRCards(hc.Ctx, hc.DB, sub, id, res.ChannelID, res.ThreadTS, a.tapPRs(hc.Ctx, id, hc.Env.Scope, b))
 		if b.NoWatch {
 			return ok(res)
 		}
@@ -711,6 +712,11 @@ func checkMessage(b opBody) ([]slack.Block, error) {
 	}
 	if err := checkAgent(b.Agent); err != nil {
 		return nil, err
+	}
+	for _, raw := range b.TapPRs {
+		if pr, ok := parseRef(raw); !ok || pr.Kind != refPR {
+			return nil, fmt.Errorf("tap_prs takes pull request URLs, not %q", raw)
+		}
 	}
 	blocks, err := parseBlocks(b.Blocks)
 	if err != nil {
@@ -1771,7 +1777,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	msg, later, prs := a.dmMessageOf(hc, id, b, blocks)
+	msg, later := a.dmMessageOf(hc, id, b, blocks)
 	if b.Card != nil && b.Card.Replaces != "" {
 		thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, msg.tag)
 		if err != nil {
@@ -1796,7 +1802,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
-	a.attachPRCards(hc.Ctx, hc.DB, sub, id, id.DMChannelID, thread, prs)
+	a.attachPRCards(hc.Ctx, hc.DB, sub, id, id.DMChannelID, thread, a.tapPRs(hc.Ctx, id, hc.Env.Scope, b))
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 }
 
@@ -1810,23 +1816,23 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	return a.cardThread(hc.Ctx, hc.DB, sub.ID, id, b.About)
 }
 
-func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block, []linkedPR) {
-	texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
+func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
+	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
 		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
-			return msg, nil, prs
+			return msg, nil
 		}
 		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true)
 		msg.text, msg.blocks = clipRunes(msg.text, cardMaxSectionLen), pages[0]
-		return msg, pages[1:], prs
+		return msg, pages[1:]
 	}
-	texts, prs = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
+	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
 	b.Card.Body, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
-	return msg, nil, prs
+	return msg, nil
 }
 
 func (a *app) postPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts, text string, pages [][]slack.Block) error {

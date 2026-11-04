@@ -237,12 +237,16 @@ names, so write `#123`, `owner/repo#123`, or the PR URL and never build the
 link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
 this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. Code spans and text already inside `<...>` are left
-alone. With `card_command` set, a PR the user has to decide on also gets its
-card, with the buttons that program draws, once. In the user's DM the card
-opens at the root in its own thread, wherever the post naming the PR sits; a
-post lands in a DM thread only when its call names that thread. In a listed
-channel the card goes in the post's thread. Never post a PR card or add a
-`refs` entry by hand for a PR your text names. With `preview_command` set, a PR
+alone. A link never draws a card or a button. With `card_command` set, a PR the
+user has to tap gets its card only when the call lists its URL in `tap_prs` (the
+CLI's repeatable `--tap-pr` on `dm-status`), once per PR and head. A tap on it,
+or on a pick card whose `prs` names that one PR at that head with the same
+answers, closes every other such card and counts once. A reply carrying its own
+picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM the
+card opens at the root in its own thread, wherever the post sits; a post lands in
+a DM thread only when its call names that thread. In a listed channel the card
+goes in the post's thread. Never post a PR card or add a `refs` entry by hand for
+a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what
 it changes and where it stands, and a line that only repeats a link is dropped,
 so name each PR once and never draw its state yourself. With `[buildkite]` set, a build link
