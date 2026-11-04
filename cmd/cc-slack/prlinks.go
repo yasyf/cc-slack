@@ -18,7 +18,7 @@ import (
 
 const (
 	prLookupPatience = 5 * time.Second
-	prCardPatience   = 30 * time.Second
+	prCardPatience   = 2 * time.Minute
 )
 
 var (
@@ -239,6 +239,11 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channe
 	if len(asked) == 0 {
 		return
 	}
+	go a.postPRCards(context.WithoutCancel(ctx), db, id, channelID, threadTS, asked)
+}
+
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, asked []map[string]any) {
+	command := id.Config.PRLinks.CardCommand
 	out, err := runCardCommand(ctx, command, map[string]any{"prs": asked})
 	if err != nil {
 		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, threadTS, err)
@@ -251,10 +256,17 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, id identity, channe
 		a.poller.log.Printf("PR cards for %s/%s: decode %s: %v", channelID, threadTS, command[0], err)
 		return
 	}
+	cards := a.cards
+	cards.mu.Lock()
+	defer cards.mu.Unlock()
+	t := cards.draft(channelID, threadTS)
 	now := a.now()
 	for _, p := range answer.Cards {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
 			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
+			continue
+		}
+		if slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }) {
 			continue
 		}
 		m := &liveMessage{Card: p.Card, At: now}
@@ -275,6 +287,7 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
 	cmd.Stdin = bytes.NewReader(mustJSON(ask))
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return nil, fmt.Errorf("%s: %w: %s", command[0], err, bytes.TrimSpace(exit.Stderr))
