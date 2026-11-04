@@ -118,7 +118,7 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": append([]providedCard{}, cards...)}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	held := []map[string]any{}
+	held := make([]map[string]any, 0, len(drivePRs))
 	for _, pr := range drivePRs {
 		repo, number, _ := strings.Cut(pr, "#")
 		n, err := strconv.Atoi(number)
