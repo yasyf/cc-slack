@@ -300,7 +300,10 @@ session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
 A post that links a Slack message shows Slack's own preview of it, so post the
-permalink and never draw a preview of a card by hand. Slack's preview has no
+permalink and never draw a preview of a card by hand. A post to your DM that
+links a Sentry issue or a Datadog monitor asks Slack to unfurl it too; posts to
+channels do not. `thread` and `history` list what Slack unfurled for each message:
+Slack messages under `shares`, other links under `unfurls`. Slack's preview has no
 working buttons, so when a post needs a tap on an open card beside it, run
 `cc-slack card-copy --url <permalink> --thread <ts>`. A tap on that copy answers
 the card.

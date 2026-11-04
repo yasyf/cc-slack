@@ -120,6 +120,58 @@ func TestOnlyAPostLinkingASlackMessageUnfurls(t *testing.T) {
 	}
 }
 
+func TestAnAlertLinkInADMCardUnfurls(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, want string
+	}{
+		{"a Sentry issue", "https://acme.sentry.io/issues/4821/", "true"},
+		{"a Sentry issue under an org path", "https://sentry.io/organizations/acme/issues/4821/", "true"},
+		{"a Datadog monitor", "https://app.datadoghq.com/monitors/4821", "true"},
+		{"a Sentry page that is no issue", "https://acme.sentry.io/releases/", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Incident", Body: "The run timeline fails " + tc.link}})
+			posts := l.slack.sent()
+			at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.blocks, tc.link) })
+			if at < 0 || posts[at].unfurlLinks != tc.want {
+				t.Fatalf("posts = %+v, want the card with unfurl_links=%s", posts, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnAlertLinkInAChannelDoesNotUnfurl(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "The run timeline fails https://acme.sentry.io/issues/4821/"})
+	if posts := l.slack.sent(); len(posts) != 1 || posts[0].unfurlLinks != "false" {
+		t.Fatalf("posts = %+v, want one post with unfurl_links=false", posts)
+	}
+}
+
+func TestAThreadListsTheLinksSlackUnfurledApartFromSharedMessages(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	issue := "https://acme.sentry.io/issues/4821/"
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, User: "U0JOSH", Text: originalText}})
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000000.000100", User: testUser, Text: sharerText,
+		Attachments: []slack.Attachment{{FromURL: originLink, Text: originalText}, {FromURL: issue, Title: "TypeError"}, {Title: "no link"}},
+	}})
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Messages[0].Unfurls; !reflect.DeepEqual(got, []string{issue}) {
+		t.Fatalf("unfurls = %v, want only the Sentry issue", got)
+	}
+	if len(res.Messages[0].Shares) != 1 {
+		t.Fatalf("shares = %+v, want the one shared message", res.Messages[0].Shares)
+	}
+}
+
 func TestAMessageLinkInAStatusCardUnfurlsWithNoHandBuiltReply(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

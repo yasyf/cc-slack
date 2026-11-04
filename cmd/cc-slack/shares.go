@@ -38,6 +38,16 @@ func shareAuthor(at slack.Attachment) string {
 	return cmp.Or(at.AuthorName, at.AuthorSubname, at.AuthorID)
 }
 
+func linkUnfurls(m slack.Message) []string {
+	var out []string
+	for _, at := range m.Attachments {
+		if _, shared := shareRef(at); !shared && shareLink(at) != "" {
+			out = append(out, shareLink(at))
+		}
+	}
+	return out
+}
+
 func (a *app) sharedMessages(ctx context.Context, api slackAPI, m slack.Message) []sharedMessage {
 	var out []sharedMessage
 	for _, at := range m.Attachments {

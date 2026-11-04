@@ -163,6 +163,7 @@ type threadMessage struct {
 	Text       string          `json:"text"`
 	Files      []messageFile   `json:"files,omitempty"`
 	Shares     []sharedMessage `json:"shares,omitempty"`
+	Unfurls    []string        `json:"unfurls,omitempty"`
 	Buttons    []string        `json:"buttons,omitempty"`
 
 	WorkObjects []slack.WorkObjectEntity `json:"work_objects,omitempty"`
@@ -198,6 +199,7 @@ type historyMessage struct {
 	LatestReply string          `json:"latest_reply,omitempty"`
 	Files       []messageFile   `json:"files,omitempty"`
 	Shares      []sharedMessage `json:"shares,omitempty"`
+	Unfurls     []string        `json:"unfurls,omitempty"`
 }
 
 type historyResult struct {
@@ -693,7 +695,7 @@ func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
 		}
-		if linksAMessage(text, blocks) {
+		if linksTo(text, blocks, messageLink) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
 			opts = append(opts, slack.MsgOptionEnableLinkUnfurl())
 		}
 		return api.PostMessageContext(ctx, channelID, opts...)
@@ -708,8 +710,8 @@ func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS
 	return shareFiles(ctx, api, id, channelID, threadTS, text, files)
 }
 
-func linksAMessage(text string, blocks []slack.Block) bool {
-	return messageLink.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), messageLink.MatchString)
+func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
+	return link.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), link.MatchString)
 }
 
 func checkMessage(b opBody) ([]slack.Block, error) {
@@ -1042,7 +1044,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
 			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
-			Shares: a.sharedMessages(hc.Ctx, api, m), Buttons: messageButtons(m), WorkObjects: workObjects[m.Timestamp],
+			Shares: a.sharedMessages(hc.Ctx, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), WorkObjects: workObjects[m.Timestamp],
 		})
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
@@ -1093,7 +1095,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
 			FromClaude: id.fromClaude(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files, Shares: a.sharedMessages(ctx, api, m),
+			Files: files, Shares: a.sharedMessages(ctx, api, m), Unfurls: linkUnfurls(m),
 		})
 	}
 	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})

@@ -21,7 +21,10 @@ const (
 	cardCopyLead   = "Answer it here:"
 )
 
-var messageLink = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
+var (
+	messageLink = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
+	alertLink   = regexp.MustCompile(`https://[\w.-]*(?:sentry\.io/\S*?issues|datadoghq\.com/monitors)/\d+`)
+)
 
 func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	b, err := decodeBody(hc)
