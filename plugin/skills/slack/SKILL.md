@@ -285,6 +285,10 @@ MCP instead.
 session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
+A post to the user's DM that links a card in that DM shows the card's preview below
+the text, with its answer buttons, so never paste a card's title or options beside
+its link.
+
 ## Receive watched messages
 
 A session receives Slack messages only for its own subscriptions: its

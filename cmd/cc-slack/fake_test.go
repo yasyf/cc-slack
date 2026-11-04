@@ -37,13 +37,15 @@ type fakePost struct {
 	unfurlLinks string
 	blocks      string
 	metadata    string
+	attachments string
 }
 
 type fakeEdit struct {
-	channelID string
-	ts        string
-	text      string
-	blocks    string
+	channelID   string
+	ts          string
+	text        string
+	blocks      string
+	attachments string
 }
 
 type fakeSlack struct {
@@ -269,9 +271,15 @@ func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, opti
 		channelID: channelID, threadTS: values.Get("thread_ts"), text: values.Get("text"),
 		username: values.Get("username"), iconURL: values.Get("icon_url"), ts: ts,
 		broadcast: values.Get("reply_broadcast") == "true", unfurlLinks: values.Get("unfurl_links"), blocks: values.Get("blocks"),
-		metadata: values.Get("metadata"),
+		metadata: values.Get("metadata"), attachments: values.Get("attachments"),
 	}
 	f.posts = append(f.posts, p)
+	var attachments []slack.Attachment
+	if p.attachments != "" {
+		if err := json.Unmarshal([]byte(p.attachments), &attachments); err != nil {
+			return "", "", err
+		}
+	}
 	var blocks slack.Blocks
 	if p.blocks != "" {
 		if err := json.Unmarshal([]byte(p.blocks), &blocks); err != nil {
@@ -286,7 +294,7 @@ func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, opti
 	}
 	f.channels[channelID] = append(f.channels[channelID], slack.Message{Msg: slack.Msg{
 		Timestamp: ts, ThreadTimestamp: p.threadTS, User: f.auth.UserID, BotID: f.auth.BotID, Username: p.username, Text: p.text,
-		Blocks: blocks, Metadata: metadata,
+		Blocks: blocks, Metadata: metadata, Attachments: attachments,
 	}})
 	return channelID, ts, nil
 }
@@ -347,7 +355,7 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 	if err != nil {
 		return "", "", "", err
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks")})
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), attachments: values.Get("attachments")})
 	return channelID, timestamp, values.Get("text"), nil
 }
 
