@@ -347,24 +347,32 @@ func (c refClient) selectPRs(ctx context.Context, tok *refToken, refs []refID, f
 	return out, nil
 }
 
+type buildkiteBuild struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
+}
+
 func (c refClient) build(ctx context.Context, tok *refToken, r refID) (refState, error) {
+	b, err := c.readBuild(ctx, tok, r)
+	return refState{State: b.State}, err
+}
+
+func (c refClient) readBuild(ctx context.Context, tok *refToken, r refID) (buildkiteBuild, error) {
 	u := fmt.Sprintf("%s/v2/organizations/%s/pipelines/%s/builds/%d", c.buildkiteURL, url.PathEscape(r.Owner), url.PathEscape(r.Repo), r.Number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return refState{}, err
+		return buildkiteBuild{}, err
 	}
 	body, _, err := c.do(ctx, tok, req)
 	if err != nil {
-		return refState{}, err
+		return buildkiteBuild{}, err
 	}
-	var b struct {
-		State string `json:"state"`
-	}
+	var b buildkiteBuild
 	if err := json.Unmarshal(body, &b); err != nil {
-		return refState{}, fmt.Errorf("decode Buildkite build: %w", err)
+		return buildkiteBuild{}, fmt.Errorf("decode Buildkite build: %w", err)
 	}
 	if b.State == "" {
-		return refState{}, errors.New("buildkite build carries no state")
+		return buildkiteBuild{}, errors.New("buildkite build carries no state")
 	}
-	return refState{State: b.State}, nil
+	return b, nil
 }

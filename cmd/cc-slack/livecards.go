@@ -56,12 +56,18 @@ type liveThread struct {
 	Groups   map[string]*liveMessage `json:"groups,omitempty"`
 	Keyed    map[string]*liveMessage `json:"keyed,omitempty"`
 	PRCards  []*liveMessage          `json:"pr_cards,omitempty"`
+	Copies   []liveCardCopy          `json:"copies,omitempty"`
 	Timeline []timelineEntry         `json:"timeline,omitempty"`
 	Asks     []cardAsk               `json:"asks,omitempty"`
 	Answers  map[string]askAnswer    `json:"answers,omitempty"`
 	Updated  time.Time               `json:"updated"`
 	Drawn    time.Time               `json:"drawn"`
 	Stale    bool                    `json:"stale,omitempty"`
+}
+
+type liveCardCopy struct {
+	Card string `json:"card"`
+	TS   string `json:"ts"`
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -229,6 +235,32 @@ type liveCards struct {
 	hosts   map[string]*refHost
 }
 
+func (l *liveCards) rememberCopy(channel, thread, card, ts string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.draft(channel, thread)
+	t.Copies = append(t.Copies, liveCardCopy{Card: card, TS: ts})
+	t.Updated = at
+	l.commit(t)
+}
+
+func (l *liveCards) copiesOf(channel, card string) []cardRef {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var copies []cardRef
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for _, c := range t.Copies {
+			if c.Card == card {
+				copies = append(copies, cardRef{channel, t.Thread, c.TS})
+			}
+		}
+	}
+	return copies
+}
+
 func (l *liveCards) openPRCard(channel string, pr refID) (ts, thread string, ok bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -301,7 +333,7 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
 		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
-		c.PRCards = slices.Clone(t.PRCards)
+		c.PRCards, c.Copies = slices.Clone(t.PRCards), slices.Clone(t.Copies)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}

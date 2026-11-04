@@ -90,6 +90,7 @@ func root() *cobra.Command {
 		unfollowCmd(d),
 		dmStatusCmd(d),
 		cardAnswerCmd(d),
+		cardCopyCmd(d),
 		channelCmd(d, opChannelCreate, approveCreate, "Create a public Slack channel as the Claude app"),
 		channelCmd(d, opChannelArchive, approveArchive, "Archive a Slack channel as the Claude app"),
 		channelCmd(d, opChannelInvite, approveInvite, "Invite people to a Slack channel as the Claude app"),

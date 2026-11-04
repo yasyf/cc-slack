@@ -245,7 +245,8 @@ channel the card goes in the post's thread. Never post a PR card or add a
 `refs` entry by hand for a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what
 it changes and where it stands, and a line that only repeats a link is dropped,
-so name each PR once and never draw its state yourself.
+so name each PR once and never draw its state yourself. With `[buildkite]` set, a build link
+there shows its state and message the same way.
 
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
@@ -295,7 +296,10 @@ session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
 A post that links a Slack message shows Slack's own preview of it, so post the
-permalink and never draw a preview of a card by hand.
+permalink and never draw a preview of a card by hand. Slack's preview has no
+working buttons, so when a post needs a tap on an open card beside it, run
+`cc-slack card-copy --url <permalink> --thread <ts>`. A tap on that copy answers
+the card.
 
 ## Receive watched messages
 
