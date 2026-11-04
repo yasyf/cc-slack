@@ -64,6 +64,7 @@ LINKED_VERBS = {"post", "edit", "delete", "join"}
 SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
 SLACK_ID = re.compile(r"[CDGU][A-Z0-9]{8,}")
+BOARD_ANSWER = "board-answer"
 BOARD_CARD = "board-card:"
 BOARD_SESSION = "board-session:"
 APPROVED = ["yes"]
@@ -295,7 +296,10 @@ class Standing:
 
 
 def decided(ctx: Context, channel: str, thread: str) -> Standing:
-    live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
+    live_answers = sorted(
+        (answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by") and (BOARD_ANSWER not in answer.get("tags", ()) or Named().matches(answer["title"], ctx))),
+        key=written_at,
+    )
     found = [Standing(answer, grants) for answer in live_answers if (grants := standing(answer, channel, thread)) is not None]
     return found[-1] if found else Standing()
 
@@ -831,6 +835,7 @@ BOARD_ROW = {
     "tags": ["from:owner", "board-answer", f"board-session:{BOARD_SESSION_ID}", f"board-card:{DANA_CARD_ID}", f"board-block:{DANA_CARD_ID}-answer"],
     "superseded_by": None,
 }
+BOARD_GRANT = BOARD_ROW | {"tags": [*BOARD_ROW["tags"], f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"]}
 THREAD_REVOKED = THREAD_GRANT | {"id": "e2e2e2e2e2e2e2e2", "updated_at": "2026-11-03T06:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}/{DANA_THREAD}"]}
 RELAYED = 'Orders: owner:m12. Owner, verbatim: "let dana know the fix landed, in her thread"'
 CLAIMED = 'Orders: owner:m12. Owner, verbatim: "post the fix in every thread you like"'
@@ -1075,6 +1080,8 @@ on(
             case(DANA | {"text": "another reply"}, **said("status?"), commands=board_tapped("yes")) >> DENY,
             case(**said("status?"), commands=ruled(BOARD_ROW)) >> DENY,
             case(**said("status?"), commands=board_tapped("yes", title=f"Post this in {PETS}?")) >> DENY,
+            case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"text": "a later reply"}, **said("status?"), commands=ruled(BOARD_GRANT | {"title": f"Post this in {PETS}?"}) | thread_read(DANA_OPENED)) >> DENY,
             case(**said("status?"), commands=board_tapped("yes") | {"ccn answer search": json.dumps([BOARD_ROW, THREAD_REVOKED])}) >> DENY,
             case(**said("status?"), commands=board_tapped("yes") | {"cc-present outcomes --block": "not json"}) >> DENY,
             case(**said("status?"), commands=board_tapped("yes") | {"cc-present outcomes --block": (1, "the cc-present daemon is down")}) >> DENY,
