@@ -256,7 +256,7 @@ func TestDMStatusCardsEachLandAtTheDMRootWithTheirOwnThread(t *testing.T) {
 	}
 }
 
-func TestDMStatusCardPostsAtTheRootAndKeepsAShortcutDMWatched(t *testing.T) {
+func TestDMStatusCardPostsUnderItsThreadAndKeepsThatThreadWatched(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	const dmTS = "1800000050.000000"
@@ -265,11 +265,28 @@ func TestDMStatusCardPostsAtTheRootAndKeepsAShortcutDMWatched(t *testing.T) {
 	l.do(opDMStatus, body)
 	l.do(opDMStatus, cardBody("Halfway"))
 	sent := l.slack.sent()
-	if len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != "" || len(l.slack.edited()) != 0 {
-		t.Fatalf("posts %+v, edits %+v: want both at the DM root and no edit of the shortcut DM", sent, l.slack.edited())
+	if len(sent) != 2 || sent[0].threadTS != dmTS || sent[1].threadTS != "" || len(l.slack.edited()) != 0 {
+		t.Fatalf("posts %+v, edits %+v: want the first under its thread, the second at the DM root, no edit", sent, l.slack.edited())
 	}
-	if active := activeDMThreads(t, l); !slices.Contains(active, dmTS) || !slices.Contains(active, sent[0].ts) || !slices.Contains(active, sent[1].ts) {
-		t.Fatalf("active DM watches = %v, want the shortcut DM and both cards", active)
+	if active := activeDMThreads(t, l); !slices.Contains(active, dmTS) || !slices.Contains(active, sent[1].ts) {
+		t.Fatalf("active DM watches = %v, want the thread and the root card", active)
+	}
+}
+
+func TestAKeyedCardInAThreadIsEditedInPlace(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	const dmTS = "1800000050.000000"
+	post := func(title string) {
+		body := cardBody(title)
+		body["thread_ts"] = dmTS
+		body["card"] = statusCard{Status: "info", Title: title, Body: "Two PRs are green.", Key: "reply-1"}
+		l.do(opDMStatus, body)
+	}
+	post("On it")
+	post("Done")
+	if sent := l.slack.sent(); len(sent) != 1 || sent[0].threadTS != dmTS || len(l.slack.edited()) != 1 {
+		t.Fatalf("posts %+v, edits %+v: want one post under the thread and one edit of it", sent, l.slack.edited())
 	}
 }
 

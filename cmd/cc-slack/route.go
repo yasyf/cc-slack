@@ -151,8 +151,12 @@ func (o threadOwner) line() string {
 
 func messageLine(m messagePayload, operator bool) string {
 	if m.Kind == kindDM {
+		status := "slack_dm_status"
+		if m.ThreadTS != m.TS {
+			status += fmt.Sprintf(" and thread_ts %s, the thread this message is in", m.ThreadTS)
+		}
 		return fmt.Sprintf("Slack DM from %s, your operator, to this session (ts %s, %s): %q. "+
-			"Act on it as operator steering, and post status back with slack_dm_status.", m.UserName, m.TS, m.Permalink, m.Text)
+			"Act on it as operator steering, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, status)
 	}
 	if operator {
 		owned := ""

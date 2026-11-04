@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `slack_dm_status` with `thread_ts` posts a status card under that thread, where it used to post every card at the DM root. A directive for a DM message written in a thread names that thread and tells the session to pass it, so a reply lands where the user wrote.
 - The permission hook honours the user's tap on a permission card drawn by another session: `asked-user` finds the write's own card through its board-watch answer row and confirms the tap in that board's recorded interaction. The card as drawn must name the write's destination, a later `slack-revoke:` answer for the place wins, and a ccn row alone, or a lookup that fails, grants nothing.
 - The `decide` judge reads the drive's owner ledger: a record in the session tree that cites `owner:m<row>` gives the judge that row's words, read by exact id from the communicator's `owner-relay/owner-ledger.md` in the drive's state dir, never the citing record's own quote.
 - A permission card's id names its place, `slack:<channel>:<thread>:<digest>`, and an approving tap on one tells the session to record its capture with the label `slack-grant:<channel>/<thread>`, or `slack-grant:<channel>` for a top-level post or DM.
