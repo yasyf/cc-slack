@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,6 +46,40 @@ func (c *apiClient) DocCardsContext(ctx context.Context, serviceURL, channelID, 
 		return nil, err
 	}
 	return answer.Entities, nil
+}
+
+// ThreadWorkObjects reads each message's Work Objects itself because slack-go's Message metadata drops entities.
+func (c *apiClient) ThreadWorkObjects(ctx context.Context, channelID, threadTS string) (map[string][]slack.WorkObjectEntity, error) {
+	query := url.Values{"channel": {channelID}, "ts": {threadTS}, "include_all_metadata": {"true"}, "limit": {"200"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"conversations.replies?"+query.Encode(), http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var answer struct {
+		OK       bool   `json:"ok"`
+		Error    string `json:"error"`
+		Messages []struct {
+			TS       string                   `json:"ts"`
+			Metadata slack.WorkObjectMetadata `json:"metadata"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return nil, err
+	}
+	if !answer.OK {
+		return nil, fmt.Errorf("conversations.replies: %s", answer.Error)
+	}
+	found := map[string][]slack.WorkObjectEntity{}
+	for _, m := range answer.Messages {
+		found[m.TS] = m.Metadata.Entities
+	}
+	return found, nil
 }
 
 func docEntities(ctx context.Context, api slackAPI, logger *log.Logger, cfg docCardsConfig, channelID, text string) []slack.WorkObjectEntity {

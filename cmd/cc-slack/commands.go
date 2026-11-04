@@ -578,6 +578,7 @@ func reactionCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int
+	var workObjects bool
 	c := &cobra.Command{
 		Use:   "thread",
 		Short: "Print a Slack thread's messages",
@@ -585,11 +586,13 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
 			body["limit"] = limit
+			body["work_objects"] = workObjects
 			return runOp(c, d, f.sessionFlags, opThread, body)
 		},
 	}
 	f.bind(c)
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "most recent messages to print")
+	c.Flags().BoolVar(&workObjects, "work-objects", false, "also read each message's Work Object cards from Slack")
 	return c
 }
 
