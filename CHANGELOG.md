@@ -8,11 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A resumed session gets its Slack watches back with no re-arming: the `session-start` hook brings back what the restart orphaned, says so in the session's context, and catches up on anything sent while it was down. A DM another session took meanwhile stays with that session.
 - `cc-slack card-answer --withdrawn --label "<reason>"` closes a waiting card whose question was withdrawn. The card keeps its title and shows `Withdrawn: <reason>` in place of its buttons. No session receives a tap, and later answers are refused.
 - An answered, settled, or withdrawn waiting card gets a reaction: `white_check_mark` for an answer, `x` for a withdrawal.
 
 ### Fixed
 
+- A session posting under an old thread no longer replays that thread. Opening a DM thread reset its shared cursor to the thread's root, so every reply came back as new operator steering, for the session and for anyone following the thread. A cursor now stays where it is.
+- One Slack message reaches a session once, keyed by its own timestamp. A new watch on the same thread used to pass the delivery check.
+- A resumed session's channel carries Slack tags again (cc-interact 0.40.2).
+- `cc-slack history` with a large `--limit` prints what it read before its deadline, marked `partial`, instead of failing with no output.
 - A Slack call answered 429 or 5xx, or whose connection drops, tries again, up to four tries in all, instead of failing on the first. Posts, file shares, and channel creates retry only a 429, so a retry never posts twice. A 5xx or dropped connection that outlasts its retries says how many tries it took.
 - A `+1` reaction from the bot on your DM message answers it: `cc-slack dm-owed` stops listing it, and only that message. `eyes` and other reactions still leave it owed.
 - `cc-slack login` no longer fails when the program `card_command` names is missing from this machine. PR cards stay off there and PR links still work, so a shared config can name a tool only some people have.

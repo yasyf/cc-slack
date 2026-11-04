@@ -63,6 +63,7 @@ const (
 
 	defaultThreadLimit  = 50
 	defaultHistoryLimit = 20
+	historyBudget       = 25 * time.Second
 )
 
 type opBody struct {
@@ -192,6 +193,7 @@ type historyMessage struct {
 type historyResult struct {
 	ChannelID string           `json:"channel_id"`
 	Messages  []historyMessage `json:"messages"`
+	Partial   bool             `json:"partial,omitempty"`
 }
 
 type channelInfo struct {
@@ -391,12 +393,55 @@ func messageThreadOf(ctx context.Context, api slackAPI, channelID string, b opBo
 	return "", nil
 }
 
+type sessionStartResult struct {
+	WatchesBack int64 `json:"watches_back"`
+}
+
 func (a *app) handleSessionStart(hc daemon.HandlerCtx) daemon.Reply {
-	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
+	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
 	}
-	return daemon.Reply{OK: true, SubjectID: sub.ID, HTTPPort: hc.HTTPPort}
+	var res sessionStartResult
+	if resumed {
+		if res.WatchesBack, err = a.watchesBack(hc.Ctx, hc.DB, sub.ID); err != nil {
+			return fail(err.Error())
+		}
+	}
+	reply := ok(res)
+	reply.SubjectID, reply.HTTPPort = sub.ID, hc.HTTPPort
+	return reply
+}
+
+func (a *app) watchesBack(ctx context.Context, db *sql.DB, subjectID string) (int64, error) {
+	id, err := loadIdentity(ctx, db)
+	if errors.Is(err, errNoIdentity) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	back, err := reviveWatches(ctx, db, subjectID, id.DMChannelID)
+	if err != nil || back == 0 {
+		return 0, err
+	}
+	a.poller.reconcileAll()
+	return back, nil
+}
+
+func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) (int64, error) {
+	res, err := db.ExecContext(ctx, `UPDATE watches SET status = 'active' WHERE id IN (
+		SELECT MAX(o.id) FROM watches o
+		WHERE o.subject_id = ? AND o.owner_agent_id = ? AND o.status = 'orphaned'
+			AND NOT EXISTS (SELECT 1 FROM watches a WHERE a.subject_id = o.subject_id AND a.owner_agent_id = o.owner_agent_id
+				AND a.channel_id = o.channel_id AND a.thread_ts = o.thread_ts AND a.status = 'active')
+			AND NOT (o.kind = 'channel' AND o.channel_id = ? AND EXISTS (SELECT 1 FROM watches h
+				WHERE h.channel_id = o.channel_id AND h.thread_ts = '' AND h.kind = 'channel' AND h.status = 'active'))
+		GROUP BY o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, dmChannelID)
+	if err != nil {
+		return 0, fmt.Errorf("bring back watches: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
@@ -986,24 +1031,30 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
-	msgs, err := fetchRecentTopLevel(hc.Ctx, api, channelID, limit)
+	ctx, cancel := context.WithTimeout(hc.Ctx, historyBudget)
+	defer cancel()
+	msgs, partial, err := fetchRecentTopLevel(ctx, api, channelID, limit)
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
-		files, err := messageFiles(hc.Ctx, api, m)
+		files, err := messageFiles(ctx, api, m)
+		if errors.Is(err, context.DeadlineExceeded) {
+			partial = true
+			break
+		}
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
 		out = append(out, historyMessage{
-			TS: m.Timestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m), FromUser: m.User == id.UserID,
+			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
 			FromClaude: id.fromClaude(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files, Shares: a.sharedMessages(hc.Ctx, api, m),
+			Files: files, Shares: a.sharedMessages(ctx, api, m),
 		})
 	}
-	return ok(historyResult{ChannelID: channelID, Messages: out})
+	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})
 }
 
 func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]messageFile, error) {
@@ -1589,10 +1640,10 @@ func countActive(ctx context.Context, tx *sql.Tx, query string, args ...any) (bo
 	return n > 0, nil
 }
 
-func claimCursor(ctx context.Context, tx *sql.Tx, channelID, threadTS, oldest string, now time.Time, inUse bool) error {
+func claimCursor(ctx context.Context, tx *sql.Tx, channelID, threadTS, oldest string, now time.Time, keep bool) error {
 	query := `INSERT INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(channel_id, thread_ts) DO UPDATE SET oldest_ts = excluded.oldest_ts, next_poll_at = excluded.next_poll_at, backoff_s = 0`
-	if inUse {
+	if keep {
 		query = `INSERT OR IGNORE INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, ?, ?, ?)`
 	}
 	if _, err := tx.ExecContext(ctx, query, channelID, threadTS, oldest, now.UnixMilli()); err != nil {
@@ -1980,7 +2031,7 @@ func (a *app) openSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 		dmChannelID, threadTS, now.UnixMilli()); err != nil {
 		return fmt.Errorf("claim DM cursor: %w", err)
 	}
-	if err := claimCursor(ctx, tx, dmChannelID, threadTS, threadTS, now, false); err != nil {
+	if err := claimCursor(ctx, tx, dmChannelID, threadTS, threadTS, now, true); err != nil {
 		return err
 	}
 	if _, err := addWatch(ctx, tx, sub.ID, agent.TopLevel, kindDM, dmChannelID, threadTS, now); err != nil {
