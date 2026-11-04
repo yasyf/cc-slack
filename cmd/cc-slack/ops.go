@@ -1232,7 +1232,11 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	return ok(dmOwedResult{Replies: replies, HolderSession: holder.session})
+	others, err := othersCardThreads(hc.Ctx, hc.DB, id.DMChannelID, holder)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(dmOwedResult{Replies: slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] }), HolderSession: holder.session})
 }
 
 func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {

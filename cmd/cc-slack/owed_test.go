@@ -10,6 +10,8 @@ import (
 
 	"github.com/yasyf/cc-interact/agent"
 	"github.com/yasyf/cc-interact/cmd"
+	"github.com/yasyf/cc-interact/daemon"
+	"github.com/yasyf/cc-interact/subject"
 )
 
 const (
@@ -101,6 +103,83 @@ func TestAReplyInAStoodDownLanesDMThreadReachesTheHolder(t *testing.T) {
 	}
 	if status := f.watchStatus(gone); status != "orphaned" {
 		t.Fatalf("stood-down lane's watch is %q, want orphaned", status)
+	}
+}
+
+func cardSessionElsewhere(t *testing.T, f *fixture) subject.Subject {
+	t.Helper()
+	const id, pid = "0123456789abcdef0123456789abcdef", testPID + 2
+	f.alive[pid] = true
+	if _, err := storeSubjects(f).Create(f.ctx, id, "", "sess-card", scopeName, pid, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := storeSubjects(f).Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
+func owedToHolder(t *testing.T, f *fixture) []owedReply {
+	t.Helper()
+	var owed dmOwedResult
+	if err := json.Unmarshal(f.app.handleDMOwed(daemon.HandlerCtx{Ctx: f.ctx, DB: f.db()}).Body, &owed); err != nil {
+		t.Fatal(err)
+	}
+	return owed.Replies
+}
+
+func TestAReplyInAnotherSessionsCardThreadReachesOnlyThatSession(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := dmMessageOf(t, f, cardSessionElsewhere(t, f))
+	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindDM}) {
+		t.Fatalf("delivered to %v, want only the card's session", got)
+	}
+	if got := owedToHolder(t, f); len(got) != 0 {
+		t.Fatalf("holder owes %+v, want nothing from another session's card", got)
+	}
+}
+
+func TestTheHolderGetsACardThreadBackWhenItsSessionEnds(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	sub := cardSessionElsewhere(t, f)
+	thread := dmMessageOf(t, f, sub)
+	f.tick()
+	f.alive[sub.ClaudePID] = false
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindChannel}) {
+		t.Fatalf("delivered to %v, want only the holder once the card's session ended", got)
+	}
+	if got := owedToHolder(t, f); len(got) != 1 {
+		t.Fatalf("holder owes %+v, want the reply", got)
+	}
+}
+
+func TestAReplyOnACardFromTheHoldersOwnProcessStillReachesTheHolder(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := dmMessageOf(t, f, secondSession(t, f))
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindChannel, kindDM}) {
+		t.Fatalf("delivered to %v, want the holder and the card's earlier session in the same process", got)
+	}
+	if got := owedToHolder(t, f); len(got) != 1 {
+		t.Fatalf("holder owes %+v, want the reply", got)
 	}
 }
 
