@@ -638,18 +638,22 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 ## React before you reply
 
 On any message you have read and are acting on but have not answered, add
-`eyes` at once. When the ask is done, swap it: add `white_check_mark` with
-`slack_react`, then remove `eyes` with `slack_unreact`.
+`eyes` at once. A message you pick up from a public channel gets `eyes` when
+you first look at it and `wrench` beside it when work starts, so the channel
+can see whether it is being read or worked on. When the ask is done, add
+`white_check_mark` with `slack_react`, then remove `eyes` and any `wrench` with
+`slack_unreact`.
 For a message that needs only acknowledgment and no reply, use `pray`, or `+1`
-in the user's own DM with the bot. Everywhere else, use only these three:
+in the user's own DM with the bot. Everywhere else, use only these four:
 
 | Emoji | Name to pass | When |
 |---|---|---|
-| 👀 | `eyes` | Read, acting on, not yet answered |
+| 👀 | `eyes` | Read, acting on, not yet answered; on a public-channel pickup, first look |
+| 🔧 | `wrench` | Public-channel pickup only; work has started |
 | ✅ | `white_check_mark` | Ask done |
 | 🙏 | `pray` | Acknowledgment only; no reply needed |
 
-Put 👀 and ✅ on the specific message that addressed you or asked you to act,
+Put 👀, 🔧 and ✅ on the specific message that addressed you or asked you to act,
 usually the thread reply that mentioned you. Never react on the thread root
 by default; react there only when the root itself is the ask. If someone's
 thread root is just ":catjam:" and a later reply mentions you and asks you
@@ -671,7 +675,8 @@ Fix a mistake or a gap in it by editing it. This narrows what a lane asks to
 send and changes no permission rule. Questions they ask are not limited:
 write every post so a person can answer it, and answer each reply as it lands.
 
-- React `eyes` the moment you start on a message, as above.
+- React `eyes` the moment you look at a message and, on a public-channel
+  pickup, `wrench` when work starts, as above.
 - Answer every question in a watched thread the moment it lands, in that
   thread, before you return to other work. When the answer needs work, say
   in one line what you are doing, then post the answer when you have it.
