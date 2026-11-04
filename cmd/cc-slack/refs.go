@@ -157,7 +157,7 @@ func (t *refToken) get(ctx context.Context, now time.Time) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, refCommandTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, t.source.Command[0], t.source.Command[1:]...).Output() //nolint:gosec // G204: the configured token command's argv, never a shell
+	out, err := exec.CommandContext(ctx, installed(t.source.Command[0]), t.source.Command[1:]...).Output() //nolint:gosec // G204: the configured token command's argv, never a shell
 	if err != nil {
 		return "", fmt.Errorf("token command %s: %w", t.source.Command[0], err)
 	}

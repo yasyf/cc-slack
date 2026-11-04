@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, dir, body string) string {
@@ -149,6 +151,14 @@ func TestACardCommandThisMachineLacksLeavesCardsOffAndLoginWorking(t *testing.T)
 	}
 	if len(c.PRLinks.CardCommand) != 0 {
 		t.Fatalf("card_command = %v, want cards off on this machine", c.PRLinks.CardCommand)
+	}
+}
+
+func TestATokenCommandPinnedAtLoginStillRunsAfterItsToolMoves(t *testing.T) {
+	tok := refToken{source: &tokenSource{Command: []string{filepath.Join(t.TempDir(), "sh"), "-c", "echo fresh"}}}
+	got, err := tok.get(context.Background(), time.Now())
+	if err != nil || got != "fresh" {
+		t.Fatalf("token = %q, %v, want the daemon's own sh to answer once the pinned path is gone", got, err)
 	}
 }
 
