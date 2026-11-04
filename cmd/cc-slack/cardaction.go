@@ -286,7 +286,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	}
 	err := p.applyTap(ctx, id, card, k)
 	if previewed && err == nil {
-		p.markPreview(ctx, id, a, k.Label)
+		p.markPreview(ctx, id, a, card.ref(), k.Label)
 	}
 	return err
 }
@@ -387,7 +387,8 @@ func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k
 	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(a.Channel, a.ThreadTS, k.ID)
-		p.log.Printf("PR card %s: %q not applied, so the card keeps its buttons: %v", k.ID, k.Label, err)
+		p.log.Printf("PR card %s: %q not applied: %v", k.ID, k.Label, err)
+		p.recard(ctx, id, a.ref(), pr, "Your *"+mrkdwnEscapes.Replace(k.Label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
 		return nil
 	}
 	if err := p.markOption(ctx, id, a.ref(), "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now())); err != nil {
@@ -487,6 +488,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 
 const (
 	cardAnsweredReaction  = "white_check_mark"
+	cardNoLongerWaits     = "This PR no longer waits on your tap."
 	cardWithdrawnReaction = "x"
 )
 

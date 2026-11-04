@@ -20,7 +20,9 @@ func previewButtonsOf(t *testing.T, post fakePost) []*slack.ButtonBlockElement {
 		for _, block := range preview.Blocks.BlockSet {
 			if actions, ok := block.(*slack.ActionBlock); ok {
 				for _, element := range actions.Elements.ElementSet {
-					buttons = append(buttons, element.(*slack.ButtonBlockElement))
+					if b, isButton := element.(*slack.ButtonBlockElement); isButton {
+						buttons = append(buttons, b)
+					}
 				}
 			}
 		}
@@ -68,7 +70,7 @@ func TestAPostLinkingACardShowsItAndATapOnThePreviewAnswersTheCard(t *testing.T)
 			marked = append(marked, edit)
 		}
 	}
-	if len(marked) != 1 || !strings.Contains(marked[0].attachments, "✓ *merge it*") || strings.Contains(marked[0].attachments, cardPreviewAction) || marked[0].text != post.text {
+	if len(marked) != 1 || !strings.Contains(marked[0].attachments, "Tapped *merge it*") || strings.Contains(marked[0].attachments, cardPreviewAction) || marked[0].text != post.text {
 		t.Fatalf("preview edits = %+v, want its text kept and its buttons replaced by the answer", marked)
 	}
 }

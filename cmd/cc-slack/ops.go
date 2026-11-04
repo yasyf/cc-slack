@@ -24,28 +24,29 @@ import (
 )
 
 const (
-	opSessionStart daemon.Op = "session-start"
-	opLogin        daemon.Op = "login"
-	opWhoami       daemon.Op = "whoami"
-	opSend         daemon.Op = "send"
-	opReply        daemon.Op = "reply"
-	opReact        daemon.Op = "react"
-	opUnreact      daemon.Op = "unreact"
-	opEdit         daemon.Op = "edit"
-	opDelete       daemon.Op = "delete"
-	opThread       daemon.Op = "thread"
-	opHistory      daemon.Op = "history"
-	opFile         daemon.Op = "file"
-	opChannels     daemon.Op = "channels"
-	opUsers        daemon.Op = "users"
-	opDMPeer       daemon.Op = "dm-peer"
-	opDMOwed       daemon.Op = "dm-owed"
-	opFollow       daemon.Op = "follow"
-	opUnfollow     daemon.Op = "unfollow"
-	opDMStatus     daemon.Op = "dm-status"
-	opCardAnswer   daemon.Op = "card-answer"
-	opRevoke       daemon.Op = "revoke"
-	opAgentSubject daemon.Op = "agent-subject"
+	opSessionStart  daemon.Op = "session-start"
+	opLogin         daemon.Op = "login"
+	opWhoami        daemon.Op = "whoami"
+	opSend          daemon.Op = "send"
+	opReply         daemon.Op = "reply"
+	opReact         daemon.Op = "react"
+	opUnreact       daemon.Op = "unreact"
+	opEdit          daemon.Op = "edit"
+	opDelete        daemon.Op = "delete"
+	opThread        daemon.Op = "thread"
+	opHistory       daemon.Op = "history"
+	opFile          daemon.Op = "file"
+	opChannels      daemon.Op = "channels"
+	opUsers         daemon.Op = "users"
+	opDMPeer        daemon.Op = "dm-peer"
+	opDMOwed        daemon.Op = "dm-owed"
+	opRedrawPRCards daemon.Op = "redraw-pr-cards"
+	opFollow        daemon.Op = "follow"
+	opUnfollow      daemon.Op = "unfollow"
+	opDMStatus      daemon.Op = "dm-status"
+	opCardAnswer    daemon.Op = "card-answer"
+	opRevoke        daemon.Op = "revoke"
+	opAgentSubject  daemon.Op = "agent-subject"
 
 	opChannelCreate  daemon.Op = "channel-create"
 	opChannelArchive daemon.Op = "channel-archive"
@@ -278,6 +279,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opUsers, a.handleUsers)
 	s.Register(opDMPeer, a.handleDMPeer)
 	s.Register(opDMOwed, a.handleDMOwed)
+	s.Register(opRedrawPRCards, a.handleRedrawPRCards)
 	s.Register(opFollow, a.handleFollow)
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opDMStatus, a.handleDMStatus)
@@ -1226,6 +1228,23 @@ func (a *app) handleUsers(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	slices.SortFunc(out, func(x, y userInfo) int { return strings.Compare(x.Name, y.Name) })
 	return ok(usersResult{Users: out})
+}
+
+func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if len(id.Config.PRLinks.CardCommand) == 0 {
+		return fail("redraw-pr-cards needs a [pr_links] card_command on this machine")
+	}
+	open := a.cards.openPRCards()
+	go func(ctx context.Context) {
+		for _, card := range open {
+			a.recardPR(ctx, id, card.card, card.pr, "")
+		}
+	}(context.WithoutCancel(hc.Ctx))
+	return ok(map[string]int{"redrawing": len(open)})
 }
 
 func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {

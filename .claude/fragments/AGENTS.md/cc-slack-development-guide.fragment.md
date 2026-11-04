@@ -130,8 +130,11 @@ the daemon logs why. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
 "waits", "label"}}` instead of to a session. When the program exits 0, the
-card shows the answer in place of its buttons. Otherwise the daemon logs why
-and the card keeps its buttons.
+card shows the answer in place of its buttons. When it refuses, the thread gets
+its reason in a reply and the card is redrawn from the program, so a refused tap
+is never silent. A head that moves redraws an open PR card the same way in place,
+and a PR the program no longer cards gives up its buttons. `redraw-pr-cards` runs
+that once over every open PR card, with no new posts.
 
 A card with `refs` and no body, options, asks, links, facts, images,
 progress, or rollup gets no Ack or Pause button.
