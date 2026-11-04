@@ -113,14 +113,16 @@ keeps unfurls off. The setting covers the whole post, so another link in it may
 unfurl too. Slack's preview of a card has no working buttons, so `card-copy` posts
 one working copy of an open card when a post needs a tap beside it.
 
-`card_command` names a program, resolved on `PATH` at `login`, that draws a
-linked PR's card. A checked-in config can name a tool only some engineers have,
-so `login` on a machine without it leaves cards off and links still work. After a post in the bot's DM with the engineer, or in a
-channel whose ID `card_channels` lists, the daemon runs it once with
-`{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR the post
-linked that no card in the post's thread cites and no open card at the DM root
-cites. A merged or closed PR stays a
-link. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
+`card_command` names a program, resolved on `PATH` at `login`, that draws the
+card of a PR waiting on a tap. A checked-in config can name a tool only some engineers have,
+so `login` on a machine without it leaves cards off and links still work. A link
+in a post, text or card, never draws one. After a post in the bot's DM with the engineer, or in a
+channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
+(`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
+`{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`
+that no card in the post's thread cites and no open card at the DM root
+cites. A merged or closed PR gets no card. A card the program draws for a PR and
+head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
 one that passes the card checks. In the bot's DM the card opens at the root in
 its own thread, watched by the session whose post named the PR, wherever that
@@ -134,7 +136,13 @@ the daemon logs why. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
 "waits", "label"}}` instead of to a session. When the program exits 0, the
-card shows the answer in place of its buttons. When it refuses, the thread gets
+card shows the answer in place of its buttons, and so does every other open card
+offering that PR at that head: a PR card with the same `waits`, and a pick card
+whose `prs` has that one PR with the same `head` and the same answers. A tap on
+such a pick card, or its answer from a board, likewise closes the PR card and
+goes to the program once; a pick card closed this way tells its session as if
+tapped. A pick card with no `prs` entry, another head, or other answers is
+another question and stays open. Cards already open in `live-cards.json` count. When it refuses, the thread gets
 its reason in a reply and the card is redrawn from the program, so a refused tap
 is never silent. A head that moves redraws an open PR card the same way in place,
 and a PR the program no longer cards gives up its buttons. `redraw-pr-cards` runs
