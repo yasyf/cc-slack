@@ -196,6 +196,19 @@ func TestAPRCardShowsItsLinkCIFourLinesAndDescription(t *testing.T) {
 	}
 }
 
+func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *testing.T) {
+	pr := fullPR(49623)
+	pr.Review = "CI red; approved by poetic-svc; grade pass"
+	card := statusCard{Status: "needs_you", Title: "Approve the team credential?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-49623", PRs: []cardPR{pr}}
+	id, _ := parseRef(pr.URL)
+	v := view()
+	v.refs = map[string]refState{id.key(): {State: "open", Checks: "passed"}}
+	link := asSection(t, card.replyBlocks(v)[1]).Text.Text
+	if strings.Contains(link, "CI passed") || !strings.Contains(link, "CI red; approved by poetic-svc") {
+		t.Fatalf("link line %q, want the ledger's review alone, never GitHub's live state beside it", link)
+	}
+}
+
 func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	pr := fullPR(49722)
 	pr.Risk, pr.Blocks = "", " "
