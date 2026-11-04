@@ -46,6 +46,7 @@ type slackAPI interface {
 	SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error)
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
+	ThreadWorkObjects(ctx context.Context, channelID, threadTS string) (map[string][]slack.WorkObjectEntity, error)
 }
 
 type fileShare struct {

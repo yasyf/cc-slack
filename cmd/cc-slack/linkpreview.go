@@ -206,6 +206,18 @@ func (r ledgerRow) entity(url, cardLink string) slack.WorkObjectEntity {
 	}
 }
 
+func linkPreviewsText(prs []slack.WorkObjectEntity) string {
+	lines := make([]string, 0, 1+len(prs))
+	lines = append(lines, linkPreviewsLead)
+	for _, pr := range prs {
+		attributes, _ := pr.EntityPayload["attributes"].(map[string]any)
+		title, _ := attributes["title"].(map[string]any)
+		text, _ := title["text"].(string)
+		lines = append(lines, slackLink(pr.URL, text))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func entitiesOption(entities []slack.WorkObjectEntity) []slack.MsgOption {
 	if len(entities) == 0 {
 		return nil

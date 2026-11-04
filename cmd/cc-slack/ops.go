@@ -101,16 +101,18 @@ type opBody struct {
 	Out       string            `json:"out"`
 	Broadcast bool              `json:"broadcast"`
 	NoWatch   bool              `json:"no_watch"`
-	Agent     string            `json:"agent"`
-	Mirrored  bool              `json:"mirrored"`
-	Waits     string            `json:"waits"`
-	Label     string            `json:"label"`
-	Other     bool              `json:"other"`
-	Settled   bool              `json:"settled"`
-	Withdrawn bool              `json:"withdrawn"`
-	Via       string            `json:"via"`
-	About     string            `json:"about"`
-	TapPRs    []string          `json:"tap_prs"`
+
+	WorkObjects bool     `json:"work_objects"`
+	Agent       string   `json:"agent"`
+	Mirrored    bool     `json:"mirrored"`
+	Waits       string   `json:"waits"`
+	Label       string   `json:"label"`
+	Other       bool     `json:"other"`
+	Settled     bool     `json:"settled"`
+	Withdrawn   bool     `json:"withdrawn"`
+	Via         string   `json:"via"`
+	About       string   `json:"about"`
+	TapPRs      []string `json:"tap_prs"`
 	ticketSpend
 }
 
@@ -161,6 +163,9 @@ type threadMessage struct {
 	Text       string          `json:"text"`
 	Files      []messageFile   `json:"files,omitempty"`
 	Shares     []sharedMessage `json:"shares,omitempty"`
+	Buttons    []string        `json:"buttons,omitempty"`
+
+	WorkObjects []slack.WorkObjectEntity `json:"work_objects,omitempty"`
 }
 
 type messageFile struct {
@@ -1022,6 +1027,12 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if truncated {
 		msgs = msgs[len(msgs)-limit:]
 	}
+	var workObjects map[string][]slack.WorkObjectEntity
+	if b.WorkObjects {
+		if workObjects, err = api.ThreadWorkObjects(hc.Ctx, channelID, b.ThreadTS); err != nil {
+			return fail(fallback(actionRead, err))
+		}
+	}
 	out := make([]threadMessage, 0, len(msgs))
 	for _, m := range msgs {
 		files, err := messageFiles(hc.Ctx, api, m)
@@ -1031,7 +1042,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
 			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
-			Shares: a.sharedMessages(hc.Ctx, api, m),
+			Shares: a.sharedMessages(hc.Ctx, api, m), Buttons: messageButtons(m), WorkObjects: workObjects[m.Timestamp],
 		})
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
@@ -1137,6 +1148,30 @@ func messageText(m slack.Message) string {
 		out = append(out, p)
 	}
 	return strings.Join(out, "\n")
+}
+
+func messageButtons(m slack.Message) []string {
+	var labels []string
+	add := func(element any) {
+		if button, ok := element.(*slack.ButtonBlockElement); ok && button.Text != nil {
+			labels = append(labels, button.Text.Text)
+		}
+	}
+	for _, block := range m.Blocks.BlockSet {
+		switch b := block.(type) {
+		case *slack.ActionBlock:
+			if b.Elements != nil {
+				for _, element := range b.Elements.ElementSet {
+					add(element)
+				}
+			}
+		case *slack.SectionBlock:
+			if b.Accessory != nil && b.Accessory.ButtonElement != nil {
+				add(b.Accessory.ButtonElement)
+			}
+		}
+	}
+	return labels
 }
 
 func blockTexts(blocks slack.Blocks) []string {
@@ -1973,7 +2008,7 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if msg.card != nil {
 		thread, ts, posted, err := a.cardStatus(ctx, db, sub, id, under, msg)
 		if err == nil && posted && len(msg.prs)+len(msg.previews) > 0 {
-			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, append(entitiesOption(msg.prs), slack.MsgOptionAttachments(msg.previews...))...); err != nil {
+			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsText(msg.prs), nil, nil, append(entitiesOption(msg.prs), slack.MsgOptionAttachments(msg.previews...))...); err != nil {
 				a.poller.log.Printf("previews under card %s: %v", ts, err)
 			}
 		}

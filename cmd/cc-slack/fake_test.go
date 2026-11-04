@@ -116,6 +116,19 @@ func (f *fakeSlack) DocCardsContext(_ context.Context, serviceURL, channelID, te
 	return f.cards, nil
 }
 
+func (f *fakeSlack) ThreadWorkObjects(_ context.Context, _, _ string) (map[string][]slack.WorkObjectEntity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	found := map[string][]slack.WorkObjectEntity{}
+	for _, p := range f.posts {
+		var metadata slack.WorkObjectMetadata
+		if err := json.Unmarshal([]byte(p.metadata), &metadata); err == nil {
+			found[p.ts] = metadata.Entities
+		}
+	}
+	return found, nil
+}
+
 func historyOf(channelID string) string { return methodHistory + " " + channelID }
 
 func (f *fakeSlack) fail(method string, err error) {

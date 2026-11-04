@@ -211,7 +211,7 @@ func TestAStatusCardCarriesItsPRPreviewInItsThreadAndLosesItsBareLine(t *testing
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Fixed.\n" + testPR}})
 	post := lastPost(l)
-	if post.text != linkPreviewsLead || post.threadTS == "" || !strings.Contains(workObjectsIn(post), "Chats load faster") {
+	if !strings.HasPrefix(post.text, linkPreviewsLead+"\n") || !strings.Contains(post.text, testPR) || post.threadTS == "" || !strings.Contains(workObjectsIn(post), "Chats load faster") {
 		t.Fatalf("post = %+v, want the preview in the card's thread", post)
 	}
 	if card := l.slack.sent()[0]; strings.Contains(card.blocks, testPR) {
@@ -522,5 +522,35 @@ func TestAPostNamingAPRAndADocCarriesBothCards(t *testing.T) {
 	}
 	if strings.Join(urls, " ") != doc.URL+" "+testPR {
 		t.Fatalf("cards at %v, want the doc and the PR", urls)
+	}
+}
+
+func TestTheLinkLineUnderACardAlwaysNamesItsPRs(t *testing.T) {
+	entity := readyRow(41).entity(testPR, "")
+	if got, want := linkPreviewsText([]slack.WorkObjectEntity{entity}), linkPreviewsLead+"\n<"+testPR+"|#41 api: fix chat list 41>"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
+func TestAThreadReadNamesEachMessagesButtonsAndWorkObjects(t *testing.T) {
+	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Land it?", Body: "Fixed.\n" + testPR, Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w1"}})
+	card, reply := l.slack.sent()[0], lastPost(l)
+	var read threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testDM, "thread_ts": card.ts, "work_objects": true}).Body, &read); err != nil {
+		t.Fatal(err)
+	}
+	var buttons []string
+	var drawn []slack.WorkObjectEntity
+	for _, m := range read.Messages {
+		if m.TS == card.ts {
+			buttons = m.Buttons
+		}
+		if m.TS == reply.ts {
+			drawn = m.WorkObjects
+		}
+	}
+	if !slices.Contains(buttons, "Hold") || len(drawn) != 1 || drawn[0].URL != testPR {
+		t.Fatalf("buttons = %v, work objects = %+v, want the card's buttons and the reply's PR card", buttons, drawn)
 	}
 }
