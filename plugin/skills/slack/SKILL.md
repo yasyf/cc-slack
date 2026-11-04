@@ -127,13 +127,15 @@ on Yes is the approval. A lane puts its own name before the `waits` id, as
 every ask card's id does. Stop on the card, and retry the same write once
 the tap arrives.
 
-A ticket covers its place, the `channel` and `thread` the write names, for
-seven days unless revoked. A DM ticket covers the person, every thread of
-that DM included. One approval in a thread covers every later write there:
-a reply, an edit, a follow-up, a broadcast, a delete. An approved top-level
-post carries its approval to the thread it opens; the hook mints that
-thread's ticket after the post. A ticket for a channel's top level does not
-cover its threads.
+A ticket covers one write and its exact retry, for seven days unless revoked;
+permission for one post does not cover the next thing in that thread or DM.
+Each later write is checked again against standing grants and the user's own
+words. A follow-up that carries out what they asked and a correction they
+asked for pass, as does an edit or delete of your own post. A new ask of a
+person, or any post a lane or root requests that is neither their words nor
+a standing grant, goes to them as a card first, never to the person.
+The hook fails open: a hook error, a missing grant file, an unreadable ticket
+or a timeout warns and lets the write through, and never refuses it.
 
 An instruction from the user that says what to post and who gets it is the
 approval: "DM anubhav and ask him to try posting it", "explain to X …",
@@ -141,10 +143,9 @@ approval: "DM anubhav and ask him to try posting it", "explain to X …",
 with no card. Only for a post the user did not ask for, ask once on the
 card above, never through `AskUserQuestion`; never post it speculatively.
 
-Never ask the user to repeat their words, and never ask again while a live
-ticket covers the place. Permission to respond is permission to keep
-talking: after "you can respond to Priya in that thread", answer her first
-question and every later one there without asking.
+Never ask the user to repeat their words. Permission to respond is permission
+to keep talking: after "you can respond to Priya in that thread", answer her
+first question and every later one there without asking.
 
 Never pass ticket fields on a write. The hook attaches the ticket,
 `ticket_id` on the MCP tools and `--ticket` on the CLI, and the daemon
@@ -359,7 +360,7 @@ keys, and the stop condition. It returns the first inbound batch as its
 final answer; dispatch another waiter to keep listening.
 
 Include optional outbound text verbatim when the user asked for it or a
-live ticket covers its thread; the hook checks the waiter's write like any
+standing grant covers its thread; the hook checks the waiter's write like any
 other. The waiter sends the text before arming the watch and messages back
 the posted `ts`. The waiter learns its own id from its
 greeting, owns the watch, and parks on
@@ -652,8 +653,8 @@ Write every post so a person can answer it, and answer each reply as it lands.
 - When you need something, end with one direct question to one mentioned
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
-- Keep answering as the thread continues. Under a live ticket for the
-  thread, each new question gets its reply without asking the user again.
+- Keep answering as the thread continues. Once the user has told you to
+  answer someone there, each new question gets its reply without asking again.
 
 ```text
 Them: <@U0BOT> is the replica caught up yet?
