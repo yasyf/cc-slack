@@ -21,8 +21,7 @@ permissions:
 
 jobs:
   test:
-    if: github.event_name != 'pull_request'
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -40,8 +39,7 @@ jobs:
         run: go build ./...
 
   lint:
-    if: github.event_name != 'pull_request'
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -57,8 +55,7 @@ jobs:
           version: latest
 
   vuln:
-    if: github.event_name != 'pull_request'
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

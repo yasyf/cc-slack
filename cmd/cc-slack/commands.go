@@ -840,6 +840,25 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func cardCopyCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f            sessionFlags
+		card, thread string
+	)
+	c := &cobra.Command{
+		Use:   "card-copy",
+		Short: "Post one working copy of an open card in a thread of your DM; a tap on it answers the card",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opCardCopy, map[string]any{"url": card, "thread_ts": thread})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&card, "url", "", "the open card's Slack permalink")
+	c.Flags().StringVar(&thread, "thread", "", "ts of the DM thread to post the copy in")
+	return c
+}
+
 func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f                       sessionFlags

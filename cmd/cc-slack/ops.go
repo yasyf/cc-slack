@@ -46,6 +46,7 @@ const (
 	opUnfollow      daemon.Op = "unfollow"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
+	opCardCopy      daemon.Op = "card-copy"
 	opRevoke        daemon.Op = "revoke"
 	opAgentSubject  daemon.Op = "agent-subject"
 
@@ -287,6 +288,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
+	s.Register(opCardCopy, a.handleCardCopy)
 	s.Register(opRevoke, a.handleRevoke)
 	s.Register(opAgentSubject, a.handleAgentSubject)
 	s.Register(opChannelCreate, a.handleChannel(approveCreate, createChannel))
@@ -534,7 +536,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
-		text, previews := a.prPreviews(hc.Ctx, id, channelID, texts[0])
+		text, previews := a.linkPreviews(hc.Ctx, id, channelID, texts[0])
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
 		}
@@ -698,8 +700,6 @@ func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS
 	}
 	return shareFiles(ctx, api, id, channelID, threadTS, text, files)
 }
-
-var messageLink = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
 
 func linksAMessage(text string, blocks []slack.Block) bool {
 	return messageLink.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), messageLink.MatchString)
@@ -1814,7 +1814,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	texts, prs := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
-		msg.text, msg.previews = a.prPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
+		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
 			return msg, nil, prs
 		}
@@ -1823,7 +1823,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 		return msg, pages[1:], prs
 	}
 	texts, prs = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
-	b.Card.Body, msg.previews = a.prPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
+	b.Card.Body, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
 	return msg, nil, prs
@@ -1965,7 +1965,7 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if msg.card != nil {
 		thread, ts, posted, err := a.cardStatus(ctx, db, sub, id, under, msg)
 		if err == nil && posted && len(msg.previews) > 0 {
-			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, prPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
+			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
 				a.poller.log.Printf("previews under card %s: %v", ts, err)
 			}
 		}

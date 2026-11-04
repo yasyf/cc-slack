@@ -29,12 +29,13 @@ const (
 )
 
 type fakeRefs struct {
-	mu      sync.Mutex
-	pr      string
-	build   string
-	status  int
-	header  http.Header
-	queries []string
+	mu           sync.Mutex
+	pr           string
+	build        string
+	status       int
+	header       http.Header
+	queries      []string
+	buildMessage string
 }
 
 func (f *fakeRefs) set(pr, build string) {
@@ -82,7 +83,7 @@ func (f *fakeRefs) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/graphql":
 		_, _ = fmt.Fprintf(w, `{"data":{"p0":{"pullRequest":%s}}}`, f.pr)
 	case "/v2/organizations/acme/pipelines/deploy/builds/7":
-		_, _ = fmt.Fprintf(w, `{"state":%q}`, f.build)
+		_, _ = fmt.Fprintf(w, `{"state":%q,"message":%q}`, f.build, f.buildMessage)
 	default:
 		http.NotFound(w, r)
 	}

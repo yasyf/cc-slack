@@ -147,9 +147,13 @@ func TestExecutablePathReadsTheKernelsExecPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
+	want, err := filepath.EvalSymlinks("/bin/sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := executablePath(c.Process.Pid)
-	if err != nil || got != "/bin/sleep" {
-		t.Fatalf("executablePath = %q, %v, want /bin/sleep", got, err)
+	if err != nil || got != want {
+		t.Fatalf("executablePath = %q, %v, want %s", got, err, want)
 	}
 }
 

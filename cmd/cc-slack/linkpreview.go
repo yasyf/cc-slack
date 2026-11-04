@@ -14,19 +14,21 @@ import (
 )
 
 const (
-	prPreviewLimit = 5
-	prPreviewChars = 600
-	prPreviewsLead = "The PRs this names:"
-	prPreviewsMore = "pr-previews-more"
-	rowLanded      = "landed"
-	rowClosed      = "closed"
-	rowOpen        = "open"
-	rowNoHold      = "none"
+	linkPreviewLimit = 5
+	linkPreviewChars = 600
+	linkPreviewsLead = "What this links to:"
+	linkPreviewsMore = "link-previews-more"
+	rowLanded        = "landed"
+	rowClosed        = "closed"
+	rowTapped        = "tapped"
+	rowOpen          = "open"
+	rowNoHold        = "none"
 )
 
 var (
 	prLink     = regexp.MustCompile(`https://github\.com/([\w-]+)/([\w.-]+)/pull/(\d+)`)
 	prLinkLine = regexp.MustCompile(`^[-*•\s]*(?:<?https://github\.com/[\w-]+/[\w.-]+/pull/\d+(?:\|[^>\n]*)?>?[\s,]*)+$`)
+	buildLink  = regexp.MustCompile(`https://buildkite\.com/[\w.-]+/[\w.-]+/builds/\d+`)
 	sentence   = regexp.MustCompile(`(?m)^.+?(?:[.!?](?:\s|$)|$)`)
 )
 
@@ -55,7 +57,11 @@ func (r ledgerRow) standing() string {
 	case r.Hold != "" && r.Hold != rowNoHold:
 		return "*On hold.*" + r.checks()
 	}
-	return "*Waiting:* " + mrkdwnEscapes.Replace(clipRunes(strings.TrimRight(r.WaitsOn, ". "), prPreviewChars)) + "." + r.checks()
+	waits := mrkdwnEscapes.Replace(clipRunes(strings.TrimRight(r.WaitsOn, ". "), linkPreviewChars)) + "."
+	if r.State == rowTapped {
+		return "*" + waits + "*" + r.checks()
+	}
+	return "*Waiting:* " + waits + r.checks()
 }
 
 func (r ledgerRow) checks() string {
@@ -66,19 +72,33 @@ func (r ledgerRow) checks() string {
 }
 
 func (r ledgerRow) words() string {
-	return mrkdwnEscapes.Replace(clipRunes(strings.TrimSpace(sentence.FindString(strings.TrimSpace(r.ForUsers))), prPreviewChars))
+	return mrkdwnEscapes.Replace(clipRunes(strings.TrimSpace(sentence.FindString(strings.TrimSpace(r.ForUsers))), linkPreviewChars))
 }
 
-func (a *app) prPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.Attachment) {
+func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.Attachment) {
+	if channelID != id.DMChannelID {
+		return text, nil
+	}
+	text, previews, more := a.prPreviews(ctx, id, text)
+	builds, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(previews))
+	previews = append(previews, builds...)
+	if more += moreBuilds; more > 0 {
+		line := fmt.Sprintf("+%d more not shown here", more)
+		previews = append(previews, slack.Attachment{Fallback: line, Blocks: slack.Blocks{BlockSet: []slack.Block{mrkdwn(linkPreviewsMore, line)}}})
+	}
+	return text, previews
+}
+
+func (a *app) prPreviews(ctx context.Context, id identity, text string) (string, []slack.Attachment, int) {
 	command := id.Config.PRLinks.PreviewCommand
 	prs := linkedPRRefs(text)
-	if channelID != id.DMChannelID || len(command) == 0 || len(prs) == 0 {
-		return text, nil
+	if len(command) == 0 || len(prs) == 0 {
+		return text, nil, 0
 	}
 	rows, err := readLedgerRows(ctx, command, prs)
 	if err != nil {
 		a.poller.log.Printf("post keeps its PR links with no previews: %v", err)
-		return text, nil
+		return text, nil, 0
 	}
 	var previews []slack.Attachment
 	drawn := map[string]bool{}
@@ -88,18 +108,57 @@ func (a *app) prPreviews(ctx context.Context, id identity, channelID, text strin
 		if !ok {
 			continue
 		}
-		if len(previews) == prPreviewLimit {
+		if len(previews) == linkPreviewLimit {
 			more++
 			continue
 		}
 		previews = append(previews, a.prPreview(id, pr, row))
 		drawn[pr.key()] = true
 	}
-	if more > 0 {
-		line := fmt.Sprintf("+%d more not shown here", more)
-		previews = append(previews, slack.Attachment{Fallback: line, Blocks: slack.Blocks{BlockSet: []slack.Block{mrkdwn(prPreviewsMore, line)}}})
+	return withoutRepeatedLinks(text, drawn), previews, more
+}
+
+func (a *app) buildPreviews(ctx context.Context, id identity, text string, room int) ([]slack.Attachment, int) {
+	var links []string
+	for _, link := range buildLink.FindAllString(text, -1) {
+		if !slices.Contains(links, link) {
+			links = append(links, link)
+		}
 	}
-	return withoutRepeatedLinks(text, drawn), previews
+	if id.Config.Buildkite == nil || len(links) == 0 {
+		return nil, 0
+	}
+	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
+	defer cancel()
+	token := a.cards.host(refHostBuildkite, id.Config).token
+	var previews []slack.Attachment
+	for i, link := range links {
+		if len(previews) == room {
+			return previews, len(links) - i
+		}
+		ref, ok := parseRef(link)
+		if !ok {
+			continue
+		}
+		build, err := a.cards.client.readBuild(lookup, token, ref)
+		if err != nil {
+			a.poller.log.Printf("%s stays a link: %v", link, err)
+			continue
+		}
+		previews = append(previews, build.preview(link, ref))
+	}
+	return previews, 0
+}
+
+func (b buildkiteBuild) preview(link string, ref refID) slack.Attachment {
+	title := fmt.Sprintf("%s build %d", ref.Repo, ref.Number)
+	lines := []string{"*" + slackLink(link, title) + "*"}
+	if message, _, _ := strings.Cut(strings.TrimSpace(b.Message), "\n"); message != "" {
+		lines = append(lines, mrkdwnEscapes.Replace(clipRunes(message, linkPreviewChars)))
+	}
+	state := strings.ReplaceAll(b.State, "_", " ")
+	lines = append(lines, "*"+strings.ToUpper(state[:1])+state[1:]+".*")
+	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: []slack.Block{section("", strings.Join(lines, "\n"))}}}
 }
 
 func linkedPRRefs(text string) []refID {
