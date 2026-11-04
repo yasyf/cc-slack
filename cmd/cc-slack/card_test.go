@@ -413,3 +413,32 @@ func TestPermissionCardSpeaksInWords(t *testing.T) {
 		t.Fatalf("only a permission card is held to plain words: %v", err)
 	}
 }
+
+func TestACardListsLongOptionsInFullAndNumbersItsButtons(t *testing.T) {
+	long := []string{"Cap the run search at 200 sessions and drop the rest", "Run the whole search tonight on the pass box", "Skip the search and ship the fix as is"}
+	card := statusCard{Status: "needs_you", Title: "How should the run search pay for itself?", Options: long, Recommended: long[1], Waits: "cost-pick"}
+	at := time.Date(2026, 11, 4, 5, 30, 0, 0, time.UTC)
+	blocks := card.replyBlocks(cardView{at: at, now: at})
+	want := "*1.* Run the whole search tonight on the pass box _(Recommended)_\n*2.* Cap the run search at 200 sessions and drop the rest\n*3.* Skip the search and ship the fix as is"
+	if got := blocksJSON(t, blocks); !strings.Contains(got, string(mustJSON(want))) {
+		t.Fatalf("blocks %s, want every option in full, numbered in button order, the recommendation marked", got)
+	}
+	buttons := cardButtons(t, blocks)
+	labels := make([]string, 0, 3)
+	for _, b := range buttons[:3] {
+		labels = append(labels, b.Text.Text)
+		k, ok := (cardActionPush{ActionID: b.ActionID, Value: b.Value}).tap()
+		if !ok || !slices.Contains(long, k.Label) {
+			t.Fatalf("button %q taps %+v, %v; want the full option as the answer", b.Text.Text, k, ok)
+		}
+	}
+	if !slices.Equal(labels, []string{"1 (Recommended)", "2", "3"}) || buttons[0].Style != slack.StylePrimary {
+		t.Fatalf("labels = %q, want numbers with the recommendation marked and primary", labels)
+	}
+
+	steer := statusCard{Status: "info", Title: "Which first?", Options: long[:2]}
+	buttons = cardButtons(t, steer.replyBlocks(cardView{at: at, now: at}))
+	if buttons[0].Text.Text != "1" || buttons[0].Value != long[0] || buttons[1].ActionID != cardOptionAction+"1" {
+		t.Fatalf("option buttons %q=%q, %q; want a number that taps the full option", buttons[0].Text.Text, buttons[0].Value, buttons[1].ActionID)
+	}
+}

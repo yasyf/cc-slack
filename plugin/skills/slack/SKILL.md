@@ -455,7 +455,10 @@ row's verdict through `cc-present slack-sync decided`, not to the session,
 and the row shows its answer. When the board refuses the tap, the row says
 why, and the next push asks it again.
 
-Each reply card carries the `options` plus fixed Ack and Pause buttons. A
+Each reply card carries the `options` plus fixed Ack and Pause buttons. The
+card lists every option in full, numbered, above its buttons. When any option
+runs past two words, each button shows only its number. A bare number the user
+replies in the card's thread counts as a tap on that button. A
 tap arrives as a `slack.action` event and a directive, steering this
 session the way a DM reply does. Nothing waits on these taps. A tap on
 an older card may be stale, since the directive names when that card was
@@ -477,7 +480,7 @@ calls post, and how to post one directly when cc-present is not installed. Set
 `step-3:merge`. Write the question verbatim as the `title`, the context
 in `body`, the answers as `options`, and the answer you recommend as
 `recommended`. The card shows the recommended answer first, marked
-(Recommended), then the other answers, then fixed Other and Explain more
+(Recommended), then the other answers, numbered in that order, then fixed Other and Explain more
 buttons, with no Ack or Pause. It tells the user the lane is stopped until
 they answer, and it takes no `asks`.
 
