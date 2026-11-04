@@ -78,6 +78,7 @@ token_command = ["gh", "auth", "token"]
 repos = ["acme/app", "acme/lib"]
 card_channels = ["C0TEAMROOM"]
 card_command = ["lr", "board", "card", "--lane", "pr-cards"]
+preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--json"]
 
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
@@ -105,14 +106,10 @@ asks GitHub about every candidate in one GraphQL query per post, with a 5 s
 limit; when that read fails, the post goes out as written and the daemon
 logs why.
 
-A `send`, `reply` or `dm-status` to the engineer's DM that links a message in that
-DM carrying a card shows a preview of each, up to five, below the text: the card's
-title, its question, its answer buttons and a button that opens it. A status card
-carries them in a reply in its thread. A preview is read once, at the post, so
-unfurls stay off and nothing shows a snapshot Slack froze. A tap on a preview's
-answer is the same tap on the card, which shows the answer, and the preview's
-buttons give way to what was tapped. A post anywhere else, and a link to anything
-else, stays a link.
+A post that links a Slack message goes out with `unfurl_links` on, in its text or
+in its blocks, so Slack draws its own preview of that message. Every other post
+keeps unfurls off. The setting covers the whole post, so another link in it may
+unfurl too.
 
 `card_command` names a program, resolved on `PATH` at `login`, that draws a
 linked PR's card. A checked-in config can name a tool only some engineers have,
@@ -135,6 +132,25 @@ its reason in a reply and the card is redrawn from the program, so a refused tap
 is never silent. A head that moves redraws an open PR card the same way in place,
 and a PR the program no longer cards gives up its buttons. `redraw-pr-cards` runs
 that once over every open PR card, with no new posts.
+
+`preview_command` names a program, resolved on `PATH` at `login` and off when
+unset, that says where the PRs a post links to stand. Slack cannot draw this: it
+unfurls no private PR for a link an app posts. A post in the bot's DM with the
+engineer that links a PR runs it once, whatever the number of PRs, with
+`{"prs": [{"repo", "number"}]}` on stdin; it prints a JSON array of rows with
+`repo`, `number`, `title`, `for_users`, `waits_on`, `ready_for_tap`, `state`, `ci`
+and `hold`, and may print more rows than it was asked for. Up to five linked PRs
+with a row get a preview under the text: the title as the link, the first sentence
+of `for_users`, and one line that says it landed, closed, is ready for a tap, is
+on hold, or what it waits on, with its `ci`. A hold's reason stays out, since it is
+written for whoever holds the PR. `state` `landed` and `closed` end it, and only
+`state` `open` with `ready_for_tap` reads as ready. A ready PR with an unanswered
+card links that card. A status card carries its previews in a reply in its thread.
+Anything past the limit is counted in a last line and keeps its link. Once the rows
+read, a line holding only PR links is dropped when each one has a preview or the
+rest of the text names it, so a PR shows once. A PR with no row stays a link. When
+the program fails or runs past 5 s, the post goes out as written and the daemon
+logs why.
 
 A card with `refs` and no body, options, asks, links, facts, images,
 progress, or rollup gets no Ack or Pause button.

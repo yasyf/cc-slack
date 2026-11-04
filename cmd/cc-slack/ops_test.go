@@ -99,12 +99,44 @@ func TestLoginPostsAsTheHandleWithoutADisplayName(t *testing.T) {
 	}
 }
 
-func TestPostsNeverUnfurlLinks(t *testing.T) {
+func TestOnlyAPostLinkingASlackMessageUnfurls(t *testing.T) {
+	message := "https://example.slack.com/archives/C1/p1793818357021259"
+	for _, tc := range []struct {
+		name, text, want string
+	}{
+		{"a message link", "card: <" + message + "|card>", "true"},
+		{"a message link in a thread", "card: " + message + "?thread_ts=1793818357.021259", "true"},
+		{"any other link", "see <https://example.com/a|a>", "false"},
+		{"no link", "plain words", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			l.post(opSend, map[string]string{"channel_id": testChannel, "text": tc.text})
+			if posts := l.slack.sent(); len(posts) != 1 || posts[0].unfurlLinks != tc.want {
+				t.Fatalf("posts = %+v, want one post with unfurl_links=%s", posts, tc.want)
+			}
+		})
+	}
+}
+
+func TestAMessageLinkInAStatusCardUnfurlsWithNoHandBuiltReply(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "card: <https://example.slack.com/archives/C1/p1|card>"})
-	if posts := l.slack.sent(); len(posts) != 1 || posts[0].unfurlLinks != "false" {
-		t.Fatalf("posts = %+v, want one post with unfurl_links=false so a linked card is never frozen into a stale snapshot", posts)
+	l.do(opDMStatus, cardBody("Merge the stack?", "merge it"))
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on " + link}})
+	posts := l.slack.sent()
+	at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.blocks, link) })
+	if at < 0 || posts[at].unfurlLinks != "true" {
+		t.Fatalf("posts = %+v, want the status card unfurling its link", posts)
+	}
+	if slices.ContainsFunc(posts, func(p fakePost) bool { return p.attachments != "" }) {
+		t.Fatalf("posts = %+v, want no hand-built preview", posts)
 	}
 }
 
