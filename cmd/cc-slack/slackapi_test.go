@@ -34,6 +34,10 @@ func TestSlackCallsRetryWhatSlackRefusedAndNeverRepostWhatMayHaveLanded(t *testi
 		_, _, err := api.PostMessageContext(context.Background(), testChannel, slack.MsgOptionText("hi", false))
 		return err
 	}
+	sweep := func(api slackAPI) error {
+		_, _, _, err := api.UpdateMessageContext(withoutRateWait(context.Background()), testChannel, testThread, slack.MsgOptionText("hi", false))
+		return err
+	}
 	const dropped = 0
 	backoffs := []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second}
 	for _, tc := range []struct {
@@ -49,6 +53,7 @@ func TestSlackCallsRetryWhatSlackRefusedAndNeverRepostWhatMayHaveLanded(t *testi
 		{"chat.postMessage answered 503 is not retried, since the post may have landed", post, []int{503}, "", 1, nil, "slack server error: 503 Service Unavailable"},
 		{"chat.postMessage answered 429 with Retry-After 0 is retried at once and succeeds", post, []int{429, 200}, "0", 2, []time.Duration{0}, ""},
 		{"chat.postMessage answered 429 asking for more than 30s is not retried", post, []int{429}, "31", 1, nil, "slack rate limit exceeded, retry after 31s"},
+		{"a card sweep's chat.update answered 429 hands the limit back at once instead of waiting it out", sweep, []int{429, 200}, "5", 1, nil, "slack rate limit exceeded, retry after 5s"},
 		{"chat.update answered 404 is not retried", update, []int{404}, "", 1, nil, "slack server error: 404 Not Found"},
 		{"chat.update answered 503 every time stops at 4 tries and says so", update, []int{503}, "", 4, backoffs, "slack server error: 503 Service Unavailable after 4 tries"},
 		{"chat.update whose connection drops every time stops at 4 tries and says so", update, []int{dropped}, "", 4, backoffs, " after 4 tries"},

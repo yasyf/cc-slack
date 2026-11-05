@@ -373,7 +373,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	default:
 		err = p.markOption(ctx, id, a.ref(), "✓ *"+k.Label+"* · "+p.now().In(pacific).Format(cardTimeLayout))
 	}
-	if err != nil {
+	if p.tapDrawn(a.ref(), tappedAt, err) != nil {
 		p.log.Printf("card action %s on %s: the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	line := tapLine(who, permalink, k, "")
@@ -424,7 +424,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
 		return applied
 	}
-	if err := p.markOption(ctx, id, c.ref, line); err != nil {
+	if err := p.tapDrawn(c.ref, at, p.markAnswer(ctx, id, c.ref, c.waits, line)); err != nil {
 		p.log.Printf("PR card %s: %q taken, but the card still shows its buttons: %v", c.waits, label, err)
 	}
 	if applied {
@@ -489,7 +489,7 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 			"⚠️ *"+mrkdwnEscapes.Replace(k.Label)+"* did not reach the board: "+mrkdwnEscapes.Replace(clipRunes(err.Error(), cardMaxDetailLen)))
 	}
 	p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
-	return p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)
+	return p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true))
 }
 
 func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
@@ -498,7 +498,7 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 		p.log.Printf("PR row %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
 		return nil
 	}
-	if err := p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true); err != nil {
+	if err := p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)); err != nil {
 		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
 	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
@@ -515,8 +515,9 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 }
 
 func (p *poller) repeatTap(ctx context.Context, id identity, a cardActionPush, k askTap, ans askAnswer) error {
+	tapped := slackTime(a.ActionTS)
 	if !k.Waits {
-		if err := p.markAsk(ctx, id, a, k); err != nil {
+		if err := p.tapDrawn(a.ref(), tapped, p.markAsk(ctx, id, a, k)); err != nil {
 			p.log.Printf("card action %s on %s: the card still offers the answered ask: %v", a.ActionID, a.MessageTS, err)
 		}
 		return nil
@@ -524,7 +525,7 @@ func (p *poller) repeatTap(ctx context.Context, id identity, a cardActionPush, k
 	if ans.Drawn {
 		return nil
 	}
-	err := p.drawTap(ctx, id, a.ref(), cardActionsBlock, "✓ *"+mrkdwnEscapes.Replace(clipRunes(ans.Label, cardMaxDetailLen))+"* · answered "+clock(ans.At, p.now()), true)
+	err := p.tapDrawn(a.ref(), tapped, p.drawTap(ctx, id, a.ref(), cardActionsBlock, "✓ *"+mrkdwnEscapes.Replace(clipRunes(ans.Label, cardMaxDetailLen))+"* · answered "+clock(ans.At, p.now()), true))
 	if err == nil {
 		p.cards.answerDrawn(a.Channel, a.ThreadTS, k.ID)
 	}
@@ -542,7 +543,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
 			line += " · " + slackLink(w.via, "what replaced it")
 		}
-		if err := p.markAnswer(ctx, id, w.card, w.tap.ID, line); err != nil {
+		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
 			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
 		}
@@ -551,7 +552,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	if w.settled {
 		line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
-		if err := p.markAnswer(ctx, id, w.card, w.tap.ID, line); err != nil {
+		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
 			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
 		}
@@ -575,7 +576,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.via != "" {
 		answer += "on " + slackLink(w.via, w.viaName) + " "
 	}
-	if err := p.markAnswer(ctx, id, w.card, w.tap.ID, answer+clock(w.at, p.now())); err != nil {
+	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, answer+clock(w.at, p.now()))); err != nil {
 		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
 	}
 	p.react(ctx, id, w.card, cardAnsweredReaction)
@@ -716,6 +717,13 @@ func (p *poller) drawTap(ctx context.Context, id identity, r cardRef, blockID, l
 		}
 	}
 	return p.confirmTap(ctx, id, r, blockID, line)
+}
+
+func (p *poller) tapDrawn(r cardRef, tapped time.Time, err error) error {
+	if err == nil {
+		p.log.Printf("card %s/%s: tap drawn %s after it", r.thread, r.ts, p.now().Sub(tapped).Round(time.Second))
+	}
+	return err
 }
 
 func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {

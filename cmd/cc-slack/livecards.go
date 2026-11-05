@@ -240,6 +240,7 @@ type liveCards struct {
 	refs    map[string]refState
 	hosts   map[string]*refHost
 	drawing map[string]*sync.Mutex
+	undrawn map[string]map[string]bool
 }
 
 func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at time.Time) {
@@ -782,6 +783,9 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 		default:
 			redrawn[w.ts] = true
 		}
+		if _, limited := errors.AsType[*slack.RateLimitedError](err); limited {
+			break
+		}
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -968,27 +972,49 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		}
 		next = earliest(next, h.due)
 	}
-	l.redrawChanged(ctx, l.newAPI(id.Token), changed, now)
+	if until := l.redrawChanged(ctx, l.newAPI(id.Token), changed, now); !until.IsZero() {
+		next = earliest(next, until)
+	}
 	l.recardMoved(ctx, id, moved)
 	return max(next.Sub(now), time.Second)
 }
 
-func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map[string]bool, now time.Time) {
+func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map[string]bool, now time.Time) time.Time {
 	l.mu.Lock()
 	keys := slices.Sorted(maps.Keys(l.threads))
 	l.mu.Unlock()
-	for _, k := range keys {
-		l.redrawMoved(ctx, api, k, changed, now)
+	ctx = withoutRateWait(ctx)
+	for i, k := range keys {
+		rate, limited := errors.AsType[*slack.RateLimitedError](l.redrawMoved(ctx, api, k, changed, now))
+		if !limited {
+			continue
+		}
+		l.mu.Lock()
+		for _, k := range keys[i:] {
+			if l.undrawn[k] == nil {
+				l.undrawn[k] = map[string]bool{}
+			}
+			maps.Copy(l.undrawn[k], changed)
+		}
+		l.mu.Unlock()
+		l.log.Printf("live cards: Slack limits chat.update for %s, so %d threads redraw after it", rate.RetryAfter, len(keys)-i)
+		return now.Add(rate.RetryAfter)
 	}
+	return time.Time{}
 }
 
-func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, changed map[string]bool, now time.Time) {
+func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, changed map[string]bool, now time.Time) error {
 	defer l.drawLock(key)()
 	l.mu.Lock()
 	t, ok := l.threads[key]
 	if !ok {
 		l.mu.Unlock()
-		return
+		return nil
+	}
+	if owed := l.undrawn[key]; owed != nil {
+		merged := maps.Clone(owed)
+		maps.Copy(merged, changed)
+		changed = merged
 	}
 	whole := t.Stale || t.cites(changed) || t.expiredSinceDrawn(now)
 	var writes, prCards []cardWrite
@@ -1001,16 +1027,26 @@ func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, c
 		}
 	}
 	l.mu.Unlock()
+	var errs []error
 	if whole {
 		if _, err := l.flush(ctx, api, t, writes, now, true); err != nil {
 			l.log.Printf("live card %s: %v", key, err)
+			errs = append(errs, err)
 		}
 	}
 	if len(prCards) > 0 {
 		if _, err := l.flush(ctx, api, t, prCards, now, false); err != nil {
 			l.log.Printf("live card %v", err)
+			errs = append(errs, err)
 		}
 	}
+	err := errors.Join(errs...)
+	if _, limited := errors.AsType[*slack.RateLimitedError](err); !limited {
+		l.mu.Lock()
+		delete(l.undrawn, key)
+		l.mu.Unlock()
+	}
+	return err
 }
 
 func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[string]bool) {
