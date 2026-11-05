@@ -1112,11 +1112,12 @@ func (p cardPR) markdown(v cardView, limit int, betweenFacts string) string {
 }
 
 func (p cardPR) description(limit int) (string, string) {
-	if runes(p.Description) <= limit {
-		return p.Description, ""
+	whole := prDescription(p.Description)
+	if runes(whole) <= limit {
+		return whole, ""
 	}
-	shown := sectionCut([]rune(p.Description), limit)
-	return strings.TrimSpace(shown), strings.TrimSpace(strings.TrimPrefix(p.Description, shown))
+	shown := sectionCut([]rune(whole), limit)
+	return strings.TrimSpace(shown), strings.TrimSpace(strings.TrimPrefix(whole, shown))
 }
 
 func (p cardPR) folded(limit int) [][]slack.Block {

@@ -758,15 +758,17 @@ func channelInfoCmd(d cmd.Deps) *cobra.Command {
 
 func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
+	var pr string
 	c := &cobra.Command{
 		Use:   "redraw-pr-cards",
 		Short: "Redraw every open PR card in place from the card command, with no new posts",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opRedrawPRCards, map[string]any{})
+			return runOp(c, d, f, opRedrawPRCards, map[string]any{"pr": pr})
 		},
 	}
 	f.bind(c)
+	c.Flags().StringVar(&pr, "pr", "", "pull request URL: redraw only that PR's cards")
 	return c
 }
 

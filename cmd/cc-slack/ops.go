@@ -116,6 +116,7 @@ type opBody struct {
 	Via       string   `json:"via"`
 	About     string   `json:"about"`
 	TapPRs    []string `json:"tap_prs"`
+	PR        string   `json:"pr"`
 	Status    string   `json:"status"`
 	Loading   []string `json:"loading"`
 	Mode      string   `json:"mode"`
@@ -1317,7 +1318,18 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return fail("redraw-pr-cards needs a [pr_links] card_command on this machine")
 	}
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
 	posted := a.cards.postedPRCards()
+	if b.PR != "" {
+		only, found := parseRef(b.PR)
+		if !found {
+			return fail(fmt.Sprintf("pr takes a pull request URL, not %q", b.PR))
+		}
+		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return card.pr.key() != only.key() })
+	}
 	go func(ctx context.Context) {
 		for _, card := range posted {
 			a.recardPR(ctx, id, card.card, card.pr, "")
