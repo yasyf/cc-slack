@@ -290,8 +290,15 @@ def answers_naming(evt: BaseHookEvent, term: str) -> list[dict[str, Any]]:
     raise RuntimeError(f"`ccn answer search` exited {done.returncode}: {done.stderr.strip() or 'no output'}")
 
 
-def live_answers(evt: BaseHookEvent, term: str) -> list[dict[str, Any]]:
-    return sorted((answer for answer in answers_naming(evt, term) if not answer.get("superseded_by")), key=written_at)
+class StoreReads(dict[str, list[dict[str, Any]]]):
+    pass
+
+
+def live_answers(ctx: Context, term: str) -> list[dict[str, Any]]:
+    reads = ctx.fact(StoreReads, lambda _: StoreReads())
+    if term not in reads:
+        reads[term] = sorted((answer for answer in answers_naming(live(ctx), term) if not answer.get("superseded_by")), key=written_at)
+    return reads[term]
 
 
 def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
@@ -325,7 +332,7 @@ class Standing:
 def decided(ctx: Context, channel: str, thread: str) -> Standing:
     found = [
         Standing(answer, grants)
-        for answer in live_answers(live(ctx), channel)
+        for answer in live_answers(ctx, channel)
         if (grants := standing(answer, channel, thread)) is not None and (not grants or BOARD_ANSWER not in answer.get("tags", ()) or Named().matches(answer["title"], ctx))
     ]
     return found[-1] if found else Standing()
@@ -338,10 +345,10 @@ def announced(conv: Conversation) -> set[str]:
     return {opened[1] for message in messages if message.from_bot and not AGENT_POSTER.search(message.user_name) for opened in ROOM_OPENED.finditer(message.text)}
 
 
-def incident_room(ctx: Context, room: str, thread: str) -> Standing:
-    granted = {tag.removeprefix(GRANT_LABEL) for answer in live_answers(live(ctx), GRANT_LABEL) for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
+def incident_room(ctx: Context, room: str) -> Standing:
+    granted = {tag.removeprefix(GRANT_LABEL) for answer in live_answers(ctx, GRANT_LABEL) for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
     for channel in sorted(granted - {room}):
-        found = decided(ctx, channel, thread)
+        found = decided(ctx, channel, "")
         if not found.grants:
             continue
         pages = cc_slack("history", "--channel", channel, "--json", "--limit", ROOM_PAGES)["messages"]
@@ -354,7 +361,7 @@ def standing_of(ctx: Context) -> Standing:
     def newest(ctx: Context) -> Standing:
         channel, thread = ctx.place["channel"], ctx.place["thread"]
         found = decided(ctx, channel, thread)
-        return found if found.answer is not None else incident_room(ctx, channel, thread)
+        return found if found.answer is not None or thread else incident_room(ctx, channel)
 
     return ctx.fact(Standing, newest)
 
@@ -387,7 +394,7 @@ class RecordedWords(CustomTicketCondition):
         if found.answer is not None and not found.grants:
             return None
         channel = ctx.place["channel"]
-        return [ruling_evidence(answer) for answer in live_answers(live(ctx), channel) if recorded_for(answer, channel)] or None
+        return [ruling_evidence(answer) for answer in live_answers(ctx, channel) if recorded_for(answer, channel)] or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1163,6 +1170,7 @@ on(
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM, by="Alex (claude)")) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"channel_id": ROOM, "text": "fix is out"}, **said("status?"), commands=ruled(LABELED_GRANT) | PAGE_REPLY_READ | {"ccn answer search slack-grant:": (1, "a thread write never sweeps the grants")}) >> DENY,
             case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Rewrite(pattern="--ticket-agent main"),
             case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ) >> DENY,
             case(DANA | {"channel_id": ROOM, "text": "fix is out"}, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> DENY,
