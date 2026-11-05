@@ -127,7 +127,12 @@ head that a pick card already offers, with the same answers, is not posted. The 
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
 one that passes the card checks. In the bot's DM the card opens at the root in
 its own thread, watched by the session whose post named the PR, wherever that
-post sits; a post lands in a DM thread only when its call names that thread. In
+post sits; a post lands in a DM thread only when its call names that thread.
+Each PR's card, a pick card already offering it included, then shows beside the
+post: a post in a DM thread gets a working copy of it there, and a post at the
+DM root gets its permalink as a reply in the post's own thread, one post per
+card so Slack unfurls each. Each card shows once per thread, so a keyed card
+sent again in place adds only the cards it newly names. In
 a listed channel the card is a reply in the post's thread. It keeps them in
 `live-cards.json`, so a PR at one head is carded once at the DM root, and once
 per thread in a channel, and the ref poller redraws a card when its PR changes
