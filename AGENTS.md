@@ -147,7 +147,8 @@ another question and stays open. Cards already open in `live-cards.json` count. 
 its reason in a reply and the card is redrawn from the program, so a refused tap
 is never silent. A head that moves redraws an open PR card the same way in place,
 and a PR the program no longer cards gives up its buttons. `redraw-pr-cards` runs
-that once over every open PR card, with no new posts.
+that once over every open PR card, or with `--pr <url>` over one PR's cards, with no
+new posts.
 
 `preview_command` names a program, resolved on `PATH` at `login` and off when
 unset, that says where the PRs a post links to stand. Slack cannot draw this: it
