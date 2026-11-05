@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A withdrawn card keeps its whole reason, up to 2,500 characters, where it used to cut it at 200 mid-sentence.
 - A post at the root of your DM that names PRs waiting on your tap now puts each PR's tap card in its own thread, as the card's link on its own line, so Slack previews it. Before, the cards sat elsewhere at the DM root with nothing in the post's thread, and a PR whose tap card was a pick card got no copy beside a threaded post either. Each card is linked once per thread, also when the same keyed card is sent again in place.
 
 ### Changed

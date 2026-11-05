@@ -537,7 +537,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
 	if w.withdrawn {
-		line := "*Withdrawn:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
+		line := "*Withdrawn:* " + clipRunes(mrkdwnEscapes.Replace(w.tap.Label), cardMaxReasonLen) + " · " + clock(w.at, p.now())
 		if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
 			line += " · " + slackLink(w.via, "what replaced it")
 		}

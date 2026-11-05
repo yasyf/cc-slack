@@ -72,6 +72,7 @@ const (
 	cardMaxDetailLen  = 200
 	cardMaxNoteLen    = 300
 	cardMaxSectionLen = 3000
+	cardMaxReasonLen  = 2500
 	cardMaxSteps      = 1000
 	cardMaxURLLen     = 3000
 	cardProgressCells = 10
