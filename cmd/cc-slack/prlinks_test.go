@@ -429,7 +429,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
 		t.Fatal(err)
 	}
-	cards := awaitPRCards(t, l, testDM)
+	cards := rootCards(awaitPRCards(t, l, testDM))
 	if len(cards) != 1 || cards[0].threadTS != "" {
 		t.Fatalf("cards = %+v, want one at the DM root", cards)
 	}
@@ -483,7 +483,7 @@ func TestAPRAskedAgainAtANewHeadRedrawsItsCardInPlace(t *testing.T) {
 	asks := len(cmd.requests(t))
 	l.do(opDMStatus, map[string]any{"text": "#41 at the head he answered", "tap_prs": tapPR41})
 	eventually(t, "the ask after his answer", func() bool { return len(cmd.requests(t)) > asks })
-	if got := prCards(l, testDM); len(got) != 1 {
+	if got := rootCards(prCards(l, testDM)); len(got) != 1 {
 		t.Fatalf("PR cards = %+v, want no second card for the head he answered", got)
 	}
 	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
@@ -912,7 +912,7 @@ func TestALinkInAPostDrawsNoTapCardAndKeepsItsLink(t *testing.T) {
 		t.Fatalf("post = %q, want the PR still linked", first.text)
 	}
 	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap", "tap_prs": tapPR41})
-	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
+	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
 		t.Fatalf("cards = %+v, want the one card tap_prs asked for", cards)
 	}
 }
@@ -1217,7 +1217,7 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 		t.Fatalf("cards = %+v, want the failed post to leave none", cards)
 	}
 	l.do(opDMStatus, map[string]any{"text": "#41 again", "tap_prs": tapPR41})
-	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
+	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
 		t.Fatalf("cards = %+v, want one once Slack takes it", cards)
 	}
 	eventually(t, "the card command told the card stands", func() bool { return len(cmd.shown(t)) > 0 })
