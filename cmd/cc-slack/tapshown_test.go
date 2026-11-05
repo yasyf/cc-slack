@@ -139,7 +139,7 @@ func TestATapOnACopyThisDaemonDidNotPostRedrawsThatCopyAnswered(t *testing.T) {
 	post := lastPost(l)
 	buttons := copiedButtonsOf(t, post)
 	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {
-		return strings.HasPrefix(b.ActionID, cardCopyAction) && strings.HasSuffix(b.ActionID, cardWaitAction+"0:step-3:merge")
+		return strings.HasPrefix(b.ActionID, cardCopyAction) && b.Text.Text == "Merge"
 	})
 	if at < 0 {
 		t.Fatalf("buttons = %+v, want the copy's Merge", buttons)
