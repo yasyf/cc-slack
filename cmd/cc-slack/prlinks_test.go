@@ -633,7 +633,7 @@ func movedCard() providedCard {
 	return moved
 }
 
-func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T) {
+func TestARefusedTapSendsNoLineAndTheCardShowsWhatStandsNow(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "#41 moved to 09b10f1 since the card asked merge:41:e718a74", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
@@ -643,12 +643,11 @@ func TestARefusedTapAnswersInTheThreadAndTheCardShowsWhatStandsNow(t *testing.T)
 		t.Fatal(err)
 	}
 
+	before := len(l.slack.sentTo(testDM))
 	tapMerge(t, l, card)
 
-	said := l.slack.sentTo(testDM)
-	last := said[len(said)-1]
-	if last.threadTS != card.ts || !strings.Contains(last.text, "Your *Merge* did not count: #41 moved to 09b10f1") || !strings.Contains(last.text, "shows where it stands now") {
-		t.Fatalf("last post = %+v, want the refusal in his thread", last)
+	if said := l.slack.sentTo(testDM); len(said) != before {
+		t.Fatalf("posts = %+v, want no line after a refused tap", said[before:])
 	}
 	edits := editsOf(l.slack.edited(), card.ts)
 	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "09b10f1") || !strings.Contains(edits[len(edits)-1], "merge:41:09b10f1") {

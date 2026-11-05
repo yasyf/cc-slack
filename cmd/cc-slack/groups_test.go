@@ -205,14 +205,14 @@ func TestAPRCardRowTapAppliesThroughTheCardCommandNotTheBoard(t *testing.T) {
 	}
 }
 
-func TestARefusedPRCardRowSaysWhyAndCanBeTappedAgain(t *testing.T) {
+func TestARefusedPRCardRowAsksAgainWithNoLine(t *testing.T) {
 	cmd, _ := refusingCardCommand(t, "#41 moved to 09b10f1 since the card asked "+testWaits, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	row := prCardRow()
 	c := postWaiting(t, l, groupCard(row))
 	l.tap(c.id, rowTap(c, row, 0, 500))
-	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "did not count") || !strings.Contains(edits[len(edits)-1], "moved to 09b10f1") {
-		t.Fatalf("card edits %v, want the refusal on the row", edits)
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], "did not count") || !strings.Contains(edits[len(edits)-1], cardRowAction+"0:") {
+		t.Fatalf("card edits %v, want the row asking again with no line", edits)
 	}
 	asked := len(cmd.requests(t))
 	l.tap(c.id, rowTap(c, row, 0, 501))

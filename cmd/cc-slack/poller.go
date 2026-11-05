@@ -45,7 +45,7 @@ type plane interface {
 }
 
 type poller struct {
-	recard    func(ctx context.Context, id identity, card cardRef, pr refID, refused string)
+	recard    func(ctx context.Context, id identity, card cardRef, pr refID)
 	plane     plane
 	newAPI    func(token string) slackAPI
 	alive     func(pid int) bool
