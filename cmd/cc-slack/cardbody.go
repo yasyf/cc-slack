@@ -35,7 +35,7 @@ var (
 	mdRule          = regexp.MustCompile(`^\|?[\s:|-]*-[\s:|-]*\|?$`)
 	mdMarks         = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\|`)
 	cellToken       = regexp.MustCompile("<(https?://[^|>\\s]+)\\|([^>]+)>|\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|\\*\\*?([^*\\n]+)\\*\\*?|`([^`\\n]+)`")
-	htmlComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlComment     = regexp.MustCompile(`(?s)[ \t]*<!--.*?-->`)
 	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
 	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
 )

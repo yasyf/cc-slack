@@ -210,45 +210,6 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 }
 
-func TestAPRCardPreviewsItsLongLinesAndKeepsThemWholeBehindExplainMore(t *testing.T) {
-	pr := fullPR(7)
-	pr.Change = "Chats open faster. " + strings.Repeat("Another sentence about the change. ", 5)
-	pr.Risk = "- **Threat model:** none at all\n- **Availability:** a `stale` read for a minute, " + strings.Repeat("and then it clears. ", 8)
-	pr.Blocks = strings.Repeat("A named reviewer. ", 10)
-	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
-	blocks, fold := card.layout(view())
-	change, risk := asSection(t, blocks[2]).Text.Text, asSection(t, blocks[4]).Text.Text
-	if lead, ok := strings.CutPrefix(change, "*What changes*\n"); !ok || runes(lead) > cardMaxPreview || !strings.HasSuffix(lead, "…") {
-		t.Errorf("change = %q, want a preview of at most %d characters that says it goes on", change, cardMaxPreview)
-	}
-	if lead, ok := strings.CutPrefix(risk, "*Risk*\n"); !ok || runes(lead) > cardMaxPreview || !strings.HasPrefix(lead, "Threat model: none at all Availability:") {
-		t.Errorf("risk = %q, want every bullet's start flattened with its marks gone", risk)
-	}
-	if got := asSection(t, blocks[3]).Text.Text; got != "*Against the plan*\nNothing differed" {
-		t.Errorf("plan = %q, want a short line whole with no ellipsis", got)
-	}
-	if got := asSection(t, blocks[5]).Text.Text; !strings.Contains(got, pr.Blocks[:len(pr.Blocks)-1]) {
-		t.Errorf("blocks line = %q, want what blocks landing whole", got)
-	}
-	folded := blocksJSON(t, slices.Concat(fold...))
-	if !strings.Contains(folded, "*What changes*") || strings.Count(folded, "Another sentence about the change.") != 5 || strings.Count(folded, "and then it clears.") != 8 {
-		t.Errorf("fold %s, want each clipped line whole", folded)
-	}
-	if strings.Contains(folded, "Against the plan") {
-		t.Errorf("fold %s, want no line the card already shows whole", folded)
-	}
-}
-
-func TestAPreviewNeverCutsAWordOrAnEntity(t *testing.T) {
-	shown, clipped := preview(strings.Repeat("x", 90) + " a <b> & more words that run on past the limit of a preview")
-	if !clipped || strings.Contains(shown, "x…") || strings.HasSuffix(strings.TrimSuffix(shown, "…"), "&") || strings.Contains(shown, " <") {
-		t.Fatalf("preview = %q, want a cut on a word boundary with its marks escaped", shown)
-	}
-	if shown, clipped := preview("  "); shown != "" || clipped {
-		t.Fatalf("preview of blanks = %q, %v", shown, clipped)
-	}
-}
-
 func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -357,7 +318,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	}
 }
 
-func TestAnOverLongHintPostsWholeAndAnOverLongLineWaitsWholeBehindExplainMore(t *testing.T) {
+func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
 	pr := fullPR(7)
 	pr.Risk = strings.Repeat("A risk worth a long explanation. ", 100)
 	long := []string{"Keep it", "Drop it"}
@@ -365,18 +326,13 @@ func TestAnOverLongHintPostsWholeAndAnOverLongLineWaitsWholeBehindExplainMore(t 
 	if err := card.check(bodyAt, false, ""); err != nil {
 		t.Fatalf("check = %v, want the card to post", err)
 	}
-	blocks, fold := card.layout(view())
+	blocks := card.replyBlocks(view())
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatal(err)
 	}
-	for _, page := range fold {
-		if err := checkBlocks(page); err != nil {
-			t.Fatal(err)
-		}
-	}
-	hints, risks := strings.Count(blocksJSON(t, blocks), "A reason to drop"), strings.Count(blocksJSON(t, slices.Concat(fold...)), "A risk worth")
-	if hints != 200 || risks != 100 {
-		t.Fatalf("a hint or line was lost: %d of 200 hints on the card, %d of 100 risks behind Explain more", hints, risks)
+	got := blocksJSON(t, blocks)
+	if strings.Count(got, "A risk worth") != 100 || strings.Count(got, "A reason to drop") != 200 {
+		t.Fatalf("a line or hint was cut: %d of 100, %d of 200", strings.Count(got, "A risk worth"), strings.Count(got, "A reason to drop"))
 	}
 }
 
@@ -749,5 +705,75 @@ func TestAPRCardSaysWhatItsButtonsDoAndClaimsNoLaneStops(t *testing.T) {
 	got := blocksJSON(t, asks.replyBlocks(view()))
 	if strings.Contains(got, "stopped") || !strings.Contains(got, cardPRHint) {
 		t.Fatalf("a PR card reads %s, want only what its buttons do", got)
+	}
+}
+
+func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
+	hidden := " <!-- cci #453550 -->"
+	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Change: "It changes." + hidden, Plan: "Plan." + hidden, Risk: "Low." + hidden, Blocks: "Nothing." + hidden}
+	row := pr
+	card := statusCard{
+		Status: "needs_you", Title: "Land it?" + hidden, Body: "First sentence." + hidden + " Second sentence.",
+		Options: []string{"Keep the long chapter shape as it is", "Drop it"}, Hints: map[string]string{"Drop it": "It goes." + hidden},
+		Facts: []cardFact{{"Cause", "The move." + hidden}}, PRs: []cardPR{pr}, Waits: "card-x",
+		Rows: []cardRow{{ID: "a:1", Text: "A row." + hidden, Buttons: []string{"Approve"}, PR: &row}},
+	}
+	group := statusCard{Status: "needs_you", Title: "Which?", Group: "g", Rows: card.Rows}
+	for name, got := range map[string]string{"reply": blocksJSON(t, card.replyBlocks(view())), "root": blocksJSON(t, card.rootBlocks(view())), "text": card.text(), "rows": blocksJSON(t, group.replyBlocks(view()))} {
+		if strings.Contains(got, "453550") || strings.Contains(got, "!--") {
+			t.Errorf("%s draws the comment: %s", name, got)
+		}
+	}
+	if got := blocksJSON(t, card.replyBlocks(view())); !strings.Contains(got, "First sentence. Second sentence.") {
+		t.Errorf("the words around a comment run on as one sentence: %s", got)
+	}
+	labeled := card
+	labeled.Options = []string{"Keep the long chapter shape as it is" + hidden, "Drop it"}
+	if got := blocksJSON(t, labeled.replyBlocks(view())); !strings.Contains(got, "*1. Keep the long chapter shape as it is*") {
+		t.Errorf("a pick's row draws its comment: %s", got)
+	}
+	if card.Body != "First sentence."+hidden+" Second sentence." || !strings.Contains(card.PRs[0].Risk, "453550") {
+		t.Error("drawing a card edits what it stores")
+	}
+}
+
+func TestAPRCardDrawsRiskAndWhatChangesWhole(t *testing.T) {
+	change, risk := strings.Repeat("It changes a thing. ", 25)+"The end of the change.", strings.Repeat("A real risk here. ", 30)+"The last risk."
+	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", Risk: risk, Blocks: "Only your approval."}}}
+	got := blocksJSON(t, card.replyBlocks(view()))
+	for _, whole := range []string{"The end of the change.", "The last risk."} {
+		if !strings.Contains(got, whole) {
+			t.Errorf("the card cuts %q: %s", whole, got)
+		}
+	}
+	if strings.Contains(got, "…") {
+		t.Errorf("the card cuts a line: %s", got)
+	}
+}
+
+func TestALongPickLabelDrawsWholeOnARowWithAShortButton(t *testing.T) {
+	label := strings.Repeat("x", cardMaxOptionLen)
+	card := statusCard{Status: "needs_you", Title: "Which?", Options: []string{label, "No"}, Waits: "card-x"}
+	if err := card.checkOptions(false); err != nil {
+		t.Fatal(err)
+	}
+	blocks := card.replyBlocks(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse it: %v", err)
+	}
+	if !strings.Contains(blocksJSON(t, blocks), "*1. "+label+"*") {
+		t.Fatalf("the label is not whole on its row: %s", blocksJSON(t, blocks))
+	}
+	for _, b := range cardButtons(t, blocks) {
+		if runes(b.Text.Text) > cardMaxLabelLen {
+			t.Fatalf("button %q runs past Slack's limit", b.Text.Text)
+		}
+		if len(b.Value) > 2000 {
+			t.Fatalf("button value of %d characters runs past Slack's limit", len(b.Value))
+		}
+	}
+	card.Options[0] += "x"
+	if err := card.checkOptions(false); err == nil {
+		t.Fatal("a label past the limit passed")
 	}
 }

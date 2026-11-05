@@ -208,7 +208,7 @@ func (a *app) prPreview(id identity, pr refID, row ledgerRow) slack.Attachment {
 	if ts, thread, ok := a.cards.openPRCard(id.DMChannelID, pr); ok && row.ready() {
 		standing += " " + slackLink(id.permalink(id.DMChannelID, ts, thread), "Open the card")
 	}
-	body := strings.Join([]string{"*" + slackLink(prURL(pr), title) + "*", plainMrkdwn(row.ForUsers), standing}, "\n\n")
+	body := strings.Join([]string{"*" + slackLink(prURL(pr), title) + "*", plainMrkdwn(withoutHidden(row.ForUsers)), standing}, "\n\n")
 	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: slices.Concat(bodyPages(body, cardMaxBlocks, cardMaxVisible, false)...)}}
 }
 

@@ -434,8 +434,8 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 			}
 			buttons := copiedButtonsOf(t, post)
 			at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool { return strings.HasPrefix(b.ActionID, cardCopyAction) })
-			if at < 0 || buttons[len(buttons)-1].URL != link {
-				t.Fatalf("buttons = %+v, want the card's answer and one that opens it", buttons)
+			if at < 0 || strings.Contains(post.blocks, "Open the card") {
+				t.Fatalf("buttons = %+v, want the card's answer and no button that opens it", buttons)
 			}
 
 			l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: post.ts, ThreadTS: thread,
@@ -474,8 +474,8 @@ func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	if !strings.Contains(post.blocks, "The last paragraph.") || !strings.Contains(post.blocks, strings.TrimSpace(long)) {
 		t.Fatalf("blocks = %s, want every paragraph whole", post.blocks)
 	}
-	if len(copiedButtonsOf(t, post)) < 3 {
-		t.Fatalf("blocks = %s, want both answers and the link to the card", post.blocks)
+	if len(copiedButtonsOf(t, post)) != 2 {
+		t.Fatalf("blocks = %s, want both answers and nothing else", post.blocks)
 	}
 }
 
