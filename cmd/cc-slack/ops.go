@@ -587,7 +587,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, b)
+		a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b)
 		if b.NoWatch {
 			return ok(res)
 		}
@@ -1906,7 +1906,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
-	a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, b)
+	a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b)
 	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 }

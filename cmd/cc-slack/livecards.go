@@ -384,13 +384,53 @@ func (l *liveCards) sessionThread(channel string, threads []string, matches func
 	return nil
 }
 
-func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMessage) bool) bool {
+func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMessage) bool) (cardRef, bool) {
+	var newest *liveMessage
+	var found cardRef
 	for _, t := range l.threads {
-		if t.Channel == channel && slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == t.Thread && matches(t, m) }) {
-			return true
+		if t.Channel != channel {
+			continue
+		}
+		for _, m := range t.PRCards {
+			if m.TS == t.Thread && matches(t, m) && (newest == nil || m.TS > newest.TS) {
+				newest, found = m, cardRef{t.Channel, t.Thread, m.TS}
+			}
 		}
 	}
-	return false
+	return found, newest != nil
+}
+
+func (l *liveCards) postedPRCard(channel, thread string, keys map[string]bool) (cardRef, bool) {
+	if thread == "" {
+		return l.rootPRCard(channel, func(_ *liveThread, m *liveMessage) bool { return m.cites(keys) })
+	}
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return cardRef{}, false
+	}
+	for _, m := range t.PRCards {
+		if m.cites(keys) {
+			return cardRef{channel, thread, m.TS}, true
+		}
+	}
+	return cardRef{}, false
+}
+
+func (l *liveCards) posted(channel, thread string, card statusCard) (cardRef, bool) {
+	keys := map[string]bool{}
+	for _, ref := range card.refIDs() {
+		keys[ref.key()] = true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.postedPRCard(channel, thread, keys)
+}
+
+func (l *liveCards) hasCopy(channel, thread, card string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == card })
 }
 
 func (l *liveCards) pickOffers(channel string, offer cardOffer) bool {
@@ -1015,13 +1055,17 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
-	if drawn.Waits == "" {
+	switch {
+	case drawn.Waits == "":
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended
-		if t.open(m) {
+		if m.Card.Waits != "" && t.open(m) {
 			m.Tapped = cardNoLongerWaits
 		}
+	case m.Tapped == cardNoLongerWaits || drawn.Waits != m.Card.Waits:
+		m.Tapped = ""
 	}
 	m.Card = drawn
+	t.Updated = now
 	w := l.write(t, m, now, false)
 	l.mu.Unlock()
 	_, err := l.flush(ctx, api, t, []cardWrite{w}, now, false)

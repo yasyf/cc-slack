@@ -53,12 +53,23 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, error) {
+	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
+	if err != nil {
+		return nil, err
+	}
+	if answers == 0 {
+		return nil, errors.New("that card has no answer left to tap")
+	}
+	return blocks, nil
+}
+
+func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, int, error) {
 	if ref.channelID != id.DMChannelID || ref.ts == "" {
-		return nil, fmt.Errorf("%s is not a message in your DM with the app", link)
+		return nil, 0, fmt.Errorf("%s is not a message in your DM with the app", link)
 	}
 	card, err := messageAt(ctx, a.newAPI(id.Token), ref.channelID, ref.threadTS, ref.ts)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var title string
 	var blocks []slack.Block
@@ -82,15 +93,12 @@ func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link 
 		}
 	}
 	if title == "" {
-		return nil, errors.New("that message drew as text, with no card to copy")
-	}
-	if picks+len(buttons) == 0 {
-		return nil, errors.New("that card has no answer left to tap")
+		return nil, 0, errors.New("that message drew as text, with no card to copy")
 	}
 	if len(buttons) == 0 {
-		return blocks, nil
+		return blocks, picks, nil
 	}
-	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), nil
+	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), picks + len(buttons), nil
 }
 
 func answers(actionID string) bool {
