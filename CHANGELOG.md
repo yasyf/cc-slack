@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `cc-slack card render --card <file>` prints the Block Kit a status card draws, without posting, so a card's render can be read instead of asked about.
+
 ### Changed
 
 - A link to a PR in a post no longer draws an Approve card. It keeps its link and ledger preview, and a card with buttons is drawn only for a PR the call lists in `tap_prs` (`dm-status --tap-pr`). Callers that relied on a link to draw the card need `tap_prs`.

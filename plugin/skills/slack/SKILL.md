@@ -310,6 +310,9 @@ working buttons, so when a post needs a tap on an open card beside it, run
 `cc-slack card-copy --url <permalink> --thread <ts>`. A tap on that copy answers
 the card.
 
+To read a card before it goes out, run `cc-slack card render --card <file>`. It
+prints the card's Block Kit as JSON and posts nothing, so no test card is needed.
+
 ## Receive watched messages
 
 A session receives Slack messages only for its own subscriptions: its
