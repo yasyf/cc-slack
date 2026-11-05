@@ -173,7 +173,7 @@ func TestAThreadListsTheLinksSlackUnfurledApartFromSharedMessages(t *testing.T) 
 	}
 }
 
-func TestAMessageLinkInAStatusCardUnfurlsWithNoHandBuiltReply(t *testing.T) {
+func TestAStatusCardLinkingOneOfHisCardsDrawsNoShareOfIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.do(opDMStatus, cardBody("Merge the stack?", "merge it"))
@@ -185,8 +185,8 @@ func TestAMessageLinkInAStatusCardUnfurlsWithNoHandBuiltReply(t *testing.T) {
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on " + link}})
 	posts := l.slack.sent()
 	at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.blocks, link) })
-	if at < 0 || posts[at].unfurlLinks != "true" {
-		t.Fatalf("posts = %+v, want the status card unfurling its link", posts)
+	if at < 0 || posts[at].unfurlLinks == "true" {
+		t.Fatalf("posts = %+v, want the status card keeping its link with no button-less share of the card", posts)
 	}
 	if slices.ContainsFunc(posts, func(p fakePost) bool { return p.attachments != "" }) {
 		t.Fatalf("posts = %+v, want no hand-built preview", posts)
