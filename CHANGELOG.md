@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A paged plain DM post, an edit, and a card answer's written-in reason draw no HTML comment.
 - A tap redraws its card within about a second, whatever GitHub, the card command or Slack are doing. Card redraws write to Slack outside the lock every card shares, taps run beside the socket instead of on it, one queue per card, and a PR card draws his answer before the card command applies it.
 - A post no longer reports a failure after Slack took it: the PR lookups that draw its PR cards run after the reply, not on the caller's clock.
+- A restart redraws only the cards whose PRs or builds moved while it was down. Their last known states are kept in `live-refs.json` beside `live-cards.json`, so an install no longer rewrites every tracked card.
 - A redrawn card stays in the thread it was posted in. It used to move to the DM root and delete the thread's copy.
 - No card field draws a sender's HTML comment, in a card, its options, a PR's lines, a row or a plain post.
 - A PR card draws What changes, Against the plan and Risk whole again, in place of the preview from #130.
