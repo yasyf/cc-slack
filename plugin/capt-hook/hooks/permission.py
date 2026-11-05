@@ -20,7 +20,7 @@ from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
 from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, UserRuled, holds, store
 from captain_hook.tickets.conditions import found
-from captain_hook.tickets.context import ccn_answers, instruction_words, ruling_evidence, said_evidence, written_at
+from captain_hook.tickets.context import RULINGS_TIMEOUT, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
 from captain_hook.util import reqenv
@@ -43,6 +43,7 @@ UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahe
 GRANT_LABEL = "slack-grant:"
 EVERY_THREAD = "/threads"
 REVOKE_LABEL = "slack-revoke:"
+NO_STORE = "open git repository"
 ROOM_OPENED = re.compile(r"Incident opened:\W*<#(C[A-Z0-9]+)")
 ROOM_PAGES = "10"
 AGENT_POSTER = re.compile(r" \([^()]+\)$")
@@ -280,6 +281,19 @@ class Judged(CustomTicketCondition):
             raise TimeoutError(exc.cause) from exc
 
 
+def answers_naming(evt: BaseHookEvent, term: str) -> list[dict[str, Any]]:
+    done = subprocess.run(["ccn", "answer", "search", term, "--json", "--limit", "0", "-R", str(evt.cwd or reqenv.cwd())], capture_output=True, text=True, timeout=RULINGS_TIMEOUT, env=reqenv.env_map(), check=False)
+    if done.returncode == 0:
+        return json.loads(done.stdout)
+    if NO_STORE in done.stderr:
+        return []
+    raise RuntimeError(f"`ccn answer search` exited {done.returncode}: {done.stderr.strip() or 'no output'}")
+
+
+def live_answers(evt: BaseHookEvent, term: str) -> list[dict[str, Any]]:
+    return sorted((answer for answer in answers_naming(evt, term) if not answer.get("superseded_by")), key=written_at)
+
+
 def standing(answer: dict[str, Any], channel: str, thread: str) -> bool | None:
     tags = set(answer.get("tags", ()))
     if thread and f"{REVOKE_LABEL}{channel}/{thread}" in tags:
@@ -309,10 +323,9 @@ class Standing:
 
 
 def decided(ctx: Context, channel: str, thread: str) -> Standing:
-    live_answers = sorted((answer for answer in ccn_answers(live(ctx), channel) if not answer.get("superseded_by")), key=written_at)
     found = [
         Standing(answer, grants)
-        for answer in live_answers
+        for answer in live_answers(live(ctx), channel)
         if (grants := standing(answer, channel, thread)) is not None and (not grants or BOARD_ANSWER not in answer.get("tags", ()) or Named().matches(answer["title"], ctx))
     ]
     return found[-1] if found else Standing()
@@ -326,7 +339,7 @@ def announced(conv: Conversation) -> set[str]:
 
 
 def incident_room(ctx: Context, room: str, thread: str) -> Standing:
-    granted = {tag.removeprefix(GRANT_LABEL) for answer in ccn_answers(live(ctx), GRANT_LABEL) if not answer.get("superseded_by") for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
+    granted = {tag.removeprefix(GRANT_LABEL) for answer in live_answers(live(ctx), GRANT_LABEL) for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
     for channel in sorted(granted - {room}):
         found = decided(ctx, channel, thread)
         if not found.grants:
@@ -351,6 +364,30 @@ class StandingGrant(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         found = standing_of(ctx)
         return [ruling_evidence(found.answer)] if found.answer is not None and found.grants else None
+
+
+@dataclass(frozen=True, slots=True)
+class UnjudgedGrant(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        found = standing_of(ctx)
+        if found.answer is None or not found.grants or f"{GRANT_LABEL}{ctx.place['channel']}" in found.answer.get("tags", ()):
+            return None
+        return [ruling_evidence(found.answer)]
+
+
+def recorded_for(answer: dict[str, Any], channel: str) -> bool:
+    tags = answer.get("tags", ())
+    return f"{GRANT_LABEL}{channel}" in tags or (any(OWNER_ROW.fullmatch(tag) for tag in tags) and holds(f"{answer['title']}\n{answer['body']}", channel))
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedWords(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        found = standing_of(ctx)
+        if found.answer is not None and not found.grants:
+            return None
+        channel = ctx.place["channel"]
+        return [ruling_evidence(answer) for answer in live_answers(live(ctx), channel) if recorded_for(answer, channel)] or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,7 +482,7 @@ def tool_out(evt: BaseHookEvent, argv: list[str]) -> str | None:
 def board_tap(ctx: Context) -> Evidence | None:
     evt = live(ctx)
     card = card_id(pending(evt)[0], ctx.place)
-    rows = sorted((answer for answer in ccn_answers(evt, f"{BOARD_CARD}{card}") if f"{BOARD_CARD}{card}" in answer.get("tags", ())), key=written_at)
+    rows = sorted((answer for answer in answers_naming(evt, f"{BOARD_CARD}{card}") if f"{BOARD_CARD}{card}" in answer.get("tags", ())), key=written_at)
     session = next((tag.removeprefix(BOARD_SESSION) for tag in rows[-1]["tags"] if tag.startswith(BOARD_SESSION)), None) if rows else None
     if session is None or (out := tool_out(evt, ["cc-present", "outcomes", "--block", card, "--session", session])) is None:
         return None
@@ -508,11 +545,11 @@ SLACK = Tickets(
     ("channel", "thread"),
     Reach.ONCE,
     rules=(
-        Rule("standing-grant", And(TopLevel(), StandingGrant())),
+        Rule("standing-grant", And(TopLevel(), UnjudgedGrant())),
         Rule("user-linked", Unspent(UserSaid(Linked()))),
-        Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(TopLevel(), NotRevoked(), UserRuled("channel")), And(NotRevoked(), BoardTapped()))),
+        Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
-        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
+        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords(), And(TopLevel(), NotRevoked(), UserRuled("channel"))), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -857,6 +894,23 @@ BOARD_ROW = {
 }
 BOARD_GRANT = BOARD_ROW | {"tags": [*BOARD_ROW["tags"], f"slack-grant:{FOLLOWERS}/{DANA_THREAD}"]}
 GRANT_PERMITS = jev(ruling_evidence(EVERY_THREAD_GRANT).id)
+PAGE_GRANT = LABELED_GRANT | {
+    "id": "ea25ea25ea25ea25",
+    "title": f"May the drive reply in page threads ({FOLLOWERS}) and {PETS} during an incident?",
+    "body": "While an incident is open the drive replies in page threads about it. Top-level posts still need his word.",
+    "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}", f"slack-grant:{PETS}"],
+}
+PAGE_GRANT_PERMITS = jev(ruling_evidence(PAGE_GRANT).id)
+LABELED_GRANT_PERMITS = jev(ruling_evidence(LABELED_GRANT).id)
+PAGE_REPLY = f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text-file {FIXTURES / 'page_reply.txt'} --agent claude 2>&1 | head -4 | cut -c1-260"
+PAGE_REPLY_READ = thread_read(DANA_OPENED)
+OWNER_ORDER = LABELED_GRANT | {
+    "id": "27d127d127d127d1",
+    "title": "When do we tell Dana about fixes to her bugs?",
+    "body": f"Standing grant: whenever a release carrying a fix for her bug goes live, post to her in {FOLLOWERS}, in the thread where she reported it.",
+    "tags": ["owner:m12", "scope:durable", "slack"],
+}
+OWNER_ORDER_PERMITS = jev(ruling_evidence(OWNER_ORDER).id)
 THREAD_GRANT_PERMITS = jev(ruling_evidence(THREAD_GRANT).id)
 THREAD_REVOKED = THREAD_GRANT | {"id": "e2e2e2e2e2e2e2e2", "updated_at": "2026-11-03T06:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}/{DANA_THREAD}"]}
 RELAYED = 'Orders: owner:m12. Owner, verbatim: "let dana know the fix landed, in her thread"'
@@ -1039,7 +1093,8 @@ on(
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
-            case(PRIYA_THREAD, **said("status?"), commands=PRIYA_DM | {"ccn answer search": json.dumps([LABELED_GRANT | {"tags": [f"slack-grant:{PRIYA_USER}"]}])}) >> ALLOW,
+            case(PRIYA_THREAD, **said("status?"), commands=PRIYA_DM | {"ccn answer search": json.dumps([LABELED_GRANT | {"tags": [f"slack-grant:{PRIYA_USER}"]}])}, decide=LABELED_GRANT_PERMITS) >> ALLOW,
+            case(PRIYA_THREAD, **said("status?"), commands=PRIYA_DM | {"ccn answer search": json.dumps([LABELED_GRANT | {"tags": [f"slack-grant:{PRIYA_USER}"]}])}) >> DENY,
             case(NEW_ASK, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana"), tickets=[posted_once(evidence=(TAPPED,))], decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
             case(NEW_ASK, **said("status?"), commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}, tickets=[posted_once()]) >> ALLOW,
             case(tickets=[covering({"channel": FOLLOWERS, "thread": "1791866612.381629"})]) >> DENY,
@@ -1096,7 +1151,9 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"superseded_by": "0a0a0a0a"})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"title": KEPT_POSTING["title"].replace(FOLLOWERS, PETS)})) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"tags": ["scope:ephemeral"]})) >> DENY,
-            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> ALLOW,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT), decide=LABELED_GRANT_PERMITS) >> ALLOW,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(PAGE_GRANT)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM)) >> ALLOW,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened("C0OTHER0001")) >> DENY,
@@ -1106,6 +1163,17 @@ on(
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM, by="Alex (claude)")) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
+            case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Rewrite(pattern="--ticket-agent main"),
+            case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ) >> DENY,
+            case(DANA | {"channel_id": ROOM, "text": "fix is out"}, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> DENY,
+            case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT | {"superseded_by": "0a0a0a0a"}) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> DENY,
+            case(command=PAGE_REPLY, **said("status?"), commands=ruled(THREAD_REVOKED | {"updated_at": "2026-10-01T00:00:00Z"}, PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"superseded_by": "0a0a0a0a"}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"body": OWNER_ORDER["body"].replace(FOLLOWERS, PETS)}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"tags": ["scope:durable", "slack"]}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=NOT_DM | PAGE_REPLY_READ | {"ccn answer search": (1, "database is locked")}) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=NOT_DM | PAGE_REPLY_READ | {"ccn answer search": (1, "error: open git repository at /scratch: not a git repository")}) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide=GRANT_PERMITS) >> ALLOW,
@@ -1122,7 +1190,9 @@ on(
             ) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't continue posting\n{KEEP_POSTING_OPTIONS}"})) >> DENY,
             case(LANDED, tool="slack_send", commands=ruled(REVOKED | {"body": f"Stop posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z"})) >> DENY,
-            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> ALLOW,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL), decide=jev(ruling_evidence(KEPT_IN_CHANNEL).id)) >> ALLOW,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> DENY,
+            case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL, REVOKED), decide=jev(ruling_evidence(KEPT_IN_CHANNEL).id)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
             case(**said("post it i already told u to"), commands=NOT_DM | {"cc-present outcomes": json.dumps(SUBMITTED_BOARD)}) >> ALLOW,
             case(**said("status?"), commands=board_tapped("yes")) >> ALLOW,
