@@ -14,7 +14,7 @@ import (
 
 const (
 	cardMaxArtifacts    = 5
-	artifactRefType     = "drive-artifact"
+	artifactRefType     = "link"
 	artifactProductName = "Drive dashboard"
 	artifactOpenLabel   = "Open"
 	workImageType       = "slack#/types/image"
