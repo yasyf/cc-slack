@@ -493,6 +493,20 @@ func (l *liveCards) hasCopy(channel, thread string, copied liveCardCopy) bool {
 	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == copied.Card && c.Link == copied.Link })
 }
 
+func (l *liveCards) pickAsking(channel, pr string) (cardRef, bool) {
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for _, m := range t.Waiting {
+			if pr != "" && m.Card.offer().pr == pr && t.open(m) {
+				return cardRef{t.Channel, t.Thread, m.TS}, true
+			}
+		}
+	}
+	return cardRef{}, false
+}
+
 func (l *liveCards) pickOffering(channel string, offer cardOffer) (cardRef, bool) {
 	for _, t := range l.threads {
 		if t.Channel != channel {
