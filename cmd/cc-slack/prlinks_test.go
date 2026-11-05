@@ -281,7 +281,8 @@ func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
 func prCards(l *liveDaemon, channelID string) []fakePost {
 	var cards []fakePost
 	for _, p := range l.slack.sentTo(channelID) {
-		if strings.Contains(p.blocks, testWaits) {
+		carries := p.threadTS == "" && strings.Contains(p.blocks, cardCopyBlock+"-")
+		if strings.Contains(p.blocks, testWaits) && !carries {
 			cards = append(cards, p)
 		}
 	}
