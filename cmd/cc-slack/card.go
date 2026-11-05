@@ -212,6 +212,7 @@ type askAnswer struct {
 	At    time.Time `json:"at"`
 	Label string    `json:"label,omitempty"`
 	Other bool      `json:"other,omitempty"`
+	Drawn bool      `json:"drawn,omitempty"`
 }
 
 func runes(s string) int { return utf8.RuneCountInString(s) }
