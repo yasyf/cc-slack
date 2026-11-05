@@ -82,6 +82,10 @@ UNREAD = (
     "A Slack write is checked on its literal values, one write per command. Run one `cc-slack` call per Bash command"
     " with literal `--text`, `--file`, and `--blocks` values and no `--ticket` flags."
 )
+DRAFTED = (
+    "This command writes the `--text-file` it sends, and the check reads that file before the command runs, so it would judge"
+    " what the file held before. Write the file in its own Bash call first, then send it in the next."
+)
 REFUSED = (
     "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
     " `slack_dm_status` and the second card when cc-present is missing, its body opened by a `Why:` line, then retry once they tap Yes."
@@ -672,11 +676,18 @@ def unchecked(evt: PreToolUseEvent, write: Write, conv: Conversation, exc: Excep
     return replace(named_ticket(evt, ctx, SLACK.unchecked(ctx, cause)), system_message=note)
 
 
+def written_files(evt: PreToolUseEvent) -> set[str]:
+    redirected = {redirect.target for call in evt.cmd.calls() for redirect in call.redirects if redirect.op.lstrip("&").startswith(">")}
+    return redirected | {arg for call in evt.cmd.calls("tee") for arg in call.args if not arg.startswith("-")}
+
+
 def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     writes = pending(evt)
     if len(writes) > 1 or not writes[0].readable:
         return evt.block(UNREAD)
     write = writes[0]
+    if write.fields.get("text_file") in written_files(evt):
+        return evt.block(DRAFTED)
     conv = Conversation(write.channel, write.thread)
     try:
         with check_deadline():
@@ -1132,6 +1143,8 @@ on(
             case(command=f"{CLI} send --channel {FOLLOWERS} --text 'a post' --ticket 0123456789ab") >> Block(pattern="literal values"),
             case(command=f'{CLI} send --channel {FOLLOWERS} --text "$(cat reply.txt)"') >> Block(pattern="literal values"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text a && {CLI} reply --channel {FOLLOWERS} --thread 1 --text b") >> Block(pattern="one write per command"),
+            case(command=f"cat > {FIXTURES / 'page_reply.txt'} <<'EOF'\nthe new draft\nEOF\n{PAGE_REPLY}", **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Block(pattern="in its own Bash call first"),
+            case(command=f"printf 'the new draft' | tee {FIXTURES / 'page_reply.txt'} && {PAGE_REPLY}", **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Block(pattern="in its own Bash call first"),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'", tickets=[retrying(DANA | {"text": DANA_TEXT})]) >> Allow(explicit=True),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'") >> DENY,
             case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", tickets=[retrying(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"})]) >> Allow(explicit=True),
