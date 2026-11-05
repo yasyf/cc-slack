@@ -72,7 +72,7 @@ func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsUnsharedPicture(t *t
 	}
 	got := entities[0]
 	payload := got.EntityPayload
-	if got.URL != testDiagramURL || got.EntityType != "slack#/entities/content_item" || got.ExternalRef.ID != "/diagram/r9" || got.ExternalRef.Type != artifactRefType {
+	if got.URL != testDiagramURL || got.EntityType != "slack#/entities/content_item" || got.ExternalRef.ID != "/diagram/r9" || got.ExternalRef.Type != "link" {
 		t.Fatalf("entity = %+v", got)
 	}
 	if payload.Attributes.Title.Text != diagram.Title || payload.Attributes.DisplayType != "Diagram" || payload.Attributes.LastModified == 0 {
