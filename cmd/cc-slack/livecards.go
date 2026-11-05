@@ -288,9 +288,21 @@ func (l *liveCards) openPRCard(channel string, pr refID) (ts, thread string, ok 
 	return card.TS, thread, true
 }
 
+func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
+
 func (l *liveCards) load() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	refs, err := os.ReadFile(l.refsPath())
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return fmt.Errorf("read live refs: %w", err)
+	default:
+		if err := json.Unmarshal(refs, &l.refs); err != nil {
+			return fmt.Errorf("decode live refs %s: %w", l.refsPath(), err)
+		}
+	}
 	data, err := os.ReadFile(l.path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -324,14 +336,18 @@ func (l *liveCards) prune() {
 }
 
 func (l *liveCards) save() {
-	threads := slices.SortedFunc(maps.Values(l.threads), func(a, b *liveThread) int { return a.Updated.Compare(b.Updated) })
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, mustJSON(threads), 0o600); err != nil {
-		l.log.Printf("write live cards: %v", err)
+	l.saveFile(l.path, slices.SortedFunc(maps.Values(l.threads), func(a, b *liveThread) int { return a.Updated.Compare(b.Updated) }))
+	l.saveFile(l.refsPath(), l.refs)
+}
+
+func (l *liveCards) saveFile(path string, v any) {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, mustJSON(v), 0o600); err != nil {
+		l.log.Printf("write %s: %v", filepath.Base(path), err)
 		return
 	}
-	if err := os.Rename(tmp, l.path); err != nil {
-		l.log.Printf("save live cards: %v", err)
+	if err := os.Rename(tmp, path); err != nil {
+		l.log.Printf("save %s: %v", filepath.Base(path), err)
 	}
 }
 
