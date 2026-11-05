@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A paged plain DM post, an edit, and a card answer's written-in reason draw no HTML comment.
 
+||||||| parent of 2adb74d (card: 🐛 a redrawn card stays in its thread instead of moving to the root)
+- A redrawn card stays in the thread it was posted in. It used to move to the DM root and delete the thread's copy.
 - No card field draws a sender's HTML comment, in a card, its options, a PR's lines, a row or a plain post.
 - A PR card draws What changes, Against the plan and Risk whole again, in place of the preview from #130.
 - A pick's label may run to 200 characters and draws whole on its own row with a short Pick button, in place of a limit of 61.

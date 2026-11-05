@@ -2166,7 +2166,7 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 		place.asked = place.prior.kept(card)
 	}
 	switch {
-	case place.asked != nil && ((under == "" && place.asked.TS != place.prior.Thread) || card.gainsRows(place.asked.Card)):
+	case place.asked != nil && card.gainsRows(place.asked.Card):
 		place.superseded, place.asked = place.asked, nil
 		place.thread.Answers = maps.Clone(place.prior.Answers)
 	case place.asked != nil:

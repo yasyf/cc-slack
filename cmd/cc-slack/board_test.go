@@ -483,7 +483,7 @@ func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsIt(t *testing.T) {
 	}
 }
 
-func TestNothingPostsIntoAnOldStatusThread(t *testing.T) {
+func TestAnOldThreadTakesNoNewPostAndACardThereStaysPut(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	id, err := loadIdentity(l.ctx, l.srv.DB())
@@ -510,14 +510,14 @@ func TestNothingPostsIntoAnOldStatusThread(t *testing.T) {
 			t.Fatalf("post %+v, want every message at the DM root", post)
 		}
 	}
-	if c.thread == root || !slices.ContainsFunc(l.slack.deleted(), func(d fakeEdit) bool { return d.ts == nested }) {
-		t.Fatalf("a redrawn card landed at %+v and deleted %v, want it moved out of the old thread", c, l.slack.deleted())
+	if c.thread != root || c.ts != nested || len(l.slack.deleted()) != 0 {
+		t.Fatalf("a redrawn card landed at %+v and deleted %v, want it edited where it is", c, l.slack.deleted())
 	}
 	if _, done := l.app.cards.answer(id.DMChannelID, c.thread, "earlier"); !done {
-		t.Fatal("the moved card lost the answers its old thread held")
+		t.Fatal("the card lost the answers its thread held")
 	}
-	if edits := l.slack.edited(); len(edits) != 0 {
-		t.Fatalf("edits = %+v, want no edit of a message left in the old thread", edits)
+	if edits := editsOf(l.slack.edited(), nested); len(edits) != 1 {
+		t.Fatalf("edits = %+v, want the one card edited in its thread", edits)
 	}
 }
 
