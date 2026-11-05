@@ -1064,7 +1064,7 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 	case m.Tapped == cardNoLongerWaits || drawn.Waits != m.Card.Waits:
 		m.Tapped = ""
 	}
-	m.Card = drawn
+	m.Card, m.Final = drawn, drawn.Waits == ""
 	t.Updated = now
 	w := l.write(t, m, now, false)
 	l.mu.Unlock()
