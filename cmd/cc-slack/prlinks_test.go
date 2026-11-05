@@ -1112,6 +1112,21 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 	}
 }
 
+func TestAPickAskingAboutAPRDrawsNoButtonlessCardBesideIt(t *testing.T) {
+	held := heldRowCard()
+	held.Card.Refs, held.Card.PRs = nil, []cardPR{{URL: tapPR41[0], Head: "e718a74"}}
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, held)
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	l.do(opDMStatus, map[string]any{"text": "#41 is held", "tap_prs": tapPR41})
+	if drawn := slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return !strings.Contains(p.blocks, "#41 at e718a74") }); len(drawn) != 0 {
+		t.Fatalf("posts = %+v, want no card for #41 without buttons while the pick asks about it", drawn)
+	}
+	if copies := cardCopies(l, pick); len(copies) != 1 {
+		t.Fatalf("copies of the pick = %+v, want its working copy under the post", copies)
+	}
+}
+
 func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41", "acme/app#42"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41", "acme/app#42")

@@ -356,6 +356,10 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			placed, shown = append(placed, offered), append(shown, shownCard(p))
 			continue
 		}
+		if asking, found := cards.pickAsking(channelID, p.Card.offer().pr); p.Card.Waits == "" && found {
+			placed, shown = append(placed, asking), append(shown, shownCard(p))
+			continue
+		}
 		t := cards.draft(channelID, thread)
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.refs)
