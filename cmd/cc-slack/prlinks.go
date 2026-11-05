@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/subject"
 )
@@ -278,14 +279,23 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	if len(asked)+len(standing) == 0 {
 		return
 	}
-	under := ""
-	if channelID == id.DMChannelID && postThread != postTS {
-		under = postThread
+	beside := cardBeside{}
+	switch {
+	case channelID != id.DMChannelID:
+	case postThread != postTS:
+		beside.thread = postThread
+	default:
+		beside = cardBeside{thread: postTS, link: true}
 	}
-	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), under, asked, standing)
+	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread, under string, asked []map[string]any, standing []cardRef) {
+type cardBeside struct {
+	thread string
+	link   bool
+}
+
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []map[string]any, standing []cardRef) {
 	placed := standing
 	if len(asked) > 0 {
 		provided, err := askPRCards(ctx, id, asked)
@@ -296,12 +306,12 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		a.tellShown(ctx, id, shown)
 		placed = append(placed, cards...)
 	}
-	if under == "" {
+	if beside.thread == "" {
 		return
 	}
 	for _, card := range placed {
-		if err := a.copyPRCard(ctx, db, id, under, card); err != nil {
-			a.poller.log.Printf("PR card %s has no copy under %s: %v", card.ts, under, err)
+		if err := a.showPRCard(ctx, db, id, beside, card); err != nil {
+			a.poller.log.Printf("PR card %s is not shown under %s: %v", card.ts, beside.thread, err)
 		}
 	}
 }
@@ -334,8 +344,8 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 	defer cards.mu.Unlock()
 	now := a.now()
 	for _, p := range provided {
-		if p.Card.Waits != "" && cards.pickOffers(channelID, p.Card.offer()) {
-			shown = append(shown, shownCard(p))
+		if offered, found := cards.pickOffering(channelID, p.Card.offer()); p.Card.Waits != "" && found {
+			placed, shown = append(placed, offered), append(shown, shownCard(p))
 			continue
 		}
 		t := cards.draft(channelID, thread)
@@ -362,24 +372,27 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 	return placed, shown
 }
 
-func (a *app) copyPRCard(ctx context.Context, db *sql.DB, id identity, under string, card cardRef) error {
-	if a.cards.hasCopy(card.channel, under, card.ts) {
+func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside cardBeside, card cardRef) error {
+	if a.cards.hasCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, Link: beside.link}) {
 		return nil
 	}
 	link := id.permalink(card.channel, card.ts, card.thread)
-	ref, err := parsePermalink(link)
+	text, blocks := link, []slack.Block(nil)
+	if !beside.link {
+		ref, err := parsePermalink(link)
+		if err != nil {
+			return err
+		}
+		if blocks, _, err = a.copyBlocks(ctx, id, ref, link); err != nil {
+			return err
+		}
+		text = cardCopyLead
+	}
+	res, err := a.post(ctx, db, id, card.channel, beside.thread, text, blocks, nil)
 	if err != nil {
 		return err
 	}
-	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
-	if err != nil {
-		return err
-	}
-	res, err := a.post(ctx, db, id, card.channel, under, cardCopyLead, blocks, nil)
-	if err != nil {
-		return err
-	}
-	a.cards.rememberCopy(card.channel, under, card.ts, res.TS, a.now())
+	a.cards.rememberCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, TS: res.TS, Link: beside.link}, a.now())
 	return nil
 }
 
