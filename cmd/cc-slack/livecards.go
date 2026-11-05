@@ -327,27 +327,6 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	return copies
 }
 
-func (l *liveCards) openPRCard(channel string, pr refID) (ts, thread string, ok bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	keys := map[string]bool{pr.key(): true}
-	var card *liveMessage
-	for _, t := range l.threads {
-		if t.Channel != channel {
-			continue
-		}
-		for _, m := range t.PRCards {
-			if m.Tapped == "" && m.cites(keys) && (card == nil || m.At.After(card.At)) {
-				card, thread = m, t.Thread
-			}
-		}
-	}
-	if card == nil {
-		return "", "", false
-	}
-	return card.TS, thread, true
-}
-
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
 
 func (l *liveCards) load() error {

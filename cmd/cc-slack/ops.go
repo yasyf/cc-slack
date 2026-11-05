@@ -563,7 +563,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
-		text, previews := a.linkPreviews(hc.Ctx, id, channelID, texts[0], nil)
+		text, previews, ready := a.linkPreviews(hc.Ctx, id, channelID, texts[0], nil)
+		b.TapPRs = append(b.TapPRs, ready...)
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
 		}
@@ -721,7 +722,7 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
 		}
-		if linksTo(text, blocks, messageLink) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
+		if linksBeyondDM(id.DMChannelID, text, blocks) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
 			opts = append(opts, slack.MsgOptionEnableLinkUnfurl())
 		}
 		return api.PostMessageContext(ctx, channelID, opts...)
@@ -738,6 +739,17 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 
 func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
 	return link.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), link.MatchString)
+}
+
+// Slack draws a linked message as a share with no buttons, so a link to one of
+// his DM cards stays a link and its answers reach him through the card's copy.
+func linksBeyondDM(dm, text string, blocks []slack.Block) bool {
+	return slices.ContainsFunc(append([]string{text}, blockTexts(slack.Blocks{BlockSet: blocks})...), func(s string) bool {
+		return slices.ContainsFunc(messageLink.FindAllString(s, -1), func(link string) bool {
+			ref, err := parsePermalink(link)
+			return err == nil && ref.channelID != dm
+		})
+	})
 }
 
 func checkMessage(b opBody) ([]slack.Block, error) {
@@ -1888,6 +1900,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
 	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
+	b.TapPRs = append(b.TapPRs, msg.tapPRs...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, msg.tag, pictures)
 	}
@@ -1944,7 +1957,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
-		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
+		msg.text, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
 		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
 			return msg, nil
 		}
@@ -1953,7 +1966,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 		return msg, pages[1:]
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
-	b.Card.Body, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], b.Card.refIDs())
+	b.Card.Body, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], b.Card.refIDs())
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
 	return msg, nil
@@ -2153,6 +2166,7 @@ type dmMessage struct {
 	tag      cardTag
 	rootOnly bool
 	previews []slack.Attachment
+	tapPRs   []string
 }
 
 func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {

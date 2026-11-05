@@ -88,7 +88,7 @@ func TestAPRPreviewSaysWhereThePRStandsInHisWords(t *testing.T) {
 		row          ledgerRow
 		want, absent string
 	}{
-		{"ready", readyRow(41), "Ready for your tap", "Waiting"},
+		{"ready, with no card to draw", readyRow(41), "*Not approved yet.* CI green.", "Ready for your tap"},
 		{"waiting", waiting, "the change below it, #40, has not landed", "Ready for your tap"},
 		{"landed", landed, "*Landed.*", "Waiting"},
 		{"tapped", tapped, "You approved it; it lands next", "Ready for your tap"},
@@ -103,10 +103,8 @@ func TestAPRPreviewSaysWhereThePRStandsInHisWords(t *testing.T) {
 					t.Fatalf("attachments = %s, want %q in them", post.attachments, want)
 				}
 			}
-			for _, absent := range []string{tc.absent, "Open the card"} {
-				if strings.Contains(post.attachments, absent) {
-					t.Fatalf("attachments = %s, want no %q in them", post.attachments, absent)
-				}
+			if strings.Contains(post.attachments, tc.absent) {
+				t.Fatalf("attachments = %s, want no %q in them", post.attachments, tc.absent)
 			}
 		})
 	}
@@ -268,15 +266,23 @@ func cardedPreviewDaemon(t *testing.T, row ledgerRow) (*liveDaemon, fakePost) {
 	return l, card
 }
 
-func TestAReadyPRWithAnOpenCardLinksIt(t *testing.T) {
-	l, card := cardedPreviewDaemon(t, readyRow(41))
-	id, err := loadIdentity(l.ctx, l.srv.DB())
-	if err != nil {
-		t.Fatal(err)
+func TestAPostLinkingAReadyPRShowsItAsItsCardAloneAndAWaitingOneDrawsNone(t *testing.T) {
+	waiting := readyRow(42)
+	waiting.ReadyForTap, waiting.WaitsOn = false, "CI is running"
+	cards := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}, "card_command": cards.argv, "preview_command": fakePRRows(t, readyRow(41), waiting).argv}, "acme/app#41", "acme/app#42")
+	l.do(opDMStatus, map[string]any{"text": "#42 waits on CI: https://github.com/acme/app/pull/42"})
+	if drawn := prCards(l, testDM); len(drawn) != 0 {
+		t.Fatalf("PR cards = %+v, want none for a PR that does not wait on his tap", drawn)
 	}
-	got := lastPost(l).attachments
-	if !strings.Contains(got, id.permalink(testDM, card.ts, card.threadTS)) || !strings.Contains(got, "Open the card") {
-		t.Fatalf("attachments = %s, want a link to the open card", got)
+	l.do(opDMStatus, map[string]any{"text": "Ready for your tap: " + testPR})
+	if drawn := prCards(l, testDM); len(drawn) == 0 {
+		t.Fatal("a post linking a PR ready for his tap drew no card with Approve")
+	}
+	for _, post := range l.slack.sent() {
+		if strings.Contains(post.attachments, testPR) {
+			t.Fatalf("post %+v previews a PR its card already shows", post)
+		}
 	}
 }
 
@@ -284,7 +290,7 @@ func TestAWaitingPRNeverOffersATapEvenWithAnOpenCard(t *testing.T) {
 	waiting := readyRow(41)
 	waiting.ReadyForTap, waiting.WaitsOn = false, "CI is running"
 	l, _ := cardedPreviewDaemon(t, waiting)
-	if got := lastPost(l).attachments; strings.Contains(got, "Open the card") || !strings.Contains(got, "CI is running") {
+	if got := lastPost(l).attachments; !strings.Contains(got, "CI is running") {
 		t.Fatalf("attachments = %s, want its wait and no card to tap", got)
 	}
 }
