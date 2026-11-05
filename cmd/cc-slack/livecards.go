@@ -480,6 +480,37 @@ func (l *liveCards) release(channel, thread, askID string) {
 	}
 }
 
+func (l *liveCards) showPictures(channel, thread, ts string, shown statusCard) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return false
+	}
+	found := false
+	for _, m := range append(t.messages(), t.Root) {
+		if m != nil && m.TS == ts {
+			m.Card.Images, m.Card.Artifacts = shown.Images, shown.Artifacts
+			found = true
+		}
+	}
+	return found
+}
+
+func (l *liveCards) shownImages(channel string, card statusCard) []slack.FileSummary {
+	if card.ImagesHash == "" || card.Waits == "" {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, t := range l.threads {
+		if m := t.Waiting[card.Waits]; t.Channel == channel && m != nil && m.Card.ImagesHash == card.ImagesHash {
+			return m.Card.Images
+		}
+	}
+	return nil
+}
+
 func (l *liveCards) waiting(channel, waits string, at func(thread, ts string) bool) (string, liveMessage, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

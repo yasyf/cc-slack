@@ -496,3 +496,33 @@ func TestAReplyUnderTheHoldersOwnCardNamesNoOtherOwner(t *testing.T) {
 		t.Fatalf("delivered %+v, want the reply once with no other owner", got)
 	}
 }
+
+func TestABareFileShareAnswersNoOwedReply(t *testing.T) {
+	f := newFixture(t)
+	id := f.id
+	id.BotID = "BPICTURES"
+	if err := f.app.owed.owe(f.ctx, owedReply{ThreadTS: testThread, TS: "1800000000.000100", Text: "the images are broken", Permalink: "https://slack/p1"}); err != nil {
+		t.Fatal(err)
+	}
+	owedCount := func() int {
+		replies, err := f.app.owed.list(f.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(replies)
+	}
+	share := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000200", ThreadTimestamp: testThread, BotID: id.BotID, Files: []slack.File{{ID: "Fa"}}}}
+	if err := f.app.poller.trackOwed(f.ctx, id, share); err != nil {
+		t.Fatal(err)
+	}
+	if n := owedCount(); n != 1 {
+		t.Fatalf("owed = %d after a picture share, want the reply still owed", n)
+	}
+	answer := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", ThreadTimestamp: testThread, BotID: id.BotID, Text: "fixed"}}
+	if err := f.app.poller.trackOwed(f.ctx, id, answer); err != nil {
+		t.Fatal(err)
+	}
+	if n := owedCount(); n != 0 {
+		t.Fatalf("owed = %d after a text answer, want none", n)
+	}
+}

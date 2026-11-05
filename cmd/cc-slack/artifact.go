@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -35,38 +33,6 @@ func (c statusCard) checkArtifacts(tailnet string) error {
 	for _, a := range c.Artifacts {
 		if a.Title == "" || runes(a.Title) > cardMaxTitleLen || a.Kind == "" || !checkURL(a.URL, tailnet) {
 			return fmt.Errorf("card artifact %q needs a title of up to %d characters, a kind, and a url of up to %d", a.Title, cardMaxTitleLen, cardMaxURLLen)
-		}
-	}
-	return nil
-}
-
-func (a *app) attachArtifactPictures(ctx context.Context, id identity, card *statusCard) error {
-	if card == nil {
-		return nil
-	}
-	var paths []string
-	for _, artifact := range card.Artifacts {
-		if artifact.Image != "" {
-			paths = append(paths, artifact.Image)
-		}
-	}
-	if len(paths) == 0 {
-		return nil
-	}
-	images, err := allImages(paths)
-	if err != nil {
-		return err
-	}
-	if !images {
-		return errors.New("an artifact's image is a PNG, JPEG, or GIF")
-	}
-	files, err := uploadImages(ctx, a.newAPI(id.Token), paths)
-	if err != nil {
-		return err
-	}
-	for i := range card.Artifacts {
-		if card.Artifacts[i].Image != "" {
-			card.Artifacts[i].Picture, files = &files[0], files[1:]
 		}
 	}
 	return nil

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A picture on a card or a message loads for the person reading it. Pictures were uploaded private to the bot and named by an image block, so only the bot could be sure of reading them. The message now posts first, its files are shared into its thread, and the message then shows them. A card sent again with the same pictures keeps them and shares nothing new.
+
 ### Changed
 
 - A settled card collapses to its title and one outcome line, on every route: a tap, an answer from elsewhere, a settle, a withdrawal, and a card the live store has forgotten. A PR card keeps a link to its PR, a withdrawal naming another Slack post links it, and an answered group row keeps only its PR's headline.

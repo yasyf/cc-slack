@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/agent"
 )
 
@@ -380,15 +381,23 @@ func TestABoardCardReachesSlackWithItsImageAndButtonsAndATapAnswersTheBoard(t *t
 	c := mirroredCard(t, l, map[string]any{"card": card, "files": []string{writeFile(t, "Feed first.png", pngBytes)}})
 
 	post := l.postedAt(t, c.ts)
-	if ids := imageIDs(t, post.blocks); len(ids) != 1 {
-		t.Fatalf("image blocks %v in %s, want the card's one image", ids, post.blocks)
+	if ids := imageIDs(t, post.blocks); len(ids) != 0 {
+		t.Fatalf("first post names files %v before they are shared", ids)
 	}
-	if !strings.Contains(post.blocks, "Feed first.png") {
-		t.Fatalf("blocks %s lack the image's title", post.blocks)
+	shares := slices.DeleteFunc(l.slack.sent(), func(p fakePost) bool { return p.threadTS != c.thread || p.ts == c.ts || p.blocks != "" })
+	if len(shares) != 1 || shares[0].channelID != c.id.DMChannelID {
+		t.Fatalf("shares %+v, want the card's one picture shared into its thread %s", shares, c.thread)
+	}
+	shown := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
+	if len(shown) == 0 || len(imageIDs(t, shown[0].blocks)) != 1 {
+		t.Fatalf("edits %+v, want the card to show its one shared image", shown)
+	}
+	if !strings.Contains(shown[0].blocks, "Feed first.png") {
+		t.Fatalf("blocks %s lack the image's title", shown[0].blocks)
 	}
 	for _, button := range []string{"Hold (Recommended)", "Merge", cardOtherLabel, cardExplainLabel} {
-		if !strings.Contains(post.blocks, button) {
-			t.Fatalf("blocks %s lack the %s button", post.blocks, button)
+		if !strings.Contains(shown[0].blocks, button) {
+			t.Fatalf("blocks %s lack the %s button", shown[0].blocks, button)
 		}
 	}
 	if got := presentCalls(t, calls); got != "" {
@@ -405,6 +414,59 @@ func TestABoardCardReachesSlackWithItsImageAndButtonsAndATapAnswersTheBoard(t *t
 	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
 	if len(edits) == 0 || len(imageIDs(t, edits[len(edits)-1].blocks)) != 0 {
 		t.Fatalf("edits %+v, want the tapped card to collapse past its image", edits)
+	}
+}
+
+func TestAResentCardKeepsItsSharedPicturesAndOnlyNewOnesShareAgain(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := mergeCard()
+	png := writeFile(t, "Feed first.png", pngBytes)
+	c := mirroredCard(t, l, map[string]any{"card": card, "files": []string{png}})
+
+	l.do(opDMStatus, map[string]any{"card": card, "mirrored": true, "files": []string{png}})
+	if done := l.slack.completed(); len(done) != 1 {
+		t.Fatalf("completed uploads %+v after the same picture came again, want the one share", done)
+	}
+	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
+	if ids := imageIDs(t, edits[len(edits)-1].blocks); len(ids) != 1 {
+		t.Fatalf("image blocks %v after the same picture came again, want it still shown", ids)
+	}
+	first := imageIDs(t, edits[len(edits)-1].blocks)[0]
+
+	l.do(opDMStatus, map[string]any{"card": card, "mirrored": true, "files": []string{writeFile(t, "Feed first.png", gifBytes)}})
+	if done := l.slack.completed(); len(done) != 2 {
+		t.Fatalf("completed uploads %+v after a new picture came, want a second share", done)
+	}
+	edits = slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
+	if ids := imageIDs(t, edits[len(edits)-1].blocks); len(ids) != 1 || ids[0] == first {
+		t.Fatalf("image blocks %v, want the new picture in place of %s", ids, first)
+	}
+}
+
+func TestPicturesArrivingAfterATapKeepTheTap(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status"}}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, ts := res["thread_ts"], res["ts"]
+	if !l.app.cards.markReply(id.DMChannelID, thread, ts, func(m *liveMessage) { m.Tapped = "Pause" }) {
+		t.Fatalf("no live card at %s", ts)
+	}
+
+	l.app.showCardPictures(l.ctx, l.srv.DB(), id, &statusCard{Status: "info", Title: "Status"}, []slack.FileSummary{{ID: "Fa", Title: "a.png"}}, thread, ts)
+
+	tapped := ""
+	l.app.cards.markReply(id.DMChannelID, thread, ts, func(m *liveMessage) { tapped = m.Tapped })
+	if tapped != "Pause" {
+		t.Fatalf("tap = %q after the pictures arrived, want Pause kept", tapped)
 	}
 }
 

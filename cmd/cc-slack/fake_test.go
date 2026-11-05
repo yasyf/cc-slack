@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ type fakeEdit struct {
 	ts          string
 	text        string
 	blocks      string
+	metadata    string
 	attachments string
 }
 
@@ -277,6 +279,9 @@ func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, opti
 	if err != nil {
 		return "", "", err
 	}
+	if err := f.checkPicturesShared(channelID, values); err != nil {
+		return "", "", err
+	}
 	f.clock++
 	ts := fmt.Sprintf("%d.000000", f.clock)
 	p := fakePost{
@@ -385,6 +390,18 @@ func (f *fakeSlack) reactedTo(ts string) []string {
 	return names
 }
 
+var namedSlackFile = regexp.MustCompile(`"slack_file":\{"id":"([^"]+)"`)
+
+// Slack accepts a block naming a file nobody else can read, so the refusal lives here: it stands in for the person's broken image.
+func (f *fakeSlack) checkPicturesShared(channelID string, values url.Values) error {
+	for _, named := range namedSlackFile.FindAllStringSubmatch(values.Get("blocks")+values.Get("metadata"), -1) {
+		if _, shared := f.shared[named[1]].Public[channelID]; !shared {
+			return fmt.Errorf("message names file %s, which is not shared into %s, so its reader sees a broken image", named[1], channelID)
+		}
+	}
+	return nil
+}
+
 func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -395,7 +412,10 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 	if err != nil {
 		return "", "", "", err
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), attachments: values.Get("attachments")})
+	if err := f.checkPicturesShared(channelID, values); err != nil {
+		return "", "", "", err
+	}
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments")})
 	return channelID, timestamp, values.Get("text"), nil
 }
 
@@ -549,19 +569,6 @@ func (f *fakeSlack) UploadToURL(_ context.Context, params slack.UploadToURLParam
 	}
 	f.uploads[strings.TrimPrefix(params.UploadURL, "https://files.slack.test/upload/")] = body
 	return nil
-}
-
-func (f *fakeSlack) CompleteUploadExternalContext(_ context.Context, params slack.CompleteUploadExternalParameters) (*slack.CompleteUploadExternalResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.call("files.completeUploadExternal"); err != nil {
-		return nil, err
-	}
-	if params.Channel != "" || len(params.Channels) > 0 {
-		return nil, fmt.Errorf("completeUploadExternal shared the files into %q", params.Channel)
-	}
-	f.complete = append(f.complete, params.Files)
-	return &slack.CompleteUploadExternalResponse{Files: params.Files}, nil
 }
 
 func (f *fakeSlack) ShareFilesContext(_ context.Context, share fileShare) error {

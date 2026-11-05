@@ -45,7 +45,6 @@ type slackAPI interface {
 	GetUsersContext(ctx context.Context, options ...slack.GetUsersOption) ([]slack.User, error)
 	GetUploadURLExternalContext(ctx context.Context, params slack.GetUploadURLExternalParameters) (*slack.GetUploadURLExternalResponse, error)
 	UploadToURL(ctx context.Context, params slack.UploadToURLParameters) error
-	CompleteUploadExternalContext(ctx context.Context, params slack.CompleteUploadExternalParameters) (*slack.CompleteUploadExternalResponse, error)
 	GetFileInfoContext(ctx context.Context, fileID string, count, page int) (*slack.File, []slack.Comment, *slack.Paging, error)
 	GetFileContext(ctx context.Context, downloadURL string, writer io.Writer) error
 	CreateConversationContext(ctx context.Context, params slack.CreateConversationParams) (*slack.Channel, error)
@@ -242,24 +241,24 @@ func (p workObjectPoster) Do(req *http.Request) (*http.Response, error) {
 	}
 	answer.Body = io.NopCloser(bytes.NewReader(said))
 	echo, refusal := workObjectEcho(said)
-	noteMetadataRefusal(req.Context(), refusal)
+	notePostWarning(req.Context(), refusal)
 	log.Printf("work object %s %s: %s", path.Base(req.URL.Path), body["channel"], echo) //nolint:gosec // G706: the line carries Slack's own answer, for the daemon log only
 	return answer, nil
 }
 
-type metadataRefusalsKey struct{}
+type postWarningsKey struct{}
 
-type metadataRefusals struct {
+type postWarnings struct {
 	mu   sync.Mutex
 	said []string
 }
 
-func withMetadataRefusals(ctx context.Context) context.Context {
-	return context.WithValue(ctx, metadataRefusalsKey{}, &metadataRefusals{})
+func withPostWarnings(ctx context.Context) context.Context {
+	return context.WithValue(ctx, postWarningsKey{}, &postWarnings{})
 }
 
-func noteMetadataRefusal(ctx context.Context, refusal string) {
-	refusals, ok := ctx.Value(metadataRefusalsKey{}).(*metadataRefusals)
+func notePostWarning(ctx context.Context, refusal string) {
+	refusals, ok := ctx.Value(postWarningsKey{}).(*postWarnings)
 	if !ok || refusal == "" {
 		return
 	}
@@ -268,8 +267,8 @@ func noteMetadataRefusal(ctx context.Context, refusal string) {
 	refusals.said = append(refusals.said, refusal)
 }
 
-func metadataRefusalsIn(ctx context.Context) string {
-	refusals, ok := ctx.Value(metadataRefusalsKey{}).(*metadataRefusals)
+func postWarningsIn(ctx context.Context) string {
+	refusals, ok := ctx.Value(postWarningsKey{}).(*postWarnings)
 	if !ok {
 		return ""
 	}
