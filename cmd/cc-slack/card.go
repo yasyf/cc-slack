@@ -42,6 +42,7 @@ const (
 	cardRowAction     = cardActionPrefix + ":row:"
 	cardExplainLabel  = "Explain more"
 	cardOtherLabel    = "Other"
+	cardGitHubLabel   = "Open on GitHub"
 	cardAnswerLabel   = "Answer"
 	cardRecommended   = "(Recommended)"
 	cardAckLabel      = "Ack"
@@ -951,7 +952,22 @@ func (c statusCard) actions() slack.Block {
 	pause := button(cardPauseAction, cardPauseLabel)
 	pause.Style = slack.StyleDanger
 	buttons = append(buttons, button(cardAckAction, cardAckLabel), pause)
-	return slack.NewActionBlock(cardActionsBlock, buttons...)
+	return slack.NewActionBlock(cardActionsBlock, append(buttons, c.gitHubButtons()...)...)
+}
+
+func (c statusCard) gitHubButtons() []slack.BlockElement {
+	buttons := make([]slack.BlockElement, 0, len(c.PRs))
+	for _, p := range c.PRs {
+		id, _ := parseRef(p.URL)
+		label := cardGitHubLabel
+		if len(c.PRs) > 1 {
+			label = fmt.Sprintf("Open #%d on GitHub", id.Number)
+		}
+		b := slack.NewButtonBlockElement(fmt.Sprintf("%sgithub-%d", cardLinkAction, id.Number), "", slack.NewTextBlockObject(slack.PlainTextType, label, true, false))
+		b.URL = p.URL
+		buttons = append(buttons, b)
+	}
+	return buttons
 }
 
 func (c statusCard) answers() []string {
@@ -982,7 +998,7 @@ func (c statusCard) waitActions() slack.Block {
 	buttons = append(buttons,
 		slack.NewButtonBlockElement(cardOtherAction+c.Waits, other, slack.NewTextBlockObject(slack.PlainTextType, write, true, false)),
 		slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain, slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
-	return slack.NewActionBlock(cardActionsBlock, buttons...)
+	return slack.NewActionBlock(cardActionsBlock, append(buttons, c.gitHubButtons()...)...)
 }
 
 func (c statusCard) waitHint() string {
