@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every line `cc-slack watch` prints fits the 500 characters a Claude Code Monitor event holds, so a Monitor gets each tap, message, watch error and stopped owner as whole JSON instead of cut mid-line. A longer line drops a card's capture and options, then its question and the thread owner's title, then the permalink, and last cuts its own words and sets `cut`; a tap's id is never cut. `--whole` prints lines as the daemon sent them, for a program reading the stream.
 - A Markdown link naming a PR, such as `[#41](https://github.com/acme/app/pull/41)`, posts as one link. Linking used to rewrite both its text and its URL, so the post showed brackets and two links.
 - A waiting card with `replaces` now takes the place of that message, buttons included, and stays there on later edits. It posts nothing new. If the edit fails, the error comes back and nothing is posted.
 - A PR at one head now shows as one open offer. A tap on its card, or on a pick card whose `prs` names that one PR at that head with the same answers, closes every other such card, cards already open included, and the ledger takes the answer once.
