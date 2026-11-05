@@ -6,7 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A settled card collapses to its title and one outcome line, on every route: a tap, an answer from elsewhere, a settle, a withdrawal, and a card the live store has forgotten. A PR card keeps a link to its PR, a withdrawal naming another Slack post links it, and an answered group row keeps only its PR's headline.
+
 ### Fixed
+
+- A paged plain DM post, an edit, and a card answer's written-in reason draw no HTML comment.
 
 - No card field draws a sender's HTML comment, in a card, its options, a PR's lines, a row or a plain post.
 - A PR card draws What changes, Against the plan and Risk whole again, in place of the preview from #130.

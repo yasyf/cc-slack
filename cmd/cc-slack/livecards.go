@@ -146,9 +146,13 @@ func (t *liveThread) messages() []*liveMessage {
 }
 
 func (t *liveThread) openAsks(now time.Time) []cardAsk {
+	return openAsks(t.Asks, t.Answers, now)
+}
+
+func openAsks(asks []cardAsk, answers map[string]askAnswer, now time.Time) []cardAsk {
 	var open []cardAsk
-	for _, k := range t.Asks {
-		if _, done := t.Answers[k.ID]; !done && !k.expired(now) {
+	for _, k := range asks {
+		if _, done := answers[k.ID]; !done && !k.expired(now) {
 			open = append(open, k)
 		}
 	}
@@ -172,8 +176,9 @@ func (t *liveThread) rootMessage(now time.Time, refs map[string]refState) (strin
 	return text, c.rootBlocks(t.view(t.Root, now, refs))
 }
 
-func (t *liveThread) replyMessage(now time.Time, refs map[string]refState) (string, []slack.Block) {
-	return t.Reply.Card.text(), t.Reply.Card.replyBlocks(t.view(t.Reply, now, refs))
+func (t *liveThread) replyMessage(m *liveMessage, now time.Time, refs map[string]refState) (string, []slack.Block) {
+	v := t.view(m, now, refs)
+	return m.Card.replyText(v), m.Card.replyBlocks(v)
 }
 
 func (m *liveMessage) cites(keys map[string]bool) bool {
@@ -614,7 +619,7 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 		if t.Reply == nil {
 			return
 		}
-		text, blocks := t.replyMessage(now, l.refs)
+		text, blocks := t.replyMessage(t.Reply, now, l.refs)
 		if err := l.update(ctx, api, t, &t.Reply, text, blocks); err != nil {
 			errs = append(errs, err)
 		} else if t.Reply != nil {
@@ -626,7 +631,7 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 			if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
 				continue
 			}
-			text, blocks := m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs))
+			text, blocks := t.replyMessage(m, now, l.refs)
 			if err := l.update(ctx, api, t, &m, text, blocks); err != nil {
 				errs = append(errs, err)
 			} else if m == nil {
@@ -655,7 +660,11 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 func (l *liveCards) update(ctx context.Context, api slackAPI, t *liveThread, m **liveMessage, text string, blocks []slack.Block) error {
 	ctx, cancel := context.WithTimeout(ctx, liveUpdateTimeout)
 	defer cancel()
-	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks, (*m).Card.entities()...)
+	var entities []slack.MsgOption
+	if (*m).Tapped == "" {
+		entities = (*m).Card.entities()
+	}
+	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks, entities...)
 	if err != nil && goneCardCodes[errorCode(err)] {
 		l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, (*m).TS, errorCode(err))
 		*m = nil
@@ -986,6 +995,6 @@ func (l *liveCards) drawTappedPRCard(ctx context.Context, api slackAPI, t *liveT
 }
 
 func (l *liveCards) drawPRCard(ctx context.Context, api slackAPI, t *liveThread, i int, now time.Time) error {
-	m := t.PRCards[i]
-	return l.update(ctx, api, t, &t.PRCards[i], m.Card.text(), m.Card.replyBlocks(t.view(m, now, l.refs)))
+	text, blocks := t.replyMessage(t.PRCards[i], now, l.refs)
+	return l.update(ctx, api, t, &t.PRCards[i], text, blocks)
 }

@@ -313,7 +313,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 		}
 	}
 	bare := cardPR{URL: pr.URL}
-	if err := checkBlocks(bare.blocks(view())); err != nil {
+	if err := checkBlocks(bare.blocks(view(), false)); err != nil {
 		t.Fatalf("a PR with no lines at all draws a block Slack refuses: %v", err)
 	}
 }
@@ -448,7 +448,7 @@ func TestOptionsWithWordsToReadListOnceEachWithItsOwnButton(t *testing.T) {
 			t.Fatalf("answered row %q still offers its button", row.Text.Text)
 		}
 	}
-	stripped := tappedBlocks(blocks, cardActionsBlock, "✓ picked")
+	_, stripped := settledMessage(blocks, "✓ picked")
 	if strings.Contains(blocksJSON(t, stripped), cardWaitAction) {
 		t.Fatalf("a card outside the live store keeps its pick buttons after a tap: %s", blocksJSON(t, stripped))
 	}

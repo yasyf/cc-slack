@@ -604,7 +604,7 @@ func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
 	}
 }
 
-func TestAnAnsweredCardKeepsItsAnswerUnderTheWordsItsRowHasNow(t *testing.T) {
+func TestAnAnsweredCardKeepsItsAnswerUnderTheTitleItsRowHasNow(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
@@ -622,15 +622,15 @@ func TestAnAnsweredCardKeepsItsAnswerUnderTheWordsItsRowHasNow(t *testing.T) {
 	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
 
 	edits := editsOf(l.slack.edited(), card.ts)
-	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "it landed on dev") || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
-		t.Fatalf("card edits = %v, want the landed words with his answer kept", edits)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "#41 at e718a74") || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
+		t.Fatalf("card edits = %v, want the landed title with his answer kept", edits)
 	}
-	if last := edits[len(edits)-1]; strings.Contains(last, "your approval") || strings.Contains(last, cardNoLongerWaits) {
-		t.Fatalf("last edit = %s, want neither the old blocker nor the no-longer-waits line", last)
+	if last := edits[len(edits)-1]; strings.Contains(last, "your approval") || strings.Contains(last, "it landed on dev") || strings.Contains(last, cardNoLongerWaits) {
+		t.Fatalf("last edit = %s, want neither the body nor the no-longer-waits line", last)
 	}
 }
 
-func TestACardNobodyAnsweredGivesUpItsButtonsUnderItsRowsWords(t *testing.T) {
+func TestACardNobodyAnsweredGivesUpItsButtonsUnderItsRowsTitle(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
@@ -651,8 +651,9 @@ func TestACardNobodyAnsweredGivesUpItsButtonsUnderItsRowsWords(t *testing.T) {
 	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
 
 	edits := editsOf(l.slack.edited(), card.ts)
-	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "CI is red at this head") || !strings.Contains(edits[len(edits)-1], cardNoLongerWaits) {
-		t.Fatalf("card edits = %v, want the row's words and its buttons gone", edits)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "#41 at e718a74") || !strings.Contains(edits[len(edits)-1], cardNoLongerWaits) ||
+		strings.Contains(edits[len(edits)-1], cardWaitAction) || strings.Contains(edits[len(edits)-1], "CI is red at this head") {
+		t.Fatalf("card edits = %v, want the row's title with its body and buttons gone", edits)
 	}
 }
 

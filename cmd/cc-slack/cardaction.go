@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -23,7 +24,10 @@ const (
 	eventAction         = "slack.action"
 )
 
-var permissionCard = regexp.MustCompile(`^slack:([A-Z0-9]+):(\d+\.\d+)?:[0-9a-f]{12}$`)
+var (
+	permissionCard = regexp.MustCompile(`^slack:([A-Z0-9]+):(\d+\.\d+)?:[0-9a-f]{12}$`)
+	headerEmoji    = regexp.MustCompile(`^:[a-z0-9_+-]+:\s*`)
+)
 
 type cardActionPush struct {
 	User      string `json:"user"`
@@ -478,6 +482,9 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	if w.withdrawn {
 		line := "*Withdrawn:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
+		if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
+			line += " · " + slackLink(w.via, "what replaced it")
+		}
 		if err := p.markOption(ctx, id, w.card, line); err != nil {
 			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 			return cardAnswerResult{}, err
@@ -669,13 +676,36 @@ func (p *poller) confirmTap(ctx context.Context, id identity, r cardRef, blockID
 		if m.Timestamp != r.ts {
 			continue
 		}
-		blocks := tappedBlocks(m.Blocks.BlockSet, blockID, line)
+		text, blocks := m.Text, tappedBlocks(m.Blocks.BlockSet, blockID, line)
+		if blockID == cardActionsBlock {
+			text, blocks = settledMessage(m.Blocks.BlockSet, line)
+		}
 		if blocks == nil {
 			return nil
 		}
-		return updateMessage(ctx, api, r.channel, r.ts, m.Text, blocks)
+		return updateMessage(ctx, api, r.channel, r.ts, text, blocks)
 	}
 	return fmt.Errorf("card %s is gone from its thread", r.ts)
+}
+
+func settledMessage(blocks []slack.Block, line string) (string, []slack.Block) {
+	if !slices.ContainsFunc(blocks, func(b slack.Block) bool { return b.ID() == cardActionsBlock }) {
+		return "", nil
+	}
+	title := ""
+	settled := make([]slack.Block, 0, len(blocks))
+	for _, block := range blocks {
+		switch b := block.(type) {
+		case *slack.HeaderBlock:
+			title = cmp.Or(headerEmoji.ReplaceAllString(b.Text.Text, ""), b.Text.Text)
+			settled = append(settled, header(title))
+		case *slack.SectionBlock:
+			if strings.HasPrefix(b.BlockID, cardAskBlock) && b.Accessory != nil {
+				settled = append(settled, b)
+			}
+		}
+	}
+	return settledText(title, line), append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, line))
 }
 
 func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
@@ -684,9 +714,6 @@ func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {
 	for _, b := range blocks {
 		if blockID != cardWaitBlock && strings.HasSuffix(b.ID(), cardWaitBlock) {
 			continue
-		}
-		if row, ok := b.(*slack.SectionBlock); ok && blockID == cardActionsBlock && strings.HasPrefix(row.BlockID, cardOptionBlock) {
-			row.Accessory = nil
 		}
 		if b.ID() != blockID {
 			out = append(out, b)

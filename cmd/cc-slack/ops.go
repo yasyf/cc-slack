@@ -763,7 +763,7 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
-		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, b.Text)
+		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 		return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
 	})
 }
@@ -1917,7 +1917,7 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 }
 
 func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
-	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
+	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
 		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
@@ -2019,7 +2019,7 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	label := b.Label
 	if b.Other || b.Withdrawn {
-		label = strings.TrimSpace(label)
+		label = strings.TrimSpace(withoutHidden(label))
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
@@ -2182,7 +2182,7 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
 	placed := t.Reply
-	text, blocks := t.replyMessage(a.now(), a.cards.refs)
+	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.refs)
 	write := func(do func() error) error {
 		if !placed.Card.hostsFiles() {
 			return do()
