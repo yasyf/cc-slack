@@ -937,6 +937,26 @@ func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
 	return refID{}, false
 }
 
+func (l *liveCards) prRow(channel, thread, row string) (refID, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return refID{}, false
+	}
+	for _, m := range t.messages() {
+		if m == nil {
+			continue
+		}
+		for _, r := range m.Card.Rows {
+			if r.ID == row && r.PRCard {
+				return parseRef(r.PR.URL)
+			}
+		}
+	}
+	return refID{}, false
+}
+
 func (l *liveCards) drawPRCards(ctx context.Context, api slackAPI, t *liveThread, changed map[string]bool, now time.Time) bool {
 	drawn := false
 	for i, m := range t.PRCards {

@@ -65,6 +65,7 @@ const (
 	cardMaxFieldLen   = 2000
 	cardMaxPRs        = 10
 	cardMaxPRRows     = 8
+	cardGroupChrome   = 3
 	cardMaxNameLen    = 80
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
@@ -142,6 +143,7 @@ type cardRow struct {
 	Text    string   `json:"text"`
 	Buttons []string `json:"buttons"`
 	PR      *cardPR  `json:"pr,omitempty"`
+	PRCard  bool     `json:"pr_card,omitempty"`
 }
 
 type cardPR struct {
@@ -514,8 +516,11 @@ func (c statusCard) checkRows(rootOnly bool) error {
 	case len(c.Rows) > cardMaxRows:
 		return fmt.Errorf("group card carries %d rows, at most %d", len(c.Rows), cardMaxRows)
 	}
-	if slices.ContainsFunc(c.Rows, func(r cardRow) bool { return r.PR != nil }) && len(c.Rows) > cardMaxPRRows {
-		return fmt.Errorf("group card carries %d PR rows, at most %d", len(c.Rows), cardMaxPRRows)
+	if slices.ContainsFunc(c.Rows, func(r cardRow) bool { return r.PR != nil }) && len(c.Rows) > cardMaxPRRows && c.rowChars() > cardMaxVisible {
+		return fmt.Errorf("group card carries %d PR rows of %d characters: at most %d rows, or more whose words stay within %d", len(c.Rows), c.rowChars(), cardMaxPRRows, cardMaxVisible)
+	}
+	if c.rowBlocks() > cardMaxBlocks {
+		return fmt.Errorf("group card draws %d blocks, past Slack's %d", c.rowBlocks(), cardMaxBlocks)
 	}
 	ids := map[string]bool{}
 	for _, r := range c.Rows {
@@ -530,12 +535,34 @@ func (c statusCard) checkRows(rootOnly bool) error {
 	return nil
 }
 
+func (c statusCard) rowChars() int {
+	chars := 0
+	for _, r := range c.Rows {
+		chars += runes(r.Text)
+		if r.PR != nil {
+			chars += runes(r.PR.markdown(cardView{}, "\n"))
+		}
+	}
+	return chars
+}
+
+func (c statusCard) rowBlocks() int {
+	blocks := cardGroupChrome
+	for _, r := range c.Rows {
+		blocks += len(r.blocks(cardView{}))
+	}
+	return blocks
+}
+
 func (r cardRow) check() error {
 	if !askIDPattern.MatchString(r.ID) {
 		return fmt.Errorf("card row id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", r.ID)
 	}
 	if strings.TrimSpace(r.Text) == "" && r.PR == nil {
 		return fmt.Errorf("card row %q needs a PR or text", r.ID)
+	}
+	if r.PRCard && r.PR == nil {
+		return fmt.Errorf("card row %q answers as a PR card, so it needs a PR", r.ID)
 	}
 	if r.PR != nil {
 		if err := r.PR.check(); err != nil {
