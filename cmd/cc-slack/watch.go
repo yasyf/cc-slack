@@ -212,13 +212,17 @@ func fitted(data string) (string, error) {
 		return string(encoded), nil
 	}
 	line[cutField] = true
-	if watches, ok := line[field].([]any); ok {
-		return withoutLastWatches(line, field, watches)
+	switch words := line[field].(type) {
+	case []any:
+		return withoutLastWatches(line, field, words)
+	case string:
+		said := []rune(words)
+		line[field] = string(said[:max(0, len(said)-(len(encoded)+len(`,"cut":true`)-monitorEvent))])
+		encoded, err := json.Marshal(line)
+		return string(encoded), err
+	default:
+		return "", fmt.Errorf("fit watch line %q: %s is %T", data, field, words)
 	}
-	words := []rune(line[field].(string))
-	line[field] = string(words[:max(0, len(words)-(len(encoded)+len(`,"cut":true`)-monitorEvent))])
-	encoded, err := json.Marshal(line)
-	return string(encoded), err
 }
 
 func withoutLastWatches(line map[string]any, field string, watches []any) (string, error) {
