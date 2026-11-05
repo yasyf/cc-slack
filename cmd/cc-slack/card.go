@@ -68,6 +68,7 @@ const (
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
 	cardMaxDetailLen  = 200
+	cardMaxPreview    = 100
 	cardMaxNoteLen    = 300
 	cardMaxSectionLen = 3000
 	cardMaxSteps      = 1000
@@ -94,6 +95,7 @@ var (
 	askIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 	mrkdwnEscapes   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "¦")
 	cardWordEscapes = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	previewMarks    = strings.NewReplacer("*", "", "`", "", "•", "")
 	slackToken      = regexp.MustCompile(`<[^<>\s][^<>]*>`)
 	cardJargon      = []struct {
 		pattern *regexp.Regexp
@@ -338,8 +340,8 @@ func (p cardPR) check() error {
 	return nil
 }
 
-func (p cardPR) fields() []cardFact {
-	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}, {"Blocks landing", p.Blocks}}
+func (p cardPR) previewed() []cardFact {
+	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}}
 }
 
 func (c statusCard) checkReplaces() error {
@@ -1094,11 +1096,14 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 	if p.Review != "" {
 		line += "\n" + plainMrkdwn(p.Review)
 	}
-	facts := make([]string, 0, len(p.fields()))
-	for _, f := range p.fields() {
-		if strings.TrimSpace(f.Value) != "" {
-			facts = append(facts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
+	facts := make([]string, 0, len(p.previewed())+1)
+	for _, f := range p.previewed() {
+		if shown, _ := preview(f.Value); shown != "" {
+			facts = append(facts, "*"+f.Label+"*\n"+shown)
 		}
+	}
+	if strings.TrimSpace(p.Blocks) != "" {
+		facts = append(facts, "*Blocks landing*\n"+plainMrkdwn(p.Blocks))
 	}
 	parts := []string{line}
 	if len(facts) > 0 {
@@ -1108,12 +1113,29 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 }
 
 func (p cardPR) folded() [][]slack.Block {
-	description := prDescription(p.Description)
-	if description == "" {
+	id, _ := parseRef(p.URL)
+	var parts []string
+	for _, f := range p.previewed() {
+		if _, clipped := preview(f.Value); clipped {
+			parts = append(parts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
+		}
+	}
+	if description := prDescription(p.Description); description != "" {
+		parts = append(parts, description)
+	}
+	if len(parts) == 0 {
 		return nil
 	}
-	id, _ := parseRef(p.URL)
-	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, its description", id.Repo, id.Number)), description), cardMaxPageBlock, cardMaxVisible, true)
+	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, the whole change", id.Repo, id.Number)), strings.Join(parts, "\n\n")), cardMaxPageBlock, cardMaxVisible, true)
+}
+
+func preview(text string) (string, bool) {
+	flat := previewMarks.Replace(mdBullet.ReplaceAllString(mdLink.ReplaceAllString(text, "$1"), ""))
+	flat = strings.Join(strings.Fields(flat), " ")
+	if runes(flat) <= cardMaxPreview {
+		return cardWordEscapes.Replace(flat), false
+	}
+	return cardWordEscapes.Replace(strings.TrimRight(sectionCut([]rune(flat), cardMaxPreview-1), " .,;:")) + "…", true
 }
 
 func plainMrkdwn(text string) string {

@@ -210,6 +210,45 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 }
 
+func TestAPRCardPreviewsItsLongLinesAndKeepsThemWholeBehindExplainMore(t *testing.T) {
+	pr := fullPR(7)
+	pr.Change = "Chats open faster. " + strings.Repeat("Another sentence about the change. ", 5)
+	pr.Risk = "- **Threat model:** none at all\n- **Availability:** a `stale` read for a minute, " + strings.Repeat("and then it clears. ", 8)
+	pr.Blocks = strings.Repeat("A named reviewer. ", 10)
+	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
+	blocks, fold := card.layout(view())
+	change, risk := asSection(t, blocks[2]).Text.Text, asSection(t, blocks[4]).Text.Text
+	if lead, ok := strings.CutPrefix(change, "*What changes*\n"); !ok || runes(lead) > cardMaxPreview || !strings.HasSuffix(lead, "…") {
+		t.Errorf("change = %q, want a preview of at most %d characters that says it goes on", change, cardMaxPreview)
+	}
+	if lead, ok := strings.CutPrefix(risk, "*Risk*\n"); !ok || runes(lead) > cardMaxPreview || !strings.HasPrefix(lead, "Threat model: none at all Availability:") {
+		t.Errorf("risk = %q, want every bullet's start flattened with its marks gone", risk)
+	}
+	if got := asSection(t, blocks[3]).Text.Text; got != "*Against the plan*\nNothing differed" {
+		t.Errorf("plan = %q, want a short line whole with no ellipsis", got)
+	}
+	if got := asSection(t, blocks[5]).Text.Text; !strings.Contains(got, pr.Blocks[:len(pr.Blocks)-1]) {
+		t.Errorf("blocks line = %q, want what blocks landing whole", got)
+	}
+	folded := blocksJSON(t, slices.Concat(fold...))
+	if !strings.Contains(folded, "*What changes*") || strings.Count(folded, "Another sentence about the change.") != 5 || strings.Count(folded, "and then it clears.") != 8 {
+		t.Errorf("fold %s, want each clipped line whole", folded)
+	}
+	if strings.Contains(folded, "Against the plan") {
+		t.Errorf("fold %s, want no line the card already shows whole", folded)
+	}
+}
+
+func TestAPreviewNeverCutsAWordOrAnEntity(t *testing.T) {
+	shown, clipped := preview(strings.Repeat("x", 90) + " a <b> & more words that run on past the limit of a preview")
+	if !clipped || strings.Contains(shown, "x…") || strings.HasSuffix(strings.TrimSuffix(shown, "…"), "&") || strings.Contains(shown, " <") {
+		t.Fatalf("preview = %q, want a cut on a word boundary with its marks escaped", shown)
+	}
+	if shown, clipped := preview("  "); shown != "" || clipped {
+		t.Fatalf("preview of blanks = %q, %v", shown, clipped)
+	}
+}
+
 func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -318,7 +357,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	}
 }
 
-func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
+func TestAnOverLongHintPostsWholeAndAnOverLongLineWaitsWholeBehindExplainMore(t *testing.T) {
 	pr := fullPR(7)
 	pr.Risk = strings.Repeat("A risk worth a long explanation. ", 100)
 	long := []string{"Keep it", "Drop it"}
@@ -326,13 +365,18 @@ func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
 	if err := card.check(bodyAt, false, ""); err != nil {
 		t.Fatalf("check = %v, want the card to post", err)
 	}
-	blocks := card.replyBlocks(view())
+	blocks, fold := card.layout(view())
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatal(err)
 	}
-	got := blocksJSON(t, blocks)
-	if strings.Count(got, "A risk worth") != 100 || strings.Count(got, "A reason to drop") != 200 {
-		t.Fatalf("a line or hint was cut: %d of 100, %d of 200", strings.Count(got, "A risk worth"), strings.Count(got, "A reason to drop"))
+	for _, page := range fold {
+		if err := checkBlocks(page); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hints, risks := strings.Count(blocksJSON(t, blocks), "A reason to drop"), strings.Count(blocksJSON(t, slices.Concat(fold...)), "A risk worth")
+	if hints != 200 || risks != 100 {
+		t.Fatalf("a hint or line was lost: %d of 200 hints on the card, %d of 100 risks behind Explain more", hints, risks)
 	}
 }
 
