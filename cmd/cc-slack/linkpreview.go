@@ -45,6 +45,10 @@ type ledgerRow struct {
 
 func (r ledgerRow) ready() bool { return r.ReadyForTap && r.State == rowOpen }
 
+func (r ledgerRow) approvable() bool {
+	return r.State == rowOpen && (r.Hold == "" || r.Hold == rowNone)
+}
+
 func (r ledgerRow) standing() string {
 	switch {
 	case r.State == rowLanded:
@@ -111,7 +115,7 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 		if !ok {
 			continue
 		}
-		if row.ready() && len(id.Config.PRLinks.CardCommand) > 0 {
+		if row.approvable() && len(id.Config.PRLinks.CardCommand) > 0 {
 			ready = append(ready, prURL(pr))
 			drawn[pr.key()] = true
 			continue
