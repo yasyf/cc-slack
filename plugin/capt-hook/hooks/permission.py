@@ -44,6 +44,8 @@ GRANT_LABEL = "slack-grant:"
 EVERY_THREAD = "/threads"
 REVOKE_LABEL = "slack-revoke:"
 NO_STORE = "open git repository"
+SCOPE = "recorded-scope"
+SCOPE_LINE = "Answer {answer} is recorded as a grant for this channel's top level. It covers a thread only where its own words say threads or replies."
 ROOM_OPENED = re.compile(r"Incident opened:\W*<#(C[A-Z0-9]+)")
 ROOM_PAGES = "10"
 AGENT_POSTER = re.compile(r" \([^()]+\)$")
@@ -287,9 +289,10 @@ class Judged(CustomTicketCondition):
 
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         try:
-            return self.judge.evidence(ctx)
+            found = self.judge.evidence(ctx)
         except Undecided as exc:
             raise TimeoutError(exc.cause) from exc
+        return [item for item in found or () if item.source != SCOPE] or None
 
 
 def answers_naming(evt: BaseHookEvent, term: str) -> list[dict[str, Any]]:
@@ -403,8 +406,10 @@ class RecordedWords(CustomTicketCondition):
         found = standing_of(ctx)
         if found.answer is not None and not found.grants:
             return None
-        channel = ctx.place["channel"]
-        return [ruling_evidence(answer) for answer in live_answers(ctx, channel) if recorded_for(answer, channel)] or None
+        channel, thread = ctx.place["channel"], ctx.place["thread"]
+        answers = [answer for answer in live_answers(ctx, channel) if recorded_for(answer, channel)]
+        scopes = [Evidence(id=f"scope-{answer['id'][:7]}", source=SCOPE, quote="", detail=SCOPE_LINE.format(answer=f"ccn:{answer['id'][:7]}")) for answer in answers if thread and standing(answer, channel, "") and standing(answer, channel, thread) is None]
+        return [*map(ruling_evidence, answers), *scopes] or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -566,7 +571,7 @@ SLACK = Tickets(
         Rule("user-linked", Unspent(UserSaid(Linked()))),
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
-        Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
+        Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS, tool_results=True))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -1170,6 +1175,8 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT), decide=LABELED_GRANT_PERMITS) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(PAGE_GRANT)) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(LABELED_GRANT) | PAGE_REPLY_READ, decide=jev(f"scope-{LABELED_GRANT['id'][:7]}")) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(LABELED_GRANT) | PAGE_REPLY_READ, decide=LABELED_GRANT_PERMITS) >> ALLOW,
             case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ | {f"{CC_SLACK} channel-info --channel {FOLLOWERS}": (1, "timed out")}, decide=PAGE_GRANT_PERMITS) >> Rewrite(pattern="--ticket-agent main"),
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM)) >> ALLOW,
