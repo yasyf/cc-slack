@@ -136,6 +136,7 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 		threads: map[string]*liveThread{},
 		refs:    map[string]refState{},
 		hosts:   map[string]*refHost{},
+		drawing: map[string]*sync.Mutex{},
 	}
 }
 

@@ -167,10 +167,13 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 			if err := json.Unmarshal(push.EventPayload, &action); err != nil {
 				return fmt.Errorf("decode card action %q: %w", clip(string(frame)), err)
 			}
-			if err := p.cardAction(ctx, id, action); err != nil {
-				return err
-			}
-			r.nudged(action.Seq)
+			p.taps.run(action.Channel+"/"+action.MessageTS, func() {
+				if err := p.cardAction(context.WithoutCancel(ctx), id, action); err != nil {
+					p.log.Printf("card action %s on %s: %v", action.ActionID, action.MessageTS, err)
+					return
+				}
+				r.nudged(action.Seq)
+			})
 			return nil
 		}
 		h.log.Printf("socket frame: ignoring event_type %q", push.EventType)

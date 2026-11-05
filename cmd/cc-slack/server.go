@@ -72,6 +72,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		threads: map[string]*liveThread{},
 		refs:    map[string]refState{},
 		hosts:   map[string]*refHost{},
+		drawing: map[string]*sync.Mutex{},
 	}
 	p := &poller{
 		newAPI:    newAPI,
@@ -82,6 +83,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		replay:    replay,
 		shortcuts: shortcuts,
 		cards:     cards,
+		taps:      tapQueue{queued: map[string][]func(){}},
 		wakeCh:    make(chan struct{}, 1),
 		paused:    map[string]time.Time{},
 		pending:   map[cursorKey]uint64{},
