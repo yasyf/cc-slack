@@ -25,6 +25,7 @@ const (
 	cardAskBlock      = "card-ask-"
 	cardWaitBlock     = "card-wait"
 	cardTappedBlock   = "card-tapped-"
+	cardTapNoteBlock  = cardTappedBlock + "note"
 	cardRowBlock      = "card-row-"
 	cardOptionBlock   = "card-option-"
 	cardFoldBlock     = "card-fold"
