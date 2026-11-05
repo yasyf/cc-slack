@@ -131,6 +131,41 @@ func TestATapWhoseEditFailsSaysSoInTheThread(t *testing.T) {
 	}
 }
 
+func TestATapOnACopyThisDaemonDidNotPostRedrawsThatCopyAnswered(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	l.do(opCardCopy, map[string]any{"url": c.id.permalink(c.id.DMChannelID, c.ts, c.thread), "thread_ts": c.thread})
+	post := lastPost(l)
+	buttons := copiedButtonsOf(t, post)
+	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {
+		return strings.HasPrefix(b.ActionID, cardCopyAction) && strings.HasSuffix(b.ActionID, ":merge")
+	})
+	if at < 0 {
+		t.Fatalf("buttons = %+v, want the copy's Merge", buttons)
+	}
+	l.app.cards.mu.Lock()
+	for _, thread := range l.app.cards.threads {
+		thread.Copies = nil
+	}
+	l.app.cards.mu.Unlock()
+	sent := len(l.slack.sent())
+
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: post.ts, ThreadTS: c.thread,
+		ActionID: buttons[at].ActionID, Value: buttons[at].Value, ActionTS: "1800000100.000000", Seq: "001800000100000-abcd0124"})
+
+	edits := editsOf(l.slack.edited(), post.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge*") || strings.Contains(edits[len(edits)-1], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want it answered with its buttons gone", edits)
+	}
+	if got := l.slack.sent()[sent:]; slices.ContainsFunc(got, func(p fakePost) bool { return strings.Contains(p.text, "did not change this message") }) {
+		t.Fatalf("posted %+v, want no warning under a copy that now shows the answer", got)
+	}
+	if !l.app.cards.hasCopy(c.id.DMChannelID, c.thread, liveCardCopy{Card: c.ts}) {
+		t.Fatal("the copy is not remembered, so a later redraw of the card misses it")
+	}
+}
+
 func TestARowShowsItsPickBeforeTheBoardAnswers(t *testing.T) {
 	failingPresent(t, "the board is slow and then says no")
 	l := startDaemon(t)

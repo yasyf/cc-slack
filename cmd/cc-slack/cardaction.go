@@ -500,10 +500,24 @@ func (p *poller) readBack(ctx context.Context, id identity, tapped, card cardAct
 	if tapShows(post, tapped.ActionID, slackTime(tapped.ActionTS)) {
 		return
 	}
+	if ans, done := p.cards.answer(card.Channel, card.ThreadTS, k.ID); k.ID != "" && done && post.Text == cardCopyLead {
+		p.answerCopy(ctx, id, api, card.ref(), r, post, ans)
+		return
+	}
 	line := p.unshownTap(card, k, tapErr)
 	p.log.Printf("card %s/%s: tap read back unchanged: %s", r.thread, r.ts, line)
 	if _, _, err := api.PostMessageContext(ctx, r.channel, id.postOptions(line, r.thread)...); err != nil {
 		p.log.Printf("card %s/%s: its unchanged tap is not reported in the thread: %v", r.thread, r.ts, err)
+	}
+}
+
+func (p *poller) answerCopy(ctx context.Context, id identity, api slackAPI, card, copied cardRef, post slack.Message, ans askAnswer) {
+	if !p.cards.hasCopy(copied.channel, copied.thread, liveCardCopy{Card: card.ts}) {
+		p.cards.rememberCopy(copied.channel, copied.thread, liveCardCopy{Card: card.ts, TS: copied.ts}, p.now())
+	}
+	line := "✓ *" + mrkdwnEscapes.Replace(clipRunes(ans.Label, cardMaxDetailLen)) + "* · answered " + clock(ans.At, p.now())
+	if err := markCopy(ctx, api, id, card, copied, post, line); err != nil {
+		p.log.Printf("card copy %s stays as drawn after its answer: %v", copied.ts, err)
 	}
 }
 

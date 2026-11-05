@@ -208,9 +208,14 @@ func (p *poller) markCopies(ctx context.Context, id identity, card cardRef, line
 			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 			continue
 		}
-		answered := mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))
-		if _, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(post.Blocks.BlockSet[0], answered), slack.MsgOptionAttachments([]slack.Attachment{}...)); err != nil {
+		if err := markCopy(ctx, api, id, card, copied, post, line); err != nil {
 			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 		}
 	}
+}
+
+func markCopy(ctx context.Context, api slackAPI, id identity, card, copied cardRef, post slack.Message, line string) error {
+	answered := mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))
+	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(post.Blocks.BlockSet[0], answered), slack.MsgOptionAttachments([]slack.Attachment{}...))
+	return err
 }
