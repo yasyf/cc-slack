@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -229,7 +230,40 @@ func (p workObjectPoster) Do(req *http.Request) (*http.Response, error) {
 	}
 	posted.Header.Set("Content-Type", "application/json; charset=utf-8")
 	posted.Header.Set("Authorization", "Bearer "+p.token)
-	return p.next.Do(posted) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	answer, err := p.next.Do(posted) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return nil, err
+	}
+	said, err := io.ReadAll(answer.Body)
+	if err != nil {
+		return nil, err
+	}
+	answer.Body = io.NopCloser(bytes.NewReader(said))
+	log.Printf("work object %s %s: %s", path.Base(req.URL.Path), body["channel"], workObjectEcho(said)) //nolint:gosec // G706: the line carries Slack's own answer, for the daemon log only
+	return answer, nil
+}
+
+func workObjectEcho(said []byte) string {
+	var echo struct {
+		OK       bool   `json:"ok"`
+		Error    string `json:"error"`
+		Warning  string `json:"warning"`
+		Metadata struct {
+			Warnings []string `json:"warnings"`
+			Messages []string `json:"messages"`
+		} `json:"response_metadata"`
+		Message struct {
+			Attachments []struct {
+				FromURL string `json:"from_url"`
+			} `json:"attachments"`
+			Metadata json.RawMessage `json:"metadata"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(said, &echo); err != nil {
+		return "unreadable answer: " + err.Error()
+	}
+	return fmt.Sprintf("ok=%t error=%q warning=%q warnings=%v messages=%v attachments=%v metadata=%s",
+		echo.OK, echo.Error, echo.Warning, echo.Metadata.Warnings, echo.Metadata.Messages, echo.Message.Attachments, echo.Message.Metadata)
 }
 
 func workObjectBody(form []byte) (map[string]any, bool, error) {

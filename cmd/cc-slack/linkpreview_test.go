@@ -712,3 +712,12 @@ func TestAPostWithNoWorkObjectStaysAForm(t *testing.T) {
 		t.Fatalf("posted %s, want slack-go's form", contentType)
 	}
 }
+
+func TestAWorkObjectAnswerNamesWhatSlackWarnedAndKept(t *testing.T) {
+	got := workObjectEcho([]byte(`{"ok":true,"response_metadata":{"warnings":["invalid_metadata"]},"message":{"attachments":[{"from_url":"https://x.example/1"}],"metadata":{"event_type":"e"}}}`))
+	for _, want := range []string{"ok=true", "invalid_metadata", "https://x.example/1", `"event_type":"e"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("echo = %q, missing %q", got, want)
+		}
+	}
+}
