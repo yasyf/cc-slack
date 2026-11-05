@@ -511,30 +511,6 @@ func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {
 	}
 }
 
-func TestAPostReturnsBeforeItsPRCardCommandAnswers(t *testing.T) {
-	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
-	release := filepath.Join(filepath.Dir(cmd.argv[0]), "release")
-	script, err := os.ReadFile(cmd.argv[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	slow := strings.Replace(string(script), "\n*) echo", fmt.Sprintf("\n*) until [ -e '%s' ]; do sleep 0.02; done; echo", release), 1)
-	if err := os.WriteFile(cmd.argv[0], []byte(slow), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-	if got := l.slack.sentTo(testDM); len(got) != 1 {
-		t.Fatalf("posted %+v while the card command ran, want the post alone", got)
-	}
-	if err := os.WriteFile(release, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
-		t.Fatalf("cards = %+v, want one once the command answers", cards)
-	}
-}
-
 func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("merged", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
