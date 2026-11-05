@@ -354,7 +354,10 @@ registration verbs are `follow --owner <agent_id>` and `unfollow`.
 
 A `<channel source="cc-slack" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
-from_claude, text, permalink}`. Monitor lines carry the same event data.
+from_claude, text, permalink}`. Monitor lines carry the same event data,
+each within the 500 characters a Monitor event holds: a longer line drops a
+card's `capture` and `options`, then its `question`, then the `permalink`, and
+last cuts its own words and sets `cut`. A tap's `id` is never cut.
 Top-level sessions also receive each message as an injected steering
 directive at their next tool call. Deduplicate all deliveries by
 `(channel_id, ts)` before acting, including deliveries across watches.
