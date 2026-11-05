@@ -277,7 +277,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkRollup(),
 		c.checkRows(rootOnly),
 		c.checkPRs(),
-		c.checkArtifacts(tailnet),
+		c.checkArtifacts(),
 		c.checkReplaces(),
 		c.checkSupersedes(),
 		c.checkPermissionWords(),

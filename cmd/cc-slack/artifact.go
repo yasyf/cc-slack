@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"slices"
@@ -15,27 +16,35 @@ const (
 	artifactRefType     = "link"
 	artifactProductName = "Drive dashboard"
 	artifactOpenLabel   = "Open"
-	workImageType       = "slack#/types/image"
 )
 
 type cardArtifact struct {
-	Title   string             `json:"title"`
-	Kind    string             `json:"kind"`
-	URL     string             `json:"url"`
-	Image   string             `json:"image,omitempty"`
-	Picture *slack.FileSummary `json:"picture,omitempty"`
+	Title string `json:"title"`
+	Kind  string `json:"kind"`
+	URL   string `json:"url"`
+	Image string `json:"image,omitempty"`
 }
 
-func (c statusCard) checkArtifacts(tailnet string) error {
+func (c statusCard) checkArtifacts() error {
 	if len(c.Artifacts) > cardMaxArtifacts {
 		return fmt.Errorf("card carries %d artifacts, at most %d", len(c.Artifacts), cardMaxArtifacts)
 	}
 	for _, a := range c.Artifacts {
-		if a.Title == "" || runes(a.Title) > cardMaxTitleLen || a.Kind == "" || !checkURL(a.URL, tailnet) {
-			return fmt.Errorf("card artifact %q needs a title of up to %d characters, a kind, and a url of up to %d", a.Title, cardMaxTitleLen, cardMaxURLLen)
+		if a.Title == "" || runes(a.Title) > cardMaxTitleLen || a.Kind == "" {
+			return fmt.Errorf("card artifact %q needs a title of up to %d characters and a kind", a.Title, cardMaxTitleLen)
 		}
 	}
 	return nil
+}
+
+func (c *statusCard) dropUnopenable(ctx context.Context, tailnet string) {
+	c.Artifacts = slices.DeleteFunc(c.Artifacts, func(a cardArtifact) bool {
+		if checkURL(a.URL, tailnet) {
+			return false
+		}
+		notePostWarning(ctx, fmt.Sprintf("artifact %q posted with no Work Object, since Slack opens one only from an https url, or an http url on the [links] tailnet, of up to %d characters, and %s is neither", a.Title, cardMaxURLLen, a.URL))
+		return true
+	})
 }
 
 func (a cardArtifact) entity() slack.WorkObjectEntity {
@@ -50,10 +59,6 @@ func (a cardArtifact) entity() slack.WorkObjectEntity {
 		"actions": map[string]any{"primary_actions": []map[string]any{
 			{"text": artifactOpenLabel, "action_id": cardLinkAction + "artifact", "url": a.URL},
 		}},
-	}
-	if a.Picture != nil {
-		payload["fields"] = map[string]any{"preview": map[string]any{"type": workImageType, "slack_file": map[string]any{"id": a.Picture.ID}, "alt_text": a.Title}}
-		payload["display_order"] = []string{"preview"}
 	}
 	return slack.WorkObjectEntity{
 		URL:           a.URL,
@@ -79,5 +84,5 @@ func (c statusCard) entities() []slack.MsgOption {
 }
 
 func (c statusCard) hostsFiles() bool {
-	return len(c.Images) > 0 || slices.ContainsFunc(c.Artifacts, func(a cardArtifact) bool { return a.Picture != nil })
+	return len(c.Images) > 0
 }
