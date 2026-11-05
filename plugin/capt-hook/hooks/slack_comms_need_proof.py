@@ -42,7 +42,7 @@ OUTAGE = "C0OUTAGE"
 TEAM = "C0TEAMROOM"
 SHARED = "C0NORTHWIND"
 DM = "D0DANA0001"
-CHANNELS = json.dumps({"channels": [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}, {"id": SHARED, "name": "northwind-team", "ext_shared": True}]})
+CHANNELS = {f"{CC_SLACK} channel-info --channel {channel['id']}": json.dumps(channel) for channel in [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}, {"id": SHARED, "name": "northwind-team", "ext_shared": True}]}
 
 
 def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
@@ -55,11 +55,11 @@ def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
 
 
 def in_proof_channel(write: Write) -> bool:
-    if not (out := capture([CC_SLACK, "channels", "--json"], timeout=5)):
+    if not (out := capture([CC_SLACK, "channel-info", "--channel", write.channel], timeout=5)):
         return False
     patterns = permissions().proof_channels
-    found = next((channel for channel in json.loads(out)["channels"] if channel["id"] == write.channel), None)
-    return bool(patterns and found and (found.get("ext_shared") or any(fnmatchcase(found["name"], pattern) for pattern in patterns)))
+    found = json.loads(out)
+    return bool(patterns and (found.get("ext_shared") or any(fnmatchcase(found["name"], pattern) for pattern in patterns)))
 
 
 def thread_root(write: Write) -> Message | None:
@@ -88,13 +88,13 @@ def reply(text: str, channel: str = THREAD["channel_id"], root: str | tuple[int,
         env=ENABLED,
         tool=P + "slack_reply",
         tool_input=THREAD | {"channel_id": channel, "text": text},
-        commands={f"{CC_SLACK} channels": CHANNELS, f"{CC_SLACK} thread": root},
+        commands=CHANNELS | {f"{CC_SLACK} thread": root},
         **extra,
     )
 
 
 def send(text: str, channel: str = THREAD["channel_id"]) -> Input:
-    return Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": channel, "text": text}, commands={f"{CC_SLACK} channels": CHANNELS}, decide=CONFIRMED)
+    return Input(env=ENABLED, tool=P + "slack_send", tool_input={"channel_id": channel, "text": text}, commands=CHANNELS, decide=CONFIRMED)
 
 
 @on(
@@ -147,7 +147,7 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
             env=DISABLED,
             tool=P + "slack_reply",
             tool_input=THREAD | {"channel_id": SHARED, "text": "Dana, this is fixed now."},
-            commands={f"{CC_SLACK} channels": CHANNELS},
+            commands=CHANNELS,
             decide=CONFIRMED,
         ): Allow(),
         reply("Dana, this is fixed now.", OUTAGE, root=OURS, decide=CONFIRMED): Allow(),
@@ -155,7 +155,7 @@ def comms_never_asks_for_evidence(evt: PreToolUseEvent) -> HookResult | None:
             env=ENABLED,
             tool=P + "slack_send",
             tool_input={"channel_id": OUTAGE, "text": "The upload errors are fixed."},
-            commands={f"{CC_SLACK} channels": (1, "cc-slack can't reach the daemon")},
+            commands={f"{CC_SLACK} channel-info": (1, "cc-slack can't reach the daemon")},
             decide=CONFIRMED,
         ): Allow(),
         Input(env=DISABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Dana, this is fixed now."}, decide=CONFIRMED): Allow(),

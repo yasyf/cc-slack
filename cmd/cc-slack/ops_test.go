@@ -1278,6 +1278,29 @@ func TestPersonTargetsResolveToAGroupDMWithTheOwner(t *testing.T) {
 	}
 }
 
+func TestChannelInfoReadsOneChannelOnceAndHoldsIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	want := channelInfo{ID: testChannel, Name: strings.ToLower(testChannel)}
+	read := func() channelInfo {
+		t.Helper()
+		var got channelInfo
+		if err := json.Unmarshal(l.do(opChannelInfo, map[string]string{"channel_id": testChannel}).Body, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("channel-info = %+v, want %+v", got, want)
+	}
+
+	l.slack.fail("conversations.info", slack.SlackErrorResponse{Err: "ratelimited"})
+	if got := read(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a held channel read again = %+v, want %+v", got, want)
+	}
+	l.refused(opChannelInfo, map[string]string{"channel_id": "COTHER"}, "ratelimited")
+}
+
 func TestDMPeerNamesThePersonADMReaches(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

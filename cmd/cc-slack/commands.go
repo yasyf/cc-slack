@@ -737,6 +737,24 @@ func dmPeerCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func channelInfoCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f         sessionFlags
+		channelID string
+	)
+	c := &cobra.Command{
+		Use:   "channel-info",
+		Short: "Print one Slack channel's name and earlier names, read once and held by the daemon",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opChannelInfo, map[string]any{"channel_id": channelID})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&channelID, "channel", "", "Slack channel id")
+	return c
+}
+
 func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{

@@ -41,6 +41,7 @@ const (
 	opChannels      daemon.Op = "channels"
 	opUsers         daemon.Op = "users"
 	opDMPeer        daemon.Op = "dm-peer"
+	opChannelInfo   daemon.Op = "channel-info"
 	opDMOwed        daemon.Op = "dm-owed"
 	opRedrawPRCards daemon.Op = "redraw-pr-cards"
 	opFollow        daemon.Op = "follow"
@@ -299,6 +300,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opChannels, a.handleChannels)
 	s.Register(opUsers, a.handleUsers)
 	s.Register(opDMPeer, a.handleDMPeer)
+	s.Register(opChannelInfo, a.handleChannelInfo)
 	s.Register(opDMOwed, a.handleDMOwed)
 	s.Register(opRedrawPRCards, a.handleRedrawPRCards)
 	s.Register(opFollow, a.handleFollow)
@@ -1372,6 +1374,30 @@ func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	name := a.cache.name(hc.Ctx, api, slack.Message{Msg: slack.Msg{User: peer}})
 	return ok(dmPeerResult{ChannelID: b.ChannelID, Peer: peer, PeerName: name, PeerNames: peerNames(hc.Ctx, api, peer, name), Own: b.ChannelID == id.DMChannelID})
+}
+
+func (a *app) handleChannelInfo(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if b.ChannelID == "" {
+		return fail("channel-info needs channel_id")
+	}
+	if held, found := a.channels.Load(b.ChannelID); found {
+		return ok(held)
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionRead, err))
+	}
+	c, err := a.newAPI(id.Token).GetConversationInfoContext(hc.Ctx, &slack.GetConversationInfoInput{ChannelID: b.ChannelID})
+	if err != nil {
+		return fail(fallback(actionRead, err))
+	}
+	info := channelInfo{ID: c.ID, Name: c.Name, PreviousNames: c.PreviousNames, Created: int64(c.Created), ExtShared: c.IsExtShared}
+	a.channels.Store(b.ChannelID, info)
+	return ok(info)
 }
 
 func peerNames(ctx context.Context, api slackAPI, peer, name string) []string {
