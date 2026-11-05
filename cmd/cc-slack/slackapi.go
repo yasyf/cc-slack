@@ -28,6 +28,10 @@ type slackAPI interface {
 	AddReactionContext(ctx context.Context, name string, item slack.ItemRef) error
 	RemoveReactionContext(ctx context.Context, name string, item slack.ItemRef) error
 	UpdateMessageContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error)
+	SetAssistantThreadsStatusContext(ctx context.Context, params slack.AssistantThreadsSetStatusParameters) error
+	StartStreamContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error)
+	AppendStreamContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, error)
+	StopStreamContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, error)
 	DeleteMessageContext(ctx context.Context, channelID, timestamp string) (string, string, error)
 	GetConversationRepliesContext(ctx context.Context, params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error)
 	GetConversationHistoryContext(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)

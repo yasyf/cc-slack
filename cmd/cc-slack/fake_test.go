@@ -68,6 +68,7 @@ type fakeSlack struct {
 	edits     []fakeEdit
 	deletes   []fakeEdit
 	reactions []fakeEdit
+	statuses  []slack.AssistantThreadsSetStatusParameters
 	joined    []string
 	created   []string
 	archived  []string
@@ -334,6 +335,34 @@ func sentForm(channelID string, options ...slack.MsgOption) (url.Values, error) 
 		return nil, err
 	}
 	return capture.values, nil
+}
+
+func (f *fakeSlack) SetAssistantThreadsStatusContext(_ context.Context, params slack.AssistantThreadsSetStatusParameters) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("assistant.threads.setStatus"); err != nil {
+		return err
+	}
+	f.statuses = append(f.statuses, params)
+	return nil
+}
+
+func (f *fakeSlack) StartStreamContext(_ context.Context, channelID string, _ ...slack.MsgOption) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return channelID, "1791000000.000900", f.call("chat.startStream")
+}
+
+func (f *fakeSlack) AppendStreamContext(_ context.Context, channelID, timestamp string, _ ...slack.MsgOption) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return channelID, timestamp, f.call("chat.appendStream")
+}
+
+func (f *fakeSlack) StopStreamContext(_ context.Context, channelID, timestamp string, _ ...slack.MsgOption) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return channelID, timestamp, f.call("chat.stopStream")
 }
 
 func (f *fakeSlack) AddReactionContext(_ context.Context, name string, item slack.ItemRef) error {
