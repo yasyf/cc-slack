@@ -310,7 +310,7 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 	}
 	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
-		dedup: fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
+		dedup: tapKey(a),
 	})
 	if err == nil && res.Answered && !k.Other {
 		p.answerCopies(ctx, id, a.ref(), k.Label, false, at)
@@ -332,8 +332,8 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		return nil
 	}
 	err := p.takeTap(ctx, id, card, k)
-	if errors.Is(err, errNoStatusSession) && k.ID != "" && !k.Explain && len(id.Config.PRLinks.CardCommand) > 0 {
-		err = p.handToOwner(ctx, id, a, card, k, at)
+	if errors.Is(err, errNoStatusSession) && !k.Explain {
+		err = p.handOn(ctx, id, a, card, k, at)
 	}
 	if why, dropped := droppedBecause(err); dropped {
 		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
@@ -351,29 +351,92 @@ func (p *poller) takeTap(ctx context.Context, id identity, a cardActionPush, k a
 	return p.applyTap(ctx, id, a, k)
 }
 
-func (p *poller) handToOwner(ctx context.Context, id identity, tapped, a cardActionPush, k askTap, at time.Time) error {
+func tapKey(a cardActionPush) string {
+	return fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS)
+}
+
+func (p *poller) handOn(ctx context.Context, id identity, tapped, a cardActionPush, k askTap, at time.Time) error {
 	label := mrkdwnEscapes.Replace(k.Label)
-	if won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other}); !won {
-		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
-		return nil
+	if k.ID != "" {
+		if won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other, Undelivered: tapKey(a)}); !won {
+			p.log.Printf("ask %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
+			return nil
+		}
 	}
-	p.noteTap(ctx, id, tapped.ref(), a.ref(), at, "⏳ *"+label+"* · the session that posted this card has ended, so this goes to the card's owner.")
-	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
-	if err := tellCardOwner(ctx, id.Config.PRLinks.CardCommand, unheardAnswer{
-		Card: k.ID, Label: k.Label, Question: k.Question, Other: k.Other, Permalink: permalink, At: at,
-		Key: fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
-	}); err != nil {
-		p.cards.release(a.Channel, a.ThreadTS, k.ID)
-		return fmt.Errorf("%w, and its owner was not told: %w", errNoStatusSession, err)
+	p.noteTap(ctx, id, tapped.ref(), a.ref(), at, "⏳ *"+label+"* · the session that posted this card has ended, so this goes on to whoever can act on it.")
+	heard, err := p.handOver(ctx, id, a, k, at)
+	if len(heard) == 0 {
+		if k.ID != "" {
+			p.cards.release(a.Channel, a.ThreadTS, k.ID)
+		}
+		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
 	}
-	if err := p.markAnswer(ctx, id, a.ref(), k.ID, "✓ *"+label+"* · answered "+clock(at, p.now())+" · sent to the card's owner"); err != nil {
-		p.log.Printf("waiting ask %s on %s: sent to its owner, but the card still shows its buttons: %v", k.ID, a.MessageTS, err)
+	if err != nil {
+		p.log.Printf("card action %s on %s: sent to %s, but not to every listener: %v", a.ActionID, a.MessageTS, strings.Join(heard, " and "), err)
+	}
+	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
+	if err := p.markAnswer(ctx, id, a.ref(), k.ID, "✓ *"+label+"* · answered "+clock(at, p.now())+" · sent to "+strings.Join(heard, " and ")); err != nil {
+		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)
-	if !k.Other {
+	if k.ID != "" && !k.Other {
 		p.answerCopies(ctx, id, a.ref(), k.Label, false, at)
 	}
 	return nil
+}
+
+func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) ([]string, error) {
+	var heard []string
+	var errs []error
+	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
+	switch held, err := p.tellHolder(ctx, id, a, k, permalink); {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("the session holding this DM: %w", err))
+	case held:
+		heard = append(heard, "the session holding this DM")
+	}
+	if k.ID != "" && len(id.Config.PRLinks.CardCommand) > 0 {
+		err := tellCardOwner(ctx, id.Config.PRLinks.CardCommand, unheardAnswer{
+			Card: k.ID, Label: k.Label, Question: k.Question, Other: k.Other, Permalink: permalink, At: at, Key: tapKey(a),
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("the card's owner: %w", err))
+		} else {
+			heard = append(heard, "the card's owner")
+		}
+	}
+	if len(heard) == 0 && len(errs) == 0 {
+		errs = append(errs, errors.New("no session holds this DM and no card command is set"))
+	}
+	return heard, errors.Join(errs...)
+}
+
+func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, k askTap, permalink string) (bool, error) {
+	db := p.plane.DB()
+	w, held, err := dmHolderWatch(ctx, db, a.Channel)
+	if err != nil || !held {
+		return false, err
+	}
+	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
+	line := tapLine(who, permalink, k, captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)) +
+		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
+	msg := actionPayload{
+		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
+		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, Permalink: permalink,
+	}
+	if err := p.deliver(ctx, db, w, delivery{
+		base:   eventAction,
+		origin: event.OriginHuman,
+		dedup:  tapKey(a),
+		line:   line,
+		payload: func(typ string) []byte {
+			msg.Type = typ
+			return mustJSON(msg)
+		},
+	}); err != nil {
+		return false, err
+	}
+	return true, p.owed.owe(ctx, owedReply{ThreadTS: a.ThreadTS, TS: a.ActionTS, Text: "Tapped " + k.Label + " on " + cmp.Or(k.Question, "a card"), Permalink: permalink})
 }
 
 func tellCardOwner(ctx context.Context, command []string, answer unheardAnswer) error {
@@ -492,8 +555,12 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 		return nil
 	}
 	if ans, done := p.cards.answer(a.Channel, a.ThreadTS, k.ID); k.ID != "" && done {
-		p.log.Printf("card action %s on %s: dropped: the ask was already answered", a.ActionID, a.MessageTS)
-		return p.repeatTap(ctx, id, a, k, ans)
+		if ans.Undelivered != tapKey(a) {
+			p.log.Printf("card action %s on %s: dropped: the ask was already answered", a.ActionID, a.MessageTS)
+			return p.repeatTap(ctx, id, a, k, ans)
+		}
+		p.log.Printf("card action %s on %s: its answer was recorded but never delivered, so it is delivered now", a.ActionID, a.MessageTS)
+		p.cards.release(a.Channel, a.ThreadTS, k.ID)
 	}
 	tappedAt := slackTime(a.ActionTS)
 	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
@@ -532,7 +599,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
 			origin: event.OriginHuman,
-			dedup:  fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS),
+			dedup:  tapKey(a),
 			line:   line,
 			payload: func(typ string) []byte {
 				msg.Type = typ
@@ -545,6 +612,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 			return err
 		}
 	}
+	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
 	return nil
 }
 
@@ -688,7 +756,11 @@ func (p *poller) repeatTap(ctx context.Context, id identity, a cardActionPush, k
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label, Other: w.other})
+	undelivered := w.dedup
+	if w.withdrawn || w.settled {
+		undelivered = ""
+	}
+	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: undelivered})
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
@@ -757,6 +829,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 			return cardAnswerResult{}, fmt.Errorf("waiting ask %s keeps its answer %q, but delivering it to watch %d failed: %w", w.tap.ID, w.tap.Label, watch.ID, err)
 		}
 	}
+	p.cards.answerDelivered(w.card.channel, w.card.thread, w.tap.ID)
 	if w.via == "" {
 		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
 	}
@@ -885,7 +958,7 @@ func (p *poller) tapDrawn(r cardRef, tapped time.Time, err error) error {
 func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {
 	at := slackTime(a.ActionTS)
 	if !k.expired(at) {
-		p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+		p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Undelivered: tapKey(a)})
 	}
 	line := "✓ *" + mrkdwnEscapes.Replace(k.Label) + "* · answered " + clock(at, p.now())
 	if k.expired(at) {
