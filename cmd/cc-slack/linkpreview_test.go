@@ -625,6 +625,54 @@ func TestAWorkObjectPostsAsJSONWithEventFieldsBesideItsEntities(t *testing.T) {
 	}
 }
 
+func TestAWorkObjectMessageKeepsItsBlocksAndAttachments(t *testing.T) {
+	entities := slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{readyRow(41).entity(testPR, "")}})
+	message := []slack.MsgOption{
+		slack.MsgOptionText("See it", false),
+		slack.MsgOptionBlocks(header("The card"), mrkdwn("card-body", "Its paragraph")),
+		slack.MsgOptionAttachments(slack.Attachment{Fallback: "The attachment"}),
+		entities,
+	}
+	for _, tc := range []struct {
+		method string
+		send   func(api slackAPI) error
+	}{
+		{"/chat.postMessage", func(api slackAPI) error {
+			_, _, err := api.PostMessageContext(context.Background(), "D1", message...)
+			return err
+		}},
+		{"/chat.update", func(api slackAPI) error {
+			_, _, _, err := api.UpdateMessageContext(context.Background(), "D1", "1.2", message...)
+			return err
+		}},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			var got struct {
+				Blocks      []map[string]any `json:"blocks"`
+				Attachments []map[string]any `json:"attachments"`
+			}
+			var path, auth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path, auth = r.URL.Path, r.Header.Get("Authorization")
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Errorf("decode: %v", err)
+				}
+				_, _ = w.Write([]byte(`{"ok":true,"channel":"D1","ts":"1.2"}`))
+			}))
+			defer srv.Close()
+			if err := tc.send(newSlackClient("xoxb-test", srv.URL+"/", srv.Client())); err != nil {
+				t.Fatal(err)
+			}
+			if path != tc.method || auth != "Bearer xoxb-test" {
+				t.Fatalf("posted to %s with auth %q", path, auth)
+			}
+			if len(got.Blocks) != 2 || got.Blocks[0]["type"] != "header" || len(got.Attachments) != 1 {
+				t.Fatalf("blocks = %v, attachments = %v, want the card's two blocks and its attachment", got.Blocks, got.Attachments)
+			}
+		})
+	}
+}
+
 func TestAPostWithNoWorkObjectStaysAForm(t *testing.T) {
 	var contentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

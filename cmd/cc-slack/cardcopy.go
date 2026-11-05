@@ -79,7 +79,10 @@ func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link 
 			buttons = append(buttons, copiedButtons(b, ref)...)
 		}
 	}
-	if title == "" || len(rows)+len(buttons) == 0 {
+	if title == "" {
+		return slack.Attachment{}, errors.New("that message drew as text, with no card to copy")
+	}
+	if len(rows)+len(buttons) == 0 {
 		return slack.Attachment{}, errors.New("that card has no answer left to tap")
 	}
 	open := button(cardCopyOpen, "Open the card")
