@@ -535,6 +535,23 @@ func TestTheLinkLineUnderACardAlwaysNamesItsPRs(t *testing.T) {
 	}
 }
 
+func TestACardOnTheRowsHostOpensGitHubFromItsButtonAndItsLine(t *testing.T) {
+	row := readyRow(41)
+	row.CardURL = "https://cards.example.com/pr/41"
+	entity := row.entity(testPR, "")
+	if entity.URL != row.CardURL {
+		t.Fatalf("entity url = %q, want the row's card host %q", entity.URL, row.CardURL)
+	}
+	actions, _ := entity.EntityPayload["actions"].(map[string]any)
+	primary, _ := actions["primary_actions"].([]map[string]any)
+	if got := primary[0]["url"]; got != testPR {
+		t.Fatalf("button opens %v, want GitHub %q", got, testPR)
+	}
+	if got, want := linkPreviewsText([]slack.WorkObjectEntity{entity}), linkPreviewsLead+"\n<"+testPR+"|#41 api: fix chat list 41>"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
 func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Land it?", Body: "Fixed.\n" + testPR, Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w1"}})
