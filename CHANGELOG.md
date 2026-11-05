@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A Bash command that writes a `--text-file` and sends it in the same call is refused with that cause and the fix: write the file in its own call, then send. The permission check reads the file before the command runs, so it judged whatever the file held before, and refused a permitted reply as "No permission covers this Slack write".
 - A withdrawn card keeps its whole reason, up to 2,500 characters, where it used to cut it at 200 mid-sentence.
-- A post at the root of your DM that names PRs waiting on your tap now puts each PR's tap card in its own thread, as the card's link on its own line, so Slack previews it. Before, the cards sat elsewhere at the DM root with nothing in the post's thread, and a PR whose tap card was a pick card got no copy beside a threaded post either. Each card is linked once per thread, also when the same keyed card is sent again in place.
+- A status card at the root of your DM that names PRs waiting on your tap now carries each PR's tap card inside itself, with Approve and Hold, so you tap them in the message you were sent. A tap there answers the PR's own card, and either one shows the answer. Before, the post's thread held only a link to the card, and Slack's preview of that link draws buttons that do nothing. A text post at the DM root gets a working copy of the card in its thread instead of that link. `dm-status` now waits for the cards, reads the status card back from Slack, and its warning starts with NO APPROVE when the message holds no button to answer a card it lists or a listed PR drew no card. A status card replaced in place with `--tap-pr` carries its cards too.
 
 ### Changed
 

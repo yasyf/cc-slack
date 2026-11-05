@@ -57,6 +57,7 @@ type liveThread struct {
 	Keyed    map[string]*liveMessage `json:"keyed,omitempty"`
 	PRCards  []*liveMessage          `json:"pr_cards,omitempty"`
 	Copies   []liveCardCopy          `json:"copies,omitempty"`
+	Carries  []string                `json:"carries,omitempty"`
 	Timeline []timelineEntry         `json:"timeline,omitempty"`
 	Asks     []cardAsk               `json:"asks,omitempty"`
 	Answers  map[string]askAnswer    `json:"answers,omitempty"`
@@ -252,6 +253,63 @@ func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at
 	l.commit(t)
 }
 
+func (l *liveCards) carry(channel, thread, card string, at time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.draft(channel, thread)
+	if slices.Contains(t.Carries, card) {
+		return false
+	}
+	t.Carries = append(t.Carries, card)
+	t.Updated = at
+	l.commit(t)
+	return true
+}
+
+func (l *liveCards) live(channel, ts string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, ts)]
+	return ok && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts })
+}
+
+func (l *liveCards) carriersOf(drawn *liveThread, cards map[string]bool) []cardRef {
+	var carriers []cardRef
+	for _, t := range l.threads {
+		if t.Channel == drawn.Channel && t.Thread != drawn.Thread && slices.ContainsFunc(t.Carries, func(card string) bool { return cards[card] }) {
+			carriers = append(carriers, cardRef{t.Channel, t.Thread, t.Thread})
+		}
+	}
+	return carriers
+}
+
+func (l *liveCards) carried(t *liveThread, now time.Time) []slack.Block {
+	var blocks []slack.Block
+	for _, ts := range t.Carries {
+		ct, m := l.liveMessage(t.Channel, ts)
+		if m == nil {
+			continue
+		}
+		_, card := ct.replyMessage(m, now, l.refs)
+		blocks = append(blocks, carriedCard(card, permalinkRef{channelID: t.Channel, ts: m.TS, threadTS: ct.Thread})...)
+	}
+	return blocks
+}
+
+func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) {
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for _, m := range t.messages() {
+			if m != nil && m.TS == ts {
+				return t, m
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -357,7 +415,7 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
 		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
-		c.PRCards, c.Copies = slices.Clone(t.PRCards), slices.Clone(t.Copies)
+		c.PRCards, c.Copies, c.Carries = slices.Clone(t.PRCards), slices.Clone(t.Copies), slices.Clone(t.Carries)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}
@@ -737,6 +795,9 @@ func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root boo
 	if root {
 		text, blocks = t.rootMessage(now, l.refs)
 	}
+	if m.TS == t.Thread {
+		blocks = append(blocks, l.carried(t, now)...)
+	}
 	w := cardWrite{m: m, ts: m.TS, text: text, blocks: blocks}
 	if m.Tapped == "" {
 		w.entities = m.Card.entities()
@@ -788,7 +849,6 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 		}
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	for _, m := range gone {
 		t.drop(m)
 	}
@@ -796,6 +856,13 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 		t.Drawn, t.Stale = now, len(errs) > 0
 	}
 	l.save()
+	carriers := l.carriersOf(t, redrawn)
+	l.mu.Unlock()
+	for _, carrier := range carriers {
+		if _, err := l.redraw(ctx, api, carrier.channel, carrier.thread, carrier.ts, now); err != nil {
+			errs = append(errs, fmt.Errorf("redraw card %s/%s carrying a redrawn card: %w", carrier.channel, carrier.ts, err))
+		}
+	}
 	return redrawn, errors.Join(errs...)
 }
 

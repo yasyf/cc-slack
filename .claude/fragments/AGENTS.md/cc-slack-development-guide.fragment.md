@@ -127,11 +127,18 @@ head that a pick card already offers, with the same answers, is not posted. The 
 one that passes the card checks. In the bot's DM the card opens at the root in
 its own thread, watched by the session whose post named the PR, wherever that
 post sits; a post lands in a DM thread only when its call names that thread.
-Each PR's card, a pick card already offering it included, then shows beside the
-post: a post in a DM thread gets a working copy of it there, and a post at the
-DM root gets its permalink as a reply in the post's own thread, one post per
-card so Slack unfurls each. Each card shows once per thread, so a keyed card
-sent again in place adds only the cards it newly names. In
+Each PR's card, a pick card already offering it included, then shows with the
+post. A status card at the DM root carries each card inside itself, below its
+own words, with the card's answer buttons; a tap on one answers the card
+itself, and the status card redraws whenever the card does, so a tap on
+either shows the answer on both. Other and Explain more stay on the card.
+Every other post in the DM, a text post at the root or a post in a DM thread,
+gets a working copy of the card in its thread. Each card shows once per post,
+so a keyed card sent again in place, or replaced, adds only the cards it newly
+names. The call waits for its cards, then reads a status card that carries
+them back from Slack, and its `warning` starts with NO APPROVE when the
+message holds no button answering a card it carries, or a PR it lists drew no
+card. In
 a listed channel the card is a reply in the post's thread. It keeps them in
 `live-cards.json`, so a PR at one head is carded once at the DM root, and once
 per thread in a channel, and the ref poller redraws a card when its PR changes

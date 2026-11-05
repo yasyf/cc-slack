@@ -424,6 +424,21 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 		return "", "", "", err
 	}
 	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments")})
+	var blocks slack.Blocks
+	if values.Get("blocks") != "" {
+		if err := json.Unmarshal([]byte(values.Get("blocks")), &blocks); err != nil {
+			return "", "", "", err
+		}
+	}
+	for i, m := range f.channels[channelID] {
+		if m.Timestamp != timestamp {
+			continue
+		}
+		f.channels[channelID][i].Text = values.Get("text")
+		if values.Has("blocks") {
+			f.channels[channelID][i].Blocks = blocks
+		}
+	}
 	return channelID, timestamp, values.Get("text"), nil
 }
 

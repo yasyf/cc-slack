@@ -244,57 +244,65 @@ func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) [
 	return prs
 }
 
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody) {
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody) string {
+	if len(b.TapPRs) == 0 {
+		return ""
+	}
 	ctx := context.WithoutCancel(hc.Ctx)
-	go func() {
-		a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, a.tapPRs(ctx, id, hc.Env.Scope, b))
-	}()
+	return a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, a.tapPRs(ctx, id, hc.Env.Scope, b))
 }
 
-func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread, postTS string, prs []linkedPR) {
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread, postTS string, prs []linkedPR) string {
 	command := id.Config.PRLinks.CardCommand
 	if len(command) == 0 || !cardsAt(id, channelID) {
-		return
+		return ""
 	}
-	cards := a.cards
-	cards.mu.Lock()
-	defer cards.mu.Unlock()
-	post := cards.draft(channelID, postThread)
-	var asked []map[string]any
-	var standing []cardRef
+	asked, standing, waiting := a.cards.toCard(channelID, postThread, prs)
+	if len(asked)+len(standing) == 0 {
+		return ""
+	}
+	beside := cardBeside{}
+	switch {
+	case channelID != id.DMChannelID:
+	case postThread != postTS || !a.cards.live(channelID, postTS):
+		beside.thread = postThread
+	default:
+		beside = cardBeside{thread: postTS, carry: true}
+	}
+	placed := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
+	if !beside.carry {
+		return ""
+	}
+	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, waiting)
+}
+
+func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked []map[string]any, standing []cardRef, waiting []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	post := l.draft(channelID, postThread)
 	for _, pr := range prs {
 		keys := map[string]bool{pr.ref.key(): true}
 		if pr.state.terminal() || post.carded(keys) {
 			continue
 		}
+		waiting = append(waiting, fmt.Sprintf("https://github.com/%s/%s/pull/%d", pr.ref.Owner, pr.ref.Repo, pr.ref.Number))
 		open := func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) }
-		if card, found := cards.rootPRCard(channelID, open); found {
+		if card, found := l.rootPRCard(channelID, open); found {
 			standing = append(standing, card)
 			continue
 		}
 		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
-		cards.refs[pr.ref.key()] = pr.state
+		l.refs[pr.ref.key()] = pr.state
 	}
-	if len(asked)+len(standing) == 0 {
-		return
-	}
-	beside := cardBeside{}
-	switch {
-	case channelID != id.DMChannelID:
-	case postThread != postTS:
-		beside.thread = postThread
-	default:
-		beside = cardBeside{thread: postTS, link: true}
-	}
-	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
+	return asked, standing, waiting
 }
 
 type cardBeside struct {
 	thread string
-	link   bool
+	carry  bool
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []map[string]any, standing []cardRef) {
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []map[string]any, standing []cardRef) []cardRef {
 	placed := standing
 	if len(asked) > 0 {
 		provided, err := askPRCards(ctx, id, asked)
@@ -306,13 +314,14 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		placed = append(placed, cards...)
 	}
 	if beside.thread == "" {
-		return
+		return placed
 	}
 	for _, card := range placed {
 		if err := a.showPRCard(ctx, db, id, beside, card); err != nil {
 			a.poller.log.Printf("PR card %s is not shown under %s: %v", card.ts, beside.thread, err)
 		}
 	}
+	return placed
 }
 
 func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any) {
@@ -372,27 +381,62 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 }
 
 func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside cardBeside, card cardRef) error {
-	if a.cards.hasCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, Link: beside.link}) {
+	if beside.carry {
+		if !a.cards.carry(card.channel, beside.thread, card.ts, a.now()) {
+			return nil
+		}
+		_, err := a.cards.redraw(ctx, a.newAPI(id.Token), card.channel, beside.thread, beside.thread, a.now())
+		return err
+	}
+	if a.cards.hasCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts}) {
 		return nil
 	}
 	link := id.permalink(card.channel, card.ts, card.thread)
-	text, blocks := link, []slack.Block(nil)
-	if !beside.link {
-		ref, err := parsePermalink(link)
-		if err != nil {
-			return err
-		}
-		if blocks, _, err = a.copyBlocks(ctx, id, ref, link); err != nil {
-			return err
-		}
-		text = cardCopyLead
-	}
-	res, err := a.post(ctx, db, id, card.channel, beside.thread, text, blocks, nil)
+	ref, err := parsePermalink(link)
 	if err != nil {
 		return err
 	}
-	a.cards.rememberCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, TS: res.TS, Link: beside.link}, a.now())
+	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
+	if err != nil {
+		return err
+	}
+	res, err := a.post(ctx, db, id, card.channel, beside.thread, cardCopyLead, blocks, nil)
+	if err != nil {
+		return err
+	}
+	a.cards.rememberCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
 	return nil
+}
+
+func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, placed []cardRef, waiting []string) string {
+	link := id.permalink(post.channel, post.ts, post.thread)
+	held, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, post.ts)
+	if err != nil {
+		return fmt.Sprintf("NO APPROVE READ: %s lists %s for his tap, and reading it back from Slack failed, so whether it carries Approve is unknown: %v", link, strings.Join(waiting, ", "), err)
+	}
+	var missing []string
+	for _, card := range placed {
+		if !approvesOn(held.Blocks.BlockSet, card.ts) {
+			missing = append(missing, id.permalink(card.channel, card.ts, card.thread))
+		}
+	}
+	switch {
+	case len(placed) < len(waiting):
+		return fmt.Sprintf("NO APPROVE: %s lists %s for his tap, and %d of them drew no card, so it carries no Approve for them; the daemon log says why", link, strings.Join(waiting, ", "), len(waiting)-len(placed))
+	case len(missing) > 0:
+		return fmt.Sprintf("NO APPROVE: %s, read back from Slack, carries no button to answer the card at %s", link, strings.Join(missing, ", "))
+	}
+	return ""
+}
+
+func approvesOn(blocks []slack.Block, card string) bool {
+	return slices.ContainsFunc(blocks, func(block slack.Block) bool {
+		actions, ok := block.(*slack.ActionBlock)
+		return ok && slices.ContainsFunc(actions.Elements.ElementSet, func(element slack.BlockElement) bool {
+			b, isButton := element.(*slack.ButtonBlockElement)
+			return isButton && strings.HasPrefix(b.ActionID, cardCopyAction+card+":")
+		})
+	})
 }
 
 func (a *app) redrawPRCopies(ctx context.Context, id identity, card cardRef) error {
