@@ -649,8 +649,8 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 ## React before you reply
 
 On any message you have read and are acting on but have not answered, add
-`eyes` at once. A message you pick up from a public channel shows in two steps,
-so the channel can see whether it is being read or worked on:
+`eyes` at once. A message you pick up shows in two steps, in every channel and
+DM, so its readers can see whether it is being read or worked on:
 
 1. When you first look at it, call `slack_pickup`. It adds `eyes` and Slack's
    working line under the thread, together and nothing else. If you decide not
@@ -664,11 +664,6 @@ so the channel can see whether it is being read or worked on:
    itself 6 to 11 minutes after it started, seen once: when an update fails
    because the stream has ended, start a new one with the remaining steps.
 
-Until the owner names a channel for the first run, do neither step in a public
-channel: Slack may refuse the working line there and no run has tested it. Add
-`eyes` with `slack_react`, then remove it with `slack_unreact` when the ask is
-done or you drop it. Both steps work in your DM with the app.
-
 A `line_error` in either result means the eyes or the steps landed and Slack
 refused the working line. Carry on, and report it to your lane's owner.
 
@@ -679,7 +674,7 @@ in the user's own DM with the bot. Everywhere else, use only these three:
 
 | Emoji | Name to pass | When |
 |---|---|---|
-| 👀 | `eyes` | Read, acting on, not yet answered; on a public-channel pickup, `slack_pickup` adds it |
+| 👀 | `eyes` | Read, acting on, not yet answered; on a pickup, `slack_pickup` adds it |
 | ✅ | `white_check_mark` | Ask done |
 | 🙏 | `pray` | Acknowledgment only; no reply needed |
 
@@ -705,8 +700,8 @@ Fix a mistake or a gap in it by editing it. This narrows what a lane asks to
 send and changes no permission rule. Questions they ask are not limited:
 write every post so a person can answer it, and answer each reply as it lands.
 
-- React `eyes` the moment you look at a message; on a public-channel pickup,
-  call `slack_pickup` then, and `slack_stream` when work starts, as above.
+- React `eyes` the moment you look at a message with `slack_pickup`, and call
+  `slack_stream` when work starts, as above.
 - Answer every question in a watched thread the moment it lands, in that
   thread, before you return to other work. When the answer needs work, say
   in one line what you are doing, then post the answer when you have it.
