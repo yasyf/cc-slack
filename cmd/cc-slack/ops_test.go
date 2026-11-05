@@ -99,13 +99,14 @@ func TestLoginPostsAsTheHandleWithoutADisplayName(t *testing.T) {
 	}
 }
 
-func TestOnlyAPostLinkingASlackMessageUnfurls(t *testing.T) {
+func TestOnlyAPostLinkingASlackMessageOutsideHisDMUnfurls(t *testing.T) {
 	message := "https://example.slack.com/archives/C1/p1793818357021259"
 	for _, tc := range []struct {
 		name, text, want string
 	}{
 		{"a message link", "card: <" + message + "|card>", "true"},
 		{"a message link in a thread", "card: " + message + "?thread_ts=1793818357.021259", "true"},
+		{"a link to one of his DM cards, which would draw as a share with no buttons", "card: <https://example.slack.com/archives/" + testDM + "/p1793818357021259|card>", "false"},
 		{"any other link", "see <https://example.com/a|a>", "false"},
 		{"no link", "plain words", "false"},
 	} {

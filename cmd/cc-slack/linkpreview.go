@@ -111,15 +111,17 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 		if !ok {
 			continue
 		}
+		if row.ready() && len(id.Config.PRLinks.CardCommand) > 0 {
+			ready = append(ready, prURL(pr))
+			drawn[pr.key()] = true
+			continue
+		}
 		if len(previews) == linkPreviewLimit {
 			more++
 			continue
 		}
-		previews = append(previews, a.prPreview(id, pr, row))
+		previews = append(previews, prPreview(pr, row))
 		drawn[pr.key()] = true
-		if row.ready() {
-			ready = append(ready, prURL(pr))
-		}
 	}
 	return withoutRepeatedLinks(text, drawn), previews, ready, more
 }
@@ -206,14 +208,11 @@ func readLedgerRows(ctx context.Context, command []string, prs []refID) (map[str
 	return byPR, nil
 }
 
-func (a *app) prPreview(id identity, pr refID, row ledgerRow) slack.Attachment {
+func prPreview(pr refID, row ledgerRow) slack.Attachment {
 	title := fmt.Sprintf("#%d %s", pr.Number, row.Title)
 	standing := row.standing()
-	if row.ready() && len(id.Config.PRLinks.CardCommand) == 0 {
+	if row.ready() {
 		standing = "*Not approved yet.*" + row.checks()
-	}
-	if ts, thread, ok := a.cards.openPRCard(id.DMChannelID, pr); ok && row.ready() {
-		standing += " " + slackLink(id.permalink(id.DMChannelID, ts, thread), "Open the card")
 	}
 	body := strings.Join([]string{"*" + slackLink(prURL(pr), title) + "*", plainMrkdwn(withoutHidden(row.ForUsers)), standing}, "\n\n")
 	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: slices.Concat(bodyPages(body, cardMaxBlocks, cardMaxVisible, false)...)}}

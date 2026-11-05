@@ -722,7 +722,7 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
 		}
-		if linksTo(text, blocks, messageLink) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
+		if linksBeyondDM(id.DMChannelID, text, blocks) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
 			opts = append(opts, slack.MsgOptionEnableLinkUnfurl())
 		}
 		return api.PostMessageContext(ctx, channelID, opts...)
@@ -739,6 +739,17 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 
 func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
 	return link.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), link.MatchString)
+}
+
+// Slack draws a linked message as a share with no buttons, so a link to one of
+// his DM cards stays a link and its answers reach him through the card's copy.
+func linksBeyondDM(dm, text string, blocks []slack.Block) bool {
+	return slices.ContainsFunc(append([]string{text}, blockTexts(slack.Blocks{BlockSet: blocks})...), func(s string) bool {
+		return slices.ContainsFunc(messageLink.FindAllString(s, -1), func(link string) bool {
+			ref, err := parsePermalink(link)
+			return err == nil && ref.channelID != dm
+		})
+	})
 }
 
 func checkMessage(b opBody) ([]slack.Block, error) {
