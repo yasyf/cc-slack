@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A message Claude picks up in a public channel now shows the two-step pickup, eyes with Slack's working line and then the steps once work starts, the same as in your DM with the app. Before, the skill kept public channels to eyes alone until a first channel was named, so a channel saw no sign that work had started.
 - A post to your DM that links an open PR still in CI now shows its card with Approve and Hold right away, the same as a PR ready for your tap. Before, it drew a preview with nothing to tap, and in a thread reply that preview sat next to the PR's Approve card. Your tap is stored at that head, and the PR still lands only after its checks, review and grades pass. A held PR keeps its preview.
 - A pickup in a public thread shows in two steps, in place of the wrench. `slack_pickup` (`cc-slack pickup`) adds eyes and Slack's working line together and nothing else. `slack_stream` (`cc-slack stream`), called only once Claude decides to do actual work, adds separate steps with a spinner and keeps the working line up. A message Claude looks at and does not work on never gets the steps. The steps work outside your DM with the app, the first call needing a ticket like a reply. Removed: `cc-slack thread-status` and `stream --mode`; the working line's words are now fixed, and the steps are always drawn separately.
 
