@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/yasyf/cc-interact/agent"
 )
 
 func endWatches(t *testing.T, l *liveDaemon, thread string) {
@@ -22,9 +23,9 @@ func endWatches(t *testing.T, l *liveDaemon, thread string) {
 	}
 }
 
-func waitTap(c postedCard, label string, n int) cardActionPush {
+func mergeTap(c postedCard, n int) cardActionPush {
 	return cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
-		ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: "step-3:merge", Label: label, Question: "Merge #41 now?", Options: []string{"Merge", "Hold"}})),
+		ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: "step-3:merge", Label: "Merge", Question: "Merge #41 now?", Options: []string{"Merge", "Hold"}})),
 		ActionTS: "1800000100.000000", Seq: fmt.Sprintf("001800000100000-abcd%04d", n)}
 }
 
@@ -64,7 +65,7 @@ func TestAWaitingTapNoSessionHoldsKeepsTheCardOpenAndSaysSo(t *testing.T) {
 	c := postWaiting(t, l, mergeCard())
 	endWatches(t, l, c.thread)
 
-	l.tap(c.id, waitTap(c, "Merge", 1))
+	l.tap(c.id, mergeTap(c, 1))
 
 	edits := editsOf(l.slack.edited(), c.ts)
 	if len(edits) == 0 {
@@ -94,7 +95,7 @@ func TestAnAckNoSessionHoldsSaysItReachedNoOne(t *testing.T) {
 		ActionID: cardAckAction, Value: cardAckLabel, ActionTS: "1800000100.000000"})
 
 	edits := editsOf(l.slack.edited(), ts)
-	if len(edits) != 1 || !strings.Contains(edits[0], "*"+cardAckLabel+"* reached no one") {
+	if len(edits) == 0 || !strings.Contains(edits[0], "*"+cardAckLabel+"*") || !strings.Contains(edits[len(edits)-1], "*"+cardAckLabel+"* reached no one") {
 		t.Fatalf("edits = %v, want the Ack and that it reached no one", edits)
 	}
 }
@@ -121,7 +122,7 @@ func TestATapWhoseEditFailsSaysSoInTheThread(t *testing.T) {
 	l.slack.fail("chat.update", errors.New("invalid_blocks"))
 	sent := len(l.slack.sent())
 
-	l.tap(c.id, waitTap(c, "Merge", 1))
+	l.tap(c.id, mergeTap(c, 1))
 
 	got := l.slack.sent()[sent:]
 	if len(got) != 1 || got[0].threadTS != c.thread || !strings.Contains(got[0].text, "*Merge* did not change this message") ||
@@ -248,7 +249,7 @@ func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) 
 			c := postWaiting(t, l, mergeCard())
 			endWatches(t, l, c.thread)
 
-			l.tap(c.id, waitTap(c, "Merge", 2))
+			l.tap(c.id, mergeTap(c, 2))
 
 			edits := editsOf(l.slack.edited(), c.ts)
 			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Merge* reached no one") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
@@ -258,5 +259,49 @@ func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) 
 				t.Fatal("an answer no one heard reads as answered")
 			}
 		})
+	}
+}
+
+func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAsAnOwedReply(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	endWatches(t, l, c.thread)
+	if _, _, err := insertWatch(l.ctx, l.srv.DB(), l.subID, agent.TopLevel, kindChannel, c.id.DMChannelID, "", "1700000000.000000", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	l.tap(c.id, mergeTap(c, 2))
+
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `with "Merge"`) || !strings.Contains(got, "the session holding the DM") {
+		t.Fatalf("holder heard %q, want his pick and that it comes to the DM's holder", got)
+	}
+	owed, err := l.app.owed.list(l.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owed) != 1 || owed[0].ThreadTS != c.thread || owed[0].Permalink != c.url() {
+		t.Fatalf("owed %+v, want one reply owed on the card's thread", owed)
+	}
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "sent to the session holding this DM") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("edits = %v, want the card closed on his pick and naming who heard it", edits)
+	}
+}
+
+func TestATapReplayedAfterItsAnswerWasRecordedButNotDeliveredIsDeliveredThen(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	tap := mergeTap(c, 2)
+	l.app.cards.claim(c.id.DMChannelID, c.thread, "step-3:merge", askAnswer{At: slackTime(tap.ActionTS), Label: "Merge", Undelivered: tapKey(tap)})
+
+	l.tap(c.id, tap)
+
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) {
+		t.Fatalf("session heard %q, want the answer the killed daemon never delivered", got)
+	}
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Undelivered != "" {
+		t.Fatalf("answer = %+v, %v, want it on record and delivered", ans, done)
 	}
 }

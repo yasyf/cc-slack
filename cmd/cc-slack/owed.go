@@ -118,6 +118,20 @@ func dmHolder(ctx context.Context, db *sql.DB, dmChannelID string) (dmHold, erro
 	return hold, nil
 }
 
+func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, bool, error) {
+	var w watch
+	err := db.QueryRowContext(ctx, `SELECT id, subject_id, owner_agent_id, kind, channel_id, thread_ts FROM watches
+		WHERE channel_id = ? AND thread_ts = '' AND kind = 'channel' AND status = 'active'
+		ORDER BY id LIMIT 1`, dmChannelID).Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return watch{}, false, nil
+	}
+	if err != nil {
+		return watch{}, false, fmt.Errorf("find the DM's holder watch: %w", err)
+	}
+	return w, true, nil
+}
+
 func othersCardThreads(ctx context.Context, db *sql.DB, dmChannelID string, hold dmHold) (map[string]bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT w.thread_ts FROM watches w JOIN subjects s ON s.id = w.subject_id
 		WHERE w.channel_id = ? AND w.kind = 'dm' AND w.status = 'active'

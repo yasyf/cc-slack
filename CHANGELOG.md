@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tap on a card whose session has ended now also reaches the session holding your DM, as a reply it owes, so a tap with no ask id, such as Ack or an option, is heard too. The card closes naming who heard it.
+- A tap whose answer was recorded by a daemon that was replaced before delivering it is delivered when the next daemon replays it, where it used to read as already answered and reach no one.
 - A card withdrawn because another message replaced it says `Replaced:` and links that message, where it used to say `Withdrawn:`.
 - A question card with picks that asks about a PR is the only message about that PR: no information card without buttons is posted beside it.
 - A tap on any card now changes the message you tapped. A tap the daemon used to drop in its log, because the session that posted the card has ended or the card now asks something else, keeps the card open and says your pick reached no one, on the card and on the copy you tapped. With a `[pr_links] card_command`, an answer to a card whose session has ended goes to that command as `{"unheard": {...}}`, and once it prints `{"heard": true}` the card and its copies close on your pick. A row on a group card shows your pick before the board answers. After every tap the daemon reads the message back from Slack, and if it did not change, it says so in the thread and says whether the tap was taken.
