@@ -284,9 +284,7 @@ func workObjectBody(form []byte) (map[string]any, bool, error) {
 	if len(metadata.Entities) == 0 {
 		return nil, false, nil
 	}
-	body := map[string]any{"metadata": map[string]any{
-		"event_type": postEventType, "event_payload": map[string]any{"source": "cc-slack"}, "entities": metadata.Entities,
-	}}
+	body := map[string]any{"metadata": map[string]any{"entities": metadata.Entities}}
 	for key, value := range values {
 		switch {
 		case key == "token" || key == "metadata":

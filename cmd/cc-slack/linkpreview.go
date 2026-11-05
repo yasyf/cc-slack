@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	linkPreviewLimit = 5
+	linkPreviewLimit = 3
 	linkPreviewChars = 600
 	prAboutChars     = 1500
+	prFieldFloor     = 75
+	metadataLimit    = 3900
 	linkPreviewsLead = "What this links to:"
 	linkPreviewsMore = "link-previews-more"
 	rowLanded        = "landed"
@@ -191,7 +193,7 @@ func (r ledgerRow) entity(url, cardLink string) slack.WorkObjectEntity {
 	shown := "#" + strconv.Itoa(r.Number)
 	return slack.WorkObjectEntity{
 		URL:         cmp.Or(r.CardURL, url),
-		ExternalRef: slack.WorkObjectExternalRef{ID: r.Repo + shown, Type: prEntityRefType},
+		ExternalRef: slack.WorkObjectExternalRef{ID: strings.ReplaceAll(r.Repo, ".", "_") + ":" + strconv.Itoa(r.Number), Type: prEntityRefType},
 		EntityType:  prEntityType,
 		EntityPayload: map[string]any{
 			"attributes": map[string]any{
@@ -226,10 +228,39 @@ func linkPreviewsText(prs []slack.WorkObjectEntity) string {
 }
 
 func entitiesOption(entities []slack.WorkObjectEntity) []slack.MsgOption {
+	entities = fitEntities(entities)
 	if len(entities) == 0 {
 		return nil
 	}
 	return []slack.MsgOption{slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: entities})}
+}
+
+func fitEntities(entities []slack.WorkObjectEntity) []slack.WorkObjectEntity {
+	for !fitsMetadata(entities) {
+		entities = entities[:len(entities)-1]
+	}
+	return entities
+}
+
+func fitsMetadata(entities []slack.WorkObjectEntity) bool {
+	for limit := prAboutChars; limit >= prFieldFloor; limit /= 2 {
+		clipEntityFields(entities, limit)
+		if encoded, err := json.Marshal(entities); err == nil && len(encoded) <= metadataLimit {
+			return true
+		}
+	}
+	return false
+}
+
+func clipEntityFields(entities []slack.WorkObjectEntity, limit int) {
+	for _, entity := range entities {
+		custom, _ := entity.EntityPayload["custom_fields"].([]map[string]any)
+		for _, field := range custom {
+			if value, ok := field["value"].(string); ok {
+				field["value"] = clipRunes(value, limit)
+			}
+		}
+	}
 }
 
 func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.WorkObjectEntity, []slack.Attachment) {
@@ -264,11 +295,12 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string) (string,
 		if !ok {
 			continue
 		}
-		if len(previews) == linkPreviewLimit {
+		next := append(slices.Clip(previews), a.prPreview(id, pr, row))
+		if len(next) > linkPreviewLimit || !fitsMetadata(next) {
 			more++
 			continue
 		}
-		previews = append(previews, a.prPreview(id, pr, row))
+		previews = next
 		drawn[pr.key()] = true
 	}
 	return withoutRepeatedLinks(text, drawn), previews, more
