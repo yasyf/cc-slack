@@ -68,6 +68,7 @@ type liveThread struct {
 type liveCardCopy struct {
 	Card string `json:"card"`
 	TS   string `json:"ts"`
+	Link bool   `json:"link,omitempty"`
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -241,11 +242,11 @@ type liveCards struct {
 	drawing map[string]*sync.Mutex
 }
 
-func (l *liveCards) rememberCopy(channel, thread, card, ts string, at time.Time) {
+func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t := l.draft(channel, thread)
-	t.Copies = append(t.Copies, liveCardCopy{Card: card, TS: ts})
+	t.Copies = append(t.Copies, copied)
 	t.Updated = at
 	l.commit(t)
 }
@@ -259,7 +260,7 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 			continue
 		}
 		for _, c := range t.Copies {
-			if c.Card == card {
+			if c.Card == card && !c.Link {
 				copies = append(copies, cardRef{channel, t.Thread, c.TS})
 			}
 		}
@@ -426,20 +427,25 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (cardRef, bo
 	return l.postedPRCard(channel, thread, keys)
 }
 
-func (l *liveCards) hasCopy(channel, thread, card string) bool {
+func (l *liveCards) hasCopy(channel, thread string, copied liveCardCopy) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
-	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == card })
+	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == copied.Card && c.Link == copied.Link })
 }
 
-func (l *liveCards) pickOffers(channel string, offer cardOffer) bool {
+func (l *liveCards) pickOffering(channel string, offer cardOffer) (cardRef, bool) {
 	for _, t := range l.threads {
-		if t.Channel == channel && slices.ContainsFunc(slices.Collect(maps.Values(t.Waiting)), func(m *liveMessage) bool { return offer.same(m.Card.offer()) }) {
-			return true
+		if t.Channel != channel {
+			continue
+		}
+		for _, m := range t.Waiting {
+			if offer.same(m.Card.offer()) {
+				return cardRef{t.Channel, t.Thread, m.TS}, true
+			}
 		}
 	}
-	return false
+	return cardRef{}, false
 }
 
 type offeredCard struct {

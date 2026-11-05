@@ -48,7 +48,7 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	a.cards.rememberCopy(id.DMChannelID, b.ThreadTS, ref.ts, res.TS, a.now())
+	a.cards.rememberCopy(id.DMChannelID, b.ThreadTS, liveCardCopy{Card: ref.ts, TS: res.TS}, a.now())
 	return ok(res)
 }
 

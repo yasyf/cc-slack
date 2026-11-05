@@ -264,6 +264,7 @@ func cardedPreviewDaemon(t *testing.T, row ledgerRow) (*liveDaemon, fakePost) {
 	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}, "card_command": cards.argv, "preview_command": fakePRRows(t, row).argv}, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "First " + testPR, "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
+	awaitCardLink(t, l, card)
 	l.do(opDMStatus, map[string]any{"thread_ts": card.ts, "text": "Again " + testPR})
 	return l, card
 }

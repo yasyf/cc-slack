@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A post at the root of your DM that names PRs waiting on your tap now puts each PR's tap card in its own thread, as the card's link on its own line, so Slack previews it. Before, the cards sat elsewhere at the DM root with nothing in the post's thread, and a PR whose tap card was a pick card got no copy beside a threaded post either. Each card is linked once per thread, also when the same keyed card is sent again in place.
+
 ### Changed
 
 - A pickup in a public thread shows in two steps, in place of the wrench. `slack_pickup` (`cc-slack pickup`) adds eyes and Slack's working line together and nothing else. `slack_stream` (`cc-slack stream`), called only once Claude decides to do actual work, adds separate steps with a spinner and keeps the working line up. A message Claude looks at and does not work on never gets the steps. The steps work outside your DM with the app, the first call needing a ticket like a reply. Removed: `cc-slack thread-status` and `stream --mode`; the working line's words are now fixed, and the steps are always drawn separately.
