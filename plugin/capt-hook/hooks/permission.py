@@ -192,10 +192,10 @@ class Conversation:
         return any(channel == self.channel and (self.channel_wide or thread == self.thread or ts in replies or ts == self.ts) for channel, thread, ts in links if ts)
 
 
-class Channels(dict[str, dict[str, Any]]):
-    def names(self, channel: str) -> list[str]:
-        found = self.get(channel)
-        return [] if found is None else [f"#{name}" for name in (found["name"], *found.get("previous_names", []))]
+class ChannelRead(dict[str, Any]):
+    @property
+    def names(self) -> list[str]:
+        return [f"#{name}" for name in (self["name"], *self.get("previous_names", []))] if self else []
 
 
 def cc_slack(*args: str) -> dict[str, Any]:
@@ -247,8 +247,17 @@ def thread_of(ctx: Context) -> Thread:
     return ctx.fact(Thread, lambda ctx: read_thread(conversation_of(ctx)))
 
 
-def channels_of(ctx: Context) -> Channels:
-    return ctx.fact(Channels, lambda ctx: Channels((channel["id"], channel) for channel in cc_slack("channels", "--json")["channels"]))
+def channel_of(ctx: Context) -> ChannelRead:
+    def read(ctx: Context) -> ChannelRead:
+        conv = conversation_of(ctx)
+        if conv.peer:
+            return ChannelRead()
+        try:
+            return ChannelRead(cc_slack("channel-info", "--channel", conv.channel))
+        except CHECK_FAILURES:
+            return ChannelRead()
+
+    return ctx.fact(ChannelRead, read)
 
 
 def live(ctx: Context) -> ToolHookEvent:
@@ -269,7 +278,7 @@ class Linked:
 class Named:
     def matches(self, text: str, ctx: Context) -> bool:
         conv = conversation_of(ctx)
-        return conv.named_in(text, channels_of(ctx).names(conv.channel))
+        return conv.named_in(text, channel_of(ctx).names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,8 +473,8 @@ class Destination:
         if conv.peer:
             names = ", ".join(conv.peer_names) or conv.peer_name
             return f"the direct message conversation with {names} ({conv.peer}); a write here is a message to that person"
-        channel = channels_of(ctx).get(conv.channel)
-        place = conv.channel if channel is None else channel_name(channel)
+        channel = channel_of(ctx)
+        place = channel_name(channel) if channel else conv.channel
         if not conv.thread:
             return place
         thread = thread_of(ctx)
@@ -557,7 +566,7 @@ SLACK = Tickets(
         Rule("user-linked", Unspent(UserSaid(Linked()))),
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
-        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
+        Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -593,11 +602,8 @@ def place_words(ctx: Context) -> Place:
     conv = conversation_of(ctx)
     if conv.peer:
         return Place(f"a direct message to {', '.join(conv.peer_names) or conv.peer_name or conv.peer}")
-    try:
-        channel = channels_of(ctx).get(conv.channel)
-    except CHECK_FAILURES:
-        channel = None
-    named = conv.channel if channel is None else f"#{channel['name']}"
+    channel = channel_of(ctx)
+    named = f"#{channel['name']}" if channel else conv.channel
     if not conv.thread:
         return Place(named)
     opener = next((message for message in thread_of(ctx).messages if message.ts == conv.thread), None)
@@ -718,7 +724,8 @@ LANE_BRIEF = [T.user(f"comms-desk: post the held digest in {FOLLOWERS}")]
 PROMPTED_AT = datetime(2026, 10, 13, 10, 55, 46, tzinfo=UTC)
 NOT_DM = {
     f"{CC_SLACK} dm-peer": json.dumps({"peer": "", "peer_name": ""}),
-    f"{CC_SLACK} channels": json.dumps({"channels": [{"id": FOLLOWERS, "name": "app-followers"}]}),
+    f"{CC_SLACK} channel-info": (1, "channel_not_found"),
+    f"{CC_SLACK} channel-info --channel {FOLLOWERS}": json.dumps({"id": FOLLOWERS, "name": "app-followers"}),
     f"{CC_SLACK} thread": json.dumps({"messages": [DANA_OPENED]}),
     f"{CC_SLACK} history": json.dumps({"channel_id": FOLLOWERS, "messages": []}),
     "ccn answer search": "[]",
@@ -945,12 +952,13 @@ ALLOW = Rewrite(ticket_agent="main")
 DENY = Block(pattern="No permission covers this Slack write")
 
 
-def fixture_stubs(line: dict[str, Any]) -> dict[str, str]:
-    commands: dict[str, str] = dict(NOT_DM)
+def fixture_stubs(line: dict[str, Any]) -> dict[str, str | tuple[int, str]]:
+    commands: dict[str, str | tuple[int, str]] = dict(NOT_DM)
     if line.get("dm"):
         commands[f"{CC_SLACK} dm-peer"] = json.dumps(line["dm"])
     if "channels" in line:
-        commands[f"{CC_SLACK} channels"] = json.dumps({"channels": line["channels"]})
+        del commands[f"{CC_SLACK} channel-info --channel {FOLLOWERS}"]
+        commands |= {f"{CC_SLACK} channel-info --channel {channel['id']}": json.dumps(channel) for channel in line["channels"]}
     if "thread" in line:
         commands[f"{CC_SLACK} thread"] = json.dumps({"messages": line["thread"]})
     if "board" in line:
@@ -1041,7 +1049,7 @@ on(
                 + r"(?:\w+ \d+ at )?\d{1,2}:\d{2}[ap]m: "
                 + re.escape(f'{DANA_OPENED["text"]}\\n\\n{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "{DANA_CARD_ID}"')
             ),
-            case(commands=NOT_DM | {f"{CC_SLACK} channels": json.dumps({"channels": []})}) >> Block(pattern=re.escape(f'"title": "Post this in the {FOLLOWERS} thread Dana started?"')),
+            case(commands=NOT_DM | {f"{CC_SLACK} channel-info --channel {FOLLOWERS}": (1, "ratelimited")}) >> Block(pattern=re.escape(f'"title": "Post this in the {FOLLOWERS} thread Dana started?"')),
             case(commands=NOT_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern=re.escape(f'"title": "Post this in #app-followers, thread {DANA_THREAD}?"')),
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=re.escape('"title": "Post this in a direct message to priya?",\n  "body": "Hey Priya')),
             case() >> Block(pattern=re.escape(f'then retry once they tap Yes.\n```json\n{{\n  "id": "{DANA_CARD_ID}",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "{DANA_CARD_ID}-context"')),
@@ -1162,6 +1170,7 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT), decide=LABELED_GRANT_PERMITS) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(PAGE_GRANT)) >> DENY,
+            case(command=PAGE_REPLY, **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ | {f"{CC_SLACK} channel-info --channel {FOLLOWERS}": (1, "timed out")}, decide=PAGE_GRANT_PERMITS) >> Rewrite(pattern="--ticket-agent main"),
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED)) >> DENY,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM)) >> ALLOW,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened("C0OTHER0001")) >> DENY,

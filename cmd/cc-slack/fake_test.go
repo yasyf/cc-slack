@@ -244,6 +244,7 @@ func (f *fakeSlack) GetConversationInfoContext(_ context.Context, input *slack.G
 	}
 	ch := &slack.Channel{}
 	ch.ID = input.ChannelID
+	ch.Name = strings.ToLower(input.ChannelID)
 	if users, found := f.dms[input.ChannelID]; found {
 		ch.IsIM, ch.IsMpIM = len(users) == 1, len(users) > 1
 	}
