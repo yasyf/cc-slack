@@ -452,7 +452,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	if len(edits) == 0 || edits[0].ts != reply.ts || !strings.Contains(edits[0].blocks, "You asked for more") || !strings.Contains(edits[0].blocks, cardWaitAction) {
 		t.Fatalf("edits %+v, want the tapped reply redrawn first, still offering its answers", edits)
 	}
-	if l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
 		t.Fatal("Explain more answered the waiting ask")
 	}
 
@@ -509,7 +509,7 @@ func TestABareNumberReplyAnswersTheWaitingCardAsItsButtonWould(t *testing.T) {
 	}
 
 	say(1, "+1")
-	if strings.Contains(steered, "answered the waiting ask") || l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); strings.Contains(steered, "answered the waiting ask") || done {
 		t.Fatalf("+1 answered the card: %q", steered)
 	}
 	say(2, " 2 ")

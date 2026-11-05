@@ -867,7 +867,7 @@ func TestATapClosesEveryOtherCardOfThatPRAndHeadAndAppliesOnce(t *testing.T) {
 	if edits := editsOf(l.slack.edited(), otherHead); len(edits) != 0 {
 		t.Fatalf("the card at another head was edited: %v", edits)
 	}
-	if !l.app.cards.answered(testDM, oldThread, testWaits) {
+	if _, done := l.app.cards.answer(testDM, oldThread, testWaits); !done {
 		t.Fatal("the copy's own thread does not hold the answer, so a late tap on it would apply again")
 	}
 }

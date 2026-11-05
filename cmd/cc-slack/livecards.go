@@ -496,15 +496,15 @@ func (l *liveCards) asks(channel, thread, waits, question string) bool {
 	return t.Waiting[waits].Card.Title == question
 }
 
-func (l *liveCards) answered(channel, thread, askID string) bool {
+func (l *liveCards) answer(channel, thread, askID string) (askAnswer, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
-		return false
+		return askAnswer{}, false
 	}
-	_, done := t.Answers[askID]
-	return done
+	ans, done := t.Answers[askID]
+	return ans, done
 }
 
 func (l *liveCards) numberedPick(channel, thread, text string) (string, cardPick, bool) {

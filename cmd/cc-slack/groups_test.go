@@ -175,7 +175,7 @@ func TestRowTapTheBoardRefusesShowsWhyAndLeavesTheRowOpen(t *testing.T) {
 		!strings.Contains(edits[len(edits)-1], "is not the row's head") {
 		t.Fatalf("card edits %v, want the refusal shown on the row", edits)
 	}
-	if l.app.cards.answered(c.id.DMChannelID, c.thread, row.ID) {
+	if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, row.ID); done {
 		t.Fatal("a row the board refused reads as answered")
 	}
 }
