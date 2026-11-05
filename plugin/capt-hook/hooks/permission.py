@@ -18,7 +18,7 @@ from spawnllm import LabelAnswer
 from captain_hook import Allow, Ask, Block, Event, HookResult, Input, PreToolUseEvent, Rewrite, T, on
 from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
-from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, UserRuled, holds, store
+from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, holds, store
 from captain_hook.tickets.conditions import found
 from captain_hook.tickets.context import RULINGS_TIMEOUT, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
@@ -99,6 +99,8 @@ RULES = """
       about what was reported or asked there, whether an answer, status, news of a fix, or a question about that
       report. A request to a person about anything else, which the agent, another agent, or a lane thought of,
       needs a grant whose words name that purpose.
+    - An answer that only names a channel, or only grants posting there, covers that channel's top level. A reply
+      in a thread needs the user's words to cover threads or replies there.
     - Scolding the agent for not replying to someone, or for not doing something, is an instruction to do it
       now, where that person is waiting: "why did you not respond to him?" permits responding to him, "you
       never shared the doc there, do that" permits sharing it there, and "why haven't you started?" permits
@@ -383,8 +385,7 @@ class UnjudgedGrant(CustomTicketCondition):
 
 
 def recorded_for(answer: dict[str, Any], channel: str) -> bool:
-    tags = answer.get("tags", ())
-    return f"{GRANT_LABEL}{channel}" in tags or (any(OWNER_ROW.fullmatch(tag) for tag in tags) and holds(f"{answer['title']}\n{answer['body']}", channel))
+    return f"{GRANT_LABEL}{channel}" in answer.get("tags", ()) or holds(f"{answer['title']}\n{answer['body']}", channel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,7 +557,7 @@ SLACK = Tickets(
         Rule("user-linked", Unspent(UserSaid(Linked()))),
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
-        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords(), And(TopLevel(), NotRevoked(), UserRuled("channel"))), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
+        Rule("decide", Judged(Decide(RULES, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -1179,7 +1180,7 @@ on(
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"superseded_by": "0a0a0a0a"}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"body": OWNER_ORDER["body"].replace(FOLLOWERS, PETS)}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
-            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"tags": ["scope:durable", "slack"]}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(OWNER_ORDER | {"tags": ["scope:durable", "slack"]}) | PAGE_REPLY_READ, decide=OWNER_ORDER_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=NOT_DM | PAGE_REPLY_READ | {"ccn answer search": (1, "database is locked")}) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=NOT_DM | PAGE_REPLY_READ | {"ccn answer search": (1, "error: open git repository at /scratch: not a git repository")}) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT, THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
@@ -1202,6 +1203,8 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_IN_CHANNEL, REVOKED), decide=jev(ruling_evidence(KEPT_IN_CHANNEL).id)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_IN_CHANNEL) | thread_read(DANA_OPENED), decide=jev(ruling_evidence(KEPT_IN_CHANNEL).id)) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING | {"body": f"Don't keep posting there\n{KEEP_POSTING_OPTIONS}"}) | thread_read(DANA_OPENED), decide=jev(ruling_evidence(KEPT_POSTING | {"body": f"Don't keep posting there\n{KEEP_POSTING_OPTIONS}"}).id)) >> DENY,
             case(**said("post it i already told u to"), commands=NOT_DM | {"cc-present outcomes": json.dumps(SUBMITTED_BOARD)}) >> ALLOW,
             case(**said("status?"), commands=board_tapped("yes")) >> ALLOW,
             case(**said("status?"), commands=board_tapped("no")) >> DENY,
