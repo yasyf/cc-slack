@@ -1208,8 +1208,9 @@ func TestATapPostWhoseCardNeverDrawsWarnsNoApprove(t *testing.T) {
 }
 
 func cardCopies(l *liveDaemon, card fakePost) []fakePost {
-	header := headerOf(card.blocks)
-	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
+	posts := l.slack.sentTo(testDM)
+	header := headerOf(posts[slices.IndexFunc(posts, func(p fakePost) bool { return p.ts == card.ts })].blocks)
+	return slices.DeleteFunc(posts, func(p fakePost) bool {
 		return p.threadTS == "" || p.text != cardCopyLead || headerOf(p.blocks) != header
 	})
 }
