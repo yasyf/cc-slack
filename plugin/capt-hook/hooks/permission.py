@@ -99,8 +99,6 @@ RULES = """
       about what was reported or asked there, whether an answer, status, news of a fix, or a question about that
       report. A request to a person about anything else, which the agent, another agent, or a lane thought of,
       needs a grant whose words name that purpose.
-    - An answer that only names a channel, or only grants posting there, covers that channel's top level. A reply
-      in a thread needs the user's words to cover threads or replies there.
     - Scolding the agent for not replying to someone, or for not doing something, is an instruction to do it
       now, where that person is waiting: "why did you not respond to him?" permits responding to him, "you
       never shared the doc there, do that" permits sharing it there, and "why haven't you started?" permits
@@ -110,8 +108,10 @@ RULES = """
       promised or asked for, and each thread or person the user handed over. "etc." widens it to those
       comparable places, never to arbitrary ones.
     - An instruction to post in a place permits every post there that carries it out: an introduction, a
-      context message, or one post of several, whatever its wording, attachments, or count. A condition on the
-      agent's own work, such as "once these are done", orders the work and holds nothing back; only a
+      context message, or one post of several, whatever its wording, attachments, or count. A channel named as the
+      place means its top level: words that name a channel, or grant posting or keep posting there, permit no reply
+      in one of its threads unless they say threads or replies. A condition on the agent's own work, such as "once
+      these are done", orders the work and holds nothing back; only a
       condition the user must meet, such as "after I review it", holds the write.
     - "don't block", "don't wait on me", "stop asking", and words like them are permission to proceed with the
       pending write, not a hold.
