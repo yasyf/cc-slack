@@ -130,6 +130,7 @@ type statusCard struct {
 	Rows        []cardRow         `json:"rows,omitempty"`
 	Supersedes  []string          `json:"supersedes,omitempty"`
 	PRs         []cardPR          `json:"prs,omitempty"`
+	Artifacts   []cardArtifact    `json:"artifacts,omitempty"`
 	Hints       map[string]string `json:"hints,omitempty"`
 	Replaces    string            `json:"replaces,omitempty"`
 
@@ -271,6 +272,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkRollup(),
 		c.checkRows(rootOnly),
 		c.checkPRs(),
+		c.checkArtifacts(tailnet),
 		c.checkReplaces(),
 		c.checkSupersedes(),
 		c.checkPermissionWords(),
