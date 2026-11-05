@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every card that names a PR carries an Open on GitHub button that opens the PR, beside Approve, Hold, Other and Explain more. A card naming several PRs has one button per PR, labeled with its number. A copy of a PR card carried in a status message keeps the button.
+
 - A status card's artifact now shows its language and size on its Work Object, so you can tell a 3-line file from a 400-turn transcript before opening it. A diagram shows neither and draws as before.
 
 ### Fixed

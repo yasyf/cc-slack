@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -777,5 +778,31 @@ func TestALongPickLabelDrawsWholeOnARowWithAShortButton(t *testing.T) {
 	card.Options[0] += "x"
 	if err := card.checkOptions(false); err == nil {
 		t.Fatal("a label past the limit passed")
+	}
+}
+
+func TestAPRCardOpensEachPROnGitHubAndItsCopyKeepsTheButton(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Approve #7?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w", PRs: []cardPR{fullPR(7)}}
+	opens := func(blocks []slack.Block) map[string]string {
+		urls := map[string]string{}
+		for _, b := range cardButtons(t, blocks) {
+			if b.URL != "" {
+				urls[b.Text.Text] = b.URL
+			}
+		}
+		return urls
+	}
+	blocks := card.replyBlocks(view())
+	if got := opens(blocks); !maps.Equal(got, map[string]string{cardGitHubLabel: card.PRs[0].URL}) {
+		t.Fatalf("a waiting PR card opens %v", got)
+	}
+	copied, answers := copiedCard(blocks, permalinkRef{channelID: "D1", ts: "1.2"})
+	if got := opens(copied); answers != 2 || !maps.Equal(got, map[string]string{cardGitHubLabel: card.PRs[0].URL}) {
+		t.Fatalf("its copy answers %d and opens %v, want Approve and Hold and the PR", answers, got)
+	}
+	info := statusCard{Status: "info", Title: "Two PRs", PRs: []cardPR{fullPR(7), fullPR(8)}}
+	want := map[string]string{"Open #7 on GitHub": fullPR(7).URL, "Open #8 on GitHub": fullPR(8).URL}
+	if got := opens(info.replyBlocks(view())); !maps.Equal(got, want) {
+		t.Fatalf("a card naming two PRs opens %v, want %v", got, want)
 	}
 }

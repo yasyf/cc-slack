@@ -81,7 +81,7 @@ func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, lin
 func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 	var title string
 	var blocks []slack.Block
-	var buttons []slack.BlockElement
+	var buttons, links []slack.BlockElement
 	picks := 0
 	for _, block := range card {
 		switch b := block.(type) {
@@ -95,7 +95,8 @@ func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 			}
 			blocks = append(blocks, row)
 		case *slack.ActionBlock:
-			buttons = append(buttons, copiedButtons(b, ref)...)
+			answered, linked := copiedButtons(b, ref)
+			buttons, links = append(buttons, answered...), append(links, linked...)
 		case *slack.ContextBlock, *slack.TableBlock:
 			blocks = append(blocks, block)
 		}
@@ -106,7 +107,7 @@ func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 	if len(buttons) == 0 {
 		return blocks, picks
 	}
-	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), picks + len(buttons)
+	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, append(buttons, links...)...)), picks + len(buttons)
 }
 
 // carriedCard is a card's copy drawn inside another message, so each block
@@ -155,14 +156,18 @@ func copiedAnswer(b *slack.ButtonBlockElement, ref permalinkRef) *slack.ButtonBl
 	return &answer
 }
 
-func copiedButtons(actions *slack.ActionBlock, ref permalinkRef) []slack.BlockElement {
-	var buttons []slack.BlockElement
+func copiedButtons(actions *slack.ActionBlock, ref permalinkRef) (answered, links []slack.BlockElement) {
 	for _, element := range actions.Elements.ElementSet {
-		if b, isButton := element.(*slack.ButtonBlockElement); isButton && answers(b.ActionID) {
-			buttons = append(buttons, copiedAnswer(b, ref))
+		b, isButton := element.(*slack.ButtonBlockElement)
+		switch {
+		case !isButton:
+		case answers(b.ActionID):
+			answered = append(answered, copiedAnswer(b, ref))
+		case strings.HasPrefix(b.ActionID, cardLinkAction+"github-"):
+			links = append(links, b)
 		}
 	}
-	return buttons
+	return answered, links
 }
 
 func copiedPick(row *slack.SectionBlock, ref permalinkRef) (slack.Block, bool) {
