@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 )
@@ -192,10 +193,11 @@ func (r ledgerRow) entity(url, cardLink string) slack.WorkObjectEntity {
 		EntityType:  prEntityType,
 		EntityPayload: map[string]any{
 			"attributes": map[string]any{
-				"title":        map[string]any{"text": strings.TrimSpace(shown + " " + r.Title)},
-				"display_type": prDisplayType,
-				"display_id":   shown,
-				"product_name": prProductName,
+				"title":                  map[string]any{"text": strings.TrimSpace(shown + " " + r.Title)},
+				"display_type":           prDisplayType,
+				"display_id":             shown,
+				"product_name":           prProductName,
+				"metadata_last_modified": time.Now().Unix(),
 			},
 			"custom_fields": custom,
 			"display_order": order,

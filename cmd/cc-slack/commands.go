@@ -578,7 +578,7 @@ func reactionCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int
-	var workObjects bool
+	var raw bool
 	c := &cobra.Command{
 		Use:   "thread",
 		Short: "Print a Slack thread's messages",
@@ -586,13 +586,13 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
 			body["limit"] = limit
-			body["work_objects"] = workObjects
+			body["raw"] = raw
 			return runOp(c, d, f.sessionFlags, opThread, body)
 		},
 	}
 	f.bind(c)
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "most recent messages to print")
-	c.Flags().BoolVar(&workObjects, "work-objects", false, "also read each message's Work Object cards from Slack")
+	c.Flags().BoolVar(&raw, "raw", false, "also print each message as Slack sends it, with its blocks, attachments and metadata")
 	return c
 }
 
@@ -601,20 +601,21 @@ func historyCmd(d cmd.Deps) *cobra.Command {
 		f              sessionFlags
 		channelID, url string
 		limit          int
-		asJSON         bool
+		asJSON, raw    bool
 	)
 	c := &cobra.Command{
 		Use:   "history",
 		Short: "Print a Slack channel's most recent top-level messages, newest first",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			body := map[string]any{"channel_id": channelID, "url": url, "limit": limit}
-			return renderOp(c, d, f, opHistory, body, asJSON, renderHistory)
+			body := map[string]any{"channel_id": channelID, "url": url, "limit": limit, "raw": raw}
+			return renderOp(c, d, f, opHistory, body, asJSON || raw, renderHistory)
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&channelID, "channel", "", "Slack channel id, or a user id for the bot's DM with that user")
 	c.Flags().StringVar(&url, "url", "", "Slack channel or message permalink (fills channel)")
+	c.Flags().BoolVar(&raw, "raw", false, "print JSON with each message as Slack sends it, with its blocks, attachments and metadata")
 	c.Flags().IntVar(&limit, "limit", defaultHistoryLimit, "most recent top-level messages to print")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result")
 	return c

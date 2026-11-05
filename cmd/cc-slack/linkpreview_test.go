@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -532,25 +535,91 @@ func TestTheLinkLineUnderACardAlwaysNamesItsPRs(t *testing.T) {
 	}
 }
 
-func TestAThreadReadNamesEachMessagesButtonsAndWorkObjects(t *testing.T) {
+func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Land it?", Body: "Fixed.\n" + testPR, Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w1"}})
 	card, reply := l.slack.sent()[0], lastPost(l)
 	var read threadResult
-	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testDM, "thread_ts": card.ts, "work_objects": true}).Body, &read); err != nil {
+	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testDM, "thread_ts": card.ts, "raw": true}).Body, &read); err != nil {
 		t.Fatal(err)
 	}
 	var buttons []string
-	var drawn []slack.WorkObjectEntity
+	var raw string
 	for _, m := range read.Messages {
 		if m.TS == card.ts {
 			buttons = m.Buttons
 		}
 		if m.TS == reply.ts {
-			drawn = m.WorkObjects
+			raw = string(m.Raw)
 		}
 	}
-	if !slices.Contains(buttons, "Hold") || len(drawn) != 1 || drawn[0].URL != testPR {
-		t.Fatalf("buttons = %v, work objects = %+v, want the card's buttons and the reply's PR card", buttons, drawn)
+	if !slices.Contains(buttons, "Hold") || !strings.Contains(raw, `"entities"`) || !strings.Contains(raw, testPR) {
+		t.Fatalf("buttons = %v, raw = %s, want the card's buttons and the reply's message as sent", buttons, raw)
+	}
+}
+
+func TestAWorkObjectPostsAsJSONWithEventFieldsBesideItsEntities(t *testing.T) {
+	var posted []string
+	var contentType, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		posted, contentType, path = append(posted, string(body)), r.Header.Get("Content-Type"), r.URL.Path
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"D1","ts":"1.2"}`))
+	}))
+	defer srv.Close()
+	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
+	entity := readyRow(41).entity(testPR, "")
+	channel, ts, err := api.PostMessageContext(context.Background(), "D1",
+		slack.MsgOptionText("See it", false), slack.MsgOptionTS("1.1"), slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{entity}}))
+	if err != nil || channel != "D1" || ts != "1.2" {
+		t.Fatalf("post = %q %q %v", channel, ts, err)
+	}
+	if !strings.HasPrefix(contentType, "application/json") || path != "/chat.postMessage" {
+		t.Fatalf("posted %s to %s, want JSON to chat.postMessage", contentType, path)
+	}
+	var body struct {
+		Channel     string `json:"channel"`
+		Text        string `json:"text"`
+		ThreadTS    string `json:"thread_ts"`
+		UnfurlLinks bool   `json:"unfurl_links"`
+		Token       string `json:"token"`
+		Metadata    struct {
+			EventType    string         `json:"event_type"`
+			EventPayload map[string]any `json:"event_payload"`
+			Entities     []struct {
+				URL           string `json:"url"`
+				EntityPayload struct {
+					Attributes struct {
+						LastModified int64 `json:"metadata_last_modified"`
+					} `json:"attributes"`
+				} `json:"entity_payload"`
+			} `json:"entities"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal([]byte(posted[0]), &body); err != nil {
+		t.Fatalf("%s: %v", posted[0], err)
+	}
+	if body.Channel != "D1" || body.Text != "See it" || body.ThreadTS != "1.1" || body.UnfurlLinks || body.Token != "" {
+		t.Fatalf("body = %+v, want the message's fields and no token", body)
+	}
+	if body.Metadata.EventType != postEventType || len(body.Metadata.EventPayload) == 0 || len(body.Metadata.Entities) != 1 ||
+		body.Metadata.Entities[0].URL != testPR || body.Metadata.Entities[0].EntityPayload.Attributes.LastModified == 0 {
+		t.Fatalf("metadata = %+v, want event fields beside a stamped entity", body.Metadata)
+	}
+}
+
+func TestAPostWithNoWorkObjectStaysAForm(t *testing.T) {
+	var contentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"D1","ts":"1.2"}`))
+	}))
+	defer srv.Close()
+	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
+	if _, _, err := api.PostMessageContext(context.Background(), "D1", slack.MsgOptionText("Hi", false), slack.MsgOptionMetadata(slack.SlackMetadata{EventType: postEventType, EventPayload: map[string]any{"user_id": "U1"}})); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		t.Fatalf("posted %s, want slack-go's form", contentType)
 	}
 }

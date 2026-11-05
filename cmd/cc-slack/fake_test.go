@@ -117,15 +117,12 @@ func (f *fakeSlack) DocCardsContext(_ context.Context, serviceURL, channelID, te
 	return f.cards, nil
 }
 
-func (f *fakeSlack) ThreadWorkObjects(_ context.Context, _, _ string) (map[string][]slack.WorkObjectEntity, error) {
+func (f *fakeSlack) RawMessages(_ context.Context, _, _, _ string) (map[string]json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	found := map[string][]slack.WorkObjectEntity{}
+	found := map[string]json.RawMessage{}
 	for _, p := range f.posts {
-		var metadata slack.WorkObjectMetadata
-		if err := json.Unmarshal([]byte(p.metadata), &metadata); err == nil {
-			found[p.ts] = metadata.Entities
-		}
+		found[p.ts] = mustJSON(map[string]any{"ts": p.ts, "blocks": json.RawMessage(cmp.Or(p.blocks, "[]")), "metadata": json.RawMessage(cmp.Or(p.metadata, "{}"))})
 	}
 	return found, nil
 }

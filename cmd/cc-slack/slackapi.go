@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -50,7 +51,7 @@ type slackAPI interface {
 	SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error)
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
-	ThreadWorkObjects(ctx context.Context, channelID, threadTS string) (map[string][]slack.WorkObjectEntity, error)
+	RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error)
 }
 
 type fileShare struct {
@@ -192,6 +193,146 @@ func (c *apiClient) ShareFilesContext(ctx context.Context, share fileShare) erro
 		return slack.SlackErrorResponse{Err: out.Error, Errors: out.Errors, ResponseMetadata: out.ResponseMetadata}
 	}
 	return nil
+}
+
+type chatAnswer struct {
+	slack.SlackResponse
+	Channel string `json:"channel"`
+	TS      string `json:"ts"`
+	Text    string `json:"text"`
+}
+
+func (c *apiClient) PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
+	body, carded, err := workObjectBody(c.token, channelID, c.endpoint, options...)
+	if err != nil {
+		return "", "", err
+	}
+	if !carded {
+		return c.Client.PostMessageContext(ctx, channelID, options...)
+	}
+	answer, err := c.chatJSON(ctx, "chat.postMessage", body)
+	return answer.Channel, answer.TS, err
+}
+
+func (c *apiClient) UpdateMessageContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
+	body, carded, err := workObjectBody(c.token, channelID, c.endpoint, append(options, slack.MsgOptionUpdate(timestamp))...)
+	if err != nil {
+		return "", "", "", err
+	}
+	if !carded {
+		return c.Client.UpdateMessageContext(ctx, channelID, timestamp, options...)
+	}
+	answer, err := c.chatJSON(ctx, "chat.update", body)
+	return answer.Channel, answer.TS, answer.Text, err
+}
+
+// workObjectBody is the JSON a message carrying Work Objects posts as, the shape ai-oncall's cards draw from:
+// event_type and event_payload beside entities, which slack-go's form-encoded metadata cannot carry.
+func workObjectBody(token, channelID, endpoint string, options ...slack.MsgOption) (map[string]any, bool, error) {
+	_, values, err := slack.UnsafeApplyMsgOptions(token, channelID, endpoint, options...)
+	if err != nil {
+		return nil, false, err
+	}
+	var metadata struct {
+		Entities []json.RawMessage `json:"entities"`
+	}
+	raw := values.Get("metadata")
+	if raw == "" {
+		return nil, false, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return nil, false, err
+	}
+	if len(metadata.Entities) == 0 {
+		return nil, false, nil
+	}
+	body := map[string]any{"metadata": map[string]any{
+		"event_type": postEventType, "event_payload": map[string]any{"source": "cc-slack"}, "entities": metadata.Entities,
+	}}
+	for key, value := range values {
+		switch {
+		case key == "token" || key == "metadata":
+		case key == "blocks" || key == "attachments":
+			body[key] = json.RawMessage(value[0])
+		case value[0] == "true" || value[0] == "false":
+			body[key] = value[0] == "true"
+		default:
+			body[key] = value[0]
+		}
+	}
+	return body, true, nil
+}
+
+func (c *apiClient) chatJSON(ctx context.Context, method string, body map[string]any) (chatAnswer, error) {
+	var answer chatAnswer
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return answer, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+method, bytes.NewReader(encoded))
+	if err != nil {
+		return answer, err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return answer, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return answer, &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return answer, slack.StatusCodeError{Code: resp.StatusCode, Status: resp.Status}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return answer, fmt.Errorf("%s: %s: %w", method, resp.Status, err)
+	}
+	if !answer.Ok {
+		return answer, slack.SlackErrorResponse{Err: answer.Error, Errors: answer.Errors, ResponseMetadata: answer.ResponseMetadata}
+	}
+	return answer, nil
+}
+
+// RawMessages reads messages as Slack sends them, by timestamp, since slack-go's Message drops what it has no field for.
+func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error) {
+	query := url.Values{"channel": {channelID}, "include_all_metadata": {"true"}, "limit": {"200"}}
+	if threadTS != "" {
+		query.Set("ts", threadTS)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+method+"?"+query.Encode(), http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var answer struct {
+		slack.SlackResponse
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", method, resp.Status, err)
+	}
+	if !answer.Ok {
+		return nil, slack.SlackErrorResponse{Err: answer.Error, Errors: answer.Errors, ResponseMetadata: answer.ResponseMetadata}
+	}
+	found := make(map[string]json.RawMessage, len(answer.Messages))
+	for _, raw := range answer.Messages {
+		var message struct {
+			TS string `json:"ts"`
+		}
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return nil, err
+		}
+		found[message.TS] = raw
+	}
+	return found, nil
 }
 
 const (
