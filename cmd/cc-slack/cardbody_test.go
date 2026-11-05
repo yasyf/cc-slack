@@ -415,9 +415,11 @@ func TestAGroupCardOfPRRowsFitsAMessage(t *testing.T) {
 	if got := blocksJSON(t, blocks); strings.Contains(got, "Detail.") {
 		t.Fatalf("blocks %s, want each row's description behind Explain more", got)
 	}
-	over := statusCard{Status: "needs_you", Title: "Login", Group: "pg:login", Rows: append(slices.Clone(rows), cardRow{ID: "pg:9:abc", PR: rows[0].PR, Buttons: []string{"Hold"}})}
+	wordy := fullPR(9)
+	wordy.Change = strings.Repeat("words ", cardMaxVisible/6)
+	over := statusCard{Status: "needs_you", Title: "Login", Group: "pg:login", Rows: append(slices.Clone(rows), cardRow{ID: "pg:9:abc", PR: &wordy, Buttons: []string{"Hold"}})}
 	if err := over.check(bodyAt, false, ""); err == nil {
-		t.Fatal("a group card past the PR-row limit passed its check")
+		t.Fatal("a group card past the PR-row limit whose words overflow a screen passed its check")
 	}
 }
 

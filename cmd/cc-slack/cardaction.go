@@ -435,6 +435,9 @@ func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, 
 }
 
 func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, permalink string) error {
+	if pr, ok := p.cards.prRow(a.Channel, a.ThreadTS, k.ID); ok && len(id.Config.PRLinks.CardCommand) > 0 {
+		return p.tapPRRow(ctx, id, a, k, pr, at)
+	}
 	db := p.plane.DB()
 	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
@@ -447,6 +450,23 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 	}
 	p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
 	_, err = p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
+	return err
+}
+
+func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
+	won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	if !won {
+		p.log.Printf("PR row %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
+		return nil
+	}
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+		p.cards.release(a.Channel, a.ThreadTS, k.ID)
+		p.log.Printf("PR row %s: %q not applied: %v", k.ID, k.Label, err)
+		return p.confirmTap(ctx, id, a.ref(), cardRowBlock+k.ID,
+			"Your *"+mrkdwnEscapes.Replace(k.Label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
+	}
+	_, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now())
 	return err
 }
 

@@ -179,3 +179,83 @@ func TestRowTapTheBoardRefusesShowsWhyAndLeavesTheRowOpen(t *testing.T) {
 		t.Fatal("a row the board refused reads as answered")
 	}
 }
+
+func prCardRow() cardRow {
+	return cardRow{ID: testWaits, Buttons: []string{"Approve", "Hold"}, PRCard: true, PR: &cardPR{URL: tapPR41[0], Change: "Chats load faster.", Plan: "Checked.", Blocks: "Only your approval."}}
+}
+
+func TestAPRCardRowTapAppliesThroughTheCardCommandNotTheBoard(t *testing.T) {
+	calls := fakePresent(t)
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	row := prCardRow()
+	c := postWaiting(t, l, groupCard(row, prRow(42)))
+	l.tap(c.id, rowTap(c, row, 0, 500))
+	if got := cmd.requests(t); !slices.ContainsFunc(got, func(ask string) bool {
+		return strings.Contains(ask, `"answer"`) && strings.Contains(ask, `"waits":"`+testWaits+`"`) && strings.Contains(ask, `"label":"Approve"`) && strings.Contains(ask, `"repo":"acme/app"`)
+	}) {
+		t.Fatalf("card command asked %v, want his Approve on the PR", got)
+	}
+	if onBoard := presentCalls(t, calls); onBoard != "" {
+		t.Fatalf("a PR card row reached the board: %q", onBoard)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Approve* · answered") ||
+		!strings.Contains(edits[len(edits)-1], cardRowAction+"0:pg:42:abc1234") {
+		t.Fatalf("card edits %v, want the tapped row answered and the other row still asking", edits)
+	}
+}
+
+func TestARefusedPRCardRowSaysWhyAndCanBeTappedAgain(t *testing.T) {
+	cmd, _ := refusingCardCommand(t, "#41 moved to 09b10f1 since the card asked "+testWaits, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	row := prCardRow()
+	c := postWaiting(t, l, groupCard(row))
+	l.tap(c.id, rowTap(c, row, 0, 500))
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "did not count") || !strings.Contains(edits[len(edits)-1], "moved to 09b10f1") {
+		t.Fatalf("card edits %v, want the refusal on the row", edits)
+	}
+	asked := len(cmd.requests(t))
+	l.tap(c.id, rowTap(c, row, 0, 501))
+	if got := len(cmd.requests(t)); got != asked+1 {
+		t.Fatalf("a second tap after a refusal asked %d times, want %d", got, asked+1)
+	}
+}
+
+func TestAGroupCardCarriesMorePRRowsOnlyWhileTheirWordsAndBlocksFit(t *testing.T) {
+	short := make([]cardRow, 0, 15)
+	long := make([]cardRow, 0, 15)
+	for number := range 15 {
+		row := prCardRow()
+		row.ID = fmt.Sprintf("merge:%d:e718a74", number)
+		pr := *row.PR
+		pr.Change = strings.Repeat("words ", 30)
+		row.PR = &pr
+		short = append(short, row)
+		wide := pr
+		wide.Change = strings.Repeat("words ", 200)
+		row.PR = &wide
+		long = append(long, row)
+	}
+	card := groupCard(short...)
+	if err := card.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("15 short PR rows: %v", err)
+	}
+	at := time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)
+	if blocks := card.replyBlocks(cardView{at: at, now: at}); len(blocks) > cardMaxBlocks {
+		t.Fatalf("15 short PR rows draw %d blocks, past Slack's %d", len(blocks), cardMaxBlocks)
+	}
+	if err := groupCard(long...).check(time.Now(), false, ""); err == nil {
+		t.Fatal("15 PR rows past the visible limit were accepted")
+	}
+	if err := groupCard(long[:cardMaxPRRows]...).check(time.Now(), false, ""); err != nil {
+		t.Fatalf("%d PR rows of any length up to the block limit: %v", cardMaxPRRows, err)
+	}
+}
+
+func TestAPRCardRowNeedsAPR(t *testing.T) {
+	row := prRow(41)
+	row.PRCard = true
+	if err := groupCard(row).check(time.Now(), false, ""); err == nil {
+		t.Fatal("a row answering as a PR card with no PR was accepted")
+	}
+}
