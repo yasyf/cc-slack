@@ -179,22 +179,22 @@ func TestASettledPRCardLinksItsPROnce(t *testing.T) {
 	}
 }
 
-func TestAWithdrawalLinksAnotherPostItNames(t *testing.T) {
+func TestAWithdrawalNamingAnotherPostSaysReplacedAndLinksIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
 	post := c.id.permalink(c.id.DMChannelID, "1800000009.000100", "")
 	l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "posted without a tap <!-- cci 442236 -->", "withdrawn": true, "via": post})
 	edits := editsOf(l.slack.edited(), c.ts)
-	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], post+"|what replaced it") || strings.Contains(edits[len(edits)-1], "442236") {
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Replaced:* posted without a tap") || !strings.Contains(edits[len(edits)-1], post+"|what replaced it") || strings.Contains(edits[len(edits)-1], "442236") {
 		t.Fatalf("card edits %v, want the post linked and the comment gone", edits)
 	}
 
 	own := postWaiting(t, l, statusCard{Status: "needs_you", Title: "Hold?", Options: []string{"Hold", "Merge"}, Recommended: "Hold", Waits: "hold"})
 	l.do(opCardAnswer, map[string]any{"waits": "hold", "url": own.url(), "label": "removed from the board", "withdrawn": true, "via": own.url()})
 	edits = editsOf(l.slack.edited(), own.ts)
-	if len(edits) == 0 || strings.Contains(edits[len(edits)-1], "what replaced it") {
-		t.Fatalf("card edits %v, want no link to the card itself", edits)
+	if len(edits) == 0 || strings.Contains(edits[len(edits)-1], "what replaced it") || !strings.Contains(edits[len(edits)-1], "*Withdrawn:* removed from the board") {
+		t.Fatalf("card edits %v, want it withdrawn with no link to the card itself", edits)
 	}
 }
 
