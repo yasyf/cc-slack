@@ -169,6 +169,18 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestAWithdrawnCardKeepsItsWholeReason(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	reason := strings.Repeat("Nothing is owed from you, since the judge decides once. ", 10) + "Last words."
+	l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": reason, "withdrawn": true, "via": "http://127.0.0.1:7000/p/asks--ab12"})
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Last words.") {
+		t.Fatalf("card edits %v, want the reason whole", edits)
+	}
+}
+
 func TestAWithdrawnCardShowsItsReasonInPlaceOfTheButtonsOnce(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
