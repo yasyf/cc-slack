@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SLACK_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
+CODE_SPAN = re.compile(r"`[^`\n]+`")
+SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
+LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
+FENCE = re.compile(r"^\s*```")
+MAX_SENTENCES = 3
 
 
 @dataclass(frozen=True)
@@ -15,6 +20,7 @@ class Rule:
     kind: str
     pattern: re.Pattern[str]
     fix: str
+    reads_code: bool = True
 
 
 RULES = (
@@ -63,6 +69,17 @@ RULES = (
         re.compile(r"https?://\S+"),
         "wrap it as <url|short label>",
     ),
+    Rule(
+        "plain-name",
+        re.compile(r"(?i:\b(?:hi|hey|hello|thanks|thank you)\b),?[ \t]+[A-Z][a-z]+\b"),
+        "address the person as a <@U…> mention, which Slack renders as their @handle; look the id up with slack_users",
+    ),
+    Rule(
+        "bare-identifier",
+        re.compile(r"(?<![\w`])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?![\w`])"),
+        "wrap identifiers such as env, secret, and setting names in backticks",
+        reads_code=False,
+    ),
 )
 
 
@@ -82,21 +99,43 @@ def mask_slack_tokens(line: str) -> str:
     return SLACK_TOKEN.sub(lambda match: " " * len(match.group()), line)
 
 
+def mask_code(line: str) -> str:
+    return CODE_SPAN.sub(lambda match: " " * len(match.group()), line)
+
+
 def check(text: str) -> list[Finding]:
-    findings = []
+    findings = walls(text)
     for number, line in enumerate(text.splitlines(), start=1):
         masked = mask_slack_tokens(line)
+        prose = mask_code(masked)
         for rule in RULES:
             findings.extend(
                 Finding(number, match.start() + 1, rule.kind, match.group(), rule.fix)
-                for match in rule.pattern.finditer(masked)
+                for match in rule.pattern.finditer(masked if rule.reads_code else prose)
             )
     return sorted(findings, key=lambda finding: (finding.line, finding.column))
 
 
+def walls(text: str) -> list[Finding]:
+    findings = []
+    start, sentences, fenced = 0, 0, False
+    for number, line in enumerate([*text.splitlines(), ""], start=1):
+        if FENCE.match(line):
+            fenced = not fenced
+        if fenced or FENCE.match(line) or not line.strip() or LIST_ITEM.match(line):
+            if sentences > MAX_SENTENCES:
+                opening = " ".join(text.splitlines()[start - 1].split()[:6])
+                findings.append(Finding(start, 1, "wall-of-text", opening, f"{sentences} sentences in one paragraph; keep each paragraph to {MAX_SENTENCES} sentences or fewer, put steps and settings in a bulleted list, and end with one direct question"))
+            start, sentences = 0, 0
+            continue
+        start = start or number
+        sentences += len(SENTENCE_END.findall(mask_code(mask_slack_tokens(line))))
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, and unlinked references in a Slack post."
+        description="Flag internal ids, raw shas, unlinked references, plain-name greetings, unformatted identifiers, and walls of text in a Slack post."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     args = parser.parse_args()
