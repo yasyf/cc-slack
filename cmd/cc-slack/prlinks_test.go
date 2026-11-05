@@ -494,8 +494,8 @@ func TestAPRAskedAgainAtANewHeadRedrawsItsCardInPlace(t *testing.T) {
 	eventually(t, "the new head's question on the same post", func() bool {
 		return slices.ContainsFunc(editsOf(l.slack.edited(), card.ts), func(e string) bool { return strings.Contains(e, "merge:41:09b10f1") })
 	})
-	if slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return strings.Contains(p.blocks, "merge:41:09b10f1") }) {
-		t.Fatal("a new head drew a new post, want the same post edited")
+	if slices.ContainsFunc(rootCards(l.slack.sentTo(testDM)), func(p fakePost) bool { return strings.Contains(p.blocks, "merge:41:09b10f1") }) {
+		t.Fatal("a new head drew a new card at the DM root, want the same card edited")
 	}
 }
 
