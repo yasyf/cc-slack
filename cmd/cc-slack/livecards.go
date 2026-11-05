@@ -655,7 +655,7 @@ func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now t
 func (l *liveCards) update(ctx context.Context, api slackAPI, t *liveThread, m **liveMessage, text string, blocks []slack.Block) error {
 	ctx, cancel := context.WithTimeout(ctx, liveUpdateTimeout)
 	defer cancel()
-	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks, (*m).Card.prEntities()...)
+	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks)
 	if err != nil && goneCardCodes[errorCode(err)] {
 		l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, (*m).TS, errorCode(err))
 		*m = nil

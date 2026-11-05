@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -25,13 +24,6 @@ type fakeRows struct {
 	asked string
 }
 
-func workObjectsIn(post fakePost) string {
-	if !strings.Contains(post.metadata, `"entities"`) {
-		return ""
-	}
-	return post.metadata
-}
-
 func entitiesOf(t *testing.T, raw string) []slack.WorkObjectEntity {
 	t.Helper()
 	var metadata slack.WorkObjectMetadata
@@ -39,6 +31,13 @@ func entitiesOf(t *testing.T, raw string) []slack.WorkObjectEntity {
 		t.Fatal(err)
 	}
 	return metadata.Entities
+}
+
+func testEntity() slack.WorkObjectEntity {
+	return slack.WorkObjectEntity{
+		URL: testPR, EntityType: slack.EntityTypeContentItem,
+		EntityPayload: map[string]any{"attributes": map[string]any{"title": map[string]any{"text": "The doc"}, "metadata_last_modified": time.Now().Unix()}},
+	}
 }
 
 func lastPost(l *liveDaemon) fakePost {
@@ -70,7 +69,7 @@ func previewingDaemon(t *testing.T, rows []string, held ...string) *liveDaemon {
 func readyRow(number int) ledgerRow {
 	return ledgerRow{
 		Repo: "Acme/App", Number: number, Title: fmt.Sprintf("api: fix chat list %d", number),
-		ForUsers: "Chats load faster. The second sentence stays out.", WaitsOn: "Only your approval.",
+		ForUsers: "Chats load faster. A second sentence stays in.", WaitsOn: "Only your approval.",
 		ReadyForTap: true, State: rowOpen, CI: "green", Hold: rowNone,
 	}
 }
@@ -89,24 +88,24 @@ func TestAPRPreviewSaysWhereThePRStandsInHisWords(t *testing.T) {
 		row          ledgerRow
 		want, absent string
 	}{
-		{"ready", readyRow(41), "Ready for your tap", "Waiting on"},
+		{"ready", readyRow(41), "Ready for your tap", "Waiting"},
 		{"waiting", waiting, "the change below it, #40, has not landed", "Ready for your tap"},
-		{"landed", landed, `"value":"Merged"`, "Waiting on"},
-		{"tapped", tapped, "You approved it; it lands next.", "Ready for your tap"},
-		{"held", held, `"value":"On hold"`, "record 12"},
+		{"landed", landed, "*Landed.*", "Waiting"},
+		{"tapped", tapped, "You approved it; it lands next", "Ready for your tap"},
+		{"held", held, "*On hold.*", "record 12"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := previewingDaemon(t, fakePRRows(t, tc.row).argv, "acme/app#41")
 			l.do(opDMStatus, map[string]any{"text": "See " + testPR})
 			post := lastPost(l)
-			for _, want := range []string{"#41 api: fix chat list 41", testPR, "Chats load faster.", tc.want} {
-				if !strings.Contains(workObjectsIn(post), want) {
-					t.Fatalf("attachments = %s, want %q in them", workObjectsIn(post), want)
+			for _, want := range []string{"#41 api: fix chat list 41", testPR, "Chats load faster. A second sentence stays in.", tc.want} {
+				if !strings.Contains(post.attachments, want) {
+					t.Fatalf("attachments = %s, want %q in them", post.attachments, want)
 				}
 			}
 			for _, absent := range []string{tc.absent, "Open the card"} {
-				if strings.Contains(workObjectsIn(post), absent) {
-					t.Fatalf("attachments = %s, want no %q in them", workObjectsIn(post), absent)
+				if strings.Contains(post.attachments, absent) {
+					t.Fatalf("attachments = %s, want no %q in them", post.attachments, absent)
 				}
 			}
 		})
@@ -117,7 +116,7 @@ func TestAPRWithNoRowStaysALink(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, readyRow(7)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Done.\n" + testPR})
 	post := lastPost(l)
-	if workObjectsIn(post) != "" || !strings.Contains(post.text, "<"+testPR+"|#41>") {
+	if post.attachments != "" || !strings.Contains(post.text, "<"+testPR+"|#41>") {
 		t.Fatalf("post = %+v, want the link and no preview", post)
 	}
 }
@@ -127,8 +126,8 @@ func TestAPRNamedTwiceDrawsOnePreviewFromOneReadAndLosesItsBareLine(t *testing.T
 	l := previewingDaemon(t, rows.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Fixed in " + testPR + ", as promised.\n" + testPR})
 	post := lastPost(l)
-	if got := strings.Count(workObjectsIn(post), "Chats load faster"); got != 1 {
-		t.Fatalf("attachments = %s, want one preview", workObjectsIn(post))
+	if got := strings.Count(post.attachments, "Chats load faster"); got != 1 {
+		t.Fatalf("attachments = %s, want one preview", post.attachments)
 	}
 	if got := post.text; got != "Fixed in <"+testPR+"|#41>, as promised." {
 		t.Fatalf("text = %q, want the sentence alone", got)
@@ -150,7 +149,7 @@ func TestALinkAloneInAPostKeepsItsText(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": testPR})
 	post := lastPost(l)
-	if !strings.Contains(post.text, testPR) || !strings.Contains(workObjectsIn(post), "Chats load faster") {
+	if !strings.Contains(post.text, testPR) || !strings.Contains(post.attachments, "Chats load faster") {
 		t.Fatalf("post = %+v, want the link and its preview", post)
 	}
 }
@@ -166,7 +165,7 @@ func TestAPreviewPastTheLimitIsCountedAndItsLinkStays(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, rows...).argv, held...)
 	l.do(opDMStatus, map[string]any{"text": "Four PRs.\n" + strings.Join(lines, "\n")})
 	post := lastPost(l)
-	if got := strings.Count(workObjectsIn(post), "Chats load faster"); got != linkPreviewLimit {
+	if got := strings.Count(post.attachments, "Chats load faster"); got != linkPreviewLimit {
 		t.Fatalf("drew %d previews, want %d", got, linkPreviewLimit)
 	}
 	if !strings.Contains(post.attachments, "+1 more not shown here") {
@@ -185,7 +184,7 @@ func TestAFailedRowReadLeavesThePostAsWritten(t *testing.T) {
 	l := previewingDaemon(t, rows.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Fixed in " + testPR + ".\n" + testPR})
 	post := lastPost(l)
-	if workObjectsIn(post) != "" || strings.Count(post.text, testPR) != 2 {
+	if post.attachments != "" || strings.Count(post.text, testPR) != 2 {
 		t.Fatalf("post = %+v, want both links and no preview", post)
 	}
 }
@@ -194,7 +193,7 @@ func TestPRPreviewsAreOffWithNoCommand(t *testing.T) {
 	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}}, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Fixed in " + testPR + ".\n" + testPR})
 	post := lastPost(l)
-	if workObjectsIn(post) != "" || strings.Count(post.text, testPR) != 2 {
+	if post.attachments != "" || strings.Count(post.text, testPR) != 2 {
 		t.Fatalf("post = %+v, want both links and no preview", post)
 	}
 }
@@ -203,8 +202,8 @@ func TestOnlyAPostToTheDMReadsTheRows(t *testing.T) {
 	rows := fakePRRows(t, readyRow(41))
 	l := previewingDaemon(t, rows.argv, "acme/app#41")
 	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "See " + testPR})
-	if post := lastPost(l); workObjectsIn(post) != "" {
-		t.Fatalf("a post outside the DM drew %s", workObjectsIn(post))
+	if post := lastPost(l); post.attachments != "" {
+		t.Fatalf("a post outside the DM drew %s", post.attachments)
 	}
 	if got := readAsks(t, rows.asked); len(got) != 0 {
 		t.Fatalf("a post outside the DM read the rows: %v", got)
@@ -215,7 +214,7 @@ func TestAStatusCardCarriesItsPRPreviewInItsThreadAndLosesItsBareLine(t *testing
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Fixed.\n" + testPR}})
 	post := lastPost(l)
-	if !strings.HasPrefix(post.text, linkPreviewsLead+"\n") || !strings.Contains(post.text, testPR) || post.threadTS == "" || !strings.Contains(workObjectsIn(post), "Chats load faster") {
+	if post.text != linkPreviewsLead || post.threadTS == "" || !strings.Contains(post.attachments, testPR) || !strings.Contains(post.attachments, "Chats load faster") {
 		t.Fatalf("post = %+v, want the preview in the card's thread", post)
 	}
 	if card := l.slack.sent()[0]; strings.Contains(card.blocks, testPR) {
@@ -239,13 +238,9 @@ func TestAReadyPRWithAnOpenCardLinksIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entities := entitiesOf(t, workObjectsIn(lastPost(l)))
-	if len(entities) != 1 {
-		t.Fatalf("entities = %+v, want one", entities)
-	}
-	fields := mustJSON(entities[0].EntityPayload["custom_fields"])
-	if want := string(mustJSON(id.permalink(testDM, card.ts, card.threadTS))); !strings.Contains(string(fields), `"link":`+want) {
-		t.Fatalf("fields = %s, want a link to the open card", fields)
+	got := lastPost(l).attachments
+	if !strings.Contains(got, id.permalink(testDM, card.ts, card.threadTS)) || !strings.Contains(got, "Open the card") {
+		t.Fatalf("attachments = %s, want a link to the open card", got)
 	}
 }
 
@@ -253,7 +248,7 @@ func TestAWaitingPRNeverOffersATapEvenWithAnOpenCard(t *testing.T) {
 	waiting := readyRow(41)
 	waiting.ReadyForTap, waiting.WaitsOn = false, "CI is running"
 	l, _ := cardedPreviewDaemon(t, waiting)
-	if got := workObjectsIn(lastPost(l)); strings.Contains(got, "Open the card") || !strings.Contains(got, "CI is running") {
+	if got := lastPost(l).attachments; strings.Contains(got, "Open the card") || !strings.Contains(got, "CI is running") {
 		t.Fatalf("attachments = %s, want its wait and no card to tap", got)
 	}
 }
@@ -330,7 +325,7 @@ func TestBuildPreviewsShareTheLimitWithPRs(t *testing.T) {
 	})
 	l.do(opDMStatus, map[string]any{"text": "All.\n" + strings.Join(lines, "\n") + "\n" + testBuildURL})
 	post := lastPost(l)
-	if got := strings.Count(workObjectsIn(post), "Chats load faster"); got != linkPreviewLimit {
+	if got := strings.Count(post.attachments, "Chats load faster"); got != linkPreviewLimit {
 		t.Fatalf("drew %d PR previews, want %d", got, linkPreviewLimit)
 	}
 	if strings.Contains(post.attachments, "deploy build 7") || !strings.Contains(post.attachments, "+1 more not shown here") || !strings.Contains(post.text, testBuildURL) {
@@ -465,71 +460,42 @@ func TestACopyIsRefusedOutsideTheDM(t *testing.T) {
 	l.refused(opCardCopy, map[string]any{"url": "https://example.slack.com/archives/C1/p1793818357021259", "thread_ts": thread}, "not a message in your DM")
 }
 
-func TestAPRCardOpensThePROnGitHubInOneTap(t *testing.T) {
-	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "See " + testPR})
-	entity := entitiesOf(t, workObjectsIn(lastPost(l)))[0]
-	if entity.URL != testPR || entity.EntityType != prEntityType {
-		t.Fatalf("entity = %+v, want the item entity at the PR", entity)
-	}
-	var actions struct {
-		Primary []struct {
-			Text     string `json:"text"`
-			ActionID string `json:"action_id"`
-			URL      string `json:"url"`
-		} `json:"primary_actions"`
-	}
-	if err := json.Unmarshal(mustJSON(entity.EntityPayload["actions"]), &actions); err != nil {
-		t.Fatal(err)
-	}
-	if len(actions.Primary) != 1 || actions.Primary[0].URL != testPR || actions.Primary[0].Text != prOpenLabel || !strings.HasPrefix(actions.Primary[0].ActionID, cardLinkAction) {
-		t.Fatalf("actions = %+v, want one link to GitHub the backend acks", actions)
-	}
-}
-
-func TestARowDrawsTheMergeTagItsStateEarns(t *testing.T) {
-	row := func(change func(*ledgerRow)) ledgerRow {
-		r := ledgerRow{State: rowOpen, CI: ciGreen, Approvers: "forge-pr-reviewer", Mergeable: "clean", Queue: rowNone, Hold: rowNone}
-		change(&r)
-		return r
-	}
-	for _, tc := range []struct {
-		name, value, color string
-		row                ledgerRow
-	}{
-		{"open", "Open", tagBlue, row(func(*ledgerRow) {})},
-		{"landed beats a red CI", "Merged", tagGreen, row(func(r *ledgerRow) { r.State, r.CI = rowLanded, ciRed })},
-		{"closed", "Closed", tagGray, row(func(r *ledgerRow) { r.State = rowClosed })},
-		{"ready", "Ready for your tap", tagBlue, row(func(r *ledgerRow) { r.ReadyForTap = true })},
-		{"hold beats red CI", "On hold", tagYellow, row(func(r *ledgerRow) { r.Hold, r.CI = "root:12", ciRed })},
-		{"red CI", "Blocked: CI red", tagRed, row(func(r *ledgerRow) { r.CI = ciRed })},
-		{"conflict", "Blocked: conflict", tagRed, row(func(r *ledgerRow) { r.Mergeable = rowConflict })},
-		{"no approval", "Blocked: review", tagYellow, row(func(r *ledgerRow) { r.Approvers = rowNone })},
-		{"queued", "Queued", tagYellow, row(func(r *ledgerRow) { r.Queue = rowQueued })},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.row.mergeTag(); got.value != tc.value || got.color != tc.color {
-				t.Fatalf("merge tag = %+v, want %s %s", got, tc.value, tc.color)
-			}
-		})
-	}
-}
-
-func TestACardWithARowDrawsItsWorkObjectInPlaceOfItsFieldBlocks(t *testing.T) {
+func TestAPreviewKeepsAllOfWhatThePRChangesAndLinksGitHub(t *testing.T) {
 	row := readyRow(41)
+	row.ForUsers = strings.Repeat("Words that run on. ", 200)
+	l := previewingDaemon(t, fakePRRows(t, row).argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "See " + testPR})
+	post := lastPost(l)
+	if got := strings.Count(post.attachments, "Words that run on."); got != 200 {
+		t.Fatalf("drew %d of 200 sentences: %s", got, post.attachments)
+	}
+	if !strings.Contains(post.attachments, testPR) || strings.Contains(post.attachments, "oncall") || strings.Contains(post.metadata, `"entities"`) {
+		t.Fatalf("post = %+v, want our own blocks linking GitHub and no Work Object", post)
+	}
+}
+
+func TestAPRCardDrawsInBlocksAboveItsButtonsAndNoWorkObject(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t).argv, "acme/app#41")
-	card := statusCard{Status: "info", Title: "Status", PRs: []cardPR{{URL: testPR, Change: "Chats load faster", Row: &row}}}
+	long := strings.Repeat("A sentence of the description. ", 200)
+	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m41", PRs: []cardPR{{URL: testPR, Change: "Chats load faster", Description: long}}}
 	l.do(opDMStatus, map[string]any{"card": card})
 	post := l.slack.sent()[0]
-	if strings.Contains(post.blocks, "What changes") {
-		t.Fatalf("blocks = %s, want the fields only on the Work Object", post.blocks)
+	if strings.Contains(post.metadata, `"entities"`) || post.attachments != "" {
+		t.Fatalf("metadata = %s, attachments = %s, want the PR in the blocks alone", post.metadata, post.attachments)
 	}
-	if entities := entitiesOf(t, workObjectsIn(post)); len(entities) != 1 || entities[0].URL != testPR {
-		t.Fatalf("metadata = %s, want the PR's Work Object", post.metadata)
+	at, buttons := strings.Index(post.blocks, "What changes"), strings.Index(post.blocks, cardExplainAction+"m41")
+	if at < 0 || buttons < 0 || at > buttons || strings.LastIndex(post.blocks, "A sentence of the description.") > buttons {
+		t.Fatalf("blocks = %s, want the PR above its buttons", post.blocks)
+	}
+	if got := strings.Count(post.blocks, "A sentence of the description."); got != 200 {
+		t.Fatalf("drew %d of 200 sentences", got)
+	}
+	if !strings.Contains(post.blocks, testPR) {
+		t.Fatalf("blocks = %s, want the PR's link on GitHub", post.blocks)
 	}
 }
 
-func TestAPostNamingAPRAndADocCarriesBothCards(t *testing.T) {
+func TestAPostNamingAPRAndADocCarriesTheDocCardAndThePRPreview(t *testing.T) {
 	rows := fakePRRows(t, readyRow(41))
 	l := previewingDaemon(t, rows.argv, "acme/app#41")
 	doc := slack.WorkObjectEntity{URL: "https://docs.example.com/x", EntityType: slack.EntityTypeContentItem}
@@ -543,44 +509,20 @@ func TestAPostNamingAPRAndADocCarriesBothCards(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.do(opDMStatus, map[string]any{"text": "Read https://docs.example.com/x and " + testPR})
-	entities := entitiesOf(t, workObjectsIn(lastPost(l)))
-	urls := make([]string, 0, len(entities))
-	for _, entity := range entities {
-		urls = append(urls, entity.URL)
+	post := lastPost(l)
+	entities := entitiesOf(t, post.metadata)
+	if len(entities) != 1 || entities[0].URL != doc.URL {
+		t.Fatalf("metadata = %s, want the doc's card alone", post.metadata)
 	}
-	if strings.Join(urls, " ") != doc.URL+" "+testPR {
-		t.Fatalf("cards at %v, want the doc and the PR", urls)
-	}
-}
-
-func TestTheLinkLineUnderACardAlwaysNamesItsPRs(t *testing.T) {
-	entity := readyRow(41).entity(testPR, "")
-	if got, want := linkPreviewsText([]slack.WorkObjectEntity{entity}), linkPreviewsLead+"\n<"+testPR+"|#41 api: fix chat list 41>"; got != want {
-		t.Fatalf("text = %q, want %q", got, want)
-	}
-}
-
-func TestACardOnTheRowsHostOpensGitHubFromItsButtonAndItsLine(t *testing.T) {
-	row := readyRow(41)
-	row.CardURL = "https://cards.example.com/pr/41"
-	entity := row.entity(testPR, "")
-	if entity.URL != row.CardURL {
-		t.Fatalf("entity url = %q, want the row's card host %q", entity.URL, row.CardURL)
-	}
-	actions, _ := entity.EntityPayload["actions"].(map[string]any)
-	primary, _ := actions["primary_actions"].([]map[string]any)
-	if got := primary[0]["url"]; got != testPR {
-		t.Fatalf("button opens %v, want GitHub %q", got, testPR)
-	}
-	if got, want := linkPreviewsText([]slack.WorkObjectEntity{entity}), linkPreviewsLead+"\n<"+testPR+"|#41 api: fix chat list 41>"; got != want {
-		t.Fatalf("text = %q, want %q", got, want)
+	if !strings.Contains(post.attachments, "Chats load faster") {
+		t.Fatalf("attachments = %s, want the PR's preview", post.attachments)
 	}
 }
 
 func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Land it?", Body: "Fixed.\n" + testPR, Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w1"}})
-	card, reply := l.slack.sent()[0], lastPost(l)
+	card := l.slack.sent()[0]
 	var read threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testDM, "thread_ts": card.ts, "raw": true}).Body, &read); err != nil {
 		t.Fatal(err)
@@ -589,14 +531,11 @@ func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
 	var raw string
 	for _, m := range read.Messages {
 		if m.TS == card.ts {
-			buttons = m.Buttons
-		}
-		if m.TS == reply.ts {
-			raw = string(m.Raw)
+			buttons, raw = m.Buttons, string(m.Raw)
 		}
 	}
-	if !slices.Contains(buttons, "Hold") || !strings.Contains(raw, `"entities"`) || !strings.Contains(raw, testPR) {
-		t.Fatalf("buttons = %v, raw = %s, want the card's buttons and the reply's message as sent", buttons, raw)
+	if !slices.Contains(buttons, "Hold") || !strings.Contains(raw, "Land it?") {
+		t.Fatalf("buttons = %v, raw = %s, want the card's buttons and its message as sent", buttons, raw)
 	}
 }
 
@@ -610,7 +549,7 @@ func TestAWorkObjectPostsAsJSONWithOnlyItsEntitiesAsMetadata(t *testing.T) {
 	}))
 	defer srv.Close()
 	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
-	entity := readyRow(41).entity(testPR, "")
+	entity := testEntity()
 	channel, ts, err := api.PostMessageContext(context.Background(), "D1",
 		slack.MsgOptionText("See it", false), slack.MsgOptionTS("1.1"), slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{entity}}))
 	if err != nil || channel != "D1" || ts != "1.2" {
@@ -651,7 +590,7 @@ func TestAWorkObjectPostsAsJSONWithOnlyItsEntitiesAsMetadata(t *testing.T) {
 }
 
 func TestAWorkObjectMessageKeepsItsBlocksAndAttachments(t *testing.T) {
-	entities := slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{readyRow(41).entity(testPR, "")}})
+	entities := slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{testEntity()}})
 	message := []slack.MsgOption{
 		slack.MsgOptionText("See it", false),
 		slack.MsgOptionBlocks(header("The card"), mrkdwn("card-body", "Its paragraph")),
@@ -723,56 +662,6 @@ func TestAWorkObjectAnswerNamesWhatSlackWarnedAndKept(t *testing.T) {
 	}
 }
 
-func TestAPRCardsRefSlackAcceptsEvenOnADottedRepo(t *testing.T) {
-	accepted := regexp.MustCompile(`^[0-9a-zA-Z\-_:!/=]+$`)
-	row := readyRow(41)
-	row.Repo = "Acme/app.js"
-	if id := row.entity(testPR, "").ExternalRef.ID; !accepted.MatchString(id) {
-		t.Fatalf("external_ref id %q, want one Slack's pattern accepts", id)
-	}
-}
-
-func TestCardsFitSlacksMetadataLimitClippingBeforeDropping(t *testing.T) {
-	long := strings.Repeat("Words that run on. ", 200)
-	wordy := func(number int) slack.WorkObjectEntity {
-		row := readyRow(number)
-		row.ForUsers, row.Risk, row.Description, row.WaitsOn = long, long, long, long
-		return row.entity(testPR, "")
-	}
-	one := fitEntities([]slack.WorkObjectEntity{wordy(1)})
-	if len(one) != 1 {
-		t.Fatalf("kept %d cards, want the one card clipped to fit", len(one))
-	}
-	many := fitEntities([]slack.WorkObjectEntity{wordy(1), wordy(2), wordy(3), wordy(4), wordy(5)})
-	encoded, err := json.Marshal(many)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(many) == 0 || many[0].ExternalRef.ID != "Acme/App:1" || len(encoded) > metadataLimit {
-		t.Fatalf("kept %d cards in %d bytes, want the first ones within %d", len(many), len(encoded), metadataLimit)
-	}
-}
-
-func TestAPRCardThatDoesNotFitIsCountedAndItsLinkStays(t *testing.T) {
-	long := strings.Repeat("Words that run on. ", 200)
-	var rows []ledgerRow
-	var held, lines []string
-	for n := 41; n <= 43; n++ {
-		row := readyRow(n)
-		row.ForUsers, row.Risk, row.WaitsOn, row.Description, row.Lane, row.GradeFindings = long, long, long, long, long, long
-		rows = append(rows, row)
-		held = append(held, fmt.Sprintf("acme/app#%d", n))
-		lines = append(lines, fmt.Sprintf("https://github.com/acme/app/pull/%d", n))
-	}
-	l := previewingDaemon(t, fakePRRows(t, rows...).argv, held...)
-	l.do(opDMStatus, map[string]any{"text": "Three long PRs.\n" + strings.Join(lines, "\n")})
-	post := lastPost(l)
-	drawn := entitiesOf(t, workObjectsIn(post))
-	if len(drawn) == 0 || len(drawn) == len(rows) || !strings.Contains(post.attachments, "more not shown here") || !strings.Contains(post.text, "pull/43") {
-		t.Fatalf("drew %d, post = %+v, want the undrawn counted and its link kept", len(drawn), post)
-	}
-}
-
 func TestSlackDroppingACardReachesTheCallersContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"D1","ts":"1.2","warning":"metadata_too_large","response_metadata":{"warnings":["metadata_too_large"],"messages":["[WARN] too big"]}}`))
@@ -781,7 +670,7 @@ func TestSlackDroppingACardReachesTheCallersContext(t *testing.T) {
 	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
 	ctx := withMetadataRefusals(context.Background())
 	_, _, err := api.PostMessageContext(ctx, "D1", slack.MsgOptionText("See it", false),
-		slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{readyRow(41).entity(testPR, "")}}))
+		slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{testEntity()}}))
 	if err != nil {
 		t.Fatal(err)
 	}
