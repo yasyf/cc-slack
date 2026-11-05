@@ -608,6 +608,9 @@ func TestAnAnswerDrawnForAnEarlierQuestionDoesNotAnswerTheRedrawnCard(t *testing
 	if got := l.inject(agent.TopLevel); got != "" {
 		t.Fatalf("an answer to the old question steered %q", got)
 	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "this card now asks something else") {
+		t.Fatalf("card edits %v, want the card to say the answer reached no one", edits)
+	}
 	if res := answerOnBoard(t, l, c, "Hold"); !res.Answered {
 		t.Fatalf("the redrawn card's board answer = %+v, want it to win", res)
 	}

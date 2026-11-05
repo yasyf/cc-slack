@@ -41,6 +41,8 @@ type fakePost struct {
 	attachments string
 }
 
+const fakeEditedAt = "9999999999.000000"
+
 type fakeEdit struct {
 	channelID   string
 	ts          string
@@ -435,6 +437,7 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 			continue
 		}
 		f.channels[channelID][i].Text = values.Get("text")
+		f.channels[channelID][i].Edited = &slack.Edited{Timestamp: fakeEditedAt}
 		if values.Has("blocks") {
 			f.channels[channelID][i].Blocks = blocks
 		}

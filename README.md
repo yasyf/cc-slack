@@ -113,6 +113,11 @@ card_command = ["lr", "board", "card", "--lane", "pr-cards"]
 preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--json"]
 ```
 
+`card_command` also receives `{"unheard": {"card", "label", "question", "other", "permalink", "at", "key"}}`
+on stdin when you answer a card whose session has ended. It prints `{"heard": true}` once the answer has
+reached someone, and the card closes on your pick. Anything else leaves the card open, saying your pick
+reached no one.
+
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
 the config it was logged in with, so rerun `cc-slack login` after a change.
 
