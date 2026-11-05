@@ -356,24 +356,22 @@ func copyDaemon(t *testing.T, card map[string]any) (*liveDaemon, identity, strin
 
 func copiedButtonsOf(t *testing.T, post fakePost) []*slack.ButtonBlockElement {
 	t.Helper()
-	var copies []slack.Attachment
-	if err := json.Unmarshal([]byte(post.attachments), &copies); err != nil {
-		t.Fatalf("attachments %q: %v", post.attachments, err)
+	var copied slack.Blocks
+	if err := json.Unmarshal([]byte(post.blocks), &copied); err != nil {
+		t.Fatalf("blocks %q: %v", post.blocks, err)
 	}
 	var buttons []*slack.ButtonBlockElement
-	for _, copied := range copies {
-		for _, block := range copied.Blocks.BlockSet {
-			switch b := block.(type) {
-			case *slack.ActionBlock:
-				for _, element := range b.Elements.ElementSet {
-					if button, isButton := element.(*slack.ButtonBlockElement); isButton {
-						buttons = append(buttons, button)
-					}
+	for _, block := range copied.BlockSet {
+		switch b := block.(type) {
+		case *slack.ActionBlock:
+			for _, element := range b.Elements.ElementSet {
+				if button, isButton := element.(*slack.ButtonBlockElement); isButton {
+					buttons = append(buttons, button)
 				}
-			case *slack.SectionBlock:
-				if b.Accessory != nil && b.Accessory.ButtonElement != nil {
-					buttons = append(buttons, b.Accessory.ButtonElement)
-				}
+			}
+		case *slack.SectionBlock:
+			if b.Accessory != nil && b.Accessory.ButtonElement != nil {
+				buttons = append(buttons, b.Accessory.ButtonElement)
 			}
 		}
 	}
@@ -396,7 +394,7 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 				t.Fatal(err)
 			}
 			post := lastPost(l)
-			if post.threadTS != thread || post.text != cardCopyLead || first.Permalink == "" || !strings.Contains(post.attachments, "Merge the stack?") {
+			if post.threadTS != thread || post.text != cardCopyLead || first.Permalink == "" || !strings.Contains(post.blocks, "Merge the stack?") || post.attachments != "" {
 				t.Fatalf("post = %+v, reply = %+v, want the copy in thread %s and its permalink", post, first, thread)
 			}
 			if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": link, "thread_ts": thread}).Body, &second); err != nil {
@@ -421,12 +419,38 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 						marked = append(marked, edit)
 					}
 				}
-				if len(marked) != 1 || !strings.Contains(marked[0].attachments, "*"+tc.option+"*") || strings.Contains(marked[0].attachments, cardCopyAction) {
+				if len(marked) != 1 || !strings.Contains(marked[0].blocks, "*"+tc.option+"*") || strings.Contains(marked[0].blocks, cardCopyAction) {
 					t.Fatalf("copy %s edits = %+v, want its buttons replaced by the answer", copied, marked)
 				}
 			}
 		})
 	}
+}
+
+func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
+	long := strings.Repeat("A paragraph long enough that the old copy would clip it. ", 12)
+	l, id, card, thread := copyDaemon(t, map[string]any{"card": statusCard{Status: "needs_you", Title: "Merge the stack?", Body: long + "\n\nThe last paragraph.", Options: []string{"merge it", "hold it"}}})
+	l.do(opCardCopy, map[string]any{"url": id.permalink(id.DMChannelID, card, ""), "thread_ts": thread})
+	post := lastPost(l)
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(post.blocks), &blocks); err != nil {
+		t.Fatalf("blocks %q: %v", post.blocks, err)
+	}
+	if _, isHeader := blocks.BlockSet[0].(*slack.HeaderBlock); !isHeader {
+		t.Fatalf("first block = %T, want the card's header", blocks.BlockSet[0])
+	}
+	if !strings.Contains(post.blocks, "The last paragraph.") || !strings.Contains(post.blocks, strings.TrimSpace(long)) {
+		t.Fatalf("blocks = %s, want every paragraph whole", post.blocks)
+	}
+	if len(copiedButtonsOf(t, post)) < 3 {
+		t.Fatalf("blocks = %s, want both answers and the link to the card", post.blocks)
+	}
+}
+
+func TestACopyOfAMessageThatDrewAsTextSaysSo(t *testing.T) {
+	l, id, _, thread := copyDaemon(t, map[string]any{"text": "Just words."})
+	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
+	l.refused(opCardCopy, map[string]any{"url": link, "thread_ts": thread}, "no card to copy")
 }
 
 func TestACopyIsRefusedWhenNoAnswerIsLeftToTap(t *testing.T) {

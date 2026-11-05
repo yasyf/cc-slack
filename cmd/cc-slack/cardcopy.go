@@ -17,7 +17,6 @@ const (
 	cardCopyAction = cardActionPrefix + ":preview:"
 	cardCopyOpen   = cardLinkAction + "copy"
 	cardCopyBlock  = cardActionPrefix + "-copy"
-	cardCopyChars  = 600
 	cardCopyLead   = "Answer it here:"
 )
 
@@ -46,7 +45,7 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.post(hc.Ctx, hc.DB, id, id.DMChannelID, b.ThreadTS, cardCopyLead, nil, nil, slack.MsgOptionAttachments(copied))
+	res, err := a.post(hc.Ctx, hc.DB, id, id.DMChannelID, b.ThreadTS, cardCopyLead, copied, nil)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -54,41 +53,44 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(res)
 }
 
-func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) (slack.Attachment, error) {
+func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, error) {
 	if ref.channelID != id.DMChannelID || ref.ts == "" {
-		return slack.Attachment{}, fmt.Errorf("%s is not a message in your DM with the app", link)
+		return nil, fmt.Errorf("%s is not a message in your DM with the app", link)
 	}
 	card, err := messageAt(ctx, a.newAPI(id.Token), ref.channelID, ref.threadTS, ref.ts)
 	if err != nil {
-		return slack.Attachment{}, err
+		return nil, err
 	}
-	var title, body string
-	var rows []slack.Block
+	var title string
+	var blocks []slack.Block
 	var buttons []slack.BlockElement
+	picks := 0
 	for _, block := range card.Blocks.BlockSet {
 		switch b := block.(type) {
 		case *slack.HeaderBlock:
 			title = cmp.Or(title, b.Text.Text)
+			blocks = append(blocks, b)
 		case *slack.SectionBlock:
-			if row, isPick := copiedPick(b, ref); isPick {
-				rows = append(rows, row)
-			} else if b.Text != nil && len(rows) == 0 {
-				body = cmp.Or(body, b.Text.Text)
+			row, isPick := copiedPick(b, ref)
+			if isPick {
+				picks++
 			}
+			blocks = append(blocks, row)
 		case *slack.ActionBlock:
 			buttons = append(buttons, copiedButtons(b, ref)...)
+		case *slack.ContextBlock, *slack.TableBlock:
+			blocks = append(blocks, block)
 		}
 	}
 	if title == "" {
-		return slack.Attachment{}, errors.New("that message drew as text, with no card to copy")
+		return nil, errors.New("that message drew as text, with no card to copy")
 	}
-	if len(rows)+len(buttons) == 0 {
-		return slack.Attachment{}, errors.New("that card has no answer left to tap")
+	if picks+len(buttons) == 0 {
+		return nil, errors.New("that card has no answer left to tap")
 	}
 	open := button(cardCopyOpen, "Open the card")
 	open.URL = link
-	blocks := append([]slack.Block{section("", strings.TrimSpace("*"+slackLink(link, title)+"*\n"+clipRunes(body, cardCopyChars)))}, rows...)
-	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, append(buttons, open)...))}}, nil
+	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, append(buttons, open)...)), nil
 }
 
 func answers(actionID string) bool {
@@ -113,7 +115,7 @@ func copiedButtons(actions *slack.ActionBlock, ref permalinkRef) []slack.BlockEl
 
 func copiedPick(row *slack.SectionBlock, ref permalinkRef) (slack.Block, bool) {
 	if row.Accessory == nil || row.Accessory.ButtonElement == nil || !answers(row.Accessory.ButtonElement.ActionID) {
-		return nil, false
+		return slack.NewSectionBlock(row.Text, row.Fields, nil, slack.SectionBlockOptionBlockID(row.BlockID)), false
 	}
 	return slack.NewSectionBlock(row.Text, nil, slack.NewAccessory(copiedAnswer(row.Accessory.ButtonElement, ref)), slack.SectionBlockOptionBlockID(row.BlockID)), true
 }
@@ -145,13 +147,12 @@ func (p *poller) markCopies(ctx context.Context, id identity, card cardRef, line
 	api := p.newAPI(id.Token)
 	for _, copied := range p.cards.copiesOf(card.channel, card.ts) {
 		post, err := messageAt(ctx, api, copied.channel, copied.thread, copied.ts)
-		if err != nil || len(post.Attachments) == 0 {
+		if err != nil {
 			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 			continue
 		}
-		drawn := post.Attachments[0]
-		drawn.Blocks.BlockSet = []slack.Block{drawn.Blocks.BlockSet[0], mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))}
-		if _, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionAttachments(drawn)); err != nil {
+		answered := mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))
+		if _, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(post.Blocks.BlockSet[0], answered), slack.MsgOptionAttachments([]slack.Attachment{}...)); err != nil {
 			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 		}
 	}
