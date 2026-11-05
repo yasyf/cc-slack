@@ -248,9 +248,15 @@ func TestACardPRCarryingItsDescriptionKeepsItOverGitHubs(t *testing.T) {
 		"url": "https://github.com/acme/app/pull/41", "title": "One credential per team", "description": "The ledger's description.",
 		"change": "Launches stop waiting", "plan": "Nothing differed", "risk": "None", "blocks": "Your approval",
 	}}}})
-	posts := l.slack.sent()
-	if len(posts) == 0 || !strings.Contains(posts[len(posts)-1].blocks, "The ledger's description.") {
-		t.Fatalf("posts = %+v, want the card's own description", posts)
+	card := lastPost(l)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: card.ts, ThreadTS: card.ts, ActionID: cardFoldAction,
+		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0310"})
+	if got := lastPost(l).blocks; !strings.Contains(got, "The ledger's description.") {
+		t.Fatalf("Explain more drew %s, want the card's own description", got)
 	}
 }
 

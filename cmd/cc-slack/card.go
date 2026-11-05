@@ -64,7 +64,6 @@ const (
 	cardMaxFieldLen   = 2000
 	cardMaxPRs        = 10
 	cardMaxPRRows     = 8
-	cardQuietBody     = 400
 	cardMaxNameLen    = 80
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
@@ -1077,10 +1076,10 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 }
 
 func (p cardPR) blocks(v cardView) []slack.Block {
-	return bodyPages(p.markdown(v, cardQuietBody, "\n"), cardMaxBlocks, cardMaxVisible, false)[0]
+	return bodyPages(p.markdown(v, "\n"), cardMaxBlocks, cardMaxVisible, false)[0]
 }
 
-func (p cardPR) markdown(v cardView, limit int, betweenFacts string) string {
+func (p cardPR) markdown(v cardView, betweenFacts string) string {
 	id, _ := parseRef(p.URL)
 	line := "*" + slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number)) + "*"
 	if p.Title != "" {
@@ -1105,28 +1104,16 @@ func (p cardPR) markdown(v cardView, limit int, betweenFacts string) string {
 	if len(facts) > 0 {
 		parts = append(parts, strings.Join(facts, betweenFacts))
 	}
-	if shown, _ := p.description(limit); shown != "" {
-		parts = append(parts, shown)
-	}
 	return strings.Join(parts, "\n\n")
 }
 
-func (p cardPR) description(limit int) (string, string) {
-	whole := prDescription(p.Description)
-	if runes(whole) <= limit {
-		return whole, ""
-	}
-	shown := sectionCut([]rune(whole), limit)
-	return strings.TrimSpace(shown), strings.TrimSpace(strings.TrimPrefix(whole, shown))
-}
-
-func (p cardPR) folded(limit int) [][]slack.Block {
-	_, rest := p.description(limit)
-	if rest == "" {
+func (p cardPR) folded() [][]slack.Block {
+	description := prDescription(p.Description)
+	if description == "" {
 		return nil
 	}
 	id, _ := parseRef(p.URL)
-	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, the rest of its description", id.Repo, id.Number)), rest), cardMaxPageBlock, cardMaxVisible, true)
+	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, its description", id.Repo, id.Number)), description), cardMaxPageBlock, cardMaxVisible, true)
 }
 
 func plainMrkdwn(text string) string {
@@ -1176,15 +1163,13 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block
-	for _, r := range c.Rows {
-		if r.PR != nil {
-			fold = append(fold, r.PR.folded(cardQuietBody)...)
-		}
+	for _, p := range c.allPRs() {
+		fold = append(fold, p.folded()...)
 	}
 	tail := c.tail(v)
 	parts := make([]string, 0, len(c.PRs)+1)
 	for _, p := range c.PRs {
-		parts = append(parts, p.markdown(v, runes(p.Description), "\n\n"))
+		parts = append(parts, p.markdown(v, "\n\n"))
 	}
 	if c.Body != "" {
 		parts = append(parts, c.Body)

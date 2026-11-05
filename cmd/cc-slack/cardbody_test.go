@@ -161,7 +161,89 @@ func TestACardOverABudgetFoldsBehindExplainMoreAndNeverCuts(t *testing.T) {
 	}
 }
 
-func TestAPRCardShowsItsLinkCIFourLinesAndDescription(t *testing.T) {
+func blockLead(t *testing.T, b slack.Block) string {
+	t.Helper()
+	switch block := b.(type) {
+	case *slack.HeaderBlock:
+		return block.Text.Text
+	case *slack.SectionBlock:
+		return block.Text.Text
+	case *slack.ContextBlock:
+		text, ok := block.ContextElements.Elements[0].(*slack.TextBlockObject)
+		if !ok {
+			t.Fatalf("context element %T, want text", block.ContextElements.Elements[0])
+		}
+		return text.Text
+	case *slack.ActionBlock:
+		return block.BlockID
+	}
+	t.Fatalf("no lead for a %T", b)
+	return ""
+}
+
+func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
+	pr := fullPR(50659)
+	pr.Description = "## Context\n\nWhy it happened.\n\n## Summary\n\nWhat it does.\n\n## Full change list\n\n- `cancel.go`: the fix"
+	card := statusCard{
+		Status: "needs_you", Title: "Keep it or revert it?", Body: "It landed with no tap from you.",
+		Options: []string{"Keep it", "Revert it now"}, Recommended: "Keep it", Waits: "m50659", PRs: []cardPR{pr},
+	}
+	blocks, fold := card.layout(view())
+	want := []string{
+		"🙋 Keep it or revert it?", "*<https://github.com/acme/app/pull/50659|app PR 50659>*",
+		"*What changes*", "*Against the plan*", "*Risk*", "*Blocks landing*", "It landed with no tap from you.",
+		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
+	}
+	if len(blocks) != len(want) {
+		t.Fatalf("%d blocks %s, want %d: the first screen and nothing past it", len(blocks), blocksJSON(t, blocks), len(want))
+	}
+	for i, lead := range want {
+		if got := blockLead(t, blocks[i]); !strings.HasPrefix(got, lead) {
+			t.Errorf("block %d = %q, want it to start %q", i, got, lead)
+		}
+	}
+	folded := blocksJSON(t, slices.Concat(fold...))
+	for _, section := range []string{"pull/50659", "*Context*", "Why it happened.", "*Summary*", "What it does.", "*Full change list*", "`cancel.go`: the fix"} {
+		if !strings.Contains(folded, section) {
+			t.Errorf("fold %s lacks %q", folded, section)
+		}
+	}
+}
+
+func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	pr := fullPR(7)
+	pr.Description = "## Context\n\nWhy it happened."
+	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
+	l.do(opDMStatus, map[string]any{"card": card})
+	posted := l.slack.sent()[0]
+	if strings.Contains(posted.blocks, "Why it happened.") {
+		t.Fatalf("card %s, want its description behind Explain more", posted.blocks)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: posted.ts, ThreadTS: posted.ts,
+		ActionID: cardExplainAction + "m7", Value: string(mustJSON(askTap{ID: "m7", Label: cardExplainLabel, Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0300"}
+	l.tap(id, push)
+	posts := l.slack.sent()
+	if len(posts) != 2 || posts[1].threadTS != posted.ts || !strings.Contains(posts[1].blocks, "Why it happened.") {
+		t.Fatalf("posts = %+v, want the description in the card's thread", posts)
+	}
+	if got := l.inject(agent.TopLevel); strings.Contains(got, "explain") {
+		t.Fatalf("directive = %q, want no lane asked for what the card already holds", got)
+	}
+	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", time.Now().Unix()), "001800000100000-abcd0301"
+	l.tap(id, push)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `explain the waiting ask "m7" more`) {
+		t.Fatalf("directive = %q, want a second tap to ask the lane", got)
+	}
+}
+
+func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	pr := fullPR(49622)
 	pr.Description = "It keeps one storage credential per team."
 	card := statusCard{Status: "needs_you", Title: "Approve the team credential?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-49622", PRs: []cardPR{pr}}
@@ -186,8 +268,8 @@ func TestAPRCardShowsItsLinkCIFourLinesAndDescription(t *testing.T) {
 			t.Fatalf("paragraph %d = %q, want it to start %q", i, got, want)
 		}
 	}
-	if got := blocksJSON(t, blocks); !strings.Contains(got, "It keeps one storage credential per team.") {
-		t.Fatalf("blocks %s lack the PR's description", got)
+	if got := blocksJSON(t, blocks); strings.Contains(got, "It keeps one storage credential per team.") {
+		t.Fatalf("blocks %s, want the PR's description behind Explain more", got)
 	}
 	buttons := cardButtons(t, blocks)
 	if buttons[0].Text.Text != "Approve (Recommended)" || buttons[1].Text.Text != "Hold" {
@@ -275,7 +357,11 @@ func TestAPRDescriptionFromTheLedgerDrawsWithoutItsHTML(t *testing.T) {
 	pr := fullPR(7)
 	pr.Description = "<!-- bot -->Why it matters\n\n<details><summary>Changes</summary>\nA file\n</details>\n"
 	card := statusCard{Status: "info", Title: "Status", PRs: []cardPR{pr}}
-	got := blocksJSON(t, card.replyBlocks(view()))
+	blocks, fold := card.layout(view())
+	if shown := blocksJSON(t, blocks); !strings.Contains(shown, cardFoldAction) {
+		t.Fatalf("blocks %s, want an Explain more button on a card that waits on nothing", shown)
+	}
+	got := blocksJSON(t, slices.Concat(fold...))
 	for _, gone := range []string{"details", "summary", "-- bot"} {
 		if strings.Contains(got, gone) {
 			t.Fatalf("blocks %s still show %q", got, gone)
@@ -286,24 +372,27 @@ func TestAPRDescriptionFromTheLedgerDrawsWithoutItsHTML(t *testing.T) {
 	}
 }
 
-func TestALongPRDescriptionDrawsWholeAndOnlyAMessagesOverflowFolds(t *testing.T) {
-	sentences := func(n int) statusCard {
-		pr := fullPR(7)
-		pr.Description = strings.Repeat("A sentence of the description. ", n)
-		return statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
-	}
-	blocks, fold := sentences(200).layout(view())
-	if len(fold) != 0 || strings.Count(blocksJSON(t, blocks), "description.") != 200 {
-		t.Fatalf("fold = %d pages, blocks = %s, want all 200 sentences on the card", len(fold), blocksJSON(t, blocks))
-	}
-	blocks, fold = sentences(400).layout(view())
+func TestALongPRDescriptionWaitsWholeBehindExplainMore(t *testing.T) {
+	pr := fullPR(7)
+	pr.Description = strings.Repeat("A sentence of the description. ", 400)
+	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
+	blocks, fold := card.layout(view())
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatal(err)
 	}
-	if len(fold) == 0 || strings.Count(blocksJSON(t, blocks), "description.")+strings.Count(blocksJSON(t, slices.Concat(fold...)), "description.") != 400 {
-		t.Fatalf("fold = %d pages, want what passes a message behind Explain more with no sentence lost", len(fold))
+	for _, page := range fold {
+		if err := checkBlocks(page); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := blocksJSON(t, blocks); !strings.Contains(got, cardExplainAction+"m7") || strings.Contains(got, cardFoldAction) {
+	if got := strings.Count(blocksJSON(t, slices.Concat(fold...)), "description."); got != 400 {
+		t.Fatalf("%d of 400 sentences behind Explain more", got)
+	}
+	got := blocksJSON(t, blocks)
+	if strings.Contains(got, "description.") {
+		t.Fatalf("blocks %s, want no sentence on the card", got)
+	}
+	if !strings.Contains(got, cardExplainAction+"m7") || strings.Contains(got, cardFoldAction) {
 		t.Fatalf("blocks %s, want the waiting card's own Explain more to show the fold", got)
 	}
 }
@@ -321,7 +410,10 @@ func TestAGroupCardOfPRRowsFitsAMessage(t *testing.T) {
 	}
 	blocks, fold := card.layout(view())
 	if len(blocks) > cardMaxBlocks || len(fold) != cardMaxPRRows {
-		t.Fatalf("%d blocks and %d folds, want the card under Slack's %d with one fold per long description", len(blocks), len(fold), cardMaxBlocks)
+		t.Fatalf("%d blocks and %d folds, want the card under Slack's %d with one fold per description", len(blocks), len(fold), cardMaxBlocks)
+	}
+	if got := blocksJSON(t, blocks); strings.Contains(got, "Detail.") {
+		t.Fatalf("blocks %s, want each row's description behind Explain more", got)
 	}
 	over := statusCard{Status: "needs_you", Title: "Login", Group: "pg:login", Rows: append(slices.Clone(rows), cardRow{ID: "pg:9:abc", PR: rows[0].PR, Buttons: []string{"Hold"}})}
 	if err := over.check(bodyAt, false, ""); err == nil {
@@ -587,10 +679,9 @@ func TestAStatusCardShowsItsWholeBodyAndFoldsOnlyPastTheVisibleLimit(t *testing.
 func TestACutNeverEndsOnAHeading(t *testing.T) {
 	body := strings.Repeat("words ", 40)
 	for _, heading := range []string{"## Summary", "**Summary**", "*Summary*"} {
-		pr := cardPR{Description: "The intro.\n\n" + heading + "\n\n" + body}
-		shown, rest := pr.description(40)
-		if shown != "The intro." || !strings.HasPrefix(rest, heading) {
-			t.Fatalf("%s: shown %q, rest %q, want the heading moved to the rest", heading, shown, rest)
+		shown := strings.TrimSpace(sectionCut([]rune("The intro.\n\n"+heading+"\n\n"+body), 40))
+		if shown != "The intro." {
+			t.Fatalf("%s: shown %q, want the heading moved to the rest", heading, shown)
 		}
 	}
 	parts := splitSection("## Summary\n\n"+body, 40)

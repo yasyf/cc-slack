@@ -70,11 +70,11 @@ func (r ledgerRow) checks() string {
 	return " CI " + mrkdwnEscapes.Replace(r.CI) + "."
 }
 
-func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string) (string, []slack.Attachment) {
+func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string, onCard []refID) (string, []slack.Attachment) {
 	if channelID != id.DMChannelID {
 		return text, nil
 	}
-	text, previews, more := a.prPreviews(ctx, id, text)
+	text, previews, more := a.prPreviews(ctx, id, text, onCard)
 	builds, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(previews))
 	previews = append(previews, builds...)
 	if more += moreBuilds; more > 0 {
@@ -84,11 +84,19 @@ func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text str
 	return text, previews
 }
 
-func (a *app) prPreviews(ctx context.Context, id identity, text string) (string, []slack.Attachment, int) {
+func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard []refID) (string, []slack.Attachment, int) {
 	command := id.Config.PRLinks.PreviewCommand
 	prs := linkedPRRefs(text)
 	if len(command) == 0 || len(prs) == 0 {
 		return text, nil, 0
+	}
+	drawn := map[string]bool{}
+	for _, pr := range onCard {
+		drawn[pr.key()] = true
+	}
+	prs = slices.DeleteFunc(prs, func(pr refID) bool { return drawn[pr.key()] })
+	if len(prs) == 0 {
+		return withoutRepeatedLinks(text, drawn), nil, 0
 	}
 	rows, err := readLedgerRows(ctx, command, prs)
 	if err != nil {
@@ -96,7 +104,6 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string) (string,
 		return text, nil, 0
 	}
 	var previews []slack.Attachment
-	drawn := map[string]bool{}
 	more := 0
 	for _, pr := range prs {
 		row, ok := rows[pr.key()]

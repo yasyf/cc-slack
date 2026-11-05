@@ -222,6 +222,42 @@ func TestAStatusCardCarriesItsPRPreviewInItsThreadAndLosesItsBareLine(t *testing
 	}
 }
 
+func TestACardPreviewsNoPRItDraws(t *testing.T) {
+	const mixedCase = "https://github.com/Acme/App/pull/41"
+	for name, card := range map[string]statusCard{
+		"in its prs":  {PRs: []cardPR{{URL: mixedCase, Change: "Chats load faster"}}},
+		"in its refs": {Refs: []cardLink{{URL: mixedCase}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := fakePRRows(t, readyRow(41))
+			l := previewingDaemon(t, rows.argv, "acme/app#41")
+			card.Status, card.Title, card.Body = "info", "Status", "Fixed.\n"+testPR
+			l.do(opDMStatus, map[string]any{"card": card})
+			posts := l.slack.sent()
+			if len(posts) != 1 || posts[0].attachments != "" {
+				t.Fatalf("posts = %+v, want the card alone", posts)
+			}
+			if strings.Contains(posts[0].blocks, testPR) {
+				t.Fatalf("card blocks = %s, want no bare link", posts[0].blocks)
+			}
+			if got := readAsks(t, rows.asked); len(got) != 0 {
+				t.Fatalf("read rows %v for a PR the card draws", got)
+			}
+		})
+	}
+}
+
+func TestACardStillPreviewsALinkItDoesNotDraw(t *testing.T) {
+	const other = "https://github.com/acme/app/pull/42"
+	rows := fakePRRows(t, readyRow(41), readyRow(42))
+	l := previewingDaemon(t, rows.argv, "acme/app#41", "acme/app#42")
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Fixed.\n" + testPR + "\n" + other, PRs: []cardPR{{URL: testPR, Change: "Chats load faster"}}}})
+	post := lastPost(l)
+	if post.text != linkPreviewsLead || !strings.Contains(post.attachments, other) || strings.Contains(post.attachments, testPR) {
+		t.Fatalf("post = %+v, want a preview of the PR the card does not draw and no other", post)
+	}
+}
+
 func cardedPreviewDaemon(t *testing.T, row ledgerRow) (*liveDaemon, fakePost) {
 	t.Helper()
 	cards := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
@@ -484,11 +520,11 @@ func TestAPRCardDrawsInBlocksAboveItsButtonsAndNoWorkObject(t *testing.T) {
 		t.Fatalf("metadata = %s, attachments = %s, want the PR in the blocks alone", post.metadata, post.attachments)
 	}
 	at, buttons := strings.Index(post.blocks, "What changes"), strings.Index(post.blocks, cardExplainAction+"m41")
-	if at < 0 || buttons < 0 || at > buttons || strings.LastIndex(post.blocks, "A sentence of the description.") > buttons {
+	if at < 0 || buttons < 0 || at > buttons {
 		t.Fatalf("blocks = %s, want the PR above its buttons", post.blocks)
 	}
-	if got := strings.Count(post.blocks, "A sentence of the description."); got != 200 {
-		t.Fatalf("drew %d of 200 sentences", got)
+	if strings.Contains(post.blocks, "A sentence of the description.") {
+		t.Fatalf("blocks = %s, want the description behind Explain more", post.blocks)
 	}
 	if !strings.Contains(post.blocks, testPR) {
 		t.Fatalf("blocks = %s, want the PR's link on GitHub", post.blocks)

@@ -463,7 +463,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
-| `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, the lines it has as fields, and its description read from GitHub; a missing line is left out |
+| `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, and the lines it has as fields; a missing line is left out. Its description, read from GitHub, posts in the thread on Explain more |
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
