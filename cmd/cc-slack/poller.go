@@ -55,6 +55,7 @@ type poller struct {
 	replay    *replayCursor
 	shortcuts *shortcutHandler
 	cards     *liveCards
+	taps      tapQueue
 	wakeCh    chan struct{}
 	reconcile atomic.Bool
 	paused    map[string]time.Time

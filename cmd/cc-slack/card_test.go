@@ -308,6 +308,12 @@ func TestDMStatusRefusesACardWithBlocksOrABadStatus(t *testing.T) {
 
 func (l *liveDaemon) tap(id identity, push cardActionPush) {
 	l.t.Helper()
+	l.push(id, push)
+	l.app.poller.taps.busy.Wait()
+}
+
+func (l *liveDaemon) push(id identity, push cardActionPush) {
+	l.t.Helper()
 	frame := mustJSON(map[string]any{"event_type": cardActionEventType, "event_payload": push})
 	if err := socketFrames(l.app.shortcuts, l.app.poller, l.app.replay)(l.ctx, id, frame); err != nil {
 		l.t.Fatal(err)

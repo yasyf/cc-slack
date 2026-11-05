@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/subject"
 )
 
@@ -241,6 +242,13 @@ func prCardThread(id identity, channelID, postThread string) string {
 func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) []linkedPR {
 	_, prs := a.linkPRs(ctx, id, scope, strings.Join(b.TapPRs, "\n"))
 	return prs
+}
+
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread string, b opBody) {
+	ctx := context.WithoutCancel(hc.Ctx)
+	go func() {
+		a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, a.tapPRs(ctx, id, hc.Env.Scope, b))
+	}()
 }
 
 func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread string, prs []linkedPR) {

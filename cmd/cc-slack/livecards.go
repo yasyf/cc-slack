@@ -238,6 +238,7 @@ type liveCards struct {
 	threads map[string]*liveThread
 	refs    map[string]refState
 	hosts   map[string]*refHost
+	drawing map[string]*sync.Mutex
 }
 
 func (l *liveCards) rememberCopy(channel, thread, card, ts string, at time.Time) {
@@ -621,90 +622,120 @@ func (l *liveCards) fold(channel, thread, ts string, now time.Time) [][]slack.Bl
 }
 
 func (l *liveCards) redraw(ctx context.Context, api slackAPI, channel, thread, first string, now time.Time) (map[string]bool, error) {
+	key := threadKey(channel, thread)
+	defer l.drawLock(key)()
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(channel, thread)]
+	t, ok := l.threads[key]
 	if !ok {
+		l.mu.Unlock()
 		return nil, nil
 	}
-	redrawn, err := l.draw(ctx, api, t, now, first)
-	l.save()
-	return redrawn, err
+	writes := l.plan(t, now, first)
+	l.mu.Unlock()
+	return l.flush(ctx, api, t, writes, now, true)
 }
 
-func (l *liveCards) draw(ctx context.Context, api slackAPI, t *liveThread, now time.Time, first string) (map[string]bool, error) {
-	redrawn := map[string]bool{}
-	var errs []error
-	drawRoot := func() {
-		if t.Root == nil {
-			return
-		}
-		text, blocks := t.rootMessage(now, l.refs)
-		if err := l.update(ctx, api, t, &t.Root, text, blocks); err != nil {
-			errs = append(errs, err)
-		} else if t.Root != nil {
-			redrawn[t.Root.TS] = true
-		}
+func (l *liveCards) drawLock(key string) func() {
+	l.mu.Lock()
+	mu, ok := l.drawing[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		l.drawing[key] = mu
 	}
-	drawReply := func() {
-		if t.Reply == nil {
-			return
-		}
-		text, blocks := t.replyMessage(t.Reply, now, l.refs)
-		if err := l.update(ctx, api, t, &t.Reply, text, blocks); err != nil {
-			errs = append(errs, err)
-		} else if t.Reply != nil {
-			redrawn[t.Reply.TS] = true
-		}
+	l.mu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
+type cardWrite struct {
+	m        *liveMessage
+	ts       string
+	text     string
+	blocks   []slack.Block
+	entities []slack.MsgOption
+}
+
+func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root bool) cardWrite {
+	text, blocks := t.replyMessage(m, now, l.refs)
+	if root {
+		text, blocks = t.rootMessage(now, l.refs)
 	}
+	w := cardWrite{m: m, ts: m.TS, text: text, blocks: blocks}
+	if m.Tapped == "" {
+		w.entities = m.Card.entities()
+	}
+	return w
+}
+
+func (l *liveCards) plan(t *liveThread, now time.Time, first string) []cardWrite {
+	var writes []cardWrite
 	for _, kept := range []map[string]*liveMessage{t.Waiting, t.Groups, t.Keyed} {
-		for key, m := range kept {
-			if m == nil || m.TS != first || (t.Reply != nil && t.Reply.TS == first) {
-				continue
-			}
-			text, blocks := t.replyMessage(m, now, l.refs)
-			if err := l.update(ctx, api, t, &m, text, blocks); err != nil {
-				errs = append(errs, err)
-			} else if m == nil {
-				delete(kept, key)
-			} else {
-				redrawn[m.TS] = true
+		for _, m := range kept {
+			if m != nil && m.TS == first && (t.Reply == nil || t.Reply.TS != first) {
+				writes = append(writes, l.write(t, m, now, false))
 			}
 		}
 	}
-	if drawn, err := l.drawTappedPRCard(ctx, api, t, now, first); err != nil {
-		errs = append(errs, err)
-	} else if drawn {
-		redrawn[first] = true
+	if i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == first }); i >= 0 {
+		writes = append(writes, l.write(t, t.PRCards[i], now, false))
 	}
+	order := []*liveMessage{t.Root, t.Reply}
 	if t.Reply != nil && t.Reply.TS == first {
-		drawReply()
-		drawRoot()
-	} else {
-		drawRoot()
-		drawReply()
+		order = []*liveMessage{t.Reply, t.Root}
 	}
-	t.Drawn, t.Stale = now, len(errs) > 0
+	for _, m := range order {
+		if m != nil {
+			writes = append(writes, l.write(t, m, now, m == t.Root))
+		}
+	}
+	return writes
+}
+
+func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writes []cardWrite, now time.Time, whole bool) (map[string]bool, error) {
+	redrawn := map[string]bool{}
+	var gone []*liveMessage
+	var errs []error
+	for _, w := range writes {
+		err := l.update(ctx, api, t.Channel, w)
+		switch {
+		case err != nil && goneCardCodes[errorCode(err)]:
+			l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, w.ts, errorCode(err))
+			gone = append(gone, w.m)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("redraw card %s/%s: %w", t.Channel, w.ts, err))
+		default:
+			redrawn[w.ts] = true
+		}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, m := range gone {
+		t.drop(m)
+	}
+	if whole {
+		t.Drawn, t.Stale = now, len(errs) > 0
+	}
+	l.save()
 	return redrawn, errors.Join(errs...)
 }
 
-func (l *liveCards) update(ctx context.Context, api slackAPI, t *liveThread, m **liveMessage, text string, blocks []slack.Block) error {
+func (l *liveCards) update(ctx context.Context, api slackAPI, channel string, w cardWrite) error {
 	ctx, cancel := context.WithTimeout(ctx, liveUpdateTimeout)
 	defer cancel()
-	var entities []slack.MsgOption
-	if (*m).Tapped == "" {
-		entities = (*m).Card.entities()
+	return updateMessage(ctx, api, channel, w.ts, w.text, w.blocks, w.entities...)
+}
+
+func (t *liveThread) drop(m *liveMessage) {
+	if t.Root == m {
+		t.Root = nil
 	}
-	err := updateMessage(ctx, api, t.Channel, (*m).TS, text, blocks, entities...)
-	if err != nil && goneCardCodes[errorCode(err)] {
-		l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, (*m).TS, errorCode(err))
-		*m = nil
-		return nil
+	if t.Reply == m {
+		t.Reply = nil
 	}
-	if err != nil {
-		return fmt.Errorf("redraw card %s/%s: %w", t.Channel, (*m).TS, err)
+	for _, kept := range []map[string]*liveMessage{t.Waiting, t.Groups, t.Keyed} {
+		maps.DeleteFunc(kept, func(_ string, k *liveMessage) bool { return k == m })
 	}
-	return nil
+	t.PRCards = slices.DeleteFunc(t.PRCards, func(k *liveMessage) bool { return k == m })
 }
 
 func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool, time.Time) {
@@ -868,25 +899,41 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 
 func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map[string]bool, now time.Time) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	dirty := false
-	for _, k := range slices.Sorted(maps.Keys(l.threads)) {
-		t := l.threads[k]
-		if !t.Stale && !t.cites(changed) && !t.expiredSinceDrawn(now) {
-			continue
-		}
-		dirty = true
-		if _, err := l.draw(ctx, api, t, now, ""); err != nil {
-			l.log.Printf("live card %s: %v", k, err)
+	keys := slices.Sorted(maps.Keys(l.threads))
+	l.mu.Unlock()
+	for _, k := range keys {
+		l.redrawMoved(ctx, api, k, changed, now)
+	}
+}
+
+func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, changed map[string]bool, now time.Time) {
+	defer l.drawLock(key)()
+	l.mu.Lock()
+	t, ok := l.threads[key]
+	if !ok {
+		l.mu.Unlock()
+		return
+	}
+	whole := t.Stale || t.cites(changed) || t.expiredSinceDrawn(now)
+	var writes, prCards []cardWrite
+	if whole {
+		writes = l.plan(t, now, "")
+	}
+	for _, m := range t.PRCards {
+		if m.cites(changed) {
+			prCards = append(prCards, l.write(t, m, now, false))
 		}
 	}
-	for _, t := range l.threads {
-		if l.drawPRCards(ctx, api, t, changed, now) {
-			dirty = true
+	l.mu.Unlock()
+	if whole {
+		if _, err := l.flush(ctx, api, t, writes, now, true); err != nil {
+			l.log.Printf("live card %s: %v", key, err)
 		}
 	}
-	if dirty {
-		l.save()
+	if len(prCards) > 0 {
+		if _, err := l.flush(ctx, api, t, prCards, now, false); err != nil {
+			l.log.Printf("live card %v", err)
+		}
 	}
 }
 
@@ -924,26 +971,30 @@ func (l *liveCards) postedPRCards() []postedPRCard {
 
 // replacePRCard redraws a posted PR card in place from what its command says now.
 func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, now time.Time) error {
+	key := threadKey(card.channel, card.thread)
+	defer l.drawLock(key)()
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(card.channel, card.thread)]
+	t, ok := l.threads[key]
 	if !ok {
+		l.mu.Unlock()
 		return fmt.Errorf("no live thread %s/%s", card.channel, card.thread)
 	}
 	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == card.ts })
 	if i < 0 {
+		l.mu.Unlock()
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
-	if m := t.PRCards[i]; drawn.Waits == "" {
+	m := t.PRCards[i]
+	if drawn.Waits == "" {
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended
 		if t.open(m) {
 			m.Tapped = cardNoLongerWaits
 		}
 	}
-	t.PRCards[i].Card = drawn
-	err := l.drawPRCard(ctx, api, t, i, now)
-	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
-	l.save()
+	m.Card = drawn
+	w := l.write(t, m, now, false)
+	l.mu.Unlock()
+	_, err := l.flush(ctx, api, t, []cardWrite{w}, now, false)
 	return err
 }
 
@@ -995,37 +1046,4 @@ func (l *liveCards) prRow(channel, thread, row string) (refID, bool) {
 		}
 	}
 	return refID{}, false
-}
-
-func (l *liveCards) drawPRCards(ctx context.Context, api slackAPI, t *liveThread, changed map[string]bool, now time.Time) bool {
-	drawn := false
-	for i, m := range t.PRCards {
-		if !m.cites(changed) {
-			continue
-		}
-		drawn = true
-		if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
-			l.log.Printf("live card %v", err)
-		}
-	}
-	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
-	return drawn
-}
-
-func (l *liveCards) drawTappedPRCard(ctx context.Context, api slackAPI, t *liveThread, now time.Time, first string) (bool, error) {
-	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == first })
-	if i < 0 {
-		return false, nil
-	}
-	if err := l.drawPRCard(ctx, api, t, i, now); err != nil {
-		return false, err
-	}
-	drawn := t.PRCards[i] != nil
-	t.PRCards = slices.DeleteFunc(t.PRCards, func(m *liveMessage) bool { return m == nil })
-	return drawn, nil
-}
-
-func (l *liveCards) drawPRCard(ctx context.Context, api slackAPI, t *liveThread, i int, now time.Time) error {
-	text, blocks := t.replyMessage(t.PRCards[i], now, l.refs)
-	return l.update(ctx, api, t, &t.PRCards[i], text, blocks)
 }

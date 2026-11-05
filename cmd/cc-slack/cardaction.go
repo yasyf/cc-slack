@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -69,6 +70,38 @@ type askTap struct {
 	Explain  bool     `json:"-"`
 	Other    bool     `json:"-"`
 	Row      bool     `json:"-"`
+}
+
+type tapQueue struct {
+	mu     sync.Mutex
+	queued map[string][]func()
+	busy   sync.WaitGroup
+}
+
+func (q *tapQueue) run(card string, tap func()) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if taps, ok := q.queued[card]; ok {
+		q.queued[card] = append(taps, tap)
+		return
+	}
+	q.queued[card] = []func(){tap}
+	q.busy.Go(func() { q.drain(card) })
+}
+
+func (q *tapQueue) drain(card string) {
+	for {
+		q.mu.Lock()
+		taps := q.queued[card]
+		if len(taps) == 0 {
+			delete(q.queued, card)
+			q.mu.Unlock()
+			return
+		}
+		q.queued[card] = taps[1:]
+		q.mu.Unlock()
+		taps[0]()
+	}
 }
 
 type cardRef struct {
@@ -397,17 +430,23 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
 		return applied
 	}
-	if !applied {
-		answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label}
-		if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
-			p.cards.release(c.ref.channel, c.ref.thread, c.waits)
-			p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
-			p.recard(ctx, id, c.ref, c.pr, "Your *"+mrkdwnEscapes.Replace(label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
-			return false
-		}
-	}
 	if err := p.markOption(ctx, id, c.ref, line); err != nil {
-		p.log.Printf("PR card %s: %q applied, but the card still shows its buttons: %v", c.waits, label, err)
+		p.log.Printf("PR card %s: %q taken, but the card still shows its buttons: %v", c.waits, label, err)
+	}
+	if applied {
+		return true
+	}
+	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+		p.cards.release(c.ref.channel, c.ref.thread, c.waits)
+		p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
+		if p.cards.markReply(c.ref.channel, c.ref.thread, c.ref.ts, func(m *liveMessage) { m.Tapped = "" }) {
+			if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), c.ref.channel, c.ref.thread, c.ref.ts, p.now()); err != nil {
+				p.log.Printf("PR card %s: the card still shows %q: %v", c.waits, label, err)
+			}
+		}
+		p.recard(ctx, id, c.ref, c.pr, "Your *"+mrkdwnEscapes.Replace(label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
+		return false
 	}
 	return true
 }
@@ -465,14 +504,20 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 		p.log.Printf("PR row %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
 		return nil
 	}
+	if err := p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true); err != nil {
+		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
+	}
 	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(a.Channel, a.ThreadTS, k.ID)
 		p.log.Printf("PR row %s: %q not applied: %v", k.ID, k.Label, err)
+		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now()); err != nil {
+			p.log.Printf("PR row %s: the card still shows %q: %v", k.ID, k.Label, err)
+		}
 		return p.confirmTap(ctx, id, a.ref(), cardRowBlock+k.ID,
 			"Your *"+mrkdwnEscapes.Replace(k.Label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
 	}
-	return p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)
+	return nil
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {

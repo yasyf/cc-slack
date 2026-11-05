@@ -34,10 +34,18 @@ type fakeGitHub struct {
 	down        bool
 	reads       int
 	mergedAfter int
+	stall       chan struct{}
+	stalled     int
 }
 
 func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
+	if stall := f.stall; stall != nil {
+		f.stalled++
+		f.mu.Unlock()
+		<-stall
+		f.mu.Lock()
+	}
 	defer f.mu.Unlock()
 	f.reads++
 	if f.down {
@@ -901,6 +909,84 @@ func TestATapOnThePRCardAnswersItsPickAndTellsTheLaneWaitingOnIt(t *testing.T) {
 	}
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, "Merge") {
 		t.Fatalf("the waiting lane heard %q, want the pick's answer", got)
+	}
+}
+
+func TestATapRedrawsItsCardWithinASecondWhileGitHubAndTheCardCommandStall(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, gh := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	docs := statusCard{Status: "needs_you", Title: "Ship the docs?", Body: "The docs are ready.", Options: []string{"Ship", "Hold"}, Recommended: "Ship", Waits: "card-docs"}
+	l.do(opDMStatus, map[string]any{"card": docs})
+	other := sentWith(t, l, testDM, docs.Waits)
+
+	released := filepath.Join(t.TempDir(), "released")
+	stalled := fmt.Sprintf("#!/bin/sh\ncat >/dev/null\nwhile [ ! -e '%s' ]; do sleep 0.05; done\n", released)
+	if err := os.WriteFile(cmd.argv[0], []byte(stalled), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stall := make(chan struct{})
+	gh.mu.Lock()
+	gh.stall = stall
+	gh.mu.Unlock()
+	posting := make(chan struct{})
+	go func() {
+		defer close(posting)
+		_, _ = invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, mustJSON(map[string]any{"text": "acme/app#41 is still green"}))
+	}()
+	t.Cleanup(func() {
+		close(stall)
+		if err := os.WriteFile(released, nil, 0o600); err != nil {
+			t.Error(err)
+		}
+		<-posting
+		l.app.poller.taps.busy.Wait()
+	})
+	eventually(t, "GitHub holding the post's PR lookup", func() bool {
+		gh.mu.Lock()
+		defer gh.mu.Unlock()
+		return gh.stalled > 0
+	})
+
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.push(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
+		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0401"})
+	within(t, time.Second, "the PR card drawing his Merge", func() bool { return answered(l, card.ts, "Merge") })
+	l.push(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: other.ts, ThreadTS: cmp.Or(other.threadTS, other.ts),
+		ActionID: cardWaitAction + "0:" + docs.Waits, Value: string(mustJSON(askTap{ID: docs.Waits, Label: "Ship", Question: docs.Title, Options: docs.Options})),
+		ActionTS: fmt.Sprintf("%d.000200", time.Now().Unix()), Seq: "001800000100000-abcd0402"})
+	within(t, time.Second, "the other card drawing his Ship", func() bool { return answered(l, other.ts, "Ship") })
+}
+
+func sentWith(t *testing.T, l *liveDaemon, channelID, text string) fakePost {
+	t.Helper()
+	for _, p := range l.slack.sentTo(channelID) {
+		if strings.Contains(p.blocks, text) {
+			return p
+		}
+	}
+	t.Fatalf("no post in %s carries %q", channelID, text)
+	return fakePost{}
+}
+
+func answered(l *liveDaemon, ts, label string) bool {
+	edits := editsOf(l.slack.edited(), ts)
+	return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "✓ *"+label+"* · answered")
+}
+
+func within(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s took longer than %s", what, d)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
