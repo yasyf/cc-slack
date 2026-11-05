@@ -513,7 +513,7 @@ func TestNothingPostsIntoAnOldStatusThread(t *testing.T) {
 	if c.thread == root || !slices.ContainsFunc(l.slack.deleted(), func(d fakeEdit) bool { return d.ts == nested }) {
 		t.Fatalf("a redrawn card landed at %+v and deleted %v, want it moved out of the old thread", c, l.slack.deleted())
 	}
-	if !l.app.cards.answered(id.DMChannelID, c.thread, "earlier") {
+	if _, done := l.app.cards.answer(id.DMChannelID, c.thread, "earlier"); !done {
 		t.Fatal("the moved card lost the answers its old thread held")
 	}
 	if edits := l.slack.edited(); len(edits) != 0 {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -452,7 +453,7 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	if len(edits) == 0 || edits[0].ts != reply.ts || !strings.Contains(edits[0].blocks, "You asked for more") || !strings.Contains(edits[0].blocks, cardWaitAction) {
 		t.Fatalf("edits %+v, want the tapped reply redrawn first, still offering its answers", edits)
 	}
-	if l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
 		t.Fatal("Explain more answered the waiting ask")
 	}
 
@@ -484,6 +485,58 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	}
 }
 
+func pickFixture(t *testing.T) (*fixture, statusCard, string) {
+	t.Helper()
+	f := newFixture(t)
+	thread := postDMThread(t, f)
+	if err := f.app.openSessionThread(f.ctx, f.db(), subjectFor(t, f), f.id.DMChannelID, thread); err != nil {
+		t.Fatal(err)
+	}
+	card := statusCard{Status: "needs_you", Title: "How should a subagent chat get one runner?",
+		Options: []string{"One door for every chat", "A lock per chat", "Leave it as it is"}, Waits: "one-runner"}
+	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
+		Waiting: map[string]*liveMessage{card.Waits: {TS: thread, Card: card}}}
+	return f, card, thread
+}
+
+func pick(f *fixture, card statusCard, thread string, n int) error {
+	return f.poller.cardAction(f.ctx, f.id, cardActionPush{User: testUser, Channel: f.id.DMChannelID, MessageTS: thread, ThreadTS: thread,
+		ActionID: fmt.Sprintf("%s%d:%s", cardWaitAction, n, card.Waits),
+		Value:    string(mustJSON(askTap{ID: card.Waits, Label: card.Options[n], Question: card.Title, Options: card.Options})),
+		ActionTS: fmt.Sprintf("%d.%06d", f.now.Unix(), n)})
+}
+
+func TestAPickShowsOnItsCardBeforeTheLaneTakesIt(t *testing.T) {
+	f, card, thread := pickFixture(t)
+	f.plane.directErr = errors.New("the lane is mid-turn")
+	if err := pick(f, card, thread, 0); err == nil {
+		t.Fatal("the failed hand-off to the lane reported nothing")
+	}
+	edits := editsOf(f.slack.edited(), thread)
+	if len(edits) != 1 || !strings.Contains(edits[0], "✓ *One door for every chat* · answered") || strings.Contains(edits[0], cardWaitAction) {
+		t.Fatalf("card edits %v, want the pick marked and its buttons gone whatever the lane is doing", edits)
+	}
+}
+
+func TestARepeatPickRedrawsTheFirstAnswerAndHandsOverNothing(t *testing.T) {
+	f, card, thread := pickFixture(t)
+	if err := pick(f, card, thread, 0); err != nil {
+		t.Fatal(err)
+	}
+	handed := len(f.plane.directives)
+	if err := pick(f, card, thread, 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.plane.directives) != handed {
+		t.Fatalf("the repeat pick reached the lane: %+v", f.plane.directives[handed:])
+	}
+	edits := editsOf(f.slack.edited(), thread)
+	if len(edits) != 2 || !strings.Contains(edits[1], "✓ *One door for every chat* · answered") || strings.Contains(edits[1], "A lock per chat* · answered") ||
+		strings.Contains(edits[1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the repeat pick to redraw the first answer", edits)
+	}
+}
+
 func TestABareNumberReplyAnswersTheWaitingCardAsItsButtonWould(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -509,7 +562,7 @@ func TestABareNumberReplyAnswersTheWaitingCardAsItsButtonWould(t *testing.T) {
 	}
 
 	say(1, "+1")
-	if strings.Contains(steered, "answered the waiting ask") || l.app.cards.answered(id.DMChannelID, reply.ts, card.Waits) {
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); strings.Contains(steered, "answered the waiting ask") || done {
 		t.Fatalf("+1 answered the card: %q", steered)
 	}
 	say(2, " 2 ")
