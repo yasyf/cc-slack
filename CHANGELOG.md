@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Every card that names a PR carries an Open on GitHub button that opens the PR, beside Approve, Hold, Other and Explain more. A card naming several PRs has one button per PR, labeled with its number. A copy of a PR card carried in a status message keeps the button.
+- A post to your DM that links a PR ready for your tap now carries that PR's card, with Approve and Hold, in the same message or its thread, as if the PR had been passed with `--tap-pr`. Before, its "What this links to" preview said "Ready for your tap" with nothing to tap. When no card command is set, so no card can be drawn, the preview says "Not approved yet" in its place.
 
 - A status card's artifact now shows its language and size on its Work Object, so you can tell a 3-line file from a 400-turn transcript before opening it. A diagram shows neither and draws as before.
 

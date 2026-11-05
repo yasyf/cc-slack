@@ -88,7 +88,7 @@ func TestAPRPreviewSaysWhereThePRStandsInHisWords(t *testing.T) {
 		row          ledgerRow
 		want, absent string
 	}{
-		{"ready", readyRow(41), "Ready for your tap", "Waiting"},
+		{"ready, with no card to draw", readyRow(41), "*Not approved yet.* CI green.", "Ready for your tap"},
 		{"waiting", waiting, "the change below it, #40, has not landed", "Ready for your tap"},
 		{"landed", landed, "*Landed.*", "Waiting"},
 		{"tapped", tapped, "You approved it; it lands next", "Ready for your tap"},
@@ -277,6 +277,24 @@ func TestAReadyPRWithAnOpenCardLinksIt(t *testing.T) {
 	got := lastPost(l).attachments
 	if !strings.Contains(got, id.permalink(testDM, card.ts, card.threadTS)) || !strings.Contains(got, "Open the card") {
 		t.Fatalf("attachments = %s, want a link to the open card", got)
+	}
+}
+
+func TestAPostLinkingAReadyPRCarriesItsApproveAndAWaitingOneDrawsNone(t *testing.T) {
+	waiting := readyRow(42)
+	waiting.ReadyForTap, waiting.WaitsOn = false, "CI is running"
+	cards := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}, "card_command": cards.argv, "preview_command": fakePRRows(t, readyRow(41), waiting).argv}, "acme/app#41", "acme/app#42")
+	l.do(opDMStatus, map[string]any{"text": "#42 waits on CI: https://github.com/acme/app/pull/42"})
+	if drawn := prCards(l, testDM); len(drawn) != 0 {
+		t.Fatalf("PR cards = %+v, want none for a PR that does not wait on his tap", drawn)
+	}
+	l.do(opDMStatus, map[string]any{"text": "Ready for your tap: " + testPR})
+	if got := lastPost(l).attachments; !strings.Contains(got, "Ready for your tap") {
+		t.Fatalf("attachments = %s, want the preview to say it waits on his tap", got)
+	}
+	if drawn := prCards(l, testDM); len(drawn) == 0 {
+		t.Fatal("a post previewing a PR ready for his tap drew no card with Approve")
 	}
 }
 

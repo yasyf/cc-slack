@@ -70,25 +70,25 @@ func (r ledgerRow) checks() string {
 	return " CI " + mrkdwnEscapes.Replace(r.CI) + "."
 }
 
-func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string, onCard []refID) (string, []slack.Attachment) {
+func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string, onCard []refID) (string, []slack.Attachment, []string) {
 	if channelID != id.DMChannelID {
-		return text, nil
+		return text, nil, nil
 	}
-	text, previews, more := a.prPreviews(ctx, id, text, onCard)
+	text, previews, ready, more := a.prPreviews(ctx, id, text, onCard)
 	builds, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(previews))
 	previews = append(previews, builds...)
 	if more += moreBuilds; more > 0 {
 		line := fmt.Sprintf("+%d more not shown here", more)
 		previews = append(previews, slack.Attachment{Fallback: line, Blocks: slack.Blocks{BlockSet: []slack.Block{mrkdwn(linkPreviewsMore, line)}}})
 	}
-	return text, previews
+	return text, previews, ready
 }
 
-func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard []refID) (string, []slack.Attachment, int) {
+func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard []refID) (string, []slack.Attachment, []string, int) {
 	command := id.Config.PRLinks.PreviewCommand
 	prs := linkedPRRefs(text)
 	if len(command) == 0 || len(prs) == 0 {
-		return text, nil, 0
+		return text, nil, nil, 0
 	}
 	drawn := map[string]bool{}
 	for _, pr := range onCard {
@@ -96,14 +96,15 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 	}
 	prs = slices.DeleteFunc(prs, func(pr refID) bool { return drawn[pr.key()] })
 	if len(prs) == 0 {
-		return withoutRepeatedLinks(text, drawn), nil, 0
+		return withoutRepeatedLinks(text, drawn), nil, nil, 0
 	}
 	rows, err := readLedgerRows(ctx, command, prs)
 	if err != nil {
 		a.poller.log.Printf("post keeps its PR links with no previews: %v", err)
-		return text, nil, 0
+		return text, nil, nil, 0
 	}
 	var previews []slack.Attachment
+	var ready []string
 	more := 0
 	for _, pr := range prs {
 		row, ok := rows[pr.key()]
@@ -116,8 +117,11 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 		}
 		previews = append(previews, a.prPreview(id, pr, row))
 		drawn[pr.key()] = true
+		if row.ready() {
+			ready = append(ready, prURL(pr))
+		}
 	}
-	return withoutRepeatedLinks(text, drawn), previews, more
+	return withoutRepeatedLinks(text, drawn), previews, ready, more
 }
 
 func (a *app) buildPreviews(ctx context.Context, id identity, text string, room int) ([]slack.Attachment, int) {
@@ -205,6 +209,9 @@ func readLedgerRows(ctx context.Context, command []string, prs []refID) (map[str
 func (a *app) prPreview(id identity, pr refID, row ledgerRow) slack.Attachment {
 	title := fmt.Sprintf("#%d %s", pr.Number, row.Title)
 	standing := row.standing()
+	if row.ready() && len(id.Config.PRLinks.CardCommand) == 0 {
+		standing = "*Not approved yet.*" + row.checks()
+	}
 	if ts, thread, ok := a.cards.openPRCard(id.DMChannelID, pr); ok && row.ready() {
 		standing += " " + slackLink(id.permalink(id.DMChannelID, ts, thread), "Open the card")
 	}
