@@ -213,8 +213,8 @@ The tool names below have the full prefix
 | Watch a thread, or a channel's top-level messages and thread replies | `slack_watch(channel_id, thread_ts?, owner?)` |
 | End a watch | `slack_unwatch(watch_id)` |
 | Update the user's own status DM | `slack_dm_status(text, thread_ts?, files?, blocks?)` |
-| Show or clear Slack's working line under a thread in the user's DM, CLI only | `cc-slack thread-status --channel <dm> --thread <ts> --status "is reading the logs…"`, repeatable `--loading`; an empty `--status` clears it |
-| Stream a spinning task list into a thread in the user's DM, CLI only | `cc-slack stream --channel <dm> --thread <ts> --mode plan\|timeline --plan <title> --task "id\|in_progress\|title"`, then `--ts <ts>` to update and `--stop` to end |
+| Show you picked up a message: eyes plus Slack's working line, together | `slack_pickup(channel_id, ts, thread_ts?)`; `done: true` takes both away (CLI `cc-slack pickup`) |
+| Once you decide to do actual work, show separate steps with a spinner and keep the working line | `slack_stream(channel_id, thread_ts, recipient?, plan?, tasks)` returns `ts`; then `slack_stream(channel_id, thread_ts, ts, tasks)` per step and `stop: true` to end (CLI `cc-slack stream`, `--task "id\|in_progress\|title"`) |
 | Create an approved public channel | `slack_channel_create(name)` |
 | Archive an approved channel | `slack_channel_archive(channel_id)` |
 | Invite approved people to a channel | `slack_channel_invite(channel_id, users)` |
@@ -649,22 +649,41 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 ## React before you reply
 
 On any message you have read and are acting on but have not answered, add
-`eyes` at once. A message you pick up from a public channel gets `eyes` when
-you first look at it and `wrench` beside it when work starts, so the channel
-can see whether it is being read or worked on. When the ask is done, add
-`white_check_mark` with `slack_react`, then remove `eyes` and any `wrench` with
-`slack_unreact`.
+`eyes` at once. A message you pick up from a public channel shows in two steps,
+so the channel can see whether it is being read or worked on:
+
+1. When you first look at it, call `slack_pickup`. It adds `eyes` and Slack's
+   working line under the thread, together and nothing else. If you decide not
+   to work on it, call `slack_pickup` with `done: true`, which takes both away.
+   Such a message never gets step two.
+2. Only once you decide to do actual work, call `slack_stream` with
+   `recipient` set to the person who asked. It adds each step as its own line
+   with a spinner and keeps the working line up. Its first call posts in the
+   thread, so it needs a ticket like a reply. Update it as each step starts and
+   ends, and stop it when the work ends. Slack ended an unfinished stream by
+   itself 6 to 11 minutes after it started, seen once: when an update fails
+   because the stream has ended, start a new one with the remaining steps.
+
+Until the owner names a channel for the first run, do neither step in a public
+channel: Slack may refuse the working line there and no run has tested it. Add
+`eyes` with `slack_react`, then remove it with `slack_unreact` when the ask is
+done or you drop it. Both steps work in your DM with the app.
+
+A `line_error` in either result means the eyes or the steps landed and Slack
+refused the working line. Carry on, and report it to your lane's owner.
+
+When the ask is done, add `white_check_mark` with `slack_react`, then call
+`slack_pickup` with `done: true`.
 For a message that needs only acknowledgment and no reply, use `pray`, or `+1`
-in the user's own DM with the bot. Everywhere else, use only these four:
+in the user's own DM with the bot. Everywhere else, use only these three:
 
 | Emoji | Name to pass | When |
 |---|---|---|
-| 👀 | `eyes` | Read, acting on, not yet answered; on a public-channel pickup, first look |
-| 🔧 | `wrench` | Public-channel pickup only; work has started |
+| 👀 | `eyes` | Read, acting on, not yet answered; on a public-channel pickup, `slack_pickup` adds it |
 | ✅ | `white_check_mark` | Ask done |
 | 🙏 | `pray` | Acknowledgment only; no reply needed |
 
-Put 👀, 🔧 and ✅ on the specific message that addressed you or asked you to act,
+Put 👀 and ✅ on the specific message that addressed you or asked you to act,
 usually the thread reply that mentioned you. Never react on the thread root
 by default; react there only when the root itself is the ask. If someone's
 thread root is just ":catjam:" and a later reply mentions you and asks you
@@ -686,8 +705,8 @@ Fix a mistake or a gap in it by editing it. This narrows what a lane asks to
 send and changes no permission rule. Questions they ask are not limited:
 write every post so a person can answer it, and answer each reply as it lands.
 
-- React `eyes` the moment you look at a message and, on a public-channel
-  pickup, `wrench` when work starts, as above.
+- React `eyes` the moment you look at a message; on a public-channel pickup,
+  call `slack_pickup` then, and `slack_stream` when work starts, as above.
 - Answer every question in a watched thread the moment it lands, in that
   thread, before you return to other work. When the answer needs work, say
   in one line what you are doing, then post the answer when you have it.

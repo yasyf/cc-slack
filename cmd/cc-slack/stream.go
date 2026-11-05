@@ -1,7 +1,8 @@
 package main
 
 import (
-	"errors"
+	"cmp"
+	"context"
 	"fmt"
 	"strings"
 
@@ -18,7 +19,24 @@ type task struct {
 	Details string `json:"details,omitempty"`
 }
 
-var errOutsideDM = errors.New("this verb works only in your DM with the app, since the permission hook checks no status or stream elsewhere")
+const (
+	pickupReaction = "eyes"
+	workingStatus  = "is working…"
+	timelineMode   = "timeline"
+	taskInProgress = "in_progress"
+)
+
+var pickupLoading = []string{"Reading the thread…", "Looking at this…"}
+
+type pickupResult struct {
+	OK        bool   `json:"ok"`
+	LineError string `json:"line_error,omitempty"`
+}
+
+type streamResult struct {
+	postResult
+	LineError string `json:"line_error,omitempty"`
+}
 
 func parseTask(flag string) (task, error) {
 	parts := strings.SplitN(flag, "|", 4)
@@ -46,32 +64,108 @@ func streamChunks(plan string, tasks []task) []slack.StreamChunk {
 	return chunks
 }
 
-func (a *app) handleThreadStatus(hc daemon.HandlerCtx) daemon.Reply {
+func inProgress(tasks []task) []string {
+	var titles []string
+	for _, t := range tasks {
+		if t.Status == taskInProgress {
+			titles = append(titles, t.Title+"…")
+		}
+	}
+	return titles
+}
+
+func streamWords(plan string, tasks []task) string {
+	words := make([]string, 0, 2*len(tasks)+1)
+	words = append(words, plan)
+	for _, t := range tasks {
+		words = append(words, t.Title, t.Details)
+	}
+	return strings.TrimSpace(strings.Join(words, "\n"))
+}
+
+func setWorkingLine(ctx context.Context, api slackAPI, id identity, channelID, threadTS, status string, loading []string) string {
+	params := slack.AssistantThreadsSetStatusParameters{ChannelID: channelID, ThreadTS: threadTS, Status: status, LoadingMessages: loading, Username: id.username(), IconURL: id.AvatarURL}
+	if err := api.SetAssistantThreadsStatusContext(ctx, params); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 	b, err := decodeBody(hc)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.ChannelID == "" || b.ThreadTS == "" {
-		return fail("thread-status needs channel_id and thread_ts (or a Slack url); an empty status clears the line")
+	if b.ChannelID == "" || b.TS == "" {
+		return fail("pickup needs channel_id and ts (or a Slack url)")
+	}
+	if err := checkAgent(b.Agent); err != nil {
+		return fail(err.Error())
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
-		return fail(err.Error())
+		return fail(fallback(actionReact, err))
 	}
+	id.Agent = b.Agent
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
 	if err != nil {
-		return fail(err.Error())
+		return fail(fallback(actionReact, err))
 	}
+	act, settled, apply, status, loading := actionReact, "already_reacted", slackAPI.AddReactionContext, workingStatus, pickupLoading
+	if b.Done {
+		act, settled, apply, status, loading = actionUnreact, "no_reaction", slackAPI.RemoveReactionContext, "", nil
+	}
+	err = a.joinAndRetry(hc.Ctx, api, channelID, func() error {
+		return apply(api, hc.Ctx, pickupReaction, slack.ItemRef{Channel: channelID, Timestamp: b.TS})
+	})
+	if err != nil && errorCode(err) != settled {
+		return fail(fallback(act, err))
+	}
+	return ok(pickupResult{OK: true, LineError: setWorkingLine(hc.Ctx, api, id, channelID, cmp.Or(b.ThreadTS, b.TS), status, loading)})
+}
+
+func (a *app) startStream(hc daemon.HandlerCtx, api slackAPI, id identity, channelID string, b opBody, chunks []slack.MsgOption) daemon.Reply {
+	options := append(chunks, slack.MsgOptionTS(b.ThreadTS), slack.MsgOptionTaskDisplayMode(slack.TaskDisplayMode(timelineMode)), slack.MsgOptionUsername(id.username()), slack.MsgOptionIconURL(id.AvatarURL))
+	var ticket hookTicket
 	if channelID != id.DMChannelID {
-		return fail(errOutsideDM.Error())
+		if b.Recipient == "" {
+			return fail("stream needs recipient outside your DM with the app: the user id of the person the work is for, which Slack requires in a channel")
+		}
+		options = append(options, slack.MsgOptionRecipientTeamID(id.TeamID), slack.MsgOptionRecipientUserID(b.Recipient))
+		w := write{action: approvePost, named: b.ChannelID, channelID: channelID, threadTS: b.ThreadTS, text: streamWords(b.Plan, b.Tasks)}
+		spent, replay, err := a.authorize(hc, api, id, b.ticketSpend, w)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if replay != nil {
+			res := replay.result(true)
+			res.ThreadTS = b.ThreadTS
+			return ok(streamResult{postResult: res})
+		}
+		if err := a.claimReceipt(hc.Ctx, hc.DB, spent, w); err != nil {
+			return fail(err.Error())
+		}
+		ticket = spent
 	}
-	id.Agent = b.Agent
-	params := slack.AssistantThreadsSetStatusParameters{ChannelID: channelID, ThreadTS: b.ThreadTS, Status: b.Status, LoadingMessages: b.Loading, Username: id.username(), IconURL: id.AvatarURL}
-	if err := api.SetAssistantThreadsStatusContext(hc.Ctx, params); err != nil {
-		return fail(err.Error())
+	var ts string
+	err := a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
+		_, ts, err = api.StartStreamContext(hc.Ctx, channelID, options...)
+		return err
+	})
+	if err != nil {
+		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
 	}
-	return ok(map[string]bool{"ok": true})
+	a.wrote(hc.Ctx, channelID, b.ThreadTS)
+	if ticket.once() {
+		if err := a.saveReceipt(hc.Ctx, hc.DB, receipt{TicketID: ticket.ID, ChannelID: channelID, TS: ts}); err != nil {
+			return fail(fmt.Sprintf("started stream %s but could not record its receipt, so do not start it again: %v", ts, err))
+		}
+	}
+	return ok(streamResult{
+		postResult: postResult{ChannelID: channelID, TS: ts, ThreadTS: b.ThreadTS, TicketID: ticket.ID, Posted: true},
+		LineError:  setWorkingLine(hc.Ctx, api, id, channelID, b.ThreadTS, workingStatus, inProgress(b.Tasks)),
+	})
 }
 
 func (a *app) handleStream(hc daemon.HandlerCtx) daemon.Reply {
@@ -79,60 +173,64 @@ func (a *app) handleStream(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.ChannelID == "" || (b.TS == "" && b.ThreadTS == "") {
-		return fail("stream needs channel_id and thread_ts to start, or channel_id and ts to continue")
+	if b.ChannelID == "" || b.ThreadTS == "" {
+		return fail("stream needs channel_id and thread_ts, plus ts to continue or stop a stream")
+	}
+	if err := checkAgent(b.Agent); err != nil {
+		return fail(err.Error())
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(err.Error())
 	}
+	id.Agent = b.Agent
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if channelID != id.DMChannelID {
-		return fail(errOutsideDM.Error())
+	var chunks []slack.MsgOption
+	if changed := streamChunks(b.Plan, b.Tasks); len(changed) > 0 {
+		chunks = append(chunks, slack.MsgOptionChunks(changed...))
 	}
-	id.Agent = b.Agent
-	chunks := slack.MsgOptionChunks(streamChunks(b.Plan, b.Tasks)...)
-	ts := b.TS
-	switch {
-	case b.TS == "":
-		_, ts, err = api.StartStreamContext(hc.Ctx, channelID, chunks, slack.MsgOptionTS(b.ThreadTS), slack.MsgOptionTaskDisplayMode(slack.TaskDisplayMode(b.Mode)), slack.MsgOptionUsername(id.username()), slack.MsgOptionIconURL(id.AvatarURL))
-	case b.Stop:
-		_, _, err = api.StopStreamContext(hc.Ctx, channelID, b.TS, chunks)
-	default:
-		_, _, err = api.AppendStreamContext(hc.Ctx, channelID, b.TS, chunks)
+	if b.TS == "" {
+		return a.startStream(hc, api, id, channelID, b, chunks)
 	}
-	if err != nil {
+	res := streamResult{postResult: postResult{ChannelID: channelID, TS: b.TS, ThreadTS: b.ThreadTS}}
+	if b.Stop {
+		if _, _, err := api.StopStreamContext(hc.Ctx, channelID, b.TS, chunks...); err != nil {
+			return fail(err.Error())
+		}
+		res.LineError = setWorkingLine(hc.Ctx, api, id, channelID, b.ThreadTS, "", nil)
+		return ok(res)
+	}
+	if _, _, err := api.AppendStreamContext(hc.Ctx, channelID, b.TS, chunks...); err != nil {
 		return fail(err.Error())
 	}
-	return ok(postResult{ChannelID: channelID, TS: ts})
+	res.LineError = setWorkingLine(hc.Ctx, api, id, channelID, b.ThreadTS, workingStatus, inProgress(b.Tasks))
+	return ok(res)
 }
 
-func threadStatusCmd(d cmd.Deps) *cobra.Command {
+func pickupCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f         messageFlags
-		status    string
-		loading   []string
+		done      bool
 		agentName string
 	)
 	c := &cobra.Command{
-		Use:   "thread-status",
-		Short: "Show or clear Slack's working line under a thread in your DM with the app",
+		Use:   "pickup",
+		Short: "Add eyes to a message and show Slack's working line under its thread; --done takes both away",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
-			body["status"] = status
-			body["loading"] = loading
+			body["done"] = done
 			body["agent"] = agentName
-			return runOp(c, d, f.sessionFlags, opThreadStatus, body)
+			return runOp(c, d, f.sessionFlags, opPickup, body)
 		},
 	}
 	f.bind(c)
-	c.Flags().StringVar(&status, "status", "", "words after the app's name, such as \"is reading the logs…\"; empty clears the line")
-	c.Flags().StringArrayVar(&loading, "loading", nil, "a message the line rotates through (repeatable)")
+	c.Flags().StringVar(&f.ts, "ts", "", "the message you are looking at")
+	c.Flags().BoolVar(&done, "done", false, "take the eyes and the working line away")
 	bindAgent(c, &agentName)
 	return c
 }
@@ -140,15 +238,16 @@ func threadStatusCmd(d cmd.Deps) *cobra.Command {
 func streamCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f         messageFlags
-		mode      string
+		recipient string
 		plan      string
 		taskFlags []string
 		stop      bool
 		agentName string
+		spend     ticketSpend
 	)
 	c := &cobra.Command{
 		Use:   "stream",
-		Short: "Start, update, or stop a streamed task list in a thread of your DM with the app",
+		Short: "Start, update, or stop the separate working steps in a thread, keeping the working line up",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			tasks := make([]task, 0, len(taskFlags))
@@ -160,20 +259,22 @@ func streamCmd(d cmd.Deps) *cobra.Command {
 				tasks = append(tasks, t)
 			}
 			body := f.body()
-			body["mode"] = mode
+			body["recipient"] = recipient
 			body["plan"] = plan
 			body["tasks"] = tasks
 			body["stop"] = stop
 			body["agent"] = agentName
+			spend.fill(body)
 			return runOp(c, d, f.sessionFlags, opStream, body)
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&f.ts, "ts", "", "the stream's message ts, to update or stop it; omit it to start one in --thread")
-	c.Flags().StringVar(&mode, "mode", "plan", "how a started stream draws its tasks: plan or timeline")
-	c.Flags().StringVar(&plan, "plan", "", "the plan's title")
+	c.Flags().StringVar(&recipient, "recipient", "", "outside your DM with the app, the user id of the person the work is for")
+	c.Flags().StringVar(&plan, "plan", "", "the title above the steps")
 	c.Flags().StringArrayVar(&taskFlags, "task", nil, "a task as id|status|title or id|status|title|details, with status pending, in_progress, complete, or error (repeatable)")
 	c.Flags().BoolVar(&stop, "stop", false, "end the stream")
 	bindAgent(c, &agentName)
+	bindTicket(c, &spend)
 	return c
 }
