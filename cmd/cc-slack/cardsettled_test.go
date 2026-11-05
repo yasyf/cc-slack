@@ -65,25 +65,24 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 	}
 	n := 0
 	routes := map[string]struct {
-		settle  func(*liveDaemon, postedCard)
-		want    string
-		redraws bool
+		settle func(*liveDaemon, postedCard)
+		want   string
 	}{
 		"tap": {func(l *liveDaemon, c postedCard) {
 			n++
 			l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
 				ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: "step-3:merge", Label: "Hold", Question: "Merge #41 now?"})),
 				ActionTS: fmt.Sprintf("%d.%06d", time.Now().Unix(), n), Seq: fmt.Sprintf("001800000100000-abce%04d", n)})
-		}, "✓ *Hold* · answered", true},
+		}, "✓ *Hold* · answered"},
 		"answered elsewhere": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "Hold", "via": board})
-		}, board + "|the board", false},
+		}, board + "|the board"},
 		"settled": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "Landed as 5480445", "other": true, "settled": true, "via": "https://github.com/acme/app/pull/41"})
-		}, "https://github.com/acme/app/pull/41|Landed as 5480445", false},
+		}, "https://github.com/acme/app/pull/41|Landed as 5480445"},
 		"withdrawn": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board})
-		}, "*Withdrawn:* superseded by step 4", false},
+		}, "*Withdrawn:* superseded by step 4"},
 	}
 	for name, route := range routes {
 		t.Run(name, func(t *testing.T) {
@@ -110,12 +109,8 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 			}
 
 			route.settle(l, c)
-			again := editsOf(l.slack.edited(), c.ts)
-			if !route.redraws && len(again) != len(edits) {
+			if again := editsOf(l.slack.edited(), c.ts); len(again) != len(edits) {
 				t.Fatalf("a second settle edited the card again: %v", again[len(edits):])
-			}
-			if final := again[len(again)-1]; !strings.Contains(final, route.want) || strings.Contains(final, cardWaitAction) {
-				t.Fatalf("after a second settle the card shows %s, want %q and no buttons", final, route.want)
 			}
 			if got := len(l.slack.sent()); got != posts {
 				t.Fatalf("posts = %d after settling, want %d: settling adds nothing to the thread", got, posts)

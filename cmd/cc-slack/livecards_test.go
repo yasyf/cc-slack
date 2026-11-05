@@ -518,7 +518,7 @@ func TestAPickShowsOnItsCardBeforeTheLaneTakesIt(t *testing.T) {
 	}
 }
 
-func TestARepeatPickRedrawsTheFirstAnswerAndHandsOverNothing(t *testing.T) {
+func TestARepeatPickLeavesACorrectPostAloneAndHandsOverNothing(t *testing.T) {
 	f, card, thread := pickFixture(t)
 	if err := pick(f, card, thread, 0); err != nil {
 		t.Fatal(err)
@@ -530,10 +530,37 @@ func TestARepeatPickRedrawsTheFirstAnswerAndHandsOverNothing(t *testing.T) {
 	if len(f.plane.directives) != handed {
 		t.Fatalf("the repeat pick reached the lane: %+v", f.plane.directives[handed:])
 	}
+	if edits := editsOf(f.slack.edited(), thread); len(edits) != 1 {
+		t.Fatalf("card edits %v, want the post that already shows his answer left alone", edits)
+	}
+}
+
+func TestARepeatPickRestoresAPostThatStillShowsItsButtonsAndThenLeavesItAlone(t *testing.T) {
+	f, card, thread := pickFixture(t)
+	f.slack.fail("chat.update", errors.New("slack is down"))
+	f.slack.fail(methodReplies, errors.New("slack is down"))
+	if err := pick(f, card, thread, 0); err != nil {
+		t.Fatal(err)
+	}
+	if edits := editsOf(f.slack.edited(), thread); len(edits) != 0 {
+		t.Fatalf("card edits %v, want none while Slack refuses them", edits)
+	}
+	handed := len(f.plane.directives)
+	if err := pick(f, card, thread, 1); err != nil {
+		t.Fatal(err)
+	}
 	edits := editsOf(f.slack.edited(), thread)
-	if len(edits) != 2 || !strings.Contains(edits[1], "✓ *One door for every chat* · answered") || strings.Contains(edits[1], "A lock per chat* · answered") ||
-		strings.Contains(edits[1], cardWaitAction) {
-		t.Fatalf("card edits %v, want the repeat pick to redraw the first answer", edits)
+	if len(edits) != 1 || !strings.Contains(edits[0], "✓ *One door for every chat* · answered") || strings.Contains(edits[0], cardWaitAction) {
+		t.Fatalf("card edits %v, want the repeat pick to restore the first answer", edits)
+	}
+	if err := pick(f, card, thread, 2); err != nil {
+		t.Fatal(err)
+	}
+	if again := editsOf(f.slack.edited(), thread); len(again) != 1 {
+		t.Fatalf("card edits %v, want a restored post left alone", again)
+	}
+	if len(f.plane.directives) != handed {
+		t.Fatalf("a repeat pick reached the lane: %+v", f.plane.directives[handed:])
 	}
 }
 

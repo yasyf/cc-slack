@@ -274,10 +274,15 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
 		return
 	}
+	a.tellShown(ctx, id, a.placePRCards(ctx, db, sub, id, channelID, thread, provided))
+}
+
+func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) []map[string]any {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	now := a.now()
+	var shown []map[string]any
 	for _, p := range provided {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
 			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
@@ -286,6 +291,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		sameAsk := func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }
 		t := cards.draft(channelID, thread)
 		if slices.ContainsFunc(t.PRCards, sameAsk) || cards.rootPRCard(channelID, func(_ *liveThread, m *liveMessage) bool { return sameAsk(m) }) || cards.pickOffers(channelID, p.Card.offer()) {
+			shown = append(shown, shownCard(p))
 			continue
 		}
 		m := &liveMessage{Card: p.Card, At: now}
@@ -293,19 +299,34 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
-			return
+			return shown
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
 		cards.commit(t)
+		shown = append(shown, shownCard(p))
 		if thread != "" {
 			continue
 		}
 		if err := a.bindSessionThread(ctx, db, sub, id, res.TS); err != nil {
 			a.poller.log.Printf("PR card for %s#%d at %s: its thread goes unwatched: %v", p.Repo, p.Number, res.TS, err)
 		}
+	}
+	return shown
+}
+
+func shownCard(p providedCard) map[string]any {
+	return map[string]any{"repo": p.Repo, "number": p.Number, "waits": p.Card.Waits}
+}
+
+func (a *app) tellShown(ctx context.Context, id identity, shown []map[string]any) {
+	if len(shown) == 0 {
+		return
+	}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"shown": shown}); err != nil {
+		a.poller.log.Printf("PR cards stand, but the card command did not record them, so their rows may draw again: %v", err)
 	}
 }
 
@@ -352,7 +373,13 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
 		return err
 	}
-	return a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now())
+	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now()); err != nil {
+		return err
+	}
+	if provided[0].Card.Waits != "" {
+		a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
+	}
+	return nil
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {

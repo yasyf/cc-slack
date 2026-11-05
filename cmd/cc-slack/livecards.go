@@ -511,6 +511,20 @@ func (l *liveCards) shownImages(channel string, card statusCard) []slack.FileSum
 	return nil
 }
 
+func (l *liveCards) answerDrawn(channel, thread, askID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return
+	}
+	if ans, done := t.Answers[askID]; done {
+		ans.Drawn = true
+		t.Answers[askID] = ans
+		l.save()
+	}
+}
+
 func (l *liveCards) waiting(channel, waits string, at func(thread, ts string) bool) (string, liveMessage, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

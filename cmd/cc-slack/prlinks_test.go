@@ -147,7 +147,16 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 
 func (c cardCommand) requests(t *testing.T) []string {
 	t.Helper()
-	return readAsks(t, c.asked)
+	return slices.DeleteFunc(readAsks(t, c.asked), isShown)
+}
+
+func (c cardCommand) shown(t *testing.T) []string {
+	t.Helper()
+	return slices.DeleteFunc(readAsks(t, c.asked), func(ask string) bool { return !isShown(ask) })
+}
+
+func isShown(ask string) bool {
+	return strings.Contains(ask, `"shown"`)
 }
 
 func (c cardCommand) resolves(t *testing.T) []string {
@@ -956,5 +965,27 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 	eventually(t, "the post settling", func() bool { return len(l.slack.sentTo(testDM)) == 2 })
 	if cards := prCards(l, testDM); len(cards) != 0 {
 		t.Fatalf("cards = %+v, want the pick as the one offer", cards)
+	}
+}
+
+func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.slack.fail("chat.postMessage", nil)
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "fatal_error"})
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	eventually(t, "the card command asked for the card", func() bool { return len(cmd.requests(t)) > 0 })
+	eventually(t, "the failed post", func() bool { return l.slack.callCount("chat.postMessage") >= 2 })
+	if cards := prCards(l, testDM); len(cards) != 0 {
+		t.Fatalf("cards = %+v, want the failed post to leave none", cards)
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 again", "tap_prs": tapPR41})
+	if cards := awaitPRCards(t, l, testDM); len(cards) != 1 {
+		t.Fatalf("cards = %+v, want one once Slack takes it", cards)
+	}
+	eventually(t, "the card command told the card stands", func() bool { return len(cmd.shown(t)) > 0 })
+	shown := cmd.shown(t)
+	if len(shown) != 1 || !strings.Contains(shown[0], `"waits":"`+testWaits+`"`) || !strings.Contains(shown[0], `"number":41`) || !strings.Contains(shown[0], `"repo":"acme/app"`) {
+		t.Fatalf("shown = %v, want the one posted card, none for the failed post", shown)
 	}
 }
