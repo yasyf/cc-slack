@@ -1341,7 +1341,7 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	go func(ctx context.Context) {
 		for _, card := range posted {
-			a.recardPR(ctx, id, card.card, card.pr, "")
+			a.recardPR(ctx, id, card.card, card.pr)
 		}
 	}(context.WithoutCancel(hc.Ctx))
 	return ok(map[string]int{"redrawing": len(posted)})

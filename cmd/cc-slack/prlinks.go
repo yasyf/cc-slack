@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -449,18 +448,10 @@ func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]pro
 // recardPR redraws a PR card in place from what the card command says now, so
 // it never offers a head or a question that no longer stands; a card for a PR
 // that no longer waits keeps its answer, or gives up its buttons, under the
-// row's current words. A refused tap also answers in the thread, since nothing
-// else tells him.
-func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID, refused string) {
+// row's current words.
+func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID) {
 	if err := a.redrawPRCard(ctx, id, card, pr); err != nil {
 		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)
-	}
-	if refused == "" {
-		return
-	}
-	line := refused + " " + slackLink(id.permalink(card.channel, card.ts, card.thread), "The card") + " shows where it stands now."
-	if _, err := a.post(ctx, a.poller.plane.DB(), id, card.channel, card.thread, line, nil, nil); err != nil {
-		a.poller.log.Printf("PR card %s: the refused tap went untold: %v", card.ts, err)
 	}
 }
 
@@ -515,14 +506,6 @@ type cardCommandError struct {
 func (e cardCommandError) Error() string { return e.command + ": " + e.err.Error() + ": " + e.said }
 
 func (e cardCommandError) Unwrap() error { return e.err }
-
-func refusalOf(err error) string {
-	failed, ok := errors.AsType[cardCommandError](err)
-	if !ok {
-		return err.Error()
-	}
-	return strings.TrimPrefix(failed.said, path.Base(failed.command)+": ")
-}
 
 func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)

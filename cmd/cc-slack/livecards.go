@@ -232,7 +232,7 @@ type liveCards struct {
 	now    func() time.Time
 	plane  plane
 	newAPI func(token string) slackAPI
-	recard func(ctx context.Context, id identity, card cardRef, pr refID, refused string)
+	recard func(ctx context.Context, id identity, card cardRef, pr refID)
 	wakeCh chan struct{}
 
 	mu      sync.Mutex
@@ -1019,7 +1019,7 @@ func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[stri
 	}
 	for _, posted := range l.postedPRCards() {
 		if moved[posted.pr.key()] {
-			l.recard(ctx, id, posted.card, posted.pr, "")
+			l.recard(ctx, id, posted.card, posted.pr)
 		}
 	}
 }

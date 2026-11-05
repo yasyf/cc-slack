@@ -439,7 +439,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 				p.log.Printf("PR card %s: the card still shows %q: %v", c.waits, label, err)
 			}
 		}
-		p.recard(ctx, id, c.ref, c.pr, "Your *"+mrkdwnEscapes.Replace(label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
+		p.recard(ctx, id, c.ref, c.pr)
 		return false
 	}
 	return true
@@ -508,8 +508,6 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now()); err != nil {
 			p.log.Printf("PR row %s: the card still shows %q: %v", k.ID, k.Label, err)
 		}
-		return p.confirmTap(ctx, id, a.ref(), cardRowBlock+k.ID,
-			"Your *"+mrkdwnEscapes.Replace(k.Label)+"* did not count: "+mrkdwnEscapes.Replace(clipRunes(refusalOf(err), cardMaxDetailLen)))
 	}
 	return nil
 }
