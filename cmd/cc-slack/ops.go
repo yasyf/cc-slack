@@ -576,7 +576,6 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
 		}
 		res.Posted = true
-		res.Warning = postWarningsIn(hc.Ctx)
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
 		a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
 		res.TicketID = ticket.ID
@@ -586,7 +585,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b)
+		notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b))
+		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
 			return ok(res)
 		}
@@ -1889,7 +1889,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
-		return a.replaceCardReply(hc, sub.ID, id, b, msg.tag, pictures)
+		return a.replaceCardReply(hc, sub, id, b, msg.tag, pictures)
 	}
 	under, err := a.dmThreadOf(hc, sub, id, b)
 	if err != nil {
@@ -1908,12 +1908,12 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
-	a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b)
+	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
 	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 }
 
-func (a *app) replaceCardReply(hc daemon.HandlerCtx, subjectID string, id identity, b opBody, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
+func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
 	card := *b.Card
 	if len(pictures) > 0 {
 		ref, err := parsePermalink(card.Replaces)
@@ -1926,7 +1926,8 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, subjectID string, id identi
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	return ok(a.dmStatusReply(hc, subjectID, id, thread, ts, b))
+	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
+	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
 }
 
 func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, error) {
@@ -2272,6 +2273,9 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
 	placed := t.Reply
 	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.refs)
+	if asked != nil && asked.TS == t.Thread {
+		blocks = append(blocks, a.cards.carried(t, a.now())...)
+	}
 	write := func(do func() error) error {
 		if !placed.Card.hostsFiles() {
 			return do()

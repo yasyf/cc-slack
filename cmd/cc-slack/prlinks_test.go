@@ -228,7 +228,6 @@ func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
 	}
 	eventually(t, "the held row's card", func() bool { _, drawn := drawnHeld(); return drawn })
 	card, _ := drawnHeld()
-	awaitCardLink(t, l, card)
 	for _, button := range []string{"Merge", cardAckAction, cardPauseAction} {
 		if strings.Contains(card.blocks, button) {
 			t.Fatalf("held card blocks = %s, want no %s", card.blocks, button)
@@ -638,7 +637,6 @@ func TestARefusedTapSendsNoLineAndTheCardShowsWhatStandsNow(t *testing.T) {
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
-	awaitCardLink(t, l, card)
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +651,7 @@ func TestARefusedTapSendsNoLineAndTheCardShowsWhatStandsNow(t *testing.T) {
 	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "09b10f1") || !strings.Contains(edits[len(edits)-1], "merge:41:09b10f1") {
 		t.Fatalf("card edits = %v, want it redrawn at the new head", edits)
 	}
-	if posted := prCards(l, testDM); len(posted) != 1 {
+	if posted := rootCards(prCards(l, testDM)); len(posted) != 1 {
 		t.Fatalf("PR cards = %+v, want the one card edited in place", posted)
 	}
 }
@@ -680,7 +678,6 @@ func TestAHeadThatMovesRedrawsItsOpenCardInPlaceWithNoNewPost(t *testing.T) {
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
-	awaitCardLink(t, l, card)
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -775,7 +772,6 @@ func TestRedrawPRCardsRedrawsEveryOpenCardWithNoNewPost(t *testing.T) {
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
-	awaitCardLink(t, l, card)
 	full := mergeRowCard()
 	full.Card.Body += "\n*From the ledger:* the whole row"
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{full}}), 0o600); err != nil {
@@ -799,7 +795,6 @@ func TestRedrawPRCardsCanTakeOnePR(t *testing.T) {
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
-	awaitCardLink(t, l, card)
 	full := mergeRowCard()
 	full.Card.Body += "\n*From the ledger:* the whole row"
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{full}}), 0o600); err != nil {
@@ -1135,13 +1130,12 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
-	awaitCardLink(t, l, pick)
-	if cards := prCards(l, testDM); len(cards) != 0 || len(l.slack.sentTo(testDM)) != 3 {
-		t.Fatalf("cards = %+v in %d posts, want the pick as the one offer and its link under the post", cards, len(l.slack.sentTo(testDM)))
+	if cards := prCards(l, testDM); len(cards) != 0 || len(cardCopies(l, pick)) != 1 || len(l.slack.sentTo(testDM)) != 3 {
+		t.Fatalf("cards = %+v in %d posts, want the pick as the one offer and its working copy under the post", cards, len(l.slack.sentTo(testDM)))
 	}
 }
 
-func TestAPostAtTheDMRootLinksEachPRCardInItsThreadOnce(t *testing.T) {
+func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41", "acme/app#42"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41", "acme/app#42")
 	list := map[string]any{"card": statusCard{Status: "needs_you", Title: "PR approvals waiting on you", Body: "Both wait on your tap.", Key: "approvals"}, "tap_prs": tapPR41}
@@ -1149,11 +1143,23 @@ func TestAPostAtTheDMRootLinksEachPRCardInItsThreadOnce(t *testing.T) {
 	if err := json.Unmarshal(l.do(opDMStatus, list).Body, &sent); err != nil {
 		t.Fatal(err)
 	}
-	card41 := awaitPRCards(t, l, testDM)[0]
-	link := awaitCardLink(t, l, card41)
-	if link.threadTS != sent["ts"] || link.blocks != "" || link.unfurlLinks != "true" {
-		t.Fatalf("link = %+v, want the bare permalink in the thread of %s with unfurls on", link, sent["ts"])
+	card41 := rootCards(prCards(l, testDM))[0]
+	notice := func() fakePost {
+		edits := editsOf(l.slack.edited(), sent["ts"])
+		return fakePost{ts: sent["ts"], threadTS: sent["ts"], blocks: edits[len(edits)-1]}
 	}
+	carriedOf := func(card fakePost) []*slack.ButtonBlockElement {
+		return slices.DeleteFunc(copiedButtonsOf(t, notice()), func(b *slack.ButtonBlockElement) bool {
+			return !strings.HasPrefix(b.ActionID, cardCopyAction+card.ts+":")
+		})
+	}
+	if buttons := carriedOf(card41); len(buttons) != 2 || strings.Contains(sent["warning"], "NO APPROVE") {
+		t.Fatalf("notice blocks = %s, warning %q, want #41's Merge and Hold in the notice itself and no warning", notice().blocks, sent["warning"])
+	}
+	if beside := slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return p.threadTS != sent["ts"] }); len(beside) != 0 {
+		t.Fatalf("posts in the notice's thread = %+v, want none: the notice is the card to tap", beside)
+	}
+
 	card42 := mergeRowCard()
 	card42.Number, card42.Card.Title, card42.Card.Waits = 42, "Merge #42 at 5c1d2e3?", "merge:42:5c1d2e3"
 	card42.Card.Refs = []cardLink{{URL: "https://github.com/acme/app/pull/42", Label: "acme/app#42"}}
@@ -1162,34 +1168,63 @@ func TestAPostAtTheDMRootLinksEachPRCardInItsThreadOnce(t *testing.T) {
 	}
 	list["tap_prs"] = []string{tapPR41[0], "https://github.com/acme/app/pull/42"}
 	l.do(opDMStatus, list)
-	drawn42 := func() (fakePost, bool) {
-		at := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return strings.Contains(p.blocks, "merge:42:5c1d2e3") })
-		if at < 0 {
-			return fakePost{}, false
-		}
-		return l.slack.sentTo(testDM)[at], true
+	at := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return strings.Contains(p.blocks, "merge:42:5c1d2e3") })
+	if at < 0 {
+		t.Fatal("no card for the PR the edit adds")
 	}
-	eventually(t, "the card of the PR the edit adds", func() bool { _, drawn := drawn42(); return drawn })
-	posted42, _ := drawn42()
-	if link42 := awaitCardLink(t, l, posted42); link42.threadTS != sent["ts"] {
-		t.Fatalf("link = %+v, want it in the thread of %s", link42, sent["ts"])
+	if got41, got42 := carriedOf(card41), carriedOf(l.slack.sentTo(testDM)[at]); len(got41) != 2 || len(got42) != 2 {
+		t.Fatalf("notice blocks = %s, want each PR's answers in it once", notice().blocks)
 	}
-	if links := cardLinks(l, card41); len(links) != 1 {
-		t.Fatalf("links to #41's card = %+v, want one however often the post names it", links)
+
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge := carriedOf(card41)[0]
+	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: sent["ts"], ThreadTS: sent["ts"],
+		ActionID: merge.ActionID, Value: merge.Value, ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0302"})
+
+	if edits := editsOf(l.slack.edited(), card41.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Merge*") {
+		t.Fatalf("card edits = %v, want the tap in the notice answering #41's card", edits)
+	}
+	if left := carriedOf(card41); len(left) != 0 || !strings.Contains(notice().blocks, "*Merge*") {
+		t.Fatalf("notice blocks = %s, want #41's answer in place of its buttons", notice().blocks)
+	}
+	if got := cmd.requests(t); !slices.ContainsFunc(got, func(r string) bool { return strings.Contains(r, `"answer"`) }) {
+		t.Fatalf("card command requests = %v, want the answer recorded through it", got)
 	}
 }
 
-func cardLinks(l *liveDaemon, card fakePost) []fakePost {
-	stamp := "/p" + strings.ReplaceAll(card.ts, ".", "")
+func TestATapPostWhoseCardNeverDrawsWarnsNoApprove(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"})
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}, "tap_prs": tapPR41}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(sent["warning"], "NO APPROVE") || !strings.Contains(sent["warning"], tapPR41[0]) {
+		t.Fatalf("warning = %q, want NO APPROVE naming %s", sent["warning"], tapPR41[0])
+	}
+}
+
+func cardCopies(l *liveDaemon, card fakePost) []fakePost {
+	header := headerOf(card.blocks)
 	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
-		return p.threadTS == "" || p.blocks != "" || !strings.Contains(p.text, stamp)
+		return p.threadTS == "" || p.text != cardCopyLead || headerOf(p.blocks) != header
 	})
 }
 
-func awaitCardLink(t *testing.T, l *liveDaemon, card fakePost) fakePost {
-	t.Helper()
-	eventually(t, "the link to card "+card.ts, func() bool { return len(cardLinks(l, card)) > 0 })
-	return cardLinks(l, card)[0]
+func headerOf(raw string) string {
+	var blocks slack.Blocks
+	if json.Unmarshal([]byte(raw), &blocks) != nil {
+		return ""
+	}
+	for _, block := range blocks.BlockSet {
+		if h, ok := block.(*slack.HeaderBlock); ok {
+			return h.Text.Text
+		}
+	}
+	return ""
 }
 
 func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) {

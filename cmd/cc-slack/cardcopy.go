@@ -71,11 +71,19 @@ func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, lin
 	if err != nil {
 		return nil, 0, err
 	}
+	blocks, answers := copiedCard(card.Blocks.BlockSet, ref)
+	if blocks == nil {
+		return nil, 0, errors.New("that message drew as text, with no card to copy")
+	}
+	return blocks, answers, nil
+}
+
+func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 	var title string
 	var blocks []slack.Block
 	var buttons []slack.BlockElement
 	picks := 0
-	for _, block := range card.Blocks.BlockSet {
+	for _, block := range card {
 		switch b := block.(type) {
 		case *slack.HeaderBlock:
 			title = cmp.Or(title, b.Text.Text)
@@ -93,12 +101,48 @@ func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, lin
 		}
 	}
 	if title == "" {
-		return nil, 0, errors.New("that message drew as text, with no card to copy")
+		return nil, 0
 	}
 	if len(buttons) == 0 {
-		return blocks, picks, nil
+		return blocks, picks
 	}
-	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), picks + len(buttons), nil
+	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), picks + len(buttons)
+}
+
+// carriedCard is a card's copy drawn inside another message, so each block
+// takes an id of its own that no block of that message holds.
+func carriedCard(card []slack.Block, ref permalinkRef) []slack.Block {
+	blocks, _ := copiedCard(card, ref)
+	for n, block := range blocks {
+		blocks[n] = withBlockID(block, fmt.Sprintf("%s-%s-%d", cardCopyBlock, ref.ts, n))
+	}
+	return blocks
+}
+
+func withBlockID(block slack.Block, id string) slack.Block {
+	switch b := block.(type) {
+	case *slack.HeaderBlock:
+		c := *b
+		c.BlockID = id
+		return &c
+	case *slack.SectionBlock:
+		c := *b
+		c.BlockID = id
+		return &c
+	case *slack.ActionBlock:
+		c := *b
+		c.BlockID = id
+		return &c
+	case *slack.ContextBlock:
+		c := *b
+		c.BlockID = id
+		return &c
+	case *slack.TableBlock:
+		c := *b
+		c.BlockID = id
+		return &c
+	}
+	return block
 }
 
 func answers(actionID string) bool {
