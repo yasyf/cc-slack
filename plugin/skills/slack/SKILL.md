@@ -213,6 +213,8 @@ The tool names below have the full prefix
 | Watch a thread, or a channel's top-level messages and thread replies | `slack_watch(channel_id, thread_ts?, owner?)` |
 | End a watch | `slack_unwatch(watch_id)` |
 | Update the user's own status DM | `slack_dm_status(text, thread_ts?, files?, blocks?)` |
+| Show or clear Slack's working line under a thread in the user's DM, CLI only | `cc-slack thread-status --channel <dm> --thread <ts> --status "is reading the logs…"`, repeatable `--loading`; an empty `--status` clears it |
+| Stream a spinning task list into a thread in the user's DM, CLI only | `cc-slack stream --channel <dm> --thread <ts> --mode plan\|timeline --plan <title> --task "id\|in_progress\|title"`, then `--ts <ts>` to update and `--stop` to end |
 | Create an approved public channel | `slack_channel_create(name)` |
 | Archive an approved channel | `slack_channel_archive(channel_id)` |
 | Invite approved people to a channel | `slack_channel_invite(channel_id, users)` |
