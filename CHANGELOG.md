@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A card with a PR previews What changes, Against the plan and Risk at up to 100 characters. A line past its preview posts whole in the card's thread on Explain more.
 - A card with a PR stops at its first screen: the PR's description posts in the card's thread on Explain more, and stays behind the PR link. A card no longer posts a "What this links to:" preview of a PR it already draws.
 - A link to a PR in a post no longer draws an Approve card. It keeps its link and ledger preview, and a card with buttons is drawn only for a PR the call lists in `tap_prs` (`dm-status --tap-pr`). Callers that relied on a link to draw the card need `tap_prs`.
 
