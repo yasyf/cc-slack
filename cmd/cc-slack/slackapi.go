@@ -94,7 +94,7 @@ type retrying struct{ next doer }
 
 func newSlackClient(token, endpoint string, hc doer) slackAPI {
 	hc = retrying{hc}
-	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(hc)), token, endpoint, hc}
+	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(workObjectPoster{token, hc})), token, endpoint, hc}
 }
 
 func newSlackAPI(token string) slackAPI { return newSlackClient(token, slack.APIURL, &http.Client{}) }
@@ -195,41 +195,45 @@ func (c *apiClient) ShareFilesContext(ctx context.Context, share fileShare) erro
 	return nil
 }
 
-type chatAnswer struct {
-	slack.SlackResponse
-	Channel string `json:"channel"`
-	TS      string `json:"ts"`
-	Text    string `json:"text"`
+// workObjectPoster turns slack-go's finished chat form into the JSON a message carrying Work Objects posts as, the shape
+// ai-oncall's cards draw from: event_type and event_payload beside entities, which slack-go's form-encoded metadata cannot carry.
+// It reads the form on the wire because slack-go holds a message's blocks and attachments privately until it sends.
+type workObjectPoster struct {
+	token string
+	next  doer
 }
 
-func (c *apiClient) PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
-	body, carded, err := workObjectBody(c.token, channelID, c.endpoint, options...)
+func (p workObjectPoster) Do(req *http.Request) (*http.Response, error) {
+	if method := path.Base(req.URL.Path); method != "chat.postMessage" && method != "chat.update" {
+		return p.next.Do(req) //nolint:gosec // G704: the caller built the request for Slack or the doc-cards URL the config names
+	}
+	form, err := io.ReadAll(req.Body)
 	if err != nil {
-		return "", "", err
+		return nil, err
+	}
+	body, carded, err := workObjectBody(form)
+	if err != nil {
+		return nil, err
 	}
 	if !carded {
-		return c.Client.PostMessageContext(ctx, channelID, options...)
+		req.Body = io.NopCloser(bytes.NewReader(form))
+		return p.next.Do(req) //nolint:gosec // G704: the caller built the request for Slack or the doc-cards URL the config names
 	}
-	answer, err := c.chatJSON(ctx, "chat.postMessage", body)
-	return answer.Channel, answer.TS, err
-}
-
-func (c *apiClient) UpdateMessageContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
-	body, carded, err := workObjectBody(c.token, channelID, c.endpoint, append(options, slack.MsgOptionUpdate(timestamp))...)
+	encoded, err := json.Marshal(body)
 	if err != nil {
-		return "", "", "", err
+		return nil, err
 	}
-	if !carded {
-		return c.Client.UpdateMessageContext(ctx, channelID, timestamp, options...)
+	posted, err := http.NewRequestWithContext(req.Context(), http.MethodPost, req.URL.String(), bytes.NewReader(encoded)) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return nil, err
 	}
-	answer, err := c.chatJSON(ctx, "chat.update", body)
-	return answer.Channel, answer.TS, answer.Text, err
+	posted.Header.Set("Content-Type", "application/json; charset=utf-8")
+	posted.Header.Set("Authorization", "Bearer "+p.token)
+	return p.next.Do(posted) //nolint:gosec // G704: the request goes to the Slack API endpoint
 }
 
-// workObjectBody is the JSON a message carrying Work Objects posts as, the shape ai-oncall's cards draw from:
-// event_type and event_payload beside entities, which slack-go's form-encoded metadata cannot carry.
-func workObjectBody(token, channelID, endpoint string, options ...slack.MsgOption) (map[string]any, bool, error) {
-	_, values, err := slack.UnsafeApplyMsgOptions(token, channelID, endpoint, options...)
+func workObjectBody(form []byte) (map[string]any, bool, error) {
+	values, err := url.ParseQuery(string(form))
 	if err != nil {
 		return nil, false, err
 	}
@@ -261,39 +265,6 @@ func workObjectBody(token, channelID, endpoint string, options ...slack.MsgOptio
 		}
 	}
 	return body, true, nil
-}
-
-func (c *apiClient) chatJSON(ctx context.Context, method string, body map[string]any) (chatAnswer, error) {
-	var answer chatAnswer
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return answer, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+method, bytes.NewReader(encoded))
-	if err != nil {
-		return answer, err
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
-	if err != nil {
-		return answer, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		return answer, &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return answer, slack.StatusCodeError{Code: resp.StatusCode, Status: resp.Status}
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
-		return answer, fmt.Errorf("%s: %s: %w", method, resp.Status, err)
-	}
-	if !answer.Ok {
-		return answer, slack.SlackErrorResponse{Err: answer.Error, Errors: answer.Errors, ResponseMetadata: answer.ResponseMetadata}
-	}
-	return answer, nil
 }
 
 // RawMessages reads messages as Slack sends them, by timestamp, since slack-go's Message drops what it has no field for.
