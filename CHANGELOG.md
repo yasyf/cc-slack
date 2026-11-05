@@ -6,13 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- No card field draws a sender's HTML comment, in a card, its options, a PR's lines, a row or a plain post.
+- A PR card draws What changes, Against the plan and Risk whole again, in place of the preview from #130.
+- A pick's label may run to 200 characters and draws whole on its own row with a short Pick button, in place of a limit of 61.
+- A working copy of a card no longer carries an Open the card button.
+
 ### Added
 
 - `cc-slack card render --card <file>` prints the Block Kit a status card draws, without posting, so a card's render can be read instead of asked about.
 
 ### Changed
 
-- A card with a PR previews What changes, Against the plan and Risk at up to 100 characters. A line past its preview posts whole in the card's thread on Explain more.
 - A card with a PR stops at its first screen: the PR's description posts in the card's thread on Explain more, and stays behind the PR link. A card no longer posts a "What this links to:" preview of a PR it already draws.
 - A link to a PR in a post no longer draws an Approve card. It keeps its link and ledger preview, and a card with buttons is drawn only for a PR the call lists in `tap_prs` (`dm-status --tap-pr`). Callers that relied on a link to draw the card need `tap_prs`.
 

@@ -15,7 +15,6 @@ import (
 
 const (
 	cardCopyAction = cardActionPrefix + ":preview:"
-	cardCopyOpen   = cardLinkAction + "copy"
 	cardCopyBlock  = cardActionPrefix + "-copy"
 	cardCopyLead   = "Answer it here:"
 )
@@ -88,9 +87,10 @@ func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link 
 	if picks+len(buttons) == 0 {
 		return nil, errors.New("that card has no answer left to tap")
 	}
-	open := button(cardCopyOpen, "Open the card")
-	open.URL = link
-	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, append(buttons, open)...)), nil
+	if len(buttons) == 0 {
+		return blocks, nil
+	}
+	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, buttons...)), nil
 }
 
 func answers(actionID string) bool {

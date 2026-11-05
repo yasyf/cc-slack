@@ -670,7 +670,7 @@ func postAs(ctx context.Context, api slackAPI, db *sql.DB, publish avatarPublish
 	if err != nil {
 		logger.Printf("refresh profile: %v", err)
 	}
-	ch, ts, err := postMessage(ctx, api, db, logger, id, channelID, threadTS, text, blocks, files, extra...)
+	ch, ts, err := postMessage(ctx, api, db, logger, id, channelID, threadTS, withoutHidden(text), blocks, files, extra...)
 	if err != nil {
 		return postResult{}, err
 	}

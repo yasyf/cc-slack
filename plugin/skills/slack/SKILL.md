@@ -456,14 +456,14 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `body` | 1-3 sentences of mrkdwn, under the post rules below |
 | `drive`, `phase` | the long-running drive's name and phase, when there is one |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
-| `options` | up to 4 quick replies of 61 characters or fewer; one marked "(Recommended)" becomes the recommended answer |
+| `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
 | `progress` | `{step, total, label}`, drawn as a progress bar |
 | `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
 | `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
-| `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, and the lines it has as fields, with `change`, `plan` and `risk` previewed at up to 100 characters; a missing line is left out. A line past its preview and the description, read from GitHub, post whole in the thread on Explain more |
+| `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, and the lines it has as fields; a missing line is left out. Its description, read from GitHub, posts in the thread on Explain more |
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |

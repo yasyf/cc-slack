@@ -47,7 +47,8 @@ const (
 	cardPauseLabel    = "Pause"
 	cardPickLabel     = "Pick"
 	cardMaxOptions    = 4
-	cardMaxOptionLen  = cardMaxLabelLen - len(" "+cardRecommended)
+	cardMaxOptionLen  = cardMaxDetailLen
+	cardMaxButtonText = cardMaxLabelLen - len(" "+cardRecommended)
 	cardMaxShortWords = 2
 	cardMaxLinks      = 5
 	cardMaxRefs       = 10
@@ -68,7 +69,6 @@ const (
 	cardMaxLabelLen   = 75
 	cardMaxStatusLen  = 40
 	cardMaxDetailLen  = 200
-	cardMaxPreview    = 100
 	cardMaxNoteLen    = 300
 	cardMaxSectionLen = 3000
 	cardMaxSteps      = 1000
@@ -95,7 +95,6 @@ var (
 	askIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 	mrkdwnEscapes   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "¦")
 	cardWordEscapes = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-	previewMarks    = strings.NewReplacer("*", "", "`", "", "•", "")
 	slackToken      = regexp.MustCompile(`<[^<>\s][^<>]*>`)
 	cardJargon      = []struct {
 		pattern *regexp.Regexp
@@ -340,8 +339,8 @@ func (p cardPR) check() error {
 	return nil
 }
 
-func (p cardPR) previewed() []cardFact {
-	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}}
+func (p cardPR) fields() []cardFact {
+	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}, {"Blocks landing", p.Blocks}}
 }
 
 func (c statusCard) checkReplaces() error {
@@ -665,7 +664,51 @@ func (c statusCard) merged(next statusCard) statusCard {
 
 func (c statusCard) emoji() string { return cardStatuses[c.Status] }
 
+func withoutHidden(text string) string {
+	if !strings.Contains(text, "<!--") {
+		return text
+	}
+	return strings.TrimSpace(htmlComment.ReplaceAllString(text, ""))
+}
+
+func (c statusCard) visible() statusCard {
+	c.Title, c.Body = withoutHidden(c.Title), withoutHidden(c.Body)
+	hints := make(map[string]string, len(c.Hints))
+	for option, hint := range c.Hints {
+		hints[option] = withoutHidden(hint)
+	}
+	c.Hints = hints
+	c.Facts = slices.Clone(c.Facts)
+	for i := range c.Facts {
+		c.Facts[i].Value = withoutHidden(c.Facts[i].Value)
+	}
+	c.Asks = slices.Clone(c.Asks)
+	for i := range c.Asks {
+		c.Asks[i].Description = withoutHidden(c.Asks[i].Description)
+	}
+	c.PRs = slices.Clone(c.PRs)
+	for i := range c.PRs {
+		c.PRs[i] = c.PRs[i].visible()
+	}
+	c.Rows = slices.Clone(c.Rows)
+	for i := range c.Rows {
+		c.Rows[i].Text = withoutHidden(c.Rows[i].Text)
+		if pr := c.Rows[i].PR; pr != nil {
+			shown := pr.visible()
+			c.Rows[i].PR = &shown
+		}
+	}
+	return c
+}
+
+func (p cardPR) visible() cardPR {
+	p.Title, p.Review, p.Change = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Change)
+	p.Plan, p.Risk, p.Blocks = withoutHidden(p.Plan), withoutHidden(p.Risk), withoutHidden(p.Blocks)
+	return p
+}
+
 func (c statusCard) text() string {
+	c = c.visible()
 	if c.Body == "" {
 		return c.emoji() + " " + c.Title
 	}
@@ -808,7 +851,7 @@ func (c statusCard) picks() []cardPick {
 	answers := c.answers()
 	picks := make([]cardPick, 0, len(answers))
 	for i, o := range answers {
-		p := cardPick{actionID: fmt.Sprintf("%s%d", cardOptionAction, i), value: o, option: o, label: o}
+		p := cardPick{actionID: fmt.Sprintf("%s%d", cardOptionAction, i), value: o, option: o, label: withoutHidden(o)}
 		if c.Waits != "" {
 			p.actionID = fmt.Sprintf("%s%d:%s", cardWaitAction, i, c.Waits)
 			p.value = string(mustJSON(askTap{ID: c.Waits, Label: o, Question: c.Title, Options: answers}))
@@ -822,7 +865,9 @@ func (c statusCard) picks() []cardPick {
 }
 
 func (c statusCard) listed() bool {
-	return len(c.Hints) > 0 || slices.ContainsFunc(c.Options, func(o string) bool { return len(strings.Fields(o)) > cardMaxShortWords })
+	return len(c.Hints) > 0 || slices.ContainsFunc(c.Options, func(o string) bool {
+		return len(strings.Fields(o)) > cardMaxShortWords || runes(o) > cardMaxButtonText
+	})
 }
 
 func (c statusCard) optionRows(live bool) []slack.Block {
@@ -832,7 +877,7 @@ func (c statusCard) optionRows(live bool) []slack.Block {
 	picks := c.picks()
 	rows := make([]slack.Block, 0, len(picks))
 	for i, p := range picks {
-		line := fmt.Sprintf("*%d. %s*", i+1, mrkdwnEscapes.Replace(p.option))
+		line := fmt.Sprintf("*%d. %s*", i+1, mrkdwnEscapes.Replace(withoutHidden(p.option)))
 		if p.option == c.Recommended {
 			line += " _" + cardRecommended + "_"
 		}
@@ -1096,14 +1141,11 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 	if p.Review != "" {
 		line += "\n" + plainMrkdwn(p.Review)
 	}
-	facts := make([]string, 0, len(p.previewed())+1)
-	for _, f := range p.previewed() {
-		if shown, _ := preview(f.Value); shown != "" {
-			facts = append(facts, "*"+f.Label+"*\n"+shown)
+	facts := make([]string, 0, len(p.fields()))
+	for _, f := range p.fields() {
+		if strings.TrimSpace(f.Value) != "" {
+			facts = append(facts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
-	}
-	if strings.TrimSpace(p.Blocks) != "" {
-		facts = append(facts, "*Blocks landing*\n"+plainMrkdwn(p.Blocks))
 	}
 	parts := []string{line}
 	if len(facts) > 0 {
@@ -1113,29 +1155,12 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 }
 
 func (p cardPR) folded() [][]slack.Block {
-	id, _ := parseRef(p.URL)
-	var parts []string
-	for _, f := range p.previewed() {
-		if _, clipped := preview(f.Value); clipped {
-			parts = append(parts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
-		}
-	}
-	if description := prDescription(p.Description); description != "" {
-		parts = append(parts, description)
-	}
-	if len(parts) == 0 {
+	description := prDescription(p.Description)
+	if description == "" {
 		return nil
 	}
-	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, the whole change", id.Repo, id.Number)), strings.Join(parts, "\n\n")), cardMaxPageBlock, cardMaxVisible, true)
-}
-
-func preview(text string) (string, bool) {
-	flat := previewMarks.Replace(mdBullet.ReplaceAllString(mdLink.ReplaceAllString(text, "$1"), ""))
-	flat = strings.Join(strings.Fields(flat), " ")
-	if runes(flat) <= cardMaxPreview {
-		return cardWordEscapes.Replace(flat), false
-	}
-	return cardWordEscapes.Replace(strings.TrimRight(sectionCut([]rune(flat), cardMaxPreview-1), " .,;:")) + "…", true
+	id, _ := parseRef(p.URL)
+	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, its description", id.Repo, id.Number)), description), cardMaxPageBlock, cardMaxVisible, true)
 }
 
 func plainMrkdwn(text string) string {
@@ -1183,6 +1208,7 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 }
 
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
+	c = c.visible()
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block
 	for _, p := range c.allPRs() {
@@ -1243,6 +1269,7 @@ func (c statusCard) refsOnly() bool {
 }
 
 func (c statusCard) rootBlocks(v cardView) []slack.Block {
+	c = c.visible()
 	name := c.Drive
 	switch {
 	case name != "":
