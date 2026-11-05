@@ -84,6 +84,38 @@ class CheckPostTest(unittest.TestCase):
             [("commit-sha", "cd0e2017"), ("commit-sha", "cd0e2018")],
         )
 
+    def test_flags_a_dense_ask_greeting_a_plain_name_with_a_bare_secret_name(self) -> None:
+        text = (
+            "Hi Anubhav, Yasyf asked me to ask you for one thing on our litestream fork. Could you create a "
+            "fine-grained personal access token with access to only the repository Forge-AI/litestream. Then save "
+            "it as a repository secret named FORGE_REBASE_TOKEN. It lets the nightly job rebase our patches onto "
+            "upstream. Please do not send the token to anyone, me included."
+        )
+        self.assertEqual(
+            kinds(text),
+            [
+                ("wall-of-text", "Hi Anubhav, Yasyf asked me to"),
+                ("plain-name", "Hi Anubhav"),
+                ("bare-identifier", "FORGE_REBASE_TOKEN"),
+            ],
+        )
+
+    def test_accepts_the_same_ask_mentioned_split_and_formatted(self) -> None:
+        text = (
+            "hey <@U0123ABCDE>, Yasyf asked me for one thing on our "
+            "<https://github.com/Forge-AI/litestream|litestream fork>: a token for its nightly rebase.\n\n"
+            "*What to make:* a fine-grained token for `Forge-AI/litestream` only, with:\n"
+            "• Contents: read and write\n"
+            "• Workflows: read and write\n\n"
+            "*Where it goes:* a repository secret named `FORGE_REBASE_TOKEN`. Please don't send it to anyone.\n\n"
+            "Could you set that up?"
+        )
+        self.assertEqual(kinds(text), [])
+
+    def test_reads_no_identifier_or_sentence_inside_code(self) -> None:
+        text = "Run `export AWS_PROFILE=dev. Then retry. Then wait. Then go.` once.\n```\none. two. three. four. five.\n```"
+        self.assertEqual(kinds(text), [])
+
     def test_reports_line_and_column(self) -> None:
         [finding] = check_post.check("ok\nsee G158")
         self.assertEqual((finding.line, finding.column), (2, 5))

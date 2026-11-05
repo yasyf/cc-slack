@@ -745,13 +745,17 @@ order.
 3. When the post narrates a sequence of events, attach a timeline image as
    "Show a timeline as an image" says.
 4. Write the text to a temp file and run
-   `"${CLAUDE_PLUGIN_ROOT}/skills/slack/scripts/check-post" <tmpfile>`.
+   `"${CLAUDE_PLUGIN_ROOT}/bin/check-post" <tmpfile>`, or `-` for stdin.
    Fix every line it prints; it exits 1 on a finding. It flags raw commit
    shas, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
    and build or PR numbers, bare URLs, one-letter codenames such as "D",
-   multi-agent terms such as lane, desk, walker, parity, and fence, and zone
-   labels such as `PT` or `17:35Z`, ignoring anything inside a `<url|label>`
-   link or `<@U…>` mention. Then check what the script cannot detect:
+   multi-agent terms such as lane, desk, walker, parity, and fence, zone
+   labels such as `PT` or `17:35Z`, a greeting to a plain first name such as
+   "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
+   identifier, and a paragraph past three sentences. It ignores anything
+   inside a `<url|label>` link or `<@U…>` mention, and reads no identifier
+   or sentence inside backticks or a code fence. Then check what the script
+   cannot detect:
 
    - Would someone who only reads this thread understand every noun?
    - Is everything mentioned linked?
