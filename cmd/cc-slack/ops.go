@@ -140,6 +140,7 @@ type postResult struct {
 	Watched    bool                `json:"watched"`
 	WatchError string              `json:"watch_error,omitempty"`
 	Replayed   bool                `json:"replayed,omitempty"`
+	Warning    string              `json:"warning,omitempty"`
 	Channel    daemon.ChannelState `json:"channel,omitempty"`
 }
 
@@ -518,6 +519,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(err.Error())
 		}
+		hc.Ctx = withMetadataRefusals(hc.Ctx)
 		extra, err := checkPost(b, hc.Env.Op, requireThread)
 		if err != nil {
 			return fail(err.Error())
@@ -572,6 +574,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
 		}
 		res.Posted = true
+		res.Warning = metadataRefusalsIn(hc.Ctx)
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
 		a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
 		res.TicketID = ticket.ID
@@ -1832,6 +1835,7 @@ func (a *app) handleUnfollow(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
+	hc.Ctx = withMetadataRefusals(hc.Ctx)
 	b, err := decodeBody(hc)
 	if err != nil {
 		return fail(err.Error())
@@ -1973,6 +1977,9 @@ func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity,
 	}
 	if handPostedQuestion(b) {
 		res["warning"] = questionOnBoard
+	}
+	if refusal := metadataRefusalsIn(hc.Ctx); refusal != "" {
+		res["warning"] = strings.TrimSpace(res["warning"] + " " + refusal)
 	}
 	return res
 }
