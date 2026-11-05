@@ -271,6 +271,21 @@ func TestAPRDescriptionDropsCommentsAndFolds(t *testing.T) {
 	}
 }
 
+func TestAPRDescriptionFromTheLedgerDrawsWithoutItsHTML(t *testing.T) {
+	pr := fullPR(7)
+	pr.Description = "<!-- bot -->Why it matters\n\n<details><summary>Changes</summary>\nA file\n</details>\n"
+	card := statusCard{Status: "info", Title: "Status", PRs: []cardPR{pr}}
+	got := blocksJSON(t, card.replyBlocks(view()))
+	for _, gone := range []string{"details", "summary", "-- bot"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("blocks %s still show %q", got, gone)
+		}
+	}
+	if !strings.Contains(got, "Why it matters") || !strings.Contains(got, "*Changes*") || !strings.Contains(got, "A file") {
+		t.Fatalf("blocks %s, want the description's words kept", got)
+	}
+}
+
 func TestALongPRDescriptionDrawsWholeAndOnlyAMessagesOverflowFolds(t *testing.T) {
 	sentences := func(n int) statusCard {
 		pr := fullPR(7)

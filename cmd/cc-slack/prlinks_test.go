@@ -684,6 +684,36 @@ func TestRedrawPRCardsRedrawsEveryOpenCardWithNoNewPost(t *testing.T) {
 	}
 }
 
+func TestRedrawPRCardsCanTakeOnePR(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	full := mergeRowCard()
+	full.Card.Body += "\n*From the ledger:* the whole row"
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{full}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	redrawing := func(pr string) int {
+		var got map[string]int
+		if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"pr": pr}).Body, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got["redrawing"]
+	}
+	if got := redrawing("https://github.com/acme/app/pull/42"); got != 0 {
+		t.Fatalf("another PR redraws %d cards, want none", got)
+	}
+	if got := redrawing(tapPR41[0]); got != 1 {
+		t.Fatalf("its own PR redraws %d cards, want one", got)
+	}
+	eventually(t, "the redraw", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "From the ledger")
+	})
+	l.refused(opRedrawPRCards, map[string]any{"pr": "not a link"}, "pull request URL")
+}
+
 func TestARefsOnlyCardOffersNoAckOrPause(t *testing.T) {
 	l, _ := linkingDaemon(t)
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "The relay fix", Refs: []cardLink{{URL: "https://github.com/acme/app/pull/41"}}}})
