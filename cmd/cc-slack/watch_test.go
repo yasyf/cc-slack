@@ -168,7 +168,7 @@ func printedLine(t *testing.T, whole bool, event any) string {
 	return strings.TrimSuffix(out.String(), "\n")
 }
 
-func fitLine(t *testing.T, event, target any) string {
+func fitLine(t *testing.T, event, target any) {
 	t.Helper()
 	printed := printedLine(t, false, event)
 	if len(printed) > monitorEvent {
@@ -177,7 +177,6 @@ func fitLine(t *testing.T, event, target any) string {
 	if err := json.Unmarshal([]byte(printed), target); err != nil {
 		t.Fatalf("line %s: %v", printed, err)
 	}
-	return printed
 }
 
 func longTap(label string) map[string]any {
