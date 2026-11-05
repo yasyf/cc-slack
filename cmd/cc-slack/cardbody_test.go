@@ -181,9 +181,10 @@ func TestAPRCardShowsItsLinkCIFourLinesAndDescription(t *testing.T) {
 			t.Fatalf("link line %q lacks %q", link, want)
 		}
 	}
-	fields := asSection(t, blocks[2]).Fields
-	if len(fields) != 4 || !strings.HasPrefix(fields[0].Text, "*What changes*\nLaunches") || !strings.HasPrefix(fields[3].Text, "*Blocks landing*\nYour") {
-		t.Fatalf("fields = %+v, want the four lines", fields)
+	for i, want := range []string{"*What changes*\nLaunches", "*Against the plan*\nNothing", "*Risk*\nA stale", "*Blocks landing*\nYour"} {
+		if got := asSection(t, blocks[2+i]).Text.Text; !strings.HasPrefix(got, want) {
+			t.Fatalf("paragraph %d = %q, want it to start %q", i, got, want)
+		}
 	}
 	if got := blocksJSON(t, blocks); !strings.Contains(got, "It keeps one storage credential per team.") {
 		t.Fatalf("blocks %s lack the PR's description", got)
@@ -230,7 +231,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 		}
 	}
 	bare := cardPR{URL: pr.URL}
-	if err := checkBlocks(bare.blocks(view(), cardQuietBody)); err != nil {
+	if err := checkBlocks(bare.blocks(view())); err != nil {
 		t.Fatalf("a PR with no lines at all draws a block Slack refuses: %v", err)
 	}
 }
@@ -270,16 +271,22 @@ func TestAPRDescriptionDropsCommentsAndFolds(t *testing.T) {
 	}
 }
 
-func TestALongPRDescriptionFoldsTheRest(t *testing.T) {
-	pr := fullPR(7)
-	pr.Description = strings.Repeat("A sentence of the description. ", 200)
-	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
-	blocks, fold := card.layout(view())
-	if len(fold) != 1 || !strings.Contains(blocksJSON(t, fold[0]), "the rest of its description") {
-		t.Fatalf("fold = %s, want the rest behind Explain more", blocksJSON(t, slices.Concat(fold...)))
+func TestALongPRDescriptionDrawsWholeAndOnlyAMessagesOverflowFolds(t *testing.T) {
+	sentences := func(n int) statusCard {
+		pr := fullPR(7)
+		pr.Description = strings.Repeat("A sentence of the description. ", n)
+		return statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m7", PRs: []cardPR{pr}}
 	}
-	if strings.Count(blocksJSON(t, blocks), "description.")+strings.Count(blocksJSON(t, fold[0]), "description.") != 200 {
-		t.Fatal("a sentence of the description was lost")
+	blocks, fold := sentences(200).layout(view())
+	if len(fold) != 0 || strings.Count(blocksJSON(t, blocks), "description.") != 200 {
+		t.Fatalf("fold = %d pages, blocks = %s, want all 200 sentences on the card", len(fold), blocksJSON(t, blocks))
+	}
+	blocks, fold = sentences(400).layout(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(fold) == 0 || strings.Count(blocksJSON(t, blocks), "description.")+strings.Count(blocksJSON(t, slices.Concat(fold...)), "description.") != 400 {
+		t.Fatalf("fold = %d pages, want what passes a message behind Explain more with no sentence lost", len(fold))
 	}
 	if got := blocksJSON(t, blocks); !strings.Contains(got, cardExplainAction+"m7") || strings.Contains(got, cardFoldAction) {
 		t.Fatalf("blocks %s, want the waiting card's own Explain more to show the fold", got)

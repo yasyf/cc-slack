@@ -560,8 +560,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
-		text, prCards, previews := a.linkPreviews(hc.Ctx, id, channelID, texts[0])
-		extra = append(extra, withDocCards(hc.Ctx, api, a.poller.log, id.Config.DocCards, channelID, text, prCards)...)
+		text, previews := a.linkPreviews(hc.Ctx, id, channelID, texts[0])
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
 		}
@@ -972,13 +971,13 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(ticketResult{TicketID: b.TicketID})
 }
 
-func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block, extra ...slack.MsgOption) error {
+func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block) error {
 	if err := checkBlocks(blocks); err != nil {
 		return err
 	}
 	text, blocks = fitText(text, blocks)
-	options := append([]slack.MsgOption{slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl()}, extra...)
-	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, options...)
+	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts,
+		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl())
 	return err
 }
 
@@ -1906,7 +1905,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
-		msg.text, msg.prs, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
+		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
 			return msg, nil
 		}
@@ -1915,7 +1914,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 		return msg, pages[1:]
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
-	b.Card.Body, msg.prs, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
+	b.Card.Body, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0])
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
 	return msg, nil
@@ -1944,7 +1943,7 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	}) {
 		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
 	} else {
-		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}), card.prEntities()...)
+		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}))
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("replace card %s in place: %w", ref.ts, err)
@@ -2048,7 +2047,6 @@ type dmMessage struct {
 	card     *statusCard
 	tag      cardTag
 	rootOnly bool
-	prs      []slack.WorkObjectEntity
 	previews []slack.Attachment
 }
 
@@ -2060,14 +2058,14 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	}
 	if msg.card != nil {
 		thread, ts, posted, err := a.cardStatus(ctx, db, sub, id, under, msg)
-		if err == nil && posted && len(msg.prs)+len(msg.previews) > 0 {
-			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsText(msg.prs), nil, nil, append(entitiesOption(msg.prs), slack.MsgOptionAttachments(msg.previews...))...); err != nil {
+		if err == nil && posted && len(msg.previews) > 0 {
+			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
 				a.poller.log.Printf("previews under card %s: %v", ts, err)
 			}
 		}
 		return thread, ts, posted, err
 	}
-	res, err := a.post(ctx, db, id, id.DMChannelID, under, msg.text, msg.blocks, msg.files, append(withDocCards(ctx, a.newAPI(id.Token), a.poller.log, id.Config.DocCards, id.DMChannelID, msg.text, msg.prs), slack.MsgOptionAttachments(msg.previews...))...)
+	res, err := a.post(ctx, db, id, id.DMChannelID, under, msg.text, msg.blocks, msg.files, slack.MsgOptionAttachments(msg.previews...))
 	if err != nil {
 		return "", "", false, err
 	}
@@ -2179,7 +2177,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	if asked != nil {
 		placed.TS = asked.TS
 		if err := write(func() error {
-			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks, placed.Card.prEntities()...)
+			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks)
 		}); err != nil {
 			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group, placed.Card.Key), err)
 		}
@@ -2187,7 +2185,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil, placed.Card.prEntities()...)
+		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil)
 		return err
 	}); err != nil {
 		return nil, err
@@ -2204,7 +2202,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
 		text, blocks := t.rootMessage(now, cards.refs)
-		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil, msg.card.prEntities()...)
+		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
 		if err != nil {
 			return "", "", false, err
 		}
@@ -2218,7 +2216,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	t := cards.draft(prior.Channel, prior.Thread)
 	t.apply(*msg.card, msg.tag, now, true)
 	text, blocks := t.rootMessage(now, cards.refs)
-	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks, msg.card.prEntities()...); err != nil {
+	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks); err != nil {
 		return "", "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
 	}
 	cards.commit(t)
