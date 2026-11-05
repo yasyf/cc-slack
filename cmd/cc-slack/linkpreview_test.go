@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -154,25 +155,25 @@ func TestALinkAloneInAPostKeepsItsText(t *testing.T) {
 	}
 }
 
-func TestTheSixthPreviewIsCountedAndItsLinkStays(t *testing.T) {
+func TestAPreviewPastTheLimitIsCountedAndItsLinkStays(t *testing.T) {
 	var rows []ledgerRow
 	var held, lines []string
-	for n := 41; n <= 46; n++ {
+	for n := 41; n <= 44; n++ {
 		rows = append(rows, readyRow(n))
 		held = append(held, fmt.Sprintf("acme/app#%d", n))
 		lines = append(lines, fmt.Sprintf("https://github.com/acme/app/pull/%d", n))
 	}
 	l := previewingDaemon(t, fakePRRows(t, rows...).argv, held...)
-	l.do(opDMStatus, map[string]any{"text": "Six PRs.\n" + strings.Join(lines, "\n")})
+	l.do(opDMStatus, map[string]any{"text": "Four PRs.\n" + strings.Join(lines, "\n")})
 	post := lastPost(l)
 	if got := strings.Count(workObjectsIn(post), "Chats load faster"); got != linkPreviewLimit {
 		t.Fatalf("drew %d previews, want %d", got, linkPreviewLimit)
 	}
 	if !strings.Contains(post.attachments, "+1 more not shown here") {
-		t.Fatalf("attachments = %s, want the sixth counted", post.attachments)
+		t.Fatalf("attachments = %s, want the fourth counted", post.attachments)
 	}
-	if strings.Contains(post.text, "pull/45") || !strings.Contains(post.text, "pull/46") {
-		t.Fatalf("text = %q, want only the sixth's link left", post.text)
+	if strings.Contains(post.text, "pull/43") || !strings.Contains(post.text, "pull/44") {
+		t.Fatalf("text = %q, want only the fourth's link left", post.text)
 	}
 }
 
@@ -304,7 +305,7 @@ func TestABuildPreviewIsOffWithNoBuildkiteSource(t *testing.T) {
 func TestBuildPreviewsShareTheLimitWithPRs(t *testing.T) {
 	var rows []ledgerRow
 	var held, lines []string
-	for n := 41; n <= 45; n++ {
+	for n := 41; n <= 43; n++ {
 		rows = append(rows, readyRow(n))
 		held = append(held, fmt.Sprintf("acme/app#%d", n))
 		lines = append(lines, fmt.Sprintf("https://github.com/acme/app/pull/%d", n))
@@ -599,7 +600,7 @@ func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
 	}
 }
 
-func TestAWorkObjectPostsAsJSONWithEventFieldsBesideItsEntities(t *testing.T) {
+func TestAWorkObjectPostsAsJSONWithOnlyItsEntitiesAsMetadata(t *testing.T) {
 	var posted []string
 	var contentType, path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -643,9 +644,9 @@ func TestAWorkObjectPostsAsJSONWithEventFieldsBesideItsEntities(t *testing.T) {
 	if body.Channel != "D1" || body.Text != "See it" || body.ThreadTS != "1.1" || body.UnfurlLinks || body.Token != "" {
 		t.Fatalf("body = %+v, want the message's fields and no token", body)
 	}
-	if body.Metadata.EventType != postEventType || len(body.Metadata.EventPayload) == 0 || len(body.Metadata.Entities) != 1 ||
+	if body.Metadata.EventType != "" || len(body.Metadata.EventPayload) != 0 || len(body.Metadata.Entities) != 1 ||
 		body.Metadata.Entities[0].URL != testPR || body.Metadata.Entities[0].EntityPayload.Attributes.LastModified == 0 {
-		t.Fatalf("metadata = %+v, want event fields beside a stamped entity", body.Metadata)
+		t.Fatalf("metadata = %+v, want only a stamped entity, since Slack refuses event fields beside entities", body.Metadata)
 	}
 }
 
@@ -719,5 +720,55 @@ func TestAWorkObjectAnswerNamesWhatSlackWarnedAndKept(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("echo = %q, missing %q", got, want)
 		}
+	}
+}
+
+func TestAPRCardsRefSlackAcceptsEvenOnADottedRepo(t *testing.T) {
+	accepted := regexp.MustCompile(`^[0-9a-zA-Z\-_:!/=]+$`)
+	row := readyRow(41)
+	row.Repo = "Acme/app.js"
+	if id := row.entity(testPR, "").ExternalRef.ID; !accepted.MatchString(id) {
+		t.Fatalf("external_ref id %q, want one Slack's pattern accepts", id)
+	}
+}
+
+func TestCardsFitSlacksMetadataLimitClippingBeforeDropping(t *testing.T) {
+	long := strings.Repeat("Words that run on. ", 200)
+	wordy := func(number int) slack.WorkObjectEntity {
+		row := readyRow(number)
+		row.ForUsers, row.Risk, row.Description, row.WaitsOn = long, long, long, long
+		return row.entity(testPR, "")
+	}
+	one := fitEntities([]slack.WorkObjectEntity{wordy(1)})
+	if len(one) != 1 {
+		t.Fatalf("kept %d cards, want the one card clipped to fit", len(one))
+	}
+	many := fitEntities([]slack.WorkObjectEntity{wordy(1), wordy(2), wordy(3), wordy(4), wordy(5)})
+	encoded, err := json.Marshal(many)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(many) == 0 || many[0].ExternalRef.ID != "Acme/App:1" || len(encoded) > metadataLimit {
+		t.Fatalf("kept %d cards in %d bytes, want the first ones within %d", len(many), len(encoded), metadataLimit)
+	}
+}
+
+func TestAPRCardThatDoesNotFitIsCountedAndItsLinkStays(t *testing.T) {
+	long := strings.Repeat("Words that run on. ", 200)
+	var rows []ledgerRow
+	var held, lines []string
+	for n := 41; n <= 43; n++ {
+		row := readyRow(n)
+		row.ForUsers, row.Risk, row.WaitsOn, row.Description, row.Lane, row.GradeFindings = long, long, long, long, long, long
+		rows = append(rows, row)
+		held = append(held, fmt.Sprintf("acme/app#%d", n))
+		lines = append(lines, fmt.Sprintf("https://github.com/acme/app/pull/%d", n))
+	}
+	l := previewingDaemon(t, fakePRRows(t, rows...).argv, held...)
+	l.do(opDMStatus, map[string]any{"text": "Three long PRs.\n" + strings.Join(lines, "\n")})
+	post := lastPost(l)
+	drawn := entitiesOf(t, workObjectsIn(post))
+	if len(drawn) == 0 || len(drawn) == len(rows) || !strings.Contains(post.attachments, "more not shown here") || !strings.Contains(post.text, "pull/43") {
+		t.Fatalf("drew %d, post = %+v, want the undrawn counted and its link kept", len(drawn), post)
 	}
 }
