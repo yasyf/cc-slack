@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -67,6 +68,7 @@ type ledgerRow struct {
 	Mergeable     string `json:"mergeable"`
 	Queue         string `json:"queue"`
 	Hold          string `json:"hold"`
+	CardURL       string `json:"card_url"`
 }
 
 func (r ledgerRow) ready() bool { return r.ReadyForTap && r.State == rowOpen }
@@ -188,7 +190,7 @@ func (r ledgerRow) entity(url, cardLink string) slack.WorkObjectEntity {
 	}
 	shown := "#" + strconv.Itoa(r.Number)
 	return slack.WorkObjectEntity{
-		URL:         url,
+		URL:         cmp.Or(r.CardURL, url),
 		ExternalRef: slack.WorkObjectExternalRef{ID: r.Repo + shown, Type: prEntityRefType},
 		EntityType:  prEntityType,
 		EntityPayload: map[string]any{
@@ -215,7 +217,10 @@ func linkPreviewsText(prs []slack.WorkObjectEntity) string {
 		attributes, _ := pr.EntityPayload["attributes"].(map[string]any)
 		title, _ := attributes["title"].(map[string]any)
 		text, _ := title["text"].(string)
-		lines = append(lines, slackLink(pr.URL, text))
+		actions, _ := pr.EntityPayload["actions"].(map[string]any)
+		primary, _ := actions["primary_actions"].([]map[string]any)
+		link, _ := primary[0]["url"].(string)
+		lines = append(lines, slackLink(link, text))
 	}
 	return strings.Join(lines, "\n")
 }
