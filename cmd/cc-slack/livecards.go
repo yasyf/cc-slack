@@ -547,7 +547,7 @@ func (l *liveCards) showPictures(channel, thread, ts string, shown statusCard) b
 	found := false
 	for _, m := range append(t.messages(), t.Root) {
 		if m != nil && m.TS == ts {
-			m.Card.Images, m.Card.Artifacts = shown.Images, shown.Artifacts
+			m.Card.Images = shown.Images
 			found = true
 		}
 	}

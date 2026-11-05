@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -24,16 +25,8 @@ type drawnArtifact struct {
 			DisplayType  string `json:"display_type"`
 			LastModified int64  `json:"metadata_last_modified"`
 		} `json:"attributes"`
-		Fields struct {
-			Preview *struct {
-				Type      string `json:"type"`
-				SlackFile struct {
-					ID string `json:"id"`
-				} `json:"slack_file"`
-				AltText string `json:"alt_text"`
-			} `json:"preview"`
-		} `json:"fields"`
-		DisplayOrder []string `json:"display_order"`
+		Fields       json.RawMessage `json:"fields"`
+		DisplayOrder []string        `json:"display_order"`
 		Actions      struct {
 			Primary []struct {
 				URL string `json:"url"`
@@ -53,7 +46,16 @@ func drawnArtifacts(t *testing.T, metadata string) []drawnArtifact {
 	return drawn.Entities
 }
 
-func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsSharedPicture(t *testing.T) {
+func lastEdit(t *testing.T, l *liveDaemon, ts string) fakeEdit {
+	t.Helper()
+	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != ts })
+	if len(edits) == 0 {
+		t.Fatalf("no edit of the card at %s, want one that shows the shared picture", ts)
+	}
+	return edits[len(edits)-1]
+}
+
+func TestADiagramArtifactPostsItsPictureOnTheCardBesideItsWorkObject(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	diagram := cardArtifact{Title: "How a reply reaches Slack", Kind: "diagram", URL: testDiagramURL, Image: writeFile(t, "diagram.png", pngBytes)}
@@ -64,21 +66,21 @@ func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsSharedPicture(t *tes
 	if !strings.Contains(post.blocks, testDiagramURL+"|How a reply reaches Slack") {
 		t.Fatalf("blocks = %s, want the link kept for a client that draws no card", post.blocks)
 	}
-	if strings.Contains(post.blocks, `"type":"image"`) {
-		t.Fatalf("blocks = %s, want the picture in the Work Object only", post.blocks)
-	}
-	if strings.Contains(post.metadata, "slack_file") {
-		t.Fatalf("metadata = %s, want the first post to name no file before its share", post.metadata)
+	if strings.Contains(post.blocks+post.metadata, "slack_file") {
+		t.Fatalf("post = %+v, want the first post to name no file before its share", post)
 	}
 	share := l.slack.sent()[1]
 	if share.channelID != post.channelID || share.threadTS != post.ts {
 		t.Fatalf("share = %+v, want it in the thread of the card at %s", share, post.ts)
 	}
-	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != post.ts })
-	if len(edits) == 0 {
-		t.Fatalf("no edit of the card at %s, want one that shows the shared picture", post.ts)
+	shown := lastEdit(t, l, post.ts)
+	ids := imageIDs(t, shown.blocks)
+	if len(ids) != 1 || string(l.slack.uploads[ids[0]]) != pngBytes {
+		t.Fatalf("image blocks %v, want the diagram's upload drawn on the card", ids)
 	}
-	shown := edits[len(edits)-1]
+	if len(l.slack.complete) != 1 {
+		t.Fatalf("completed uploads = %v, want the one picture completed once", l.slack.complete)
+	}
 	entities := drawnArtifacts(t, shown.metadata)
 	if len(entities) != 1 {
 		t.Fatalf("metadata = %s, want one Work Object", shown.metadata)
@@ -91,29 +93,31 @@ func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsSharedPicture(t *tes
 	if payload.Attributes.Title.Text != diagram.Title || payload.Attributes.DisplayType != "Diagram" || payload.Attributes.LastModified == 0 {
 		t.Fatalf("attributes = %+v", payload.Attributes)
 	}
-	preview := payload.Fields.Preview
-	if preview == nil || preview.Type != "slack#/types/image" || preview.SlackFile.ID == "" || preview.AltText != diagram.Title {
-		t.Fatalf("preview = %+v, want the uploaded picture as a Slack-hosted image", preview)
-	}
-	if string(l.slack.uploads[preview.SlackFile.ID]) != pngBytes {
-		t.Fatalf("preview names file %s, which is not the diagram's upload", preview.SlackFile.ID)
-	}
-	if len(l.slack.complete) != 1 {
-		t.Fatalf("completed uploads = %v, want the one picture completed once", l.slack.complete)
-	}
-	if strings.Join(payload.DisplayOrder, ",") != "preview" || len(payload.Actions.Primary) != 1 || payload.Actions.Primary[0].URL != testDiagramURL {
-		t.Fatalf("order %v, actions %+v", payload.DisplayOrder, payload.Actions)
+	if len(payload.Fields) != 0 || len(payload.DisplayOrder) != 0 || len(payload.Actions.Primary) != 1 || payload.Actions.Primary[0].URL != testDiagramURL {
+		t.Fatalf("payload = %+v, want a link with no picture inside the Work Object", payload)
 	}
 }
 
-func TestAnArtifactWithNoImageDrawsNoPreview(t *testing.T) {
-	raw, err := json.Marshal(cardArtifact{Title: "The session", Kind: "transcript", URL: testDiagramURL}.entity())
-	if err != nil {
+func TestADiagramSlackCannotOpenStillPostsItsPictureAndSaysWhyItHasNoWorkObject(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	diagram := cardArtifact{Title: "How a reply reaches Slack", Kind: "diagram", URL: "http://100.1.2.3:61210/diagram/r9", Image: writeFile(t, "diagram.png", pngBytes)}
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "The new path.", Artifacts: []cardArtifact{diagram}}}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	drawn := drawnArtifacts(t, `{"entities":[`+string(raw)+`]}`)[0]
-	if drawn.EntityPayload.Fields.Preview != nil || len(drawn.EntityPayload.DisplayOrder) != 0 {
-		t.Fatalf("entity = %s, want no preview field", raw)
+
+	if res["ts"] == "" || !strings.Contains(res["warning"], "no Work Object") || !strings.Contains(res["warning"], diagram.URL) {
+		t.Fatalf("dm-status = %v, want the card posted with a warning naming the link Slack cannot open", res)
+	}
+	shown := lastEdit(t, l, res["ts"])
+	if ids := imageIDs(t, shown.blocks); len(ids) != 1 || string(l.slack.uploads[ids[0]]) != pngBytes {
+		t.Fatalf("image blocks %v, want the diagram drawn on the card", ids)
+	}
+	for _, m := range append([]string{l.slack.sent()[0].metadata}, shown.metadata) {
+		if len(drawnArtifacts(t, cmp.Or(m, "{}"))) != 0 {
+			t.Fatalf("metadata = %s, want no Work Object", m)
+		}
 	}
 }
 
@@ -123,7 +127,6 @@ func TestAnArtifactWithoutItsPartsIsRefusedBeforeItPosts(t *testing.T) {
 	cases := map[string]cardArtifact{
 		"no title":            {Kind: "diagram", URL: testDiagramURL},
 		"no kind":             {Title: "t", URL: testDiagramURL},
-		"http off tailnet":    {Title: "t", Kind: "diagram", URL: "http://100.1.2.3:61210/diagram/r9"},
 		"long title":          {Title: strings.Repeat("t", cardMaxTitleLen+1), Kind: "diagram", URL: testDiagramURL},
 		"image not a picture": {Title: "t", Kind: "diagram", URL: testDiagramURL, Image: writeFile(t, "a.txt", "plain words")},
 	}
@@ -139,7 +142,7 @@ func TestAnArtifactWithoutItsPartsIsRefusedBeforeItPosts(t *testing.T) {
 	for i := range six {
 		six[i] = cardArtifact{Title: "t", Kind: "diagram", URL: testDiagramURL}
 	}
-	if err := (statusCard{Artifacts: six}).checkArtifacts(""); err == nil {
+	if err := (statusCard{Artifacts: six}).checkArtifacts(); err == nil {
 		t.Fatal("six artifacts were taken")
 	}
 	if len(l.slack.sent()) != 0 {

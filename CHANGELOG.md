@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A card artifact's picture draws on the card as an image, and its link alone makes the Work Object. An artifact whose link Slack cannot open, an http address off the `[links]` tailnet, posts the card with its picture and no Work Object, and the result warns why, in place of refusing the card. Every diagram card from a dashboard at a Tailscale IP was refused before.
 - A picture on a card or a message loads for the person reading it. Pictures were uploaded private to the bot and named by an image block, so only the bot could be sure of reading them. The message now posts first, its files are shared into its thread, and the message then shows them. A card sent again with the same pictures keeps them and shares nothing new.
 
 ### Changed

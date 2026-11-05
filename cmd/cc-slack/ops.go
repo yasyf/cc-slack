@@ -1884,6 +1884,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
+	if b.Card != nil {
+		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
+	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub.ID, id, b, msg.tag, pictures)
@@ -2012,14 +2015,15 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]
 	if !images {
 		return nil, errors.New("an artifact's image is a PNG, JPEG, or GIF")
 	}
-	if b.Card.ImagesHash, err = hashFiles(b.Files); err != nil {
+	pictures := slices.Concat(b.Files, drawn)
+	if b.Card.ImagesHash, err = hashFiles(pictures); err != nil {
 		return nil, err
 	}
 	if shown := a.cards.shownImages(id.DMChannelID, *b.Card); shown != nil {
 		b.Card.Images = shown
-		return uploadFiles(ctx, a.newAPI(id.Token), drawn)
+		return nil, nil
 	}
-	return uploadFiles(ctx, a.newAPI(id.Token), slices.Concat(b.Files, drawn))
+	return uploadFiles(ctx, a.newAPI(id.Token), pictures)
 }
 
 func hashFiles(paths []string) (string, error) {
@@ -2043,15 +2047,7 @@ func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, ca
 		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
 		return card, false
 	}
-	card.Artifacts = slices.Clone(card.Artifacts)
-	for i := len(card.Artifacts) - 1; i >= 0; i-- {
-		if card.Artifacts[i].Image != "" {
-			card.Artifacts[i].Picture, files = &files[len(files)-1], files[:len(files)-1]
-		}
-	}
-	if len(files) > 0 {
-		card.Images = files
-	}
+	card.Images = files
 	return card, true
 }
 
