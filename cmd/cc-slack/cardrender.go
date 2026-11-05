@@ -16,6 +16,8 @@ type renderedCard struct {
 	Text   string          `json:"text"`
 	Blocks []slack.Block   `json:"blocks"`
 	Fold   [][]slack.Block `json:"fold,omitempty"`
+
+	Entities []slack.WorkObjectEntity `json:"entities,omitempty"`
 }
 
 func cardCmd() *cobra.Command {
@@ -34,9 +36,10 @@ func cardRenderCmd() *cobra.Command {
 		Use:   "render",
 		Short: "Print the Block Kit a status card draws, reaching neither Slack nor the daemon",
 		Long: `Print the message a status card draws as JSON: its notification text, the
-blocks of the card itself, and under fold the pages Explain more posts. It
-refuses what dm-status refuses for that card. It reaches neither Slack nor the
-daemon, so PR and link previews, which need them, stay out of the output.`,
+blocks of the card itself, under fold the pages Explain more posts, and under
+entities the Work Objects its artifacts post. It refuses what dm-status refuses
+for that card. It reaches neither Slack nor the daemon, so PR and link previews
+and an artifact's uploaded picture, which need them, stay out of the output.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			dir := cwdOr(f.cwd)
@@ -87,5 +90,5 @@ func renderCard(ctx context.Context, raw []byte, session, dir string, mirrored b
 		return renderedCard{}, err
 	}
 	blocks, fold := card.layout(cardView{tag: gitCardTag(ctx, session, dir), at: now, now: now})
-	return renderedCard{Text: card.text(), Blocks: blocks, Fold: fold}, nil
+	return renderedCard{Text: card.text(), Blocks: blocks, Fold: fold, Entities: card.workObjects()}, nil
 }

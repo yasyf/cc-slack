@@ -972,13 +972,13 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(ticketResult{TicketID: b.TicketID})
 }
 
-func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block) error {
+func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block, extra ...slack.MsgOption) error {
 	if err := checkBlocks(blocks); err != nil {
 		return err
 	}
 	text, blocks = fitText(text, blocks)
-	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts,
-		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl())
+	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, append([]slack.MsgOption{
+		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl()}, extra...)...)
 	return err
 }
 
@@ -1874,6 +1874,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
+	if err := a.attachArtifactPictures(hc.Ctx, id, b.Card); err != nil {
+		return fail(fallback(actionWrite, err))
+	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, msg.tag)
@@ -1955,7 +1958,7 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	}) {
 		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
 	} else {
-		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}))
+		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}), card.entities()...)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("replace card %s in place: %w", ref.ts, err)
@@ -2181,7 +2184,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	placed := t.Reply
 	text, blocks := t.replyMessage(a.now(), a.cards.refs)
 	write := func(do func() error) error {
-		if len(placed.Card.Images) == 0 {
+		if !placed.Card.hostsFiles() {
 			return do()
 		}
 		return whileProcessing(ctx, do)
@@ -2189,7 +2192,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	if asked != nil {
 		placed.TS = asked.TS
 		if err := write(func() error {
-			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks)
+			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks, placed.Card.entities()...)
 		}); err != nil {
 			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group, placed.Card.Key), err)
 		}
@@ -2197,7 +2200,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil)
+		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil, placed.Card.entities()...)
 		return err
 	}); err != nil {
 		return nil, err
@@ -2214,7 +2217,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
 		text, blocks := t.rootMessage(now, cards.refs)
-		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil)
+		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil, msg.card.entities()...)
 		if err != nil {
 			return "", "", false, err
 		}
@@ -2228,7 +2231,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	t := cards.draft(prior.Channel, prior.Thread)
 	t.apply(*msg.card, msg.tag, now, true)
 	text, blocks := t.rootMessage(now, cards.refs)
-	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks); err != nil {
+	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks, msg.card.entities()...); err != nil {
 		return "", "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
 	}
 	cards.commit(t)
