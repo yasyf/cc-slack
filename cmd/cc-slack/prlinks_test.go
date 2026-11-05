@@ -203,6 +203,79 @@ func awaitPRCards(t *testing.T, l *liveDaemon, channelID string) []fakePost {
 	return prCards(l, channelID)
 }
 
+func rootCards(cards []fakePost) []fakePost {
+	return slices.DeleteFunc(cards, func(p fakePost) bool { return p.threadTS != "" })
+}
+
+func heldRowCard() providedCard {
+	held := mergeRowCard()
+	held.Card.Status, held.Card.Title = "info", "#41 at e718a74"
+	held.Card.Options, held.Card.Recommended, held.Card.Waits = nil, "", ""
+	return held
+}
+
+func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is held", "tap_prs": tapPR41})
+	drawnHeld := func() (fakePost, bool) {
+		for _, p := range l.slack.sentTo(testDM) {
+			if strings.Contains(p.blocks, "#41 at e718a74") {
+				return p, true
+			}
+		}
+		return fakePost{}, false
+	}
+	eventually(t, "the held row's card", func() bool { _, drawn := drawnHeld(); return drawn })
+	card, _ := drawnHeld()
+	if strings.Contains(card.blocks, "Merge") {
+		t.Fatalf("held card blocks = %s, want no button", card.blocks)
+	}
+	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
+	redraw := func(drawn providedCard) {
+		if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{drawn}}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		l.do(opRedrawPRCards, map[string]any{})
+	}
+	lastEdit := func(wants string) bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], wants)
+	}
+	posts := len(l.slack.sentTo(testDM))
+	redraw(mergeRowCard())
+	eventually(t, "Merge on the same post", func() bool { return lastEdit("Merge (Recommended)") })
+	redraw(heldRowCard())
+	eventually(t, "the buttons gone from the same post", func() bool { return lastEdit(cardNoLongerWaits) })
+	redraw(mergeRowCard())
+	eventually(t, "Merge back on the same post", func() bool { return lastEdit("Merge (Recommended)") })
+	if got := len(l.slack.sentTo(testDM)); got != posts {
+		t.Fatalf("posts = %d, want %d: a row's change edits its post", got, posts)
+	}
+}
+
+func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41})
+	copied := func() (fakePost, bool) {
+		for _, p := range prCards(l, testDM) {
+			if p.threadTS == hisThread {
+				return p, true
+			}
+		}
+		return fakePost{}, false
+	}
+	eventually(t, "the copy", func() bool { _, drawn := copied(); return drawn })
+	theCopy, _ := copied()
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opRedrawPRCards, map[string]any{})
+	eventually(t, "the copy redrawn", func() bool { return len(editsOf(l.slack.edited(), theCopy.ts)) > 0 })
+}
+
 func prCards(l *liveDaemon, channelID string) []fakePost {
 	var cards []fakePost
 	for _, p := range l.slack.sentTo(channelID) {
@@ -371,7 +444,10 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	l.do(opDMStatus, map[string]any{"thread_ts": sent["thread_ts"], "text": "acme/app#41 again", "tap_prs": tapPR41})
 	l.do(opDMStatus, map[string]any{"text": "acme/app#41 elsewhere", "tap_prs": tapPR41})
 	l.do(opDMStatus, map[string]any{"thread_ts": cards[0].ts, "text": "acme/app#41 under its own card", "tap_prs": tapPR41})
-	if cards := prCards(l, testDM); len(cards) != 1 || len(cmd.requests(t)) != 1 {
+	eventually(t, "the copy under the reply naming the PR", func() bool {
+		return slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == sent["thread_ts"] })
+	})
+	if cards := rootCards(prCards(l, testDM)); len(cards) != 1 || len(cmd.requests(t)) != 1 {
 		t.Fatalf("later mentions drew cards %+v after %d asks, want the one card and one ask", cards, len(cmd.requests(t)))
 	}
 }
@@ -381,10 +457,13 @@ func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41})
-	cards := awaitPRCards(t, l, testDM)
-	if len(cards) != 1 || cards[0].threadTS != "" {
+	cards := rootCards(awaitPRCards(t, l, testDM))
+	if len(cards) != 1 {
 		t.Fatalf("cards = %+v, want one at the DM root, not in his thread %s", cards, hisThread)
 	}
+	eventually(t, "a working copy under the post in his thread", func() bool {
+		return slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == hisThread })
+	})
 	eventually(t, "the watch on the card's own thread", func() bool { return slices.Contains(activeDMThreads(t, l), cards[0].ts) })
 	tapMerge(t, l, cards[0])
 	if edits := editsOf(l.slack.edited(), cards[0].ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
@@ -392,11 +471,12 @@ func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 	}
 }
 
-func TestAPRAskedAgainAtANewHeadGetsANewRootCard(t *testing.T) {
+func TestAPRAskedAgainAtANewHeadRedrawsItsCardInPlace(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-	tapMerge(t, l, awaitPRCards(t, l, testDM)[0])
+	card := awaitPRCards(t, l, testDM)[0]
+	tapMerge(t, l, card)
 	asks := len(cmd.requests(t))
 	l.do(opDMStatus, map[string]any{"text": "#41 at the head he answered", "tap_prs": tapPR41})
 	eventually(t, "the ask after his answer", func() bool { return len(cmd.requests(t)) > asks })
@@ -408,11 +488,12 @@ func TestAPRAskedAgainAtANewHeadGetsANewRootCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.do(opDMStatus, map[string]any{"text": "#41 moved", "tap_prs": tapPR41})
-	eventually(t, "the new head's card at the DM root", func() bool {
-		return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
-			return strings.Contains(p.blocks, "merge:41:09b10f1") && p.threadTS == ""
-		})
+	eventually(t, "the new head's question on the same post", func() bool {
+		return slices.ContainsFunc(editsOf(l.slack.edited(), card.ts), func(e string) bool { return strings.Contains(e, "merge:41:09b10f1") })
 	})
+	if slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return strings.Contains(p.blocks, "merge:41:09b10f1") }) {
+		t.Fatal("a new head drew a new post, want the same post edited")
+	}
 }
 
 func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {

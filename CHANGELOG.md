@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A post naming a PR always draws its card, with or without a question: a row with nothing to approve shows where it stands and no button, and a card follows its row on the same post at every change, a new head included.
+- A reply in a thread naming a PR carries a working copy of its card under the reply, redrawn with the card.
 - A paged plain DM post, an edit, and a card answer's written-in reason draw no HTML comment.
 - A tap redraws its card within about a second, whatever GitHub, the card command or Slack are doing. Card redraws write to Slack outside the lock every card shares, taps run beside the socket instead of on it, one queue per card, and a PR card draws his answer before the card command applies it.
 - A post no longer reports a failure after Slack took it: the PR lookups that draw its PR cards run after the reply, not on the caller's clock.

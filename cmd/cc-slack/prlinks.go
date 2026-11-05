@@ -244,14 +244,14 @@ func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) [
 	return prs
 }
 
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread string, b opBody) {
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody) {
 	ctx := context.WithoutCancel(hc.Ctx)
 	go func() {
-		a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, a.tapPRs(ctx, id, hc.Env.Scope, b))
+		a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, a.tapPRs(ctx, id, hc.Env.Scope, b))
 	}()
 }
 
-func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread string, prs []linkedPR) {
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread, postTS string, prs []linkedPR) {
 	command := id.Config.PRLinks.CardCommand
 	if len(command) == 0 || !cardsAt(id, channelID) {
 		return
@@ -261,60 +261,97 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	defer cards.mu.Unlock()
 	post := cards.draft(channelID, postThread)
 	var asked []map[string]any
+	var standing []cardRef
 	for _, pr := range prs {
 		keys := map[string]bool{pr.ref.key(): true}
+		if pr.state.terminal() || post.carded(keys) {
+			continue
+		}
 		open := func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) }
-		if pr.state.terminal() || post.carded(keys) || cards.rootPRCard(channelID, open) {
+		if card, found := cards.rootPRCard(channelID, open); found {
+			standing = append(standing, card)
 			continue
 		}
 		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
 		cards.refs[pr.ref.key()] = pr.state
 	}
-	if len(asked) == 0 {
+	if len(asked)+len(standing) == 0 {
 		return
 	}
-	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), asked)
+	under := ""
+	if channelID == id.DMChannelID && postThread != postTS {
+		under = postThread
+	}
+	go a.postPRCards(context.WithoutCancel(ctx), db, sub, id, channelID, prCardThread(id, channelID, postThread), under, asked, standing)
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, asked []map[string]any) {
-	provided, err := askPRCards(ctx, id, asked)
-	if err != nil {
-		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread, under string, asked []map[string]any, standing []cardRef) {
+	placed := standing
+	if len(asked) > 0 {
+		provided, err := askPRCards(ctx, id, asked)
+		if err != nil {
+			a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
+		}
+		cards, shown := a.placePRCards(ctx, db, sub, id, channelID, thread, provided)
+		a.tellShown(ctx, id, shown)
+		placed = append(placed, cards...)
+	}
+	if under == "" {
 		return
 	}
-	a.tellShown(ctx, id, a.placePRCards(ctx, db, sub, id, channelID, thread, provided))
+	for _, card := range placed {
+		if err := a.copyPRCard(ctx, db, id, under, card); err != nil {
+			a.poller.log.Printf("PR card %s has no copy under %s: %v", card.ts, under, err)
+		}
+	}
 }
 
-func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) []map[string]any {
+func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any) {
+	now := a.now()
+	for _, p := range provided {
+		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil {
+			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a card that passes the card checks: %v", p.Repo, p.Number, err)
+			continue
+		}
+		posted, found := a.cards.posted(channelID, thread, p.Card)
+		if !found {
+			rest = append(rest, p)
+			continue
+		}
+		if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, now); err != nil {
+			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
+			continue
+		}
+		placed, shown = append(placed, posted), append(shown, shownCard(p))
+	}
+	return rest, placed, shown
+}
+
+func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) ([]cardRef, []map[string]any) {
+	provided, placed, shown := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	now := a.now()
-	var shown []map[string]any
 	for _, p := range provided {
-		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil || p.Card.Waits == "" {
-			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a waiting card that passes the card checks: %v", p.Repo, p.Number, err)
-			continue
-		}
-		sameAsk := func(m *liveMessage) bool { return m.Card.Waits == p.Card.Waits }
-		t := cards.draft(channelID, thread)
-		if slices.ContainsFunc(t.PRCards, sameAsk) || cards.rootPRCard(channelID, func(_ *liveThread, m *liveMessage) bool { return sameAsk(m) }) || cards.pickOffers(channelID, p.Card.offer()) {
+		if p.Card.Waits != "" && cards.pickOffers(channelID, p.Card.offer()) {
 			shown = append(shown, shownCard(p))
 			continue
 		}
+		t := cards.draft(channelID, thread)
 		m := &liveMessage{Card: p.Card, At: now}
 		text, blocks := t.replyMessage(m, now, cards.refs)
 		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
-			return shown
+			return placed, shown
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
 		cards.commit(t)
-		shown = append(shown, shownCard(p))
+		placed, shown = append(placed, cardRef{channelID, t.Thread, m.TS}), append(shown, shownCard(p))
 		if thread != "" {
 			continue
 		}
@@ -322,7 +359,51 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			a.poller.log.Printf("PR card for %s#%d at %s: its thread goes unwatched: %v", p.Repo, p.Number, res.TS, err)
 		}
 	}
-	return shown
+	return placed, shown
+}
+
+func (a *app) copyPRCard(ctx context.Context, db *sql.DB, id identity, under string, card cardRef) error {
+	if a.cards.hasCopy(card.channel, under, card.ts) {
+		return nil
+	}
+	link := id.permalink(card.channel, card.ts, card.thread)
+	ref, err := parsePermalink(link)
+	if err != nil {
+		return err
+	}
+	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
+	if err != nil {
+		return err
+	}
+	res, err := a.post(ctx, db, id, card.channel, under, cardCopyLead, blocks, nil)
+	if err != nil {
+		return err
+	}
+	a.cards.rememberCopy(card.channel, under, card.ts, res.TS, a.now())
+	return nil
+}
+
+func (a *app) redrawPRCopies(ctx context.Context, id identity, card cardRef) error {
+	copies := a.cards.copiesOf(card.channel, card.ts)
+	if len(copies) == 0 {
+		return nil
+	}
+	link := id.permalink(card.channel, card.ts, card.thread)
+	ref, err := parsePermalink(link)
+	if err != nil {
+		return err
+	}
+	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
+	if err != nil {
+		return err
+	}
+	api := a.newAPI(id.Token)
+	for _, copied := range copies {
+		if err := updateMessage(ctx, api, copied.channel, copied.ts, cardCopyLead, blocks); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func shownCard(p providedCard) map[string]any {
@@ -384,10 +465,8 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now()); err != nil {
 		return err
 	}
-	if provided[0].Card.Waits != "" {
-		a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
-	}
-	return nil
+	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
+	return a.redrawPRCopies(ctx, id, card)
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
