@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A status card's artifact now shows its language and size on its Work Object, so you can tell a 3-line file from a 400-turn transcript before opening it. A diagram shows neither and draws as before.
+
 ### Fixed
 
 - A withdrawn card keeps its whole reason, up to 2,500 characters, where it used to cut it at 200 mid-sentence.
