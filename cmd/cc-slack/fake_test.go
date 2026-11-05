@@ -71,6 +71,8 @@ type fakeSlack struct {
 	deletes   []fakeEdit
 	reactions []fakeEdit
 	statuses  []slack.AssistantThreadsSetStatusParameters
+	streams   []url.Values
+	sequence  []string
 	joined    []string
 	created   []string
 	archived  []string
@@ -101,6 +103,7 @@ func newFakeSlack() *fakeSlack {
 
 func (f *fakeSlack) call(method string) error {
 	f.calls[method]++
+	f.sequence = append(f.sequence, method)
 	queue := f.errs[method]
 	if len(queue) == 0 {
 		return nil
@@ -350,9 +353,14 @@ func (f *fakeSlack) SetAssistantThreadsStatusContext(_ context.Context, params s
 	return nil
 }
 
-func (f *fakeSlack) StartStreamContext(_ context.Context, channelID string, _ ...slack.MsgOption) (string, string, error) {
+func (f *fakeSlack) StartStreamContext(_ context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	values, err := sentForm(channelID, options...)
+	if err != nil {
+		return "", "", err
+	}
+	f.streams = append(f.streams, values)
 	return channelID, "1791000000.000900", f.call("chat.startStream")
 }
 

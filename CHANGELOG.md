@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A pickup in a public thread shows in two steps, in place of the wrench. `slack_pickup` (`cc-slack pickup`) adds eyes and Slack's working line together and nothing else. `slack_stream` (`cc-slack stream`), called only once Claude decides to do actual work, adds separate steps with a spinner and keeps the working line up. A message Claude looks at and does not work on never gets the steps. The steps work outside your DM with the app, the first call needing a ticket like a reply. Removed: `cc-slack thread-status` and `stream --mode`; the working line's words are now fixed, and the steps are always drawn separately.
+
 ### Fixed
 
 - A picture on a card or a message loads for the person reading it. Pictures were uploaded private to the bot and named by an image block, so only the bot could be sure of reading them. The message now posts first, its files are shared into its thread, and the message then shows them. A card sent again with the same pictures keeps them and shares nothing new.

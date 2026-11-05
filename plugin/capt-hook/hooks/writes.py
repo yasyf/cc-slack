@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ TOOL_VERBS = {
     "slack_conversations_mark": "mark",
     "slack_workflow_save": "workflow",
 }
+STREAM_VERBS = {"stream": "post"}
 USER_TOOLS = frozenset({"slack_send_message", "slack_conversations_mark", "slack_workflow_save"})
 CLI_VERBS = {
     "send": "post",
@@ -47,18 +48,18 @@ MESSAGE_VERBS = frozenset({"post", "edit", "delete"})
 READ_TOOLS = frozenset({"slack_thread", "slack_get_thread"})
 READ_VERBS = {"thread": "read"}
 THREADED_VERBS = MESSAGE_VERBS | set(READ_VERBS.values())
-VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd", "limit")
+VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd", "limit", "plan", "task", "recipient")
 HELP = Option("help", ("--help", "-h"), bool)
 CLI = CommandSchema(
     "cc-slack",
     operands=(Operand("verb"),),
     options=(
         *(Option(name, (f"--{name}",)) for name in VALUED),
-        *(Option(name, (f"--{name}",), bool) for name in ("broadcast", "no-watch")),
+        *(Option(name, (f"--{name}",), bool) for name in ("broadcast", "no-watch", "stop")),
         HELP,
     ),
 )
-FIELDS = {"channel": "channel_id", "thread": "thread_ts", "file": "files", "user": "users", "text-file": "text_file"}
+FIELDS = {"channel": "channel_id", "thread": "thread_ts", "file": "files", "user": "users", "text-file": "text_file", "task": "tasks"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,17 @@ def permissions() -> Permissions:
     return parsed(path, path.stat().st_mtime_ns)
 
 
+def task_words(task: dict[str, str] | str) -> list[str]:
+    if isinstance(task, dict):
+        return [task["title"], task.get("details", "")]
+    return task.split("|", 3)[2:]
+
+
+def stream_words(fields: dict[str, Any]) -> str:
+    words = [word for task in fields.get("tasks") or [] for word in task_words(task)]
+    return "\n".join(word for word in [str(fields.get("plan") or ""), *words] if word)
+
+
 def capture(argv: list[str], timeout: float) -> str | None:
     done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     return done.stdout if done.returncode == 0 else None
@@ -117,6 +129,7 @@ class Write:
     fields: dict[str, Any]
     daemon: bool
     readable: bool = True
+    stream: bool = False
 
     @property
     def link(self) -> tuple[str, str, str]:
@@ -141,6 +154,8 @@ class Write:
     def text(self) -> str:
         if self.verb not in ("post", "edit", "topic"):
             return ""
+        if self.stream:
+            return stream_words(self.fields)
         if self.verb != "topic" and (path := self.fields.get("text_file")):
             return Path(str(path)).expanduser().read_text()
         return str(self.fields.get("topic" if self.verb == "topic" else "text") or "")
@@ -157,14 +172,14 @@ class Write:
     def payload(self) -> dict[str, Any]:
         text = self.channel if self.verb == "create" else self.text
         payload = {"verb": self.verb, "text": text, "files": self.files, "broadcast": bool(self.fields.get("broadcast")), "ts": self.ts}
-        return payload | ({"blocks": self.fields["blocks"]} if self.fields.get("blocks") else {}) | ({"users": self.users} if self.users else {})
+        return payload | ({"blocks": self.fields["blocks"]} if self.fields.get("blocks") else {}) | ({"users": self.users} if self.users else {}) | ({"stream": True} if self.stream else {})
 
 
 def bound_calls(evt: ToolHookEvent, schema: CommandSchema, verbs: dict[str, str], *, daemon: bool) -> list[tuple[Call, Write]]:
     found = []
     for call in evt.cmd.calls(schema.program) if evt.tool_name == "Bash" else ():
         bound = schema.bind(call)
-        values = {name: list(given) if name in ("file", "user") else given[-1] for name, given in bound.values.items() if given}
+        values = {name: list(given) if name in ("file", "user", "task") else given[-1] for name, given in bound.values.items() if given}
         if (verb := verbs.get(str(values.pop("verb", "")))) is not None and not values.get("help"):
             fields = {FIELDS.get(name, name): value for name, value in values.items()}
             if verb in MESSAGE_VERBS and (users := fields.pop("users", None)):
@@ -174,11 +189,14 @@ def bound_calls(evt: ToolHookEvent, schema: CommandSchema, verbs: dict[str, str]
 
 
 def cli_calls(evt: ToolHookEvent) -> list[tuple[Call, Write]]:
-    return bound_calls(evt, CLI, CLI_VERBS, daemon=True)
+    streams = [(call, replace(write, stream=True)) for call, write in bound_calls(evt, CLI, STREAM_VERBS, daemon=True) if not write.fields.get("ts")]
+    return [*bound_calls(evt, CLI, CLI_VERBS, daemon=True), *streams]
 
 
 def pending(evt: ToolHookEvent) -> list[Write]:
     tool, raw = (evt.tool_name or "").rsplit("__", 1)[-1], evt.input.raw
+    if tool == "slack_stream":
+        return [] if raw.get("ts") else [Write("post", dict(raw), daemon=True, stream=True)]
     if tool in TOOL_VERBS:
         return [Write(TOOL_VERBS[tool], dict(raw), daemon=tool not in USER_TOOLS)]
     extra = [write for cli in permissions().clis for _, write in bound_calls(evt, cli.schema, cli.verbs, daemon=False)]

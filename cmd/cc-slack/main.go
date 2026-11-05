@@ -76,7 +76,7 @@ func root() *cobra.Command {
 		postCmd(d, "reply", "Reply in a Slack thread as <display name> (<agent>)", opReply),
 		reactionCmd(d, "react", "React to a Slack message", opReact),
 		reactionCmd(d, "unreact", "Remove a reaction from a Slack message", opUnreact),
-		threadStatusCmd(d),
+		pickupCmd(d),
 		streamCmd(d),
 		editCmd(d),
 		deleteCmd(d),

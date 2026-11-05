@@ -256,6 +256,47 @@ var (
 			required: []string{"name"},
 		},
 		{
+			name: "slack_pickup",
+			description: "Show you have picked up a message: adds eyes to it and Slack's working line under its thread, together and nothing else. " +
+				"Pass done when you finish without working on it, or once the work is finished, to take both away.",
+			op: opPickup, failure: actionReact,
+			properties: map[string]any{
+				"channel_id": channelProp,
+				"ts":         map[string]any{"type": "string", "description": "ts of the message you are looking at"},
+				"thread_ts":  map[string]any{"type": "string", "description": "ts of its thread's parent; omit when the message is the parent"},
+				"url":        urlProp,
+				"done":       map[string]any{"type": "boolean", "description": "take the eyes and the working line away"},
+				"agent":      agentProp,
+			},
+		},
+		{
+			name: "slack_stream",
+			description: "Once you decide to do actual work on a message you picked up, show each step as its own line with a spinner in its thread, and keep the working line up. " +
+				"The first call, with no ts, posts in the thread and needs a ticket like a reply outside your DM with the app; it returns ts. " +
+				"Later calls pass ts and every step that changed; stop ends it and clears the line.",
+			op: opStream, failure: actionWrite,
+			properties: withTicket(map[string]any{
+				"channel_id": channelProp,
+				"thread_ts":  threadProp,
+				"ts":         map[string]any{"type": "string", "description": "ts the first call returned, to update or stop the steps"},
+				"plan":       map[string]any{"type": "string", "description": "the title above the steps"},
+				"recipient":  map[string]any{"type": "string", "description": "the user id of the person the work is for; required outside your DM with the app"},
+				"stop":       map[string]any{"type": "boolean", "description": "end the steps and clear the working line"},
+				"agent":      agentProp,
+				"tasks": map[string]any{"type": "array", "description": "the steps that changed", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":      map[string]any{"type": "string", "description": "the step's stable id"},
+						"status":  map[string]any{"type": "string", "enum": []string{"pending", taskInProgress, "complete", "error"}},
+						"title":   map[string]any{"type": "string", "description": "what the step does"},
+						"details": map[string]any{"type": "string", "description": "a line under the step"},
+					},
+					"required": []string{"id", "status", "title"},
+				}},
+			}),
+			required: []string{"channel_id", "thread_ts"},
+		},
+		{
 			name:        "slack_edit",
 			description: "Replace the text of a message the cc-slack bot posted; pass thread_ts, or the reply's permalink, when the message is a thread reply. The new text needs a ticket like a new post: one for this exact edit, or a place ticket over the thread or channel the message is in.",
 			op:          opEdit, failure: actionEdit,

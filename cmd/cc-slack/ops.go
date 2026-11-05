@@ -34,7 +34,7 @@ const (
 	opReply         daemon.Op = "reply"
 	opReact         daemon.Op = "react"
 	opUnreact       daemon.Op = "unreact"
-	opThreadStatus  daemon.Op = "thread-status"
+	opPickup        daemon.Op = "pickup"
 	opStream        daemon.Op = "stream"
 	opEdit          daemon.Op = "edit"
 	opDelete        daemon.Op = "delete"
@@ -120,12 +120,11 @@ type opBody struct {
 	About     string   `json:"about"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
-	Status    string   `json:"status"`
-	Loading   []string `json:"loading"`
-	Mode      string   `json:"mode"`
 	Plan      string   `json:"plan"`
 	Tasks     []task   `json:"tasks"`
 	Stop      bool     `json:"stop"`
+	Done      bool     `json:"done"`
+	Recipient string   `json:"recipient"`
 	ticketSpend
 }
 
@@ -297,7 +296,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opReply, a.handlePost(true))
 	s.Register(opReact, a.handleReaction(actionReact, "already_reacted", slackAPI.AddReactionContext))
 	s.Register(opUnreact, a.handleReaction(actionUnreact, "no_reaction", slackAPI.RemoveReactionContext))
-	s.Register(opThreadStatus, a.handleThreadStatus)
+	s.Register(opPickup, a.handlePickup)
 	s.Register(opStream, a.handleStream)
 	s.Register(opEdit, a.handleEdit)
 	s.Register(opDelete, a.handleDelete)
