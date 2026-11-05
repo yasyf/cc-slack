@@ -339,7 +339,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			continue
 		}
 		t := cards.draft(channelID, thread)
-		m := &liveMessage{Card: p.Card, At: now}
+		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.refs)
 		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil)
 		if err != nil {

@@ -228,8 +228,10 @@ func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
 	}
 	eventually(t, "the held row's card", func() bool { _, drawn := drawnHeld(); return drawn })
 	card, _ := drawnHeld()
-	if strings.Contains(card.blocks, "Merge") {
-		t.Fatalf("held card blocks = %s, want no button", card.blocks)
+	for _, button := range []string{"Merge", cardAckAction, cardPauseAction} {
+		if strings.Contains(card.blocks, button) {
+			t.Fatalf("held card blocks = %s, want no %s", card.blocks, button)
+		}
 	}
 	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
 	redraw := func(drawn providedCard) {
