@@ -287,7 +287,7 @@ func TestRichCardRendersEveryPartWithinSlackLimits(t *testing.T) {
 	thread.apply(card, cardTag{Repo: "app", Branch: "dev"}, at, false)
 	refs := map[string]refState{"pr:acme/app#1": {State: "open", Checks: "passed"}}
 	_, root := thread.rootMessage(at, refs)
-	_, reply := thread.replyMessage(at, refs)
+	_, reply := thread.replyMessage(thread.Reply, at, refs)
 	if len(root) > 50 || len(reply) > 50 {
 		t.Fatalf("root has %d blocks, reply %d; Slack takes at most 50", len(root), len(reply))
 	}
@@ -531,7 +531,7 @@ func TestRedrawsKeepATappedOptionAndAWhoamiHidesRefTokens(t *testing.T) {
 	thread := &liveThread{Channel: "D1", Thread: "1.1"}
 	thread.apply(statusCard{Status: "needs_you", Title: "Ship?", Options: []string{"ship it"}}, cardTag{}, at, false)
 	thread.Reply.Tapped = "✓ *ship it* · 10:00am"
-	if _, reply := thread.replyMessage(at, nil); strings.Contains(blocksJSON(t, reply), cardOptionAction) || !strings.Contains(blocksJSON(t, reply), "✓ *ship it*") {
+	if _, reply := thread.replyMessage(thread.Reply, at, nil); strings.Contains(blocksJSON(t, reply), cardOptionAction) || !strings.Contains(blocksJSON(t, reply), "✓ *ship it*") {
 		t.Fatalf("a redrawn reply reoffers its tapped option: %s", blocksJSON(t, reply))
 	}
 	id := identity{Config: config{GitHub: &tokenSource{Token: "ghp-secret"}, Buildkite: &tokenSource{Command: []string{"/bin/bk-token"}}}}

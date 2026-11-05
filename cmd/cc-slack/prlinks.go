@@ -289,7 +289,8 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 			continue
 		}
 		m := &liveMessage{Card: p.Card, At: now}
-		res, err := a.post(ctx, db, id, channelID, thread, m.Card.text(), m.Card.replyBlocks(t.view(m, now, cards.refs)), nil)
+		text, blocks := t.replyMessage(m, now, cards.refs)
+		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
 			return

@@ -403,8 +403,8 @@ func TestABoardCardReachesSlackWithItsImageAndButtonsAndATapAnswersTheBoard(t *t
 		t.Fatalf("cc-present calls after the tap %q, want the answer sent to the board", got)
 	}
 	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
-	if len(edits) == 0 || len(imageIDs(t, edits[len(edits)-1].blocks)) != 1 {
-		t.Fatalf("edits %+v, want the tapped card to keep its image", edits)
+	if len(edits) == 0 || len(imageIDs(t, edits[len(edits)-1].blocks)) != 0 {
+		t.Fatalf("edits %+v, want the tapped card to collapse past its image", edits)
 	}
 }
 

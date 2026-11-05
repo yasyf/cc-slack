@@ -1123,11 +1123,11 @@ func (k cardAsk) block(v cardView) slack.Block {
 
 func (r cardRow) blocks(v cardView) []slack.Block {
 	blocks := make([]slack.Block, 0, len(r.Buttons))
-	if r.PR != nil {
-		blocks = r.PR.blocks(v)
-	}
 	text := r.Text
 	ans, answered := v.answers[r.ID]
+	if r.PR != nil {
+		blocks = r.PR.blocks(v, answered)
+	}
 	if answered {
 		text = strings.TrimSpace(text + "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now))
 	}
@@ -1151,11 +1151,15 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 	return append(blocks, slack.NewActionBlock(cardRowBlock+r.ID, buttons...))
 }
 
-func (p cardPR) blocks(v cardView) []slack.Block {
-	return bodyPages(p.markdown(v, "\n"), cardMaxBlocks, cardMaxVisible, false)[0]
+func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
+	text := p.markdown(v, "\n")
+	if answered {
+		text = p.headline(v)
+	}
+	return bodyPages(text, cardMaxBlocks, cardMaxVisible, false)[0]
 }
 
-func (p cardPR) markdown(v cardView, betweenFacts string) string {
+func (p cardPR) headline(v cardView) string {
 	id, _ := parseRef(p.URL)
 	line := "*" + slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number)) + "*"
 	if p.Title != "" {
@@ -1167,6 +1171,11 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 	if live := v.refs[id.key()].text(); live != "" && p.Review == "" {
 		line += " · " + live
 	}
+	return line
+}
+
+func (p cardPR) markdown(v cardView, betweenFacts string) string {
+	line := p.headline(v)
 	if p.Review != "" {
 		line += "\n" + plainMrkdwn(p.Review)
 	}
@@ -1236,8 +1245,36 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	return blocks
 }
 
+func (c statusCard) replyText(v cardView) string {
+	if v.tapped == "" {
+		return c.text()
+	}
+	return settledText(c.visible().Title, v.tapped)
+}
+
+func settledText(title, line string) string {
+	return clipRunes(title+" — "+line, cardMaxSectionLen)
+}
+
+func (c statusCard) outcome(v cardView) string {
+	ids := c.refIDs()
+	at := slices.IndexFunc(ids, func(id refID) bool { return id.Kind == refPR })
+	if at < 0 || strings.Contains(v.tapped, prURL(ids[at])) {
+		return v.tapped
+	}
+	line := v.tapped + " · " + slackLink(prURL(ids[at]), ids[at].defaultLabel())
+	if live := v.refs[ids[at].key()].text(); live != "" {
+		line += " · " + live
+	}
+	return line
+}
+
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
+	if v.tapped != "" {
+		settled := append([]slack.Block{header(cmp.Or(c.Title, c.emoji()))}, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
+		return append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))), nil
+	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block
 	for _, p := range c.allPRs() {
@@ -1256,7 +1293,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}
-	if len(fold) > 0 && !v.unfolded && c.Waits == "" && v.tapped == "" {
+	if len(fold) > 0 && !v.unfolded && c.Waits == "" {
 		tail = slices.Insert(tail, len(tail)-1, slack.Block(slack.NewActionBlock(cardFoldBlock, button(cardFoldAction, cardExplainLabel))))
 	}
 	return append(lead, tail...), fold
@@ -1273,15 +1310,12 @@ func (c statusCard) tail(v cardView) []slack.Block {
 	blocks = append(blocks, c.rollup(v)...)
 	blocks = append(blocks, askBlocks(c.Asks, v)...)
 	blocks = append(blocks, c.links()...)
-	blocks = append(blocks, c.optionRows(v.tapped == "" && !v.final)...)
+	blocks = append(blocks, c.optionRows(!v.final)...)
 	if c.Group != "" {
 		for _, r := range c.Rows {
 			blocks = append(blocks, r.blocks(v)...)
 		}
 		return append(blocks, c.context(v.tag, v.at, ""))
-	}
-	if v.tapped != "" {
-		return append(blocks, mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped), c.context(v.tag, v.at, ""))
 	}
 	if v.final || c.refsOnly() {
 		return append(blocks, c.context(v.tag, v.at, ""))
