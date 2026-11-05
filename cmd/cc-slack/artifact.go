@@ -19,10 +19,12 @@ const (
 )
 
 type cardArtifact struct {
-	Title string `json:"title"`
-	Kind  string `json:"kind"`
-	URL   string `json:"url"`
-	Image string `json:"image,omitempty"`
+	Title    string `json:"title"`
+	Kind     string `json:"kind"`
+	URL      string `json:"url"`
+	Image    string `json:"image,omitempty"`
+	Language string `json:"language,omitempty"`
+	Size     string `json:"size,omitempty"`
 }
 
 func (c statusCard) checkArtifacts() error {
@@ -59,6 +61,18 @@ func (a cardArtifact) entity() slack.WorkObjectEntity {
 		"actions": map[string]any{"primary_actions": []map[string]any{
 			{"text": artifactOpenLabel, "action_id": cardLinkAction + "artifact", "url": a.URL},
 		}},
+	}
+	var custom []map[string]any
+	var order []string
+	for _, fact := range []struct{ key, label, value string }{{"language", "Language", a.Language}, {"size", "Size", a.Size}} {
+		if fact.value != "" {
+			custom = append(custom, map[string]any{"key": fact.key, "label": fact.label, "type": "string", "value": fact.value})
+			order = append(order, fact.key)
+		}
+	}
+	if len(custom) > 0 {
+		payload["custom_fields"] = custom
+		payload["display_order"] = order
 	}
 	return slack.WorkObjectEntity{
 		URL:           a.URL,

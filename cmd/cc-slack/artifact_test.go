@@ -26,6 +26,7 @@ type drawnArtifact struct {
 			LastModified int64  `json:"metadata_last_modified"`
 		} `json:"attributes"`
 		Fields       json.RawMessage `json:"fields"`
+		CustomFields json.RawMessage `json:"custom_fields"`
 		DisplayOrder []string        `json:"display_order"`
 		Actions      struct {
 			Primary []struct {
@@ -95,6 +96,33 @@ func TestADiagramArtifactPostsItsPictureOnTheCardBesideItsWorkObject(t *testing.
 	}
 	if len(payload.Fields) != 0 || len(payload.DisplayOrder) != 0 || len(payload.Actions.Primary) != 1 || payload.Actions.Primary[0].URL != testDiagramURL {
 		t.Fatalf("payload = %+v, want a link with no picture inside the Work Object", payload)
+	}
+}
+
+func TestACodeArtifactsWorkObjectShowsItsLanguageAndSizeAndNoBody(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	code := cardArtifact{Title: "The entry point", Kind: "code", URL: "https://brook.tail1234.ts.net:61211/artifact/r9/0", Language: "go", Size: "3 lines"}
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "The new path.", Artifacts: []cardArtifact{code}}})
+
+	entities := drawnArtifacts(t, l.slack.sent()[0].metadata)
+	if len(entities) != 1 {
+		t.Fatalf("entities = %+v, want the one Work Object", entities)
+	}
+	payload := entities[0].EntityPayload
+	if payload.Attributes.DisplayType != "Code" || !slices.Equal(payload.DisplayOrder, []string{"language", "size"}) {
+		t.Fatalf("payload = %+v", payload)
+	}
+	var facts []struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(payload.CustomFields, &facts); err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 2 || facts[0].Value != "go" || facts[1].Label != "Size" || facts[1].Value != "3 lines" {
+		t.Fatalf("custom fields = %+v, want the language and the size", facts)
 	}
 }
 

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A status card's artifact now shows its language and size on its Work Object, so you can tell a 3-line file from a 400-turn transcript before opening it. A diagram shows neither and draws as before.
+
 ### Fixed
 
 - A post at the root of your DM that names PRs waiting on your tap now puts each PR's tap card in its own thread, as the card's link on its own line, so Slack previews it. Before, the cards sat elsewhere at the DM root with nothing in the post's thread, and a PR whose tap card was a pick card got no copy beside a threaded post either. Each card is linked once per thread, also when the same keyed card is sent again in place.
