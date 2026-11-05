@@ -172,8 +172,9 @@ with a row get a preview attachment in Block Kit: the title as a link to GitHub,
 all of `for_users`, and one line that says it landed, closed, is ready for a tap, is
 on hold, or what it waits on, with its `ci`. A hold's reason stays out, since it is
 written for whoever holds the PR. `state` `landed` and `closed` end it, and only
-`state` `open` with `ready_for_tap` reads as ready. A ready PR with an unanswered
-card links that card. A status card carries its previews in a reply in its thread.
+`state` `open` with `ready_for_tap` reads as ready. With `card_command` set, a
+linked PR whose row is `state` `open` with no `hold` draws its card with Approve
+and Hold instead of a preview, in CI or not, as if `tap_prs` named it. A status card carries its previews in a reply in its thread.
 A PR in a card's `prs` draws in the card's own blocks, above its buttons: a link to
 GitHub and one paragraph per line, each its own section, and nothing is cut. Its
 description waits whole behind Explain more and the link. A PR the card draws gets
