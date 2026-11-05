@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -239,11 +241,44 @@ func (p workObjectPoster) Do(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	answer.Body = io.NopCloser(bytes.NewReader(said))
-	log.Printf("work object %s %s: %s", path.Base(req.URL.Path), body["channel"], workObjectEcho(said)) //nolint:gosec // G706: the line carries Slack's own answer, for the daemon log only
+	echo, refusal := workObjectEcho(said)
+	noteMetadataRefusal(req.Context(), refusal)
+	log.Printf("work object %s %s: %s", path.Base(req.URL.Path), body["channel"], echo) //nolint:gosec // G706: the line carries Slack's own answer, for the daemon log only
 	return answer, nil
 }
 
-func workObjectEcho(said []byte) string {
+type metadataRefusalsKey struct{}
+
+type metadataRefusals struct {
+	mu   sync.Mutex
+	said []string
+}
+
+func withMetadataRefusals(ctx context.Context) context.Context {
+	return context.WithValue(ctx, metadataRefusalsKey{}, &metadataRefusals{})
+}
+
+func noteMetadataRefusal(ctx context.Context, refusal string) {
+	refusals, ok := ctx.Value(metadataRefusalsKey{}).(*metadataRefusals)
+	if !ok || refusal == "" {
+		return
+	}
+	refusals.mu.Lock()
+	defer refusals.mu.Unlock()
+	refusals.said = append(refusals.said, refusal)
+}
+
+func metadataRefusalsIn(ctx context.Context) string {
+	refusals, ok := ctx.Value(metadataRefusalsKey{}).(*metadataRefusals)
+	if !ok {
+		return ""
+	}
+	refusals.mu.Lock()
+	defer refusals.mu.Unlock()
+	return strings.Join(refusals.said, "; ")
+}
+
+func workObjectEcho(said []byte) (string, string) {
 	var echo struct {
 		OK       bool   `json:"ok"`
 		Error    string `json:"error"`
@@ -260,10 +295,14 @@ func workObjectEcho(said []byte) string {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(said, &echo); err != nil {
-		return "unreadable answer: " + err.Error()
+		return "unreadable answer: " + err.Error(), ""
+	}
+	refusal := ""
+	if strings.Contains(echo.Warning, "metadata") {
+		refusal = "Slack dropped this post's card: " + cmp.Or(strings.Join(echo.Metadata.Messages, " "), echo.Warning)
 	}
 	return fmt.Sprintf("ok=%t error=%q warning=%q warnings=%v messages=%v attachments=%v metadata=%s",
-		echo.OK, echo.Error, echo.Warning, echo.Metadata.Warnings, echo.Metadata.Messages, echo.Message.Attachments, echo.Message.Metadata)
+		echo.OK, echo.Error, echo.Warning, echo.Metadata.Warnings, echo.Metadata.Messages, echo.Message.Attachments, echo.Message.Metadata), refusal
 }
 
 func workObjectBody(form []byte) (map[string]any, bool, error) {

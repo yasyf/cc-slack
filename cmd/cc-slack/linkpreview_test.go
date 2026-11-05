@@ -715,7 +715,7 @@ func TestAPostWithNoWorkObjectStaysAForm(t *testing.T) {
 }
 
 func TestAWorkObjectAnswerNamesWhatSlackWarnedAndKept(t *testing.T) {
-	got := workObjectEcho([]byte(`{"ok":true,"response_metadata":{"warnings":["invalid_metadata"]},"message":{"attachments":[{"from_url":"https://x.example/1"}],"metadata":{"event_type":"e"}}}`))
+	got, _ := workObjectEcho([]byte(`{"ok":true,"response_metadata":{"warnings":["invalid_metadata"]},"message":{"attachments":[{"from_url":"https://x.example/1"}],"metadata":{"event_type":"e"}}}`))
 	for _, want := range []string{"ok=true", "invalid_metadata", "https://x.example/1", `"event_type":"e"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("echo = %q, missing %q", got, want)
@@ -770,5 +770,22 @@ func TestAPRCardThatDoesNotFitIsCountedAndItsLinkStays(t *testing.T) {
 	drawn := entitiesOf(t, workObjectsIn(post))
 	if len(drawn) == 0 || len(drawn) == len(rows) || !strings.Contains(post.attachments, "more not shown here") || !strings.Contains(post.text, "pull/43") {
 		t.Fatalf("drew %d, post = %+v, want the undrawn counted and its link kept", len(drawn), post)
+	}
+}
+
+func TestSlackDroppingACardReachesTheCallersContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"D1","ts":"1.2","warning":"metadata_too_large","response_metadata":{"warnings":["metadata_too_large"],"messages":["[WARN] too big"]}}`))
+	}))
+	defer srv.Close()
+	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
+	ctx := withMetadataRefusals(context.Background())
+	_, _, err := api.PostMessageContext(ctx, "D1", slack.MsgOptionText("See it", false),
+		slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{readyRow(41).entity(testPR, "")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := metadataRefusalsIn(ctx); !strings.Contains(got, "too big") {
+		t.Fatalf("refusals = %q, want Slack's words", got)
 	}
 }
