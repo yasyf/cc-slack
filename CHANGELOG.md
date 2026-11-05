@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tap on a card copy whose answer is on record now redraws that copy to its answer and drops its buttons, even when another machine posted the copy. Before, such a copy kept Approve and Hold, and the bot posted "Your tap did not change this message" under it, so the card read as still asking.
 - A tap on a card whose session has ended now also reaches the session holding your DM, as a reply it owes, so a tap with no ask id, such as Ack or an option, is heard too. The card closes naming who heard it.
 - A tap whose answer was recorded by a daemon that was replaced before delivering it is delivered when the next daemon replays it, where it used to read as already answered and reach no one.
 - A card withdrawn because another message replaced it says `Replaced:` and links that message, where it used to say `Withdrawn:`.
