@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,7 +53,7 @@ func drawnArtifacts(t *testing.T, metadata string) []drawnArtifact {
 	return drawn.Entities
 }
 
-func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsUnsharedPicture(t *testing.T) {
+func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsSharedPicture(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	diagram := cardArtifact{Title: "How a reply reaches Slack", Kind: "diagram", URL: testDiagramURL, Image: writeFile(t, "diagram.png", pngBytes)}
@@ -66,9 +67,21 @@ func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsUnsharedPicture(t *t
 	if strings.Contains(post.blocks, `"type":"image"`) {
 		t.Fatalf("blocks = %s, want the picture in the Work Object only", post.blocks)
 	}
-	entities := drawnArtifacts(t, post.metadata)
+	if strings.Contains(post.metadata, "slack_file") {
+		t.Fatalf("metadata = %s, want the first post to name no file before its share", post.metadata)
+	}
+	share := l.slack.sent()[1]
+	if share.channelID != post.channelID || share.threadTS != post.ts {
+		t.Fatalf("share = %+v, want it in the thread of the card at %s", share, post.ts)
+	}
+	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != post.ts })
+	if len(edits) == 0 {
+		t.Fatalf("no edit of the card at %s, want one that shows the shared picture", post.ts)
+	}
+	shown := edits[len(edits)-1]
+	entities := drawnArtifacts(t, shown.metadata)
 	if len(entities) != 1 {
-		t.Fatalf("metadata = %s, want one Work Object", post.metadata)
+		t.Fatalf("metadata = %s, want one Work Object", shown.metadata)
 	}
 	got := entities[0]
 	payload := got.EntityPayload
@@ -86,7 +99,7 @@ func TestADiagramArtifactPostsAsAWorkObjectWhosePreviewIsItsUnsharedPicture(t *t
 		t.Fatalf("preview names file %s, which is not the diagram's upload", preview.SlackFile.ID)
 	}
 	if len(l.slack.complete) != 1 {
-		t.Fatalf("completed uploads = %v, want the one picture completed unshared", l.slack.complete)
+		t.Fatalf("completed uploads = %v, want the one picture completed once", l.slack.complete)
 	}
 	if strings.Join(payload.DisplayOrder, ",") != "preview" || len(payload.Actions.Primary) != 1 || payload.Actions.Primary[0].URL != testDiagramURL {
 		t.Fatalf("order %v, actions %+v", payload.DisplayOrder, payload.Actions)

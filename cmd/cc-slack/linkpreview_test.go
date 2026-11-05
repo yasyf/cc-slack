@@ -704,13 +704,13 @@ func TestSlackDroppingACardReachesTheCallersContext(t *testing.T) {
 	}))
 	defer srv.Close()
 	api := newSlackClient("xoxb-test", srv.URL+"/", srv.Client())
-	ctx := withMetadataRefusals(context.Background())
+	ctx := withPostWarnings(context.Background())
 	_, _, err := api.PostMessageContext(ctx, "D1", slack.MsgOptionText("See it", false),
 		slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: []slack.WorkObjectEntity{testEntity()}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := metadataRefusalsIn(ctx); !strings.Contains(got, "too big") {
+	if got := postWarningsIn(ctx); !strings.Contains(got, "too big") {
 		t.Fatalf("refusals = %q, want Slack's words", got)
 	}
 }

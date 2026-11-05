@@ -257,7 +257,9 @@ there shows its state and message the same way.
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
 every file is a PNG, JPEG, or GIF image, the images appear under the text in
-the same `<display name> (<agent>)` message. Any other file, such as a log,
+the same `<display name> (<agent>)` message, a moment after it posts, and the
+files are shared into its thread so everyone in the conversation can open them.
+Any other file, such as a log,
 Markdown, CSV, JSON, or PDF, goes out as a Slack file share that carries the
 text as its comment, still as `<display name> (<agent>)`, and a broadcast reply
 cannot carry one.
@@ -464,7 +466,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
 | `prs` | up to 10 `{url, title, head, review, change, plan, risk, blocks}` pull requests, each drawn with its link and live CI, and the lines it has as fields; a missing line is left out. Its description, read from GitHub, posts in the thread on Explain more |
-| `artifacts` | up to 5 `{title, kind, url, image}` things the reader opens at `url`, such as a diagram on the dashboard, each drawn as a Work Object with an Open button; `image`, an absolute path to a PNG, JPEG, or GIF, is uploaded to Slack unshared and drawn as the Work Object's picture in the post; keep the link in `body` too, for a client that draws no card |
+| `artifacts` | up to 5 `{title, kind, url, image}` things the reader opens at `url`, such as a diagram on the dashboard, each drawn as a Work Object with an Open button; `image`, an absolute path to a PNG, JPEG, or GIF, is shared into the post's thread and drawn as the Work Object's picture in the post; keep the link in `body` too, for a client that draws no card |
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |

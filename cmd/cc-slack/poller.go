@@ -608,7 +608,7 @@ func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) er
 	switch {
 	case id.fromOperator(m) && routedSubtypes[m.SubType]:
 		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
-	case id.fromClaude(m):
+	case id.fromClaude(m) && !bareFileShare(m):
 		return p.owed.answered(ctx, thread, m.Timestamp)
 	}
 	return nil

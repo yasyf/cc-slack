@@ -3,7 +3,9 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"maps"
 	"math"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -520,7 +523,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(err.Error())
 		}
-		hc.Ctx = withMetadataRefusals(hc.Ctx)
+		hc.Ctx = withPostWarnings(hc.Ctx)
 		extra, err := checkPost(b, hc.Env.Op, requireThread)
 		if err != nil {
 			return fail(err.Error())
@@ -574,7 +577,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
 		}
 		res.Posted = true
-		res.Warning = metadataRefusalsIn(hc.Ctx)
+		res.Warning = postWarningsIn(hc.Ctx)
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
 		a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
 		res.TicketID = ticket.ID
@@ -683,14 +686,21 @@ func postMessage(ctx context.Context, api slackAPI, db *sql.DB, logger *log.Logg
 		metadata = []slack.MsgOption{id.authorMetadata()}
 	}
 	extra = append(metadata, extra...)
-	ch, ts, err := publish(ctx, api, id, channelID, threadTS, text, blocks, files, extra...)
+	record := postRecorder(ctx, db, logger)
+	ch, ts, err := publish(ctx, api, record, id, channelID, threadTS, text, blocks, files, extra...)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO posts(channel_id, ts) VALUES (?, ?)`, ch, ts); err != nil {
-		logger.Printf("record post %s/%s, the poller may route it back: %v", ch, ts, err)
-	}
+	record(ch, ts)
 	return ch, ts, nil
+}
+
+func postRecorder(ctx context.Context, db *sql.DB, logger *log.Logger) func(channelID, ts string) {
+	return func(channelID, ts string) {
+		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO posts(channel_id, ts) VALUES (?, ?)`, channelID, ts); err != nil {
+			logger.Printf("record post %s/%s, the poller may route it back: %v", channelID, ts, err)
+		}
+	}
 }
 
 func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error) {
@@ -705,7 +715,7 @@ func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error
 	return true, nil
 }
 
-func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
+func publish(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
 	if len(files) == 0 {
 		text, blocks = fitText(text, blocks)
 		opts := id.postOptions(text, threadTS, extra...)
@@ -722,7 +732,7 @@ func publish(ctx context.Context, api slackAPI, id identity, channelID, threadTS
 		return "", "", err
 	}
 	if images {
-		return postImages(ctx, api, id, channelID, threadTS, text, blocks, files, extra...)
+		return postImages(ctx, api, record, id, channelID, threadTS, text, blocks, files, extra...)
 	}
 	return shareFiles(ctx, api, id, channelID, threadTS, text, files)
 }
@@ -1846,7 +1856,7 @@ func (a *app) handleUnfollow(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
-	hc.Ctx = withMetadataRefusals(hc.Ctx)
+	hc.Ctx = withPostWarnings(hc.Ctx)
 	b, err := decodeBody(hc)
 	if err != nil {
 		return fail(err.Error())
@@ -1871,19 +1881,13 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	id.Agent = b.Agent
-	if err := a.attachCardImages(hc.Ctx, id, b); err != nil {
-		return fail(fallback(actionWrite, err))
-	}
-	if err := a.attachArtifactPictures(hc.Ctx, id, b.Card); err != nil {
+	pictures, err := a.uploadCardPictures(hc.Ctx, id, b)
+	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
-		thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, msg.tag)
-		if err != nil {
-			return fail(fallback(actionWrite, err))
-		}
-		return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+		return a.replaceCardReply(hc, sub.ID, id, b, msg.tag, pictures)
 	}
 	under, err := a.dmThreadOf(hc, sub, id, b)
 	if err != nil {
@@ -1903,7 +1907,24 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	a.attachPRCards(hc.Ctx, hc.DB, sub, id, id.DMChannelID, thread, a.tapPRs(hc.Ctx, id, hc.Env.Scope, b))
+	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+}
+
+func (a *app) replaceCardReply(hc daemon.HandlerCtx, subjectID string, id identity, b opBody, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
+	card := *b.Card
+	if len(pictures) > 0 {
+		ref, err := parsePermalink(card.Replaces)
+		if err != nil {
+			return fail(fallback(actionWrite, err))
+		}
+		card, _ = a.shareCardPictures(hc.Ctx, hc.DB, id, card, pictures, cmp.Or(ref.threadTS, ref.ts))
+	}
+	thread, ts, err := a.replaceCard(hc.Ctx, id, card, tag)
+	if err != nil {
+		return fail(fallback(actionWrite, err))
+	}
+	return ok(a.dmStatusReply(hc, subjectID, id, thread, ts, b))
 }
 
 func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, error) {
@@ -1969,19 +1990,92 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	return thread, ref.ts, nil
 }
 
-func (a *app) attachCardImages(ctx context.Context, id identity, b opBody) error {
-	if b.Card == nil || len(b.Files) == 0 {
-		return nil
+func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]slack.FileSummary, error) {
+	if b.Card == nil {
+		return nil, nil
 	}
 	images, err := allImages(b.Files)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !images {
-		return errors.New("a card attaches PNG, JPEG, or GIF images only")
+		return nil, errors.New("a card attaches PNG, JPEG, or GIF images only")
 	}
-	b.Card.Images, err = uploadImages(ctx, a.newAPI(id.Token), b.Files)
-	return err
+	var drawn []string
+	for _, artifact := range b.Card.Artifacts {
+		if artifact.Image != "" {
+			drawn = append(drawn, artifact.Image)
+		}
+	}
+	if images, err = allImages(drawn); err != nil {
+		return nil, err
+	}
+	if !images {
+		return nil, errors.New("an artifact's image is a PNG, JPEG, or GIF")
+	}
+	if b.Card.ImagesHash, err = hashFiles(b.Files); err != nil {
+		return nil, err
+	}
+	if shown := a.cards.shownImages(id.DMChannelID, *b.Card); shown != nil {
+		b.Card.Images = shown
+		return uploadFiles(ctx, a.newAPI(id.Token), drawn)
+	}
+	return uploadFiles(ctx, a.newAPI(id.Token), slices.Concat(b.Files, drawn))
+}
+
+func hashFiles(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", nil
+	}
+	sum := sha256.New()
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		file := sha256.Sum256(body)
+		sum.Write(file[:])
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, card statusCard, files []slack.FileSummary, thread string) (statusCard, bool) {
+	if err := shareProcessed(ctx, a.newAPI(id.Token), postRecorder(ctx, db, a.poller.log), id, id.DMChannelID, thread, files); err != nil {
+		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
+		return card, false
+	}
+	card.Artifacts = slices.Clone(card.Artifacts)
+	for i := len(card.Artifacts) - 1; i >= 0; i-- {
+		if card.Artifacts[i].Image != "" {
+			card.Artifacts[i].Picture, files = &files[len(files)-1], files[:len(files)-1]
+		}
+	}
+	if len(files) > 0 {
+		card.Images = files
+	}
+	return card, true
+}
+
+func (a *app) showCardPictures(ctx context.Context, db *sql.DB, id identity, card *statusCard, files []slack.FileSummary, thread, ts string) {
+	if len(files) == 0 || thread == "" {
+		return
+	}
+	shown, shared := a.shareCardPictures(ctx, db, id, *card, files, thread)
+	if !shared {
+		return
+	}
+	at := cmp.Or(ts, thread)
+	if !a.cards.showPictures(id.DMChannelID, thread, at, shown) {
+		notePostWarning(ctx, "the card posted without its pictures: it left the live cards before they were shared")
+		return
+	}
+	api := a.newAPI(id.Token)
+	if err := whileProcessing(ctx, func() error {
+		_, err := a.cards.redraw(ctx, api, id.DMChannelID, thread, at, a.now())
+		return err
+	}); err != nil {
+		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
+	}
 }
 
 func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity, thread, ts string, b opBody) map[string]string {
@@ -1992,7 +2086,7 @@ func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity,
 	if handPostedQuestion(b) {
 		res["warning"] = questionOnBoard
 	}
-	if refusal := metadataRefusalsIn(hc.Ctx); refusal != "" {
+	if refusal := postWarningsIn(hc.Ctx); refusal != "" {
 		res["warning"] = strings.TrimSpace(res["warning"] + " " + refusal)
 	}
 	return res

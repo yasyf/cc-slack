@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -186,15 +187,23 @@ func shareFiles(ctx context.Context, api slackAPI, id identity, channelID, threa
 	if err != nil {
 		return "", "", err
 	}
+	ts, err := shareUploaded(ctx, api, id, channelID, threadTS, text, files)
+	if err != nil {
+		return "", "", err
+	}
+	return channelID, ts, nil
+}
+
+func shareUploaded(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, files []slack.FileSummary) (string, error) {
 	share := fileShare{files: files, channelID: channelID, threadTS: threadTS, text: text, username: id.username(), iconURL: id.AvatarURL}
 	if err := api.ShareFilesContext(ctx, share); err != nil {
-		return "", "", err
+		return "", err
 	}
 	ts, err := awaitShared(ctx, api, files[0], channelID, threadTS)
 	if err != nil {
-		return "", "", sharedError{files[0].Title, channelID, err.Error()}
+		return "", sharedError{files[0].Title, channelID, err.Error()}
 	}
-	return channelID, ts, nil
+	return ts, nil
 }
 
 type sharedError struct {
@@ -237,29 +246,46 @@ func uploadFiles(ctx context.Context, api slackAPI, paths []string) ([]slack.Fil
 	return files, nil
 }
 
-func postImages(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, blocks []slack.Block, paths []string, extra ...slack.MsgOption) (string, string, error) {
-	files, err := uploadImages(ctx, api, paths)
+func postImages(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, threadTS, text string, blocks []slack.Block, paths []string, extra ...slack.MsgOption) (string, string, error) {
+	files, err := uploadFiles(ctx, api, paths)
 	if err != nil {
 		return "", "", err
 	}
-	opts := append(id.postOptions(shortText(fallbackText(text, files)), threadTS, extra...), slack.MsgOptionBlocks(imageMessage(text, blocks, files)...))
-	var ch, ts string
-	err = whileProcessing(ctx, func() (err error) {
-		ch, ts, err = api.PostMessageContext(ctx, channelID, opts...)
-		return err
-	})
-	return ch, ts, err
+	notice := shortText(fallbackText(text, files))
+	opts := id.postOptions(notice, threadTS, extra...)
+	if body := messageBlocks(text, blocks); len(body) > 0 {
+		opts = append(opts, slack.MsgOptionBlocks(body...))
+	}
+	ch, ts, err := api.PostMessageContext(ctx, channelID, opts...)
+	if err != nil {
+		return "", "", err
+	}
+	err = shareProcessed(ctx, api, record, id, ch, cmp.Or(threadTS, ts), files)
+	if err == nil {
+		err = whileProcessing(ctx, func() error {
+			return updateMessage(ctx, api, ch, ts, notice, imageMessage(text, blocks, files), extra...)
+		})
+	}
+	if err != nil {
+		notePostWarning(ctx, "the message posted without its pictures: "+err.Error())
+	}
+	return ch, ts, nil
 }
 
-func uploadImages(ctx context.Context, api slackAPI, paths []string) ([]slack.FileSummary, error) {
-	files, err := uploadFiles(ctx, api, paths)
+// An image block names a file without sharing it, and Slack keeps a file completed with no channel private, which is how readers got
+// broken images while the bot's own reads of the file succeeded. So a message goes up first, its thread takes the real share, and
+// only then does the message name the files.
+func shareProcessed(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, thread string, files []slack.FileSummary) error {
+	ts, err := shareUploaded(ctx, api, id, channelID, thread, "", files)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if _, err := api.CompleteUploadExternalContext(ctx, slack.CompleteUploadExternalParameters{Files: files}); err != nil {
-		return nil, err
-	}
-	return files, awaitProcessed(ctx, api, files)
+	record(channelID, ts)
+	return awaitProcessed(ctx, api, files)
+}
+
+func bareFileShare(m slack.Message) bool {
+	return len(m.Files) > 0 && m.Text == ""
 }
 
 // Slack can refuse a just-processed file with invalid_blocks for a moment after files.info reports its size.
