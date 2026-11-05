@@ -137,6 +137,7 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 		refs:    map[string]refState{},
 		hosts:   map[string]*refHost{},
 		drawing: map[string]*sync.Mutex{},
+		undrawn: map[string]map[string]bool{},
 	}
 }
 
@@ -221,6 +222,33 @@ func TestARestartRedrawsNoCardWhoseRefsStayed(t *testing.T) {
 	restarted.tick(l.ctx)
 	if edits := editsOf(l.slack.edited(), "1800000000.000100"); len(edits) != 1 {
 		t.Fatalf("a restart redrew the card %d times with nothing moved, want none", len(edits)-1)
+	}
+}
+
+func TestARateLimitedCardSweepStopsThenRedrawsWhatItSkippedOnceTheLimitPasses(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	_, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	card := statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}}}
+	seedLiveThread(cards, card, clock.now())
+	second := &liveThread{Channel: "D" + testUser, Thread: "1800000000.000200"}
+	second.apply(card, cardTag{Repo: "app", Branch: "dev"}, clock.now(), false)
+	second.Reply.TS = second.Thread
+	cards.threads[threadKey(second.Channel, second.Thread)] = second
+	l.slack.fail("chat.update", &slack.RateLimitedError{RetryAfter: 20 * time.Second})
+
+	if wait := cards.tick(l.ctx); wait != 20*time.Second || len(l.slack.edited()) != 0 {
+		t.Fatalf("a sweep Slack limited wrote %d cards and waits %s, want no write and the 20s Slack asked for", len(l.slack.edited()), wait)
+	}
+	clock.advance(20 * time.Second)
+	cards.tick(l.ctx)
+	for _, ts := range []string{"1800000000.000100", "1800000000.000200"} {
+		if edits := editsOf(l.slack.edited(), ts); len(edits) != 1 || !strings.Contains(edits[0], "🔄 CI running") {
+			t.Fatalf("card %s after the limit passed = %v, want one redraw with its PR's state", ts, edits)
+		}
 	}
 }
 

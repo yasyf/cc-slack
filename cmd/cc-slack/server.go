@@ -73,6 +73,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		refs:    map[string]refState{},
 		hosts:   map[string]*refHost{},
 		drawing: map[string]*sync.Mutex{},
+		undrawn: map[string]map[string]bool{},
 	}
 	p := &poller{
 		newAPI:    newAPI,

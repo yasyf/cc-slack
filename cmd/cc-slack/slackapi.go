@@ -94,6 +94,12 @@ var nonIdempotent = map[string]bool{
 
 type retrying struct{ next doer }
 
+type rateWaitKey struct{}
+
+func withoutRateWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rateWaitKey{}, true)
+}
+
 func newSlackClient(token, endpoint string, hc doer) slackAPI {
 	hc = retrying{hc}
 	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(workObjectPoster{token, hc})), token, endpoint, hc}
@@ -111,13 +117,17 @@ func (r retrying) Do(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 		wait, again := retryWait(resp, err, idempotent, backoff)
-		if !again || !replayable || try == slackTries || req.Context().Err() != nil {
+		limited := err == nil && resp.StatusCode == http.StatusTooManyRequests
+		if !again || !replayable || try == slackTries || req.Context().Err() != nil || limited && req.Context().Value(rateWaitKey{}) != nil {
 			return withTries(resp, err, try)
 		}
+		cause := fmt.Sprint(err)
 		if err == nil {
+			cause = resp.Status
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
+		log.Printf("slack %s: %s; try %d of %d in %s", path.Base(req.URL.Path), cause, try+1, slackTries, wait) //nolint:gosec // G706: the line carries Slack's own status, for the daemon log only
 		if err := pause(req.Context(), wait); err != nil {
 			return nil, err
 		}
