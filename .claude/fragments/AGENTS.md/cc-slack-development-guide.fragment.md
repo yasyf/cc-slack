@@ -163,10 +163,10 @@ written for whoever holds the PR. `state` `landed` and `closed` end it, and only
 `state` `open` with `ready_for_tap` reads as ready. A ready PR with an unanswered
 card links that card. A status card carries its previews in a reply in its thread.
 A PR in a card's `prs` draws in the card's own blocks, above its buttons: a link to
-GitHub, one paragraph per line, and its description, each paragraph its own section
-so Slack folds a long one behind Show more. Only what passes a message waits behind
-Explain more, and nothing is cut. Anything past the limit is counted in a last line
-and keeps its link. Once the rows
+GitHub and one paragraph per line, each its own section, and nothing is cut. Its
+description waits whole behind Explain more and the link. A PR the card draws gets
+no preview, so a card whose every link is one of its own PRs posts nothing more.
+Anything past the limit is counted in a last line and keeps its link. Once the rows
 read, a line holding only PR links is dropped when each one has a preview or the
 rest of the text names it, so a PR shows once. A PR with no row stays a link. When
 the program fails or runs past 5 s, the post goes out as written and the daemon
