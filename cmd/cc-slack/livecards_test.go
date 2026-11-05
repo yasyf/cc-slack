@@ -199,6 +199,31 @@ func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 	}
 }
 
+func TestARestartRedrawsNoCardWhoseRefsStayed(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	_, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	seedLiveThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}, {URL: testBuildURL, Label: "deploy"}}}, clock.now())
+	cards.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), "1800000000.000100"); len(edits) != 1 {
+		t.Fatalf("edits after the first poll = %d, want the one drawing PR and build state", len(edits))
+	}
+
+	restarted := standaloneCards(t, l, srv, clock)
+	restarted.path = cards.path
+	if err := restarted.load(); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(refPollEvery)
+	restarted.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), "1800000000.000100"); len(edits) != 1 {
+		t.Fatalf("a restart redrew the card %d times with nothing moved, want none", len(edits)-1)
+	}
+}
+
 func TestLiveRefsBackOffUntilTheRateLimitResets(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)
