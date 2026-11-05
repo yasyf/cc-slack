@@ -105,23 +105,23 @@ type opBody struct {
 	Broadcast bool              `json:"broadcast"`
 	NoWatch   bool              `json:"no_watch"`
 
-	WorkObjects bool     `json:"work_objects"`
-	Agent       string   `json:"agent"`
-	Mirrored    bool     `json:"mirrored"`
-	Waits       string   `json:"waits"`
-	Label       string   `json:"label"`
-	Other       bool     `json:"other"`
-	Settled     bool     `json:"settled"`
-	Withdrawn   bool     `json:"withdrawn"`
-	Via         string   `json:"via"`
-	About       string   `json:"about"`
-	TapPRs      []string `json:"tap_prs"`
-	Status      string   `json:"status"`
-	Loading     []string `json:"loading"`
-	Mode        string   `json:"mode"`
-	Plan        string   `json:"plan"`
-	Tasks       []task   `json:"tasks"`
-	Stop        bool     `json:"stop"`
+	Raw       bool     `json:"raw"`
+	Agent     string   `json:"agent"`
+	Mirrored  bool     `json:"mirrored"`
+	Waits     string   `json:"waits"`
+	Label     string   `json:"label"`
+	Other     bool     `json:"other"`
+	Settled   bool     `json:"settled"`
+	Withdrawn bool     `json:"withdrawn"`
+	Via       string   `json:"via"`
+	About     string   `json:"about"`
+	TapPRs    []string `json:"tap_prs"`
+	Status    string   `json:"status"`
+	Loading   []string `json:"loading"`
+	Mode      string   `json:"mode"`
+	Plan      string   `json:"plan"`
+	Tasks     []task   `json:"tasks"`
+	Stop      bool     `json:"stop"`
 	ticketSpend
 }
 
@@ -175,7 +175,7 @@ type threadMessage struct {
 	Unfurls    []string        `json:"unfurls,omitempty"`
 	Buttons    []string        `json:"buttons,omitempty"`
 
-	WorkObjects []slack.WorkObjectEntity `json:"work_objects,omitempty"`
+	Raw json.RawMessage `json:"raw,omitempty"`
 }
 
 type messageFile struct {
@@ -209,6 +209,8 @@ type historyMessage struct {
 	Files       []messageFile   `json:"files,omitempty"`
 	Shares      []sharedMessage `json:"shares,omitempty"`
 	Unfurls     []string        `json:"unfurls,omitempty"`
+
+	Raw json.RawMessage `json:"raw,omitempty"`
 }
 
 type historyResult struct {
@@ -1041,9 +1043,9 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if truncated {
 		msgs = msgs[len(msgs)-limit:]
 	}
-	var workObjects map[string][]slack.WorkObjectEntity
-	if b.WorkObjects {
-		if workObjects, err = api.ThreadWorkObjects(hc.Ctx, channelID, b.ThreadTS); err != nil {
+	var raw map[string]json.RawMessage
+	if b.Raw {
+		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS); err != nil {
 			return fail(fallback(actionRead, err))
 		}
 	}
@@ -1056,7 +1058,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
 			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
-			Shares: a.sharedMessages(hc.Ctx, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), WorkObjects: workObjects[m.Timestamp],
+			Shares: a.sharedMessages(hc.Ctx, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw[m.Timestamp],
 		})
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
@@ -1093,6 +1095,12 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
+	var raw map[string]json.RawMessage
+	if b.Raw {
+		if raw, err = api.RawMessages(ctx, "conversations.history", channelID, ""); err != nil {
+			return fail(fallback(actionRead, err))
+		}
+	}
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
 		files, err := messageFiles(ctx, api, m)
@@ -1107,7 +1115,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
 			FromClaude: id.fromClaude(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files, Shares: a.sharedMessages(ctx, api, m), Unfurls: linkUnfurls(m),
+			Files: files, Shares: a.sharedMessages(ctx, api, m), Unfurls: linkUnfurls(m), Raw: raw[m.Timestamp],
 		})
 	}
 	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})
