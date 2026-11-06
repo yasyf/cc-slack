@@ -35,6 +35,7 @@ type messagePayload struct {
 	FromClaude  bool         `json:"from_claude"`
 	Text        string       `json:"text"`
 	Permalink   string       `json:"permalink"`
+	ThreadCard  string       `json:"thread_card,omitempty"`
 	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
 }
 
@@ -99,6 +100,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 			return delivery{}, err
 		}
 		msg.ThreadOwner = owner
+		msg.ThreadCard = p.cards.threadWaits(w.ChannelID, thread)
 	}
 	origin := event.OriginHuman
 	if msg.FromClaude {

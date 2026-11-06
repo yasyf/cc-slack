@@ -1300,6 +1300,37 @@ func (l *liveCards) threadCard(channel, thread string) (id, title string) {
 	return "", ""
 }
 
+func (l *liveCards) threadWaits(channel, thread string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if waits := l.waitsAt(channel, thread); waits != "" {
+		return waits
+	}
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return ""
+	}
+	for _, c := range t.Copies {
+		if c.TS == thread {
+			return l.waitsAt(channel, c.Card)
+		}
+	}
+	return ""
+}
+
+func (l *liveCards) waitsAt(channel, ts string) string {
+	t, ok := l.threads[threadKey(channel, ts)]
+	if !ok {
+		return ""
+	}
+	for _, m := range append(t.messages(), t.Root) {
+		if m != nil && m.TS == ts {
+			return m.Card.Waits
+		}
+	}
+	return ""
+}
+
 func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

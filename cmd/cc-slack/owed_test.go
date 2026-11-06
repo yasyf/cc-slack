@@ -497,6 +497,47 @@ func TestAReplyUnderTheHoldersOwnCardNamesNoOtherOwner(t *testing.T) {
 	}
 }
 
+func TestAReplyUnderTheHoldersOwnCardNamesTheCard(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	if err := f.app.openSessionThread(f.ctx, f.db(), subjectFor(t, f), f.id.DMChannelID, thread); err != nil {
+		t.Fatal(err)
+	}
+	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
+		Waiting: map[string]*liveMessage{"card-chat": {TS: thread, Card: statusCard{Title: "Put Chat live?", Waits: "card-chat"}}}}
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "looks good, but why the outbox?")
+
+	got := payloads(t, f)
+	if len(got) != 1 || got[0].ThreadOwner != nil || got[0].ThreadCard != "card-chat" {
+		t.Fatalf("delivered %+v, want the reply naming card-chat and no other owner", got)
+	}
+}
+
+func TestAReplyUnderACardCopyNamesTheCardItCopies(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	copied := postDMThread(t, f)
+	if err := f.app.openSessionThread(f.ctx, f.db(), subjectFor(t, f), f.id.DMChannelID, copied); err != nil {
+		t.Fatal(err)
+	}
+	const card = "1800000000.100000"
+	f.app.cards.threads[threadKey(f.id.DMChannelID, card)] = &liveThread{Channel: f.id.DMChannelID, Thread: card,
+		Waiting: map[string]*liveMessage{"card-chat": {TS: card, Card: statusCard{Title: "Put Chat live?", Waits: "card-chat"}}}}
+	f.app.cards.threads[threadKey(f.id.DMChannelID, copied)] = &liveThread{Channel: f.id.DMChannelID, Thread: copied,
+		Copies: []liveCardCopy{{Card: card, TS: copied}}}
+	f.tick()
+
+	ownerReplies(f, copied, "1800000001.500000", "approved, but confirm the shared code")
+
+	got := payloads(t, f)
+	if len(got) != 1 || got[0].ThreadCard != "card-chat" {
+		t.Fatalf("delivered %+v, want the reply naming the card its thread copies", got)
+	}
+}
+
 func TestABareFileShareAnswersNoOwedReply(t *testing.T) {
 	f := newFixture(t)
 	id := f.id
