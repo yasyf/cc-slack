@@ -400,11 +400,11 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 	if err != nil {
 		return err
 	}
-	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
+	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
 	if err != nil {
 		return err
 	}
-	res, err := a.post(ctx, db, id, card.channel, beside.thread, cardCopyLead, blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
+	res, err := a.post(ctx, db, id, card.channel, beside.thread, copyLead(blocks, answers), blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
 	if err != nil {
 		return err
 	}
@@ -463,14 +463,14 @@ func (a *app) redrawPRCopies(ctx context.Context, id identity, card cardRef) err
 	if err != nil {
 		return err
 	}
-	blocks, _, err := a.copyBlocks(ctx, id, ref, link)
+	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
 	if err != nil {
 		return err
 	}
 	api := a.newAPI(id.Token)
 	entities := a.cards.workObjectsOf(card.channel, card.ts, a.now())
 	for _, copied := range copies {
-		if err := updateMessage(ctx, api, copied.channel, copied.ts, cardCopyLead, blocks, entities...); err != nil {
+		if err := updateMessage(ctx, api, copied.channel, copied.ts, copyLead(blocks, answers), blocks, entities...); err != nil {
 			return err
 		}
 	}
