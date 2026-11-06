@@ -647,6 +647,7 @@ func (a *app) watchPostThread(ctx context.Context, db *sql.DB, subjectID, channe
 }
 
 func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (postResult, error) {
+	blocks = fitHeaders(blocks)
 	if err := checkBlocks(blocks); err != nil {
 		return postResult{}, err
 	}
@@ -994,6 +995,7 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block, extra ...slack.MsgOption) error {
+	blocks = fitHeaders(blocks)
 	if err := checkBlocks(blocks); err != nil {
 		return err
 	}
@@ -1995,7 +1997,8 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	}) {
 		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
 	} else {
-		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(cardView{tag: tag, at: now, now: now, final: true}), card.entities()...)
+		v := cardView{tag: tag, at: now, now: now, final: true}
+		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(v), card.entities(card.prEntities(v)...)...)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("replace card %s in place: %w", ref.ts, err)
@@ -2287,11 +2290,15 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
 	placed := t.Reply
 	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.refs)
+	prs := placed.Card.prEntities(t.view(placed, a.now(), a.cards.refs))
 	carrier := asked != nil && asked.TS == t.Thread
 	var more [][]slack.Block
 	if carrier {
-		blocks, more = a.cards.withCarried(t, blocks, a.now())
+		var carried []slack.WorkObjectEntity
+		blocks, more, carried = a.cards.withCarried(t, blocks, a.now())
+		prs = append(prs, carried...)
 	}
+	entities := placed.Card.entities(prs...)
 	write := func(do func() error) error {
 		if !placed.Card.hostsFiles() {
 			return do()
@@ -2301,7 +2308,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	if asked != nil {
 		placed.TS = asked.TS
 		if err := write(func() error {
-			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks, placed.Card.entities()...)
+			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks, entities...)
 		}); err != nil {
 			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group, placed.Card.Key), err)
 		}
@@ -2318,7 +2325,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil, placed.Card.entities()...)
+		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil, entities...)
 		return err
 	}); err != nil {
 		return nil, err

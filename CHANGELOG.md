@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A PR tap card, and a status card that names or carries one, now shows the PR as the GitHub card ai-oncall draws, in the same message below Approve and Hold: `#N` and its title, Pull request, a Merge tag (Ready for your tap, Open, Draft, Queued, Merged or Closed), a CI tag, and Open on GitHub, which opens the PR's GitHub page. A message shows at most 3 such cards; the rest of its PRs stay in its blocks.
 - Every card that names a PR carries an Open on GitHub button that opens the PR, beside Approve, Hold, Other and Explain more. A card naming several PRs has one button per PR, labeled with its number. A copy of a PR card carried in a status message keeps the button.
 - A post to your DM that links a PR ready for your tap now shows that PR once, as its card with Approve and Hold, in the same message or its thread, as if the PR had been passed with `--tap-pr`. Before, its "What this links to" preview listed the PR as "Ready for your tap" with nothing to tap. The preview now lists only PRs that draw no card. When no card command is set, so no card can be drawn, a ready PR's preview says "Not approved yet".
 - A post that links one of your DM messages, such as a card, no longer unfurls it. Slack drew the link as a "Shared from" copy with no buttons, often of a card already answered or withdrawn. A link to a message outside your DM still unfurls.
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A header over Slack's 150 characters is cut at its last whole word with an ellipsis, wherever a post or edit carries one, where `card-copy` used to fail with "Slack would refuse block 1 (header)". Slack reads an emoji in a header back as its `:name:`, so a copied header could run past 150 though the card had fit.
 - A tap on a card copy whose answer is on record now redraws that copy to its answer and drops its buttons, even when another machine posted the copy. Before, such a copy kept Approve and Hold, and the bot posted "Your tap did not change this message" under it, so the card read as still asking.
 - A tap on a card whose session has ended now also reaches the session holding your DM, as a reply it owes, so a tap with no ask id, such as Ack or an option, is heard too. The card closes naming who heard it.
 - A tap whose answer was recorded by a daemon that was replaced before delivering it is delivered when the next daemon replays it, where it used to read as already answered and reach no one.

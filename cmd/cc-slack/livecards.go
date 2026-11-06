@@ -285,8 +285,9 @@ func (l *liveCards) carriersOf(drawn *liveThread, cards map[string]bool) []cardR
 	return carriers
 }
 
-func (l *liveCards) carried(t *liveThread, now time.Time) []slack.Block {
+func (l *liveCards) carried(t *liveThread, now time.Time) ([]slack.Block, []slack.WorkObjectEntity) {
 	var rows []slack.Block
+	var prs []slack.WorkObjectEntity
 	for _, ts := range t.Carries {
 		ct, m := l.liveMessage(t.Channel, ts)
 		if m == nil {
@@ -295,15 +296,26 @@ func (l *liveCards) carried(t *liveThread, now time.Time) []slack.Block {
 		_, card := ct.replyMessage(m, now, l.refs)
 		if row := carriedCard(card, permalinkRef{channelID: t.Channel, ts: m.TS, threadTS: ct.Thread}); row != nil {
 			rows = append(rows, row)
+			prs = append(prs, m.Card.prEntities(ct.view(m, now, l.refs))...)
 		}
 	}
-	return rows
+	return rows, prs
 }
 
-func (l *liveCards) withCarried(t *liveThread, blocks []slack.Block, now time.Time) ([]slack.Block, [][]slack.Block) {
-	rows := l.carried(t, now)
+func (l *liveCards) workObjectsOf(channel, ts string, now time.Time) []slack.MsgOption {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(channel, ts)
+	if m == nil || m.Tapped != "" {
+		return nil
+	}
+	return m.Card.entities(m.Card.prEntities(t.view(m, now, l.refs))...)
+}
+
+func (l *liveCards) withCarried(t *liveThread, blocks []slack.Block, now time.Time) ([]slack.Block, [][]slack.Block, []slack.WorkObjectEntity) {
+	rows, prs := l.carried(t, now)
 	head := min(len(rows), max(0, cardMaxBlocks-len(blocks)))
-	return append(blocks, rows[:head]...), slices.Collect(slices.Chunk(rows[head:], cardMaxBlocks))
+	return append(blocks, rows[:head]...), slices.Collect(slices.Chunk(rows[head:], cardMaxBlocks)), prs
 }
 
 func (l *liveCards) continueCarried(ctx context.Context, api slackAPI, channel, thread string, held []string, pages [][]slack.Block) ([]string, error) {
@@ -862,16 +874,20 @@ type cardWrite struct {
 
 func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root bool) cardWrite {
 	text, blocks := t.replyMessage(m, now, l.refs)
+	prs := m.Card.prEntities(t.view(m, now, l.refs))
 	if root {
 		text, blocks = t.rootMessage(now, l.refs)
+		prs = nil
 	}
 	w := cardWrite{m: m, ts: m.TS, text: text, blocks: blocks}
 	if m.TS == t.Thread {
-		w.blocks, w.more = l.withCarried(t, blocks, now)
+		var carried []slack.WorkObjectEntity
+		w.blocks, w.more, carried = l.withCarried(t, blocks, now)
 		w.carrier, w.held = true, slices.Clone(t.Continued)
+		prs = append(prs, carried...)
 	}
 	if m.Tapped == "" {
-		w.entities = m.Card.entities()
+		w.entities = m.Card.entities(prs...)
 	}
 	return w
 }

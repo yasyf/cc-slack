@@ -455,6 +455,34 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	}
 }
 
+func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
+	tap := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
+		Status: "needs_you", Title: "Approve #41 at e718a74?",
+		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Change: "Chats load faster", Plan: "Nothing differed", Risk: "One cache key", Blocks: "Your approval"}},
+		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
+	}}
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, tap)
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+
+	entities := entitiesOf(t, card.metadata)
+	if len(entities) != 1 || entities[0].URL != tapPR41[0] || entities[0].EntityType != slack.EntityTypeItem {
+		t.Fatalf("metadata = %s, want #41's PR card linking GitHub", card.metadata)
+	}
+	payload := string(mustJSON(entities[0].EntityPayload))
+	for _, want := range []string{`"#41 Fix the chat list"`, `"Pull request"`, `"Ready for your tap"`, `"url":"` + tapPR41[0] + `"`} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("payload = %s, want %s in it", payload, want)
+		}
+	}
+	for _, want := range []string{"Approve (Recommended)", `"Hold"`, cardGitHubLabel, "What changes"} {
+		if !strings.Contains(card.blocks, want) {
+			t.Fatalf("blocks = %s, want %s beside the PR card", card.blocks, want)
+		}
+	}
+}
+
 func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())

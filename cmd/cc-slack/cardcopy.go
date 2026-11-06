@@ -44,7 +44,7 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.post(hc.Ctx, hc.DB, id, id.DMChannelID, b.ThreadTS, cardCopyLead, copied, nil)
+	res, err := a.post(hc.Ctx, hc.DB, id, id.DMChannelID, b.ThreadTS, cardCopyLead, copied, nil, a.cards.workObjectsOf(ref.channelID, ref.ts, a.now())...)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}

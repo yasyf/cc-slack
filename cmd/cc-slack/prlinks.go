@@ -363,7 +363,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		t := cards.draft(channelID, thread)
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.refs)
-		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil)
+		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.refs))...)...)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
 			return placed, shown
@@ -404,7 +404,7 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 	if err != nil {
 		return err
 	}
-	res, err := a.post(ctx, db, id, card.channel, beside.thread, cardCopyLead, blocks, nil)
+	res, err := a.post(ctx, db, id, card.channel, beside.thread, cardCopyLead, blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
 	if err != nil {
 		return err
 	}
@@ -468,8 +468,9 @@ func (a *app) redrawPRCopies(ctx context.Context, id identity, card cardRef) err
 		return err
 	}
 	api := a.newAPI(id.Token)
+	entities := a.cards.workObjectsOf(card.channel, card.ts, a.now())
 	for _, copied := range copies {
-		if err := updateMessage(ctx, api, copied.channel, copied.ts, cardCopyLead, blocks); err != nil {
+		if err := updateMessage(ctx, api, copied.channel, copied.ts, cardCopyLead, blocks, entities...); err != nil {
 			return err
 		}
 	}

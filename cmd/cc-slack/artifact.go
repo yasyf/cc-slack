@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,10 +14,19 @@ import (
 
 const (
 	cardMaxArtifacts    = 5
+	cardMaxPRObjects    = 3
+	metadataLimit       = 3900
 	artifactRefType     = "link"
 	artifactProductName = "Drive dashboard"
 	artifactOpenLabel   = "Open"
+	prRefType           = "github-pr"
+	prDisplayType       = "Pull request"
+	prProductName       = "GitHub"
 )
+
+type prTag struct {
+	key, label, value, color string
+}
 
 type cardArtifact struct {
 	Title    string `json:"title"`
@@ -82,6 +92,91 @@ func (a cardArtifact) entity() slack.WorkObjectEntity {
 	}
 }
 
+func (p cardPR) entity(live refState, waiting bool) slack.WorkObjectEntity {
+	id, _ := parseRef(p.URL)
+	shown := "#" + strconv.Itoa(id.Number)
+	tags := []prTag{live.mergeTag(waiting)}
+	if ci, known := live.ciTag(); known {
+		tags = append(tags, ci)
+	}
+	custom := make([]map[string]any, len(tags))
+	order := make([]string, len(tags))
+	for i, tag := range tags {
+		custom[i] = map[string]any{"key": tag.key, "label": tag.label, "type": "string", "value": tag.value, "tag_color": tag.color}
+		order[i] = tag.key
+	}
+	return slack.WorkObjectEntity{
+		URL:         p.URL,
+		ExternalRef: slack.WorkObjectExternalRef{ID: strings.ReplaceAll(id.Owner+"/"+id.Repo, ".", "_") + ":" + strconv.Itoa(id.Number), Type: prRefType},
+		EntityType:  slack.EntityTypeItem,
+		EntityPayload: map[string]any{
+			"attributes": map[string]any{
+				"title":                  map[string]any{"text": strings.TrimSpace(shown + " " + p.Title)},
+				"display_type":           prDisplayType,
+				"display_id":             shown,
+				"product_name":           prProductName,
+				"metadata_last_modified": time.Now().Unix(),
+			},
+			"custom_fields": custom,
+			"display_order": order,
+			"actions": map[string]any{"primary_actions": []map[string]any{
+				{"text": cardGitHubLabel, "action_id": cardLinkAction + "github", "url": p.URL},
+			}},
+		},
+	}
+}
+
+func (s refState) mergeTag(waiting bool) prTag {
+	tag := prTag{key: "status", label: "Merge", value: "Open", color: "blue"}
+	switch {
+	case s.State == "merged":
+		tag.value, tag.color = "Merged", "green"
+	case s.State == "closed":
+		tag.value, tag.color = "Closed", "gray"
+	case s.State == "queued":
+		tag.value, tag.color = "Queued", "yellow"
+	case waiting:
+		tag.value = "Ready for your tap"
+	case s.State == "draft":
+		tag.value, tag.color = "Draft", "gray"
+	}
+	return tag
+}
+
+func (s refState) ciTag() (prTag, bool) {
+	tag := prTag{key: "ci", label: "CI"}
+	switch s.Checks {
+	case "passed":
+		tag.value, tag.color = "Green", "green"
+	case "failed":
+		tag.value, tag.color = "Red", "red"
+	case "pending":
+		tag.value, tag.color = "Running", "blue"
+	default:
+		return tag, false
+	}
+	return tag, true
+}
+
+func (c statusCard) prEntities(v cardView) []slack.WorkObjectEntity {
+	live := func(p cardPR) refState {
+		id, _ := parseRef(p.URL)
+		return v.refs[id.key()]
+	}
+	_, answered := v.answers[c.Waits]
+	waiting := c.Waits != "" && !answered && v.tapped == ""
+	entities := make([]slack.WorkObjectEntity, 0, len(c.PRs)+len(c.Rows))
+	for _, p := range c.PRs {
+		entities = append(entities, p.entity(live(p), waiting))
+	}
+	for _, r := range c.Rows {
+		if _, rowAnswered := v.answers[r.ID]; r.PR != nil {
+			entities = append(entities, r.PR.entity(live(*r.PR), !rowAnswered && v.tapped == ""))
+		}
+	}
+	return entities
+}
+
 func (c statusCard) workObjects() []slack.WorkObjectEntity {
 	entities := make([]slack.WorkObjectEntity, len(c.Artifacts))
 	for i, a := range c.Artifacts {
@@ -90,11 +185,21 @@ func (c statusCard) workObjects() []slack.WorkObjectEntity {
 	return entities
 }
 
-func (c statusCard) entities() []slack.MsgOption {
-	if len(c.Artifacts) == 0 {
+func (c statusCard) entities(prs ...slack.WorkObjectEntity) []slack.MsgOption {
+	seen := map[string]bool{}
+	prs = slices.DeleteFunc(prs, func(e slack.WorkObjectEntity) bool {
+		drawn := seen[e.URL]
+		seen[e.URL] = true
+		return drawn
+	})
+	entities := slices.Concat(prs[:min(len(prs), cardMaxPRObjects)], c.workObjects())
+	for len(entities) > 0 && len(mustJSON(entities)) > metadataLimit {
+		entities = entities[:len(entities)-1]
+	}
+	if len(entities) == 0 {
 		return nil
 	}
-	return []slack.MsgOption{slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: c.workObjects()})}
+	return []slack.MsgOption{slack.MsgOptionWorkObjectMetadata(slack.WorkObjectMetadata{Entities: entities})}
 }
 
 func (c statusCard) hostsFiles() bool {
