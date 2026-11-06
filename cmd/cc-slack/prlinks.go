@@ -424,7 +424,7 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 	}
 	var missing []string
 	for _, card := range placed {
-		if !approvesOn(held, card.ts) {
+		if a.cards.awaitsTap(card.channel, card.ts) && !approvesOn(held, card.ts) {
 			missing = append(missing, id.permalink(card.channel, card.ts, card.thread))
 		}
 	}
