@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cc-slack check-post <file|->` runs the plugin's post checker with its findings, output and exit status. A session's PATH keeps the plugin `bin/` it started with, so a bare `check-post` was missing in any session older than the plugin version that shipped it; `cc-slack` always reaches the newest installed version.
 - A PR tap card, and a status card that names or carries one, now shows the PR as the GitHub card ai-oncall draws, in the same message below Approve and Hold: `#N` and its title, Pull request, a Merge tag (Ready for your tap, Open, Draft, Queued, Merged or Closed), a CI tag, and Open on GitHub, which opens the PR's GitHub page. A message shows at most 3 such cards; the rest of its PRs stay in its blocks.
 - Every card that names a PR carries an Open on GitHub button that opens the PR, beside Approve, Hold, Other and Explain more. A card naming several PRs has one button per PR, labeled with its number. A copy of a PR card carried in a status message keeps the button.
 - A post to your DM that links a PR ready for your tap now shows that PR once, as its card with Approve and Hold, in the same message or its thread, as if the PR had been passed with `--tap-pr`. Before, its "What this links to" preview listed the PR as "Ready for your tap" with nothing to tap. The preview now lists only PRs that draw no card. When no card command is set, so no card can be drawn, a ready PR's preview says "Not approved yet".

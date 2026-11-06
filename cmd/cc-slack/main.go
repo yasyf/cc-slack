@@ -95,6 +95,7 @@ func root() *cobra.Command {
 		cardAnswerCmd(d),
 		cardCopyCmd(d),
 		cardCmd(),
+		checkPostCmd(),
 		channelCmd(d, opChannelCreate, approveCreate, "Create a public Slack channel as the Claude app"),
 		channelCmd(d, opChannelArchive, approveArchive, "Archive a Slack channel as the Claude app"),
 		channelCmd(d, opChannelInvite, approveInvite, "Invite people to a Slack channel as the Claude app"),
@@ -119,6 +120,9 @@ func main() {
 		}
 	}
 	if err := root().Execute(); err != nil {
+		if status, exited := errors.AsType[exitStatus](err); exited {
+			os.Exit(int(status))
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
