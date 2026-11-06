@@ -1185,6 +1185,17 @@ func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 	if got := cmd.requests(t); !slices.ContainsFunc(got, func(r string) bool { return strings.Contains(r, `"answer"`) }) {
 		t.Fatalf("card command requests = %v, want the answer recorded through it", got)
 	}
+
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{mergeRowCard(), card42}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var edited map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, list).Body, &edited); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(edited["warning"], "NO APPROVE") || len(carriedOf(l.slack.sentTo(testDM)[at])) != 1 {
+		t.Fatalf("warning = %q, notice blocks = %s, want #42's Merge carried and no warning for #41's answered card", edited["warning"], notice().blocks)
+	}
 }
 
 func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApprove(t *testing.T) {

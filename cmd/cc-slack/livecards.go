@@ -349,6 +349,13 @@ func (l *liveCards) continued(channel, thread string) []string {
 	return nil
 }
 
+func (l *liveCards) awaitsTap(channel, ts string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(channel, ts)
+	return m == nil || m.Card.Waits != "" && t.open(m)
+}
+
 func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) {
 	for _, t := range l.threads {
 		if t.Channel != channel {
