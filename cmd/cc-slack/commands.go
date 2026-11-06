@@ -822,6 +822,31 @@ func unfollowCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func followsCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f      sessionFlags
+		asJSON bool
+	)
+	c := &cobra.Command{
+		Use:   "follows",
+		Short: "List a session's active Slack watches, channel follows first, from stored state",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return renderOp(c, d, f, opFollows, map[string]any{}, asJSON, renderFollows)
+		},
+	}
+	f.bind(c)
+	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result")
+	return c
+}
+
+func renderFollows(w io.Writer, res followsResult) {
+	_, _ = fmt.Fprintf(w, "session %s: %d active watches\n", res.Session, len(res.Watches))
+	for _, f := range res.Watches {
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", f.WatchID, f.Kind, f.ChannelID, f.ThreadTS, f.Owner, time.Unix(f.Created, 0).In(pacific).Format(pacificLayout))
+	}
+}
+
 func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f         sessionFlags

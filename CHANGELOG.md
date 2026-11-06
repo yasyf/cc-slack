@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cc-slack follows [--session <id>]` lists a session's active Slack watches, channel follows first, from stored state with no Slack call. Before, nothing showed which channels a session followed: `cc-slack status --session` printed only a watcher count.
 - `cc-slack check-post <file|->` runs the plugin's post checker with its findings, output and exit status. A session's PATH keeps the plugin `bin/` it started with, so a bare `check-post` was missing in any session older than the plugin version that shipped it; `cc-slack` always reaches the newest installed version.
 - A PR tap card, and a status card that names or carries one, now shows the PR as the GitHub card ai-oncall draws, in the same message below Approve and Hold: `#N` and its title, Pull request, a Merge tag (Ready for your tap, Open, Draft, Queued, Merged or Closed), a CI tag, and Open on GitHub, which opens the PR's GitHub page. A message shows at most 3 such cards; the rest of its PRs stay in its blocks.
 - Every card that names a PR carries an Open on GitHub button that opens the PR, beside Approve, Hold, Other and Explain more. A card naming several PRs has one button per PR, labeled with its number. A copy of a PR card carried in a status message keeps the button.
