@@ -78,6 +78,18 @@ func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, lin
 	return blocks, answers, nil
 }
 
+func copyLead(blocks []slack.Block, answers int) string {
+	if answers > 0 {
+		return cardCopyLead
+	}
+	for _, block := range blocks {
+		if header, isHeader := block.(*slack.HeaderBlock); isHeader {
+			return header.Text.Text
+		}
+	}
+	panic("a copied card always carries its header")
+}
+
 func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 	var title string
 	var blocks []slack.Block

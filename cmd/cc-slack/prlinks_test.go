@@ -278,6 +278,34 @@ func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
 	eventually(t, "the copy redrawn", func() bool { return len(editsOf(l.slack.edited(), theCopy.ts)) > 0 })
 }
 
+func TestACopyWithNothingToAnswerLeadsWithItsTitleUntilItsCardAsks(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is held", "tap_prs": tapPR41})
+	copied := func() (fakePost, bool) {
+		at := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
+			return p.threadTS == hisThread && strings.HasSuffix(headerOf(p.blocks), "#41 at e718a74")
+		})
+		if at < 0 {
+			return fakePost{}, false
+		}
+		return l.slack.sentTo(testDM)[at], true
+	}
+	eventually(t, "the copy", func() bool { _, drawn := copied(); return drawn })
+	theCopy, _ := copied()
+	if theCopy.text != headerOf(theCopy.blocks) {
+		t.Fatalf("copy text = %q, want the card's title %q, since it carries nothing to answer", theCopy.text, headerOf(theCopy.blocks))
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{mergeRowCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opRedrawPRCards, map[string]any{})
+	eventually(t, "the copy asks once its card carries Merge", func() bool {
+		return slices.ContainsFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts == theCopy.ts && e.text == cardCopyLead })
+	})
+}
+
 func prCards(l *liveDaemon, channelID string) []fakePost {
 	var cards []fakePost
 	for _, p := range l.slack.sentTo(channelID) {
