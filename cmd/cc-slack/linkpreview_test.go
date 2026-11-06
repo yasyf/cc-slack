@@ -487,6 +487,28 @@ func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	}
 }
 
+func TestACopyOfACardWhoseHeaderReadsBackPastSlacksLimitIsCutOnAWord(t *testing.T) {
+	l, id, _, thread := copyDaemon(t, cardBody("Merge the stack?", "merge it"))
+	long := ":raising_hand: " + strings.Repeat("ship it ", 17) + "soon"
+	const card = "1793939906.637489"
+	l.slack.add(id.DMChannelID, slack.Message{Msg: slack.Msg{Timestamp: card, Text: long, Blocks: slack.Blocks{BlockSet: []slack.Block{
+		slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, long, true, false)),
+		slack.NewActionBlock(cardActionsBlock, button(cardOptionAction+"0", "Approve")),
+	}}}})
+	l.do(opCardCopy, map[string]any{"url": id.permalink(id.DMChannelID, card, ""), "thread_ts": thread})
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(lastPost(l).blocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	head, isHeader := blocks.BlockSet[0].(*slack.HeaderBlock)
+	if !isHeader || runes(long) != 155 {
+		t.Fatalf("first block = %T for a %d-character header, want the copy's header", blocks.BlockSet[0], runes(long))
+	}
+	if got := head.Text.Text; runes(got) > 150 || !strings.HasSuffix(got, "…") || !strings.HasPrefix(long, strings.TrimSuffix(got, "…")+" ") {
+		t.Fatalf("header = %q (%d characters), want the 155 cut on a word to at most 150", got, runes(got))
+	}
+}
+
 func TestACopyOfAMessageThatDrewAsTextSaysSo(t *testing.T) {
 	l, id, _, thread := copyDaemon(t, map[string]any{"text": "Just words."})
 	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
@@ -518,14 +540,14 @@ func TestAPreviewKeepsAllOfWhatThePRChangesAndLinksGitHub(t *testing.T) {
 	}
 }
 
-func TestAPRCardDrawsInBlocksAboveItsButtonsAndNoWorkObject(t *testing.T) {
+func TestAPRCardDrawsInBlocksAboveItsButtonsWithItsWorkObjectBelow(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t).argv, "acme/app#41")
 	long := strings.Repeat("A sentence of the description. ", 200)
 	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m41", PRs: []cardPR{{URL: testPR, Change: "Chats load faster", Description: long}}}
 	l.do(opDMStatus, map[string]any{"card": card})
 	post := l.slack.sent()[0]
-	if strings.Contains(post.metadata, `"entities"`) || post.attachments != "" {
-		t.Fatalf("metadata = %s, attachments = %s, want the PR in the blocks alone", post.metadata, post.attachments)
+	if entities := entitiesOf(t, post.metadata); len(entities) != 1 || entities[0].URL != testPR || post.attachments != "" {
+		t.Fatalf("metadata = %s, attachments = %s, want the PR's Work Object and no preview", post.metadata, post.attachments)
 	}
 	at, buttons := strings.Index(post.blocks, "What changes"), strings.Index(post.blocks, cardExplainAction+"m41")
 	if at < 0 || buttons < 0 || at > buttons {

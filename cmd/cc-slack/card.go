@@ -859,7 +859,25 @@ func clipRunes(text string, limit int) string {
 }
 
 func header(text string) slack.Block {
-	return slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, clipRunes(strings.TrimSpace(text), cardMaxHeaderLen), true, false))
+	text = strings.TrimSpace(text)
+	if runes(text) > cardMaxHeaderLen {
+		cut := string([]rune(text)[:cardMaxHeaderLen-1])
+		if at := strings.LastIndex(cut, " "); at > 0 {
+			cut = cut[:at]
+		}
+		text = strings.TrimRight(cut, " ,;:—-") + "…"
+	}
+	return slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, text, true, false))
+}
+
+func fitHeaders(blocks []slack.Block) []slack.Block {
+	fitted := slices.Clone(blocks)
+	for i, b := range fitted {
+		if h, isHeader := b.(*slack.HeaderBlock); isHeader && runes(h.Text.Text) > cardMaxHeaderLen {
+			fitted[i] = header(h.Text.Text)
+		}
+	}
+	return fitted
 }
 
 func (c statusCard) links() []slack.Block {
