@@ -1209,7 +1209,7 @@ func messageText(m slack.Message) string {
 		if strings.TrimSpace(p) == "" || slices.ContainsFunc(out, func(o string) bool { return strings.Contains(o, p) }) {
 			continue
 		}
-		out = append(out, p)
+		out = append(slices.DeleteFunc(out, func(o string) bool { return strings.Contains(p, o) }), p)
 	}
 	return strings.Join(out, "\n")
 }

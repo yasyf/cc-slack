@@ -1493,6 +1493,13 @@ func TestMessageTextAppendsAttachmentsAndBlocks(t *testing.T) {
 			"[api] Error: Not authorized\n<https://acme.sentry.io/issues/7815544165/|*Error*>\nShort ID: API-1NH9",
 		},
 		{
+			"fallback text the block body repeats with its link",
+			slack.Msg{Text: ":x: Deploy cloudrunner-next on AIG failed.", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, ":x: Deploy cloudrunner-next on AIG failed. <https://buildkite.com/forge/release/builds/13589|Open the job>\nNext: `tools/ci release resume nascent-brossa`", false, false), nil, nil),
+			}}},
+			":x: Deploy cloudrunner-next on AIG failed. <https://buildkite.com/forge/release/builds/13589|Open the job>\nNext: `tools/ci release resume nascent-brossa`",
+		},
+		{
 			"attachment fields and blocks",
 			slack.Msg{Attachments: []slack.Attachment{{
 				Fallback: "[Triggered] lane stale",
