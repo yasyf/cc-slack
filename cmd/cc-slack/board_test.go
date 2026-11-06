@@ -295,25 +295,53 @@ func TestWrittenInAnswerFromTheOtherModalAnswersTheCardOnce(t *testing.T) {
 	}
 }
 
-func TestReusedOpenWaitsIDEditsTheCardInPlace(t *testing.T) {
+func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsItAgainBesideIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
 	posts := len(l.slack.sent())
+	if same := postWaiting(t, l, mergeCard()); same.ts != c.ts || len(l.slack.sent()) != posts {
+		t.Fatalf("asking the same card again posted %d new messages, want none", len(l.slack.sent())-posts)
+	}
 
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
 	c2 := postWaiting(t, l, redrawn)
-	if c2.ts != c.ts || len(l.slack.sent()) != posts {
-		t.Fatalf("redraw posted %d new messages at %s, want the card at %s edited in place", len(l.slack.sent())-posts, c2.ts, c.ts)
+	if c2.ts != c.ts {
+		t.Fatalf("redraw landed at %s, want the card at %s edited in place", c2.ts, c.ts)
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") {
 		t.Fatalf("card edits %v, want the new question drawn over the old card", edits)
+	}
+	if sent := l.slack.sent()[posts:]; len(sent) != 1 || sent[0].threadTS != "" || sent[0].text != cardCopyLead || !strings.Contains(sent[0].blocks, "Merge #41 before the freeze?") {
+		t.Fatalf("posts after the redraw = %+v, want one copy of the new card at the DM root", sent)
 	}
 	answerOnBoard(t, l, c2, "Merge")
 	raw := mustJSON(map[string]any{"card": redrawn})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `was answered with "Merge"`) {
 		t.Fatalf("re-asking an answered card: %v", err)
+	}
+}
+
+func TestACopyOfAWaitingCardFollowsItsRedraw(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	var thread map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "About the merge."}).Body, &thread); err != nil {
+		t.Fatal(err)
+	}
+	var copied postResult
+	if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": c.url(), "thread_ts": thread["thread_ts"]}).Body, &copied); err != nil {
+		t.Fatal(err)
+	}
+
+	redrawn := mergeCard()
+	redrawn.Title = "Merge #41 before the freeze?"
+	postWaiting(t, l, redrawn)
+
+	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !strings.Contains(edits[0], "Merge #41 before the freeze?") || !strings.Contains(edits[0], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want the copy redrawn with the new question and its buttons", edits)
 	}
 }
 
@@ -326,8 +354,11 @@ func TestAWithdrawnWaitsIDAskedAgainRevivesTheCardInPlace(t *testing.T) {
 
 	again := postWaiting(t, l, mergeCard())
 
-	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts {
-		t.Fatalf("asking again posted %d new messages at %s, want the card at %s revived in place", len(l.slack.sent())-posts, again.ts, c.ts)
+	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts+1 {
+		t.Fatalf("asking again posted %d new messages at %s, want the card at %s revived in place and one copy of it", len(l.slack.sent())-posts, again.ts, c.ts)
+	}
+	if copied := l.slack.sent()[posts]; copied.threadTS != "" || copied.text != cardCopyLead || !strings.Contains(copied.blocks, "Merge #41 now?") {
+		t.Fatalf("copy = %+v, want the revived card posted again at the DM root", copied)
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], "Withdrawn") || !strings.Contains(edits[len(edits)-1], "Merge #41 now?") {
 		t.Fatalf("card edits %v, want the question and its buttons back with the withdrawn line gone", edits)
@@ -569,7 +600,7 @@ func TestAReplyAboutAWaitingCardLandsInThatCardsThread(t *testing.T) {
 	}
 }
 
-func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsIt(t *testing.T) {
+func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsItAgain(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
@@ -579,8 +610,9 @@ func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsIt(t *testing.T) {
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
 	again := mirroredCard(t, l, map[string]any{"card": redrawn, "thread_ts": c.thread})
-	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != 1 || len(editsOf(l.slack.edited(), c.ts)) != 1 {
-		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited", again, c, l.slack.sent())
+	sent := l.slack.sent()
+	if again.ts != c.ts || again.thread != c.thread || len(sent) != 2 || sent[1].threadTS != "" || sent[1].text != cardCopyLead || len(editsOf(l.slack.edited(), c.ts)) != 1 {
+		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited and one copy at the DM root", again, c, sent)
 	}
 }
 

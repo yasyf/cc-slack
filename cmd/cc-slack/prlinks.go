@@ -453,7 +453,7 @@ func approvesOn(blocks []slack.Block, card string) bool {
 	})
 }
 
-func (a *app) redrawPRCopies(ctx context.Context, id identity, card cardRef) error {
+func (a *app) redrawCopies(ctx context.Context, id identity, card cardRef) error {
 	copies := a.cards.copiesOf(card.channel, card.ts)
 	if len(copies) == 0 {
 		return nil
@@ -529,7 +529,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		return err
 	}
 	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
-	return a.redrawPRCopies(ctx, id, card)
+	return a.redrawCopies(ctx, id, card)
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {

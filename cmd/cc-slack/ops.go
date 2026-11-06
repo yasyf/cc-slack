@@ -2245,37 +2245,49 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 }
 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
+	thread, ts, posted, again, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
+	if err == nil && again {
+		if err := a.askAgain(ctx, db, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
+			a.poller.log.Printf("card %s redrawn in place, but not posted again beside it: %v", ts, err)
+		}
+	}
+	return thread, ts, posted, err
+}
+
+func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, bool, error) {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	threads, err := sessionThreads(ctx, db, sub.ID, id.DMChannelID)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
 	if msg.rootOnly {
-		return a.rootCard(ctx, db, sub, id, threads, msg)
+		thread, posted, err := a.rootCard(ctx, db, sub, id, threads, msg)
+		return thread, "", posted, false, err
 	}
 	card := *msg.card
 	replaces := ""
 	if card.Replaces != "" {
 		ref, err := parsePermalink(card.Replaces)
 		if err != nil {
-			return "", "", false, err
+			return "", "", false, false, err
 		}
 		under, replaces, card.Replaces = cmp.Or(ref.threadTS, ref.ts), ref.ts, ""
 	}
 	place, err := cards.placeFor(id.DMChannelID, under, replaces, threads, card)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
 	if place.nothing {
-		return "", "", false, nil
+		return "", "", false, false, nil
 	}
 	t, prior, asked, superseded := place.thread, place.prior, place.asked, place.superseded
+	again := place.redraws(card)
 	t.apply(card, msg.tag, a.now(), false)
 	placed, err := a.placeCard(ctx, db, id, t, asked)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
 	if place.revived && asked != nil {
 		if err := a.newAPI(id.Token).RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: asked.TS}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
@@ -2297,12 +2309,12 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 			slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer it there"))
 	}
 	if prior != nil && asked != nil {
-		return t.Thread, placed.TS, true, nil
+		return t.Thread, placed.TS, true, again, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, t.Thread); err != nil {
-		return "", placed.TS, true, err
+		return "", placed.TS, true, false, err
 	}
-	return t.Thread, placed.TS, true, nil
+	return t.Thread, placed.TS, true, again, nil
 }
 
 type cardPlace struct {
@@ -2310,6 +2322,10 @@ type cardPlace struct {
 	prior             *liveThread
 	asked, superseded *liveMessage
 	nothing, revived  bool
+}
+
+func (p cardPlace) redraws(card statusCard) bool {
+	return p.asked != nil && card.Waits != "" && (p.revived || p.asked.Card.Waits != "" && !sameCard(p.asked.Card, card))
 }
 
 func (l *liveCards) placeFor(channel, under, replaces string, threads []string, card statusCard) (cardPlace, error) {
@@ -2388,7 +2404,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	return placed, nil
 }
 
-func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, threads []string, msg dmMessage) (string, string, bool, error) {
+func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, threads []string, msg dmMessage) (string, bool, error) {
 	cards := a.cards
 	now := a.now()
 	prior := cards.rooted(id.DMChannelID, threads)
@@ -2398,23 +2414,23 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		text, blocks := t.rootMessage(now, cards.refs)
 		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil, msg.card.entities()...)
 		if err != nil {
-			return "", "", false, err
+			return "", false, err
 		}
 		t.Thread, t.Root.TS = res.TS, res.TS
 		cards.commit(t)
 		if err := a.bindSessionThread(ctx, db, sub, id, t.Thread); err != nil {
-			return "", "", true, err
+			return "", true, err
 		}
-		return t.Thread, "", true, nil
+		return t.Thread, true, nil
 	}
 	t := cards.draft(prior.Channel, prior.Thread)
 	t.apply(*msg.card, msg.tag, now, true)
 	text, blocks := t.rootMessage(now, cards.refs)
 	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks, msg.card.entities()...); err != nil {
-		return "", "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
+		return "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
 	}
 	cards.commit(t)
-	return t.Thread, "", true, nil
+	return t.Thread, true, nil
 }
 
 func (a *app) bindSessionThread(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread string) error {
