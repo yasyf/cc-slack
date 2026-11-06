@@ -753,6 +753,51 @@ func TestFollowJoinsPublicChannelsAndDedupes(t *testing.T) {
 	}
 }
 
+func TestFollowsListsOnlyTheSessionsActiveWatches(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: testThread, Text: "parent"}})
+	follow := func(d cmd.Deps, session string, body map[string]string) followResult {
+		raw, _ := json.Marshal(body)
+		reply, err := invoke(l.ctx, d, session, "/any", opFollow, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res followResult
+		if err := json.Unmarshal(reply.Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	follows := func(d cmd.Deps, session string) followsResult {
+		reply, err := invoke(l.ctx, d, session, "/any", opFollows, []byte(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res followsResult
+		if err := json.Unmarshal(reply.Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	stranger := l.deps
+	stranger.ClaudePID = func() int { return testPID + 3 }
+
+	thread := follow(l.deps, testSession, map[string]string{"channel_id": testChannel, "thread_ts": testThread})
+	channel := follow(l.deps, testSession, map[string]string{"channel_id": testChannel})
+	theirs := follow(stranger, "other-session", map[string]string{"channel_id": testChannel})
+	l.do(opUnfollow, map[string]int64{"watch_id": thread.WatchID})
+
+	mine := follows(l.deps, testSession)
+	if mine.Session != testSession || len(mine.Watches) != 1 || mine.Watches[0].WatchID != channel.WatchID || mine.Watches[0].Kind != kindChannel || mine.Watches[0].ChannelID != testChannel {
+		t.Fatalf("follows = %+v, want only the active channel watch %d", mine, channel.WatchID)
+	}
+	other := follows(l.deps, "other-session")
+	if other.Session != "other-session" || len(other.Watches) != 1 || other.Watches[0].WatchID != theirs.WatchID {
+		t.Fatalf("follows --session other-session = %+v, want only its watch %d", other, theirs.WatchID)
+	}
+}
+
 func TestFollowRejectsUnknownOwnerAndUnreadableChannel(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

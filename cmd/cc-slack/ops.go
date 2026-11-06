@@ -50,6 +50,7 @@ const (
 	opFollow        daemon.Op = "follow"
 	opHoldDelivery  daemon.Op = "hold-delivery"
 	opUnfollow      daemon.Op = "unfollow"
+	opFollows       daemon.Op = "follows"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
 	opCardCopy      daemon.Op = "card-copy"
@@ -274,6 +275,20 @@ type unfollowResult struct {
 	Remaining int  `json:"remaining"`
 }
 
+type followedWatch struct {
+	WatchID   int64  `json:"watch_id"`
+	Kind      string `json:"kind"`
+	ChannelID string `json:"channel_id"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
+	Owner     string `json:"owner,omitempty"`
+	Created   int64  `json:"created"`
+}
+
+type followsResult struct {
+	Session string          `json:"session"`
+	Watches []followedWatch `json:"watches"`
+}
+
 type whoami struct {
 	identity
 	Username string `json:"username"`
@@ -312,6 +327,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opFollow, a.handleFollow)
 	s.Register(opHoldDelivery, a.handleHoldDelivery)
 	s.Register(opUnfollow, a.handleUnfollow)
+	s.Register(opFollows, a.handleFollows)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
 	s.Register(opCardCopy, a.handleCardCopy)
@@ -1866,6 +1882,34 @@ func (a *app) handleUnfollow(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fmt.Sprintf("count watches: %v", err))
 	}
 	return ok(unfollowResult{Stopped: n > 0, Remaining: remaining})
+}
+
+func (a *app) handleFollows(hc daemon.HandlerCtx) daemon.Reply {
+	sub, found, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if !found {
+		return fail("no cc-slack session for this Claude window, so it follows nothing")
+	}
+	rows, err := hc.DB.QueryContext(hc.Ctx, `SELECT id, kind, channel_id, thread_ts, owner_agent_id, created_at FROM watches
+		WHERE subject_id = ? AND status = 'active' ORDER BY kind, id`, sub.ID)
+	if err != nil {
+		return fail(fmt.Sprintf("list watches: %v", err))
+	}
+	defer func() { _ = rows.Close() }()
+	res := followsResult{Session: sub.SessionID, Watches: []followedWatch{}}
+	for rows.Next() {
+		var w followedWatch
+		if err := rows.Scan(&w.WatchID, &w.Kind, &w.ChannelID, &w.ThreadTS, &w.Owner, &w.Created); err != nil {
+			return fail(fmt.Sprintf("list watches: %v", err))
+		}
+		res.Watches = append(res.Watches, w)
+	}
+	if err := rows.Err(); err != nil {
+		return fail(fmt.Sprintf("list watches: %v", err))
+	}
+	return ok(res)
 }
 
 func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
