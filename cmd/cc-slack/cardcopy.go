@@ -110,40 +110,49 @@ func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 	return append(blocks, slack.NewActionBlock(cardCopyBlock+"-"+ref.ts, append(buttons, links...)...)), picks + len(buttons)
 }
 
-// carriedCard is a card's copy drawn inside another message, so each block
-// takes an id of its own that no block of that message holds.
-func carriedCard(card []slack.Block, ref permalinkRef) []slack.Block {
+func carriedCard(card []slack.Block, ref permalinkRef) slack.Block {
 	blocks, _ := copiedCard(card, ref)
-	for n, block := range blocks {
-		blocks[n] = withBlockID(block, fmt.Sprintf("%s-%s-%d", cardCopyBlock, ref.ts, n))
+	if blocks == nil {
+		return nil
 	}
-	return blocks
-}
-
-func withBlockID(block slack.Block, id string) slack.Block {
-	switch b := block.(type) {
-	case *slack.HeaderBlock:
-		c := *b
-		c.BlockID = id
-		return &c
-	case *slack.SectionBlock:
-		c := *b
-		c.BlockID = id
-		return &c
-	case *slack.ActionBlock:
-		c := *b
-		c.BlockID = id
-		return &c
-	case *slack.ContextBlock:
-		c := *b
-		c.BlockID = id
-		return &c
-	case *slack.TableBlock:
-		c := *b
-		c.BlockID = id
-		return &c
+	var title, detail, note string
+	var answer *slack.ButtonBlockElement
+	offer := func(b *slack.ButtonBlockElement) {
+		if answer == nil && strings.HasPrefix(b.ActionID, cardCopyAction) {
+			answer = b
+		}
 	}
-	return block
+	for _, block := range blocks {
+		switch b := block.(type) {
+		case *slack.HeaderBlock:
+			title = cmp.Or(title, "*"+mrkdwnEscapes.Replace(b.Text.Text)+"*")
+		case *slack.SectionBlock:
+			if b.Text != nil {
+				detail = cmp.Or(detail, b.Text.Text)
+			}
+			if b.Accessory != nil && b.Accessory.ButtonElement != nil {
+				offer(b.Accessory.ButtonElement)
+			}
+		case *slack.ContextBlock:
+			for _, element := range b.ContextElements.Elements {
+				if text, isText := element.(*slack.TextBlockObject); isText {
+					note = cmp.Or(note, text.Text)
+				}
+			}
+		case *slack.ActionBlock:
+			for _, element := range b.Elements.ElementSet {
+				if button, isButton := element.(*slack.ButtonBlockElement); isButton {
+					offer(button)
+				}
+			}
+		}
+	}
+	text := strings.TrimSpace(title + "\n" + cmp.Or(detail, note))
+	row := slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, clipRunes(text, cardMaxSectionLen), false, false), nil, nil, slack.SectionBlockOptionBlockID(cardCopyBlock+"-"+ref.ts))
+	if answer != nil {
+		row.Accessory = slack.NewAccessory(answer)
+	}
+	return row
 }
 
 func answers(actionID string) bool {
