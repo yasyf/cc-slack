@@ -746,9 +746,10 @@ order.
    draft.
 3. When the post narrates a sequence of events, attach a timeline image as
    "Show a timeline as an image" says.
-4. Write the text to a temp file and run
-   `"${CLAUDE_PLUGIN_ROOT}/bin/check-post" <tmpfile>`, or `-` for stdin.
-   Fix every line it prints; it exits 1 on a finding. It flags raw commit
+4. Write the text to a temp file and run `cc-slack check-post <tmpfile>`,
+   or `cc-slack check-post -` for stdin. It runs the newest installed
+   plugin's checker, which a bare `check-post` on an older session's PATH may
+   not reach. Fix every line it prints; it exits 1 on a finding. It flags raw commit
    shas, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
    and build or PR numbers, bare URLs, one-letter codenames such as "D",
    multi-agent terms such as lane, desk, walker, parity, and fence, zone
