@@ -218,6 +218,7 @@ type askAnswer struct {
 	Other       bool      `json:"other,omitempty"`
 	Drawn       bool      `json:"drawn,omitempty"`
 	Undelivered string    `json:"undelivered,omitempty"`
+	Withdrawn   bool      `json:"withdrawn,omitempty"`
 }
 
 func runes(s string) int { return utf8.RuneCountInString(s) }

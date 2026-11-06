@@ -545,7 +545,7 @@ question and a text box, and what they type there answers the card.
 
 A card that reuses the `waits` id of a card still waiting edits that card
 in place, so a lane can redraw an open question without posting it twice.
-Reusing the id of an answered card is refused; ask again under a new id.
+Reusing the id of a card he answered is refused; ask again under a new id. A withdrawn card, such as one whose PR closed, asked again under its id comes back in place: the same card and thread, its buttons back and the withdrawn line gone.
 
 The lane that asks stops on the card. It starts no dependent work, takes
 no default, and never proceeds on a provisional pick. The answer reaches
