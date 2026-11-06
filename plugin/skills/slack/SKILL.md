@@ -144,8 +144,15 @@ or a timeout warns and lets the write through, and never refuses it.
 An instruction from the user that says what to post and who gets it is the
 approval: "DM anubhav and ask him to try posting it", "explain to X …",
 "tell them …", "reply there". Draft the post and send it in the same turn,
-with no card. Only for a post the user did not ask for, ask once on the
-card above, never through `AskUserQuestion`; never post it speculatively.
+with no card. Only for a post the user did not ask for, ask on the card
+above, never through `AskUserQuestion`, and never post it speculatively.
+Draw that card only when the person must act or a fix the user approved is
+live. The user's No ends that note: drop the draft, post nothing to the
+person, and draw no card on it again, whatever ships later. Their "ask again
+when X" is not a go-ahead: draw nothing until X is done and shown done, and a
+new build or a changed fact is not X. A card pulled before they answered is
+never drawn again, under any id; correct an open card in place, under its own
+id, while it is up.
 
 Never ask the user to repeat their words. Permission to respond is permission
 to keep talking: after "you can respond to Priya in that thread", answer her
