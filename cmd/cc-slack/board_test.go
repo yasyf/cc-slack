@@ -317,6 +317,33 @@ func TestReusedOpenWaitsIDEditsTheCardInPlace(t *testing.T) {
 	}
 }
 
+func TestAWithdrawnWaitsIDAskedAgainRevivesTheCardInPlace(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "acme/app#41 is closed", "withdrawn": true, "via": c.url()})
+	posts, unreacted := len(l.slack.sent()), l.slack.callCount("reactions.remove")
+
+	again := postWaiting(t, l, mergeCard())
+
+	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts {
+		t.Fatalf("asking again posted %d new messages at %s, want the card at %s revived in place", len(l.slack.sent())-posts, again.ts, c.ts)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], "Withdrawn") || !strings.Contains(edits[len(edits)-1], "Merge #41 now?") {
+		t.Fatalf("card edits %v, want the question and its buttons back with the withdrawn line gone", edits)
+	}
+	if l.slack.callCount("reactions.remove") == unreacted {
+		t.Fatal("the revived card kept its withdrawn mark")
+	}
+	if res := answerOnBoard(t, l, again, "Merge"); !res.Answered {
+		t.Fatalf("a tap on the revived card was not taken: %+v", res)
+	}
+	raw := mustJSON(map[string]any{"card": mergeCard()})
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `was answered with "Merge"`) {
+		t.Fatalf("re-asking a card he answered: %v", err)
+	}
+}
+
 func TestWaitingCardsTellTheBoardOnPostAndOnASlackAnswer(t *testing.T) {
 	calls := fakePresent(t)
 	l := startDaemon(t)

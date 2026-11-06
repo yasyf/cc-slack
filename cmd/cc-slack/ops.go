@@ -2233,6 +2233,11 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	if err != nil {
 		return "", "", false, err
 	}
+	if place.revived && asked != nil {
+		if err := a.newAPI(id.Token).RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: asked.TS}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
+			a.poller.log.Printf("card %s asked again in place, but its withdrawn mark stays: %v", asked.TS, err)
+		}
+	}
 	t.keep(card, placed)
 	if superseded != nil {
 		cards.forget(prior, superseded.TS)
@@ -2260,16 +2265,18 @@ type cardPlace struct {
 	thread            *liveThread
 	prior             *liveThread
 	asked, superseded *liveMessage
-	nothing           bool
+	nothing, revived  bool
 }
 
 func (l *liveCards) placeFor(channel, under, replaces string, threads []string, card statusCard) (cardPlace, error) {
 	place := cardPlace{thread: l.draft(channel, under), prior: l.holding(channel, threads, card)}
 	if place.prior != nil {
-		if answer, done := place.prior.Answers[card.Waits]; card.Waits != "" && done {
+		answer, done := place.prior.Answers[card.Waits]
+		if card.Waits != "" && done && !answer.Withdrawn {
 			return place, fmt.Errorf("waiting card %q was answered with %q at %s; %w",
 				card.Waits, answer.Label, answer.At.In(pacific).Format(cardTimeLayout), errAskedAgain)
 		}
+		place.revived = card.Waits != "" && done
 		place.asked = place.prior.kept(card)
 	}
 	switch {
@@ -2283,6 +2290,9 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 	}
 	if place.asked == nil && place.superseded == nil && replaces != "" {
 		place.asked = &liveMessage{TS: replaces}
+	}
+	if place.revived {
+		delete(place.thread.Answers, card.Waits)
 	}
 	return place, nil
 }
