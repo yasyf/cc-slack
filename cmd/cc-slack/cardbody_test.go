@@ -544,8 +544,12 @@ func TestAWaitingCardThatReplacesAPostTakesItsPlaceWithItsButtons(t *testing.T) 
 			ask.Title = "Land the relay fix tonight?"
 			l.do(opDMStatus, map[string]any{"card": ask})
 			edits = l.slack.edited()
-			if len(l.slack.sent()) != before || edits[len(edits)-1].ts != first["ts"] || !strings.Contains(edits[len(edits)-1].blocks, "tonight") {
-				t.Fatalf("posts = %d, want %d; edits = %+v, want the waiting card kept on the first message", len(l.slack.sent()), before, edits)
+			sent := l.slack.sent()
+			if len(sent) != before+1 || edits[len(edits)-1].ts != first["ts"] || !strings.Contains(edits[len(edits)-1].blocks, "tonight") {
+				t.Fatalf("posts = %d, want %d; edits = %+v, want the waiting card kept on the first message", len(sent), before+1, edits)
+			}
+			if copied := sent[before]; copied.threadTS != thread || copied.text != cardCopyLead || !strings.Contains(copied.blocks, "tonight") {
+				t.Fatalf("copy = %+v, want the redrawn card posted again where it sits", copied)
 			}
 		})
 	}

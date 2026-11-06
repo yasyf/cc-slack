@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -50,6 +52,36 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	a.cards.rememberCopy(id.DMChannelID, b.ThreadTS, liveCardCopy{Card: ref.ts, TS: res.TS}, a.now())
 	return ok(res)
+}
+
+func (a *app) askAgain(ctx context.Context, db *sql.DB, id identity, card cardRef) error {
+	if err := a.redrawCopies(ctx, id, card); err != nil {
+		return err
+	}
+	link := id.permalink(card.channel, card.ts, card.thread)
+	ref, err := parsePermalink(link)
+	if err != nil {
+		return err
+	}
+	copied, err := a.cardCopy(ctx, id, ref, link)
+	if err != nil {
+		return err
+	}
+	under := card.thread
+	if under == card.ts {
+		under = ""
+	}
+	res, err := a.post(ctx, db, id, card.channel, under, cardCopyLead, copied, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
+	if err != nil {
+		return err
+	}
+	a.cards.rememberCopy(card.channel, cmp.Or(under, res.TS), liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
+	return nil
+}
+
+func sameCard(was, now statusCard) bool {
+	was.Images, now.Images = nil, nil
+	return bytes.Equal(mustJSON(was), mustJSON(now))
 }
 
 func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, error) {
