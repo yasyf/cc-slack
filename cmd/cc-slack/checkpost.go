@@ -1,16 +1,22 @@
 package main
 
 import (
+	"cmp"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/yasyf/cc-interact/version"
 )
 
 const pluginRootEnv = "BINRUN_PLUGIN_ROOT"
+
+var releaseDir = regexp.MustCompile(`^\d+(\.\d+)*$`)
 
 type exitStatus int
 
@@ -27,17 +33,45 @@ runs the check-post of the newest installed plugin, which a session's PATH may
 not hold.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			root := os.Getenv(pluginRootEnv)
-			if root == "" {
-				return errors.New("check-post: " + pluginRootEnv + " is unset, so the plugin's check-post cannot be found; run cc-slack through its plugin's bin/cc-slack")
+			root, err := pluginRoot()
+			if err != nil {
+				return fmt.Errorf("check-post: %w", err)
 			}
 			check := exec.CommandContext(c.Context(), filepath.Join(root, "skills", "slack", "scripts", "check-post"), args...) //nolint:gosec // G204: the plugin's own check-post script, never a shell
 			check.Stdin, check.Stdout, check.Stderr = c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr()
-			err := check.Run()
+			err = check.Run()
 			if exited, ok := errors.AsType[*exec.ExitError](err); ok {
 				return exitStatus(exited.ExitCode())
 			}
 			return err
 		},
 	}
+}
+
+func pluginRoot() (string, error) {
+	if root := os.Getenv(pluginRootEnv); root != "" {
+		return root, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	versions := filepath.Join(cmp.Or(os.Getenv("CLAUDE_CONFIG_DIR"), filepath.Join(home, ".claude")), "plugins", "cache", channelPlugin.Marketplace, channelPlugin.Name)
+	entries, err := os.ReadDir(versions)
+	if err != nil {
+		return "", fmt.Errorf("no %s plugin is installed: %w", channelPlugin.Name, err)
+	}
+	newest := ""
+	for _, e := range entries {
+		if _, err := os.Stat(filepath.Join(versions, e.Name(), ".orphaned_at")); !e.IsDir() || !releaseDir.MatchString(e.Name()) || err == nil { //nolint:gosec // G703: a version directory of this plugin in the user's own Claude config dir
+			continue
+		}
+		if newest == "" || version.Newer(e.Name(), newest) {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		return "", fmt.Errorf("no %s plugin version under %s is in use", channelPlugin.Name, versions)
+	}
+	return filepath.Join(versions, newest), nil
 }

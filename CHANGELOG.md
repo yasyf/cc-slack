@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cc-slack check-post` run through Homebrew's `cc-slack`, or any way but the plugin's launcher, finds the newest installed plugin's checker. Before, it refused with "BINRUN_PLUGIN_ROOT is unset", and Homebrew's `cc-slack` comes first on most PATHs.
 - A header over Slack's 150 characters is cut at its last whole word with an ellipsis, wherever a post or edit carries one, where `card-copy` used to fail with "Slack would refuse block 1 (header)". Slack reads an emoji in a header back as its `:name:`, so a copied header could run past 150 though the card had fit.
 - A tap on a card copy whose answer is on record now redraws that copy to its answer and drops its buttons, even when another machine posted the copy. Before, such a copy kept Approve and Hold, and the bot posted "Your tap did not change this message" under it, so the card read as still asking.
 - A tap on a card whose session has ended now also reaches the session holding your DM, as a reply it owes, so a tap with no ask id, such as Ack or an option, is heard too. The card closes naming who heard it.

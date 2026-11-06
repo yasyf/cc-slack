@@ -3,10 +3,33 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCheckPostFindsTheNewestPluginVersionInUseWithoutTheLauncher(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv(pluginRootEnv, "")
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	versions := filepath.Join(config, "plugins", "cache", channelPlugin.Marketplace, channelPlugin.Name)
+	for _, v := range []string{"0.9.4", "0.11.2", "0.13.0", "scratch"} {
+		if err := os.MkdirAll(filepath.Join(versions, v), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(versions, "0.13.0", ".orphaned_at"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if root, err := pluginRoot(); err != nil || root != filepath.Join(versions, "0.11.2") {
+		t.Fatalf("plugin root = %q, %v; want 0.11.2, the newest version Claude Code has not orphaned", root, err)
+	}
+	t.Setenv(pluginRootEnv, "/launcher/root")
+	if root, err := pluginRoot(); err != nil || root != "/launcher/root" {
+		t.Fatalf("plugin root = %q, %v; want the launcher's root", root, err)
+	}
+}
 
 func TestCheckPostFlagsABadPostAndPassesACleanOneWithTheScriptsExitStatus(t *testing.T) {
 	plugin, err := filepath.Abs(filepath.Join("..", "..", "plugin"))
