@@ -414,13 +414,17 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 
 func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, placed []cardRef, waiting []string) string {
 	link := id.permalink(post.channel, post.ts, post.thread)
-	held, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, post.ts)
-	if err != nil {
-		return fmt.Sprintf("NO APPROVE READ: %s lists %s for his tap, and reading it back from Slack failed, so whether it carries Approve is unknown: %v", link, strings.Join(waiting, ", "), err)
+	var held []slack.Block
+	for _, ts := range append([]string{post.ts}, a.cards.continued(post.channel, post.thread)...) {
+		message, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, ts)
+		if err != nil {
+			return fmt.Sprintf("NO APPROVE READ: %s lists %s for his tap, and reading it back from Slack failed, so whether it carries Approve is unknown: %v", link, strings.Join(waiting, ", "), err)
+		}
+		held = append(held, message.Blocks.BlockSet...)
 	}
 	var missing []string
 	for _, card := range placed {
-		if !approvesOn(held.Blocks.BlockSet, card.ts) {
+		if !approvesOn(held, card.ts) {
 			missing = append(missing, id.permalink(card.channel, card.ts, card.thread))
 		}
 	}
@@ -434,12 +438,18 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 }
 
 func approvesOn(blocks []slack.Block, card string) bool {
+	answersCard := func(b *slack.ButtonBlockElement) bool { return strings.HasPrefix(b.ActionID, cardCopyAction+card+":") }
 	return slices.ContainsFunc(blocks, func(block slack.Block) bool {
-		actions, ok := block.(*slack.ActionBlock)
-		return ok && slices.ContainsFunc(actions.Elements.ElementSet, func(element slack.BlockElement) bool {
-			b, isButton := element.(*slack.ButtonBlockElement)
-			return isButton && strings.HasPrefix(b.ActionID, cardCopyAction+card+":")
-		})
+		switch b := block.(type) {
+		case *slack.ActionBlock:
+			return slices.ContainsFunc(b.Elements.ElementSet, func(element slack.BlockElement) bool {
+				button, isButton := element.(*slack.ButtonBlockElement)
+				return isButton && answersCard(button)
+			})
+		case *slack.SectionBlock:
+			return b.Accessory != nil && b.Accessory.ButtonElement != nil && answersCard(b.Accessory.ButtonElement)
+		}
+		return false
 	})
 }
 

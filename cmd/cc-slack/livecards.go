@@ -29,6 +29,7 @@ const (
 	refHostGitHub     = "github"
 	refHostBuildkite  = "buildkite"
 	liveUpdateTimeout = 30 * time.Second
+	carriedMoreText   = "More to answer from the message above"
 )
 
 var goneCardCodes = map[string]bool{"message_not_found": true, "cant_update_message": true, "channel_not_found": true}
@@ -48,22 +49,23 @@ type liveMessage struct {
 }
 
 type liveThread struct {
-	Channel  string                  `json:"channel"`
-	Thread   string                  `json:"thread"`
-	Root     *liveMessage            `json:"root,omitempty"`
-	Reply    *liveMessage            `json:"reply,omitempty"`
-	Waiting  map[string]*liveMessage `json:"waiting,omitempty"`
-	Groups   map[string]*liveMessage `json:"groups,omitempty"`
-	Keyed    map[string]*liveMessage `json:"keyed,omitempty"`
-	PRCards  []*liveMessage          `json:"pr_cards,omitempty"`
-	Copies   []liveCardCopy          `json:"copies,omitempty"`
-	Carries  []string                `json:"carries,omitempty"`
-	Timeline []timelineEntry         `json:"timeline,omitempty"`
-	Asks     []cardAsk               `json:"asks,omitempty"`
-	Answers  map[string]askAnswer    `json:"answers,omitempty"`
-	Updated  time.Time               `json:"updated"`
-	Drawn    time.Time               `json:"drawn"`
-	Stale    bool                    `json:"stale,omitempty"`
+	Channel   string                  `json:"channel"`
+	Thread    string                  `json:"thread"`
+	Root      *liveMessage            `json:"root,omitempty"`
+	Reply     *liveMessage            `json:"reply,omitempty"`
+	Waiting   map[string]*liveMessage `json:"waiting,omitempty"`
+	Groups    map[string]*liveMessage `json:"groups,omitempty"`
+	Keyed     map[string]*liveMessage `json:"keyed,omitempty"`
+	PRCards   []*liveMessage          `json:"pr_cards,omitempty"`
+	Copies    []liveCardCopy          `json:"copies,omitempty"`
+	Carries   []string                `json:"carries,omitempty"`
+	Continued []string                `json:"continued,omitempty"`
+	Timeline  []timelineEntry         `json:"timeline,omitempty"`
+	Asks      []cardAsk               `json:"asks,omitempty"`
+	Answers   map[string]askAnswer    `json:"answers,omitempty"`
+	Updated   time.Time               `json:"updated"`
+	Drawn     time.Time               `json:"drawn"`
+	Stale     bool                    `json:"stale,omitempty"`
 }
 
 type liveCardCopy struct {
@@ -284,16 +286,67 @@ func (l *liveCards) carriersOf(drawn *liveThread, cards map[string]bool) []cardR
 }
 
 func (l *liveCards) carried(t *liveThread, now time.Time) []slack.Block {
-	var blocks []slack.Block
+	var rows []slack.Block
 	for _, ts := range t.Carries {
 		ct, m := l.liveMessage(t.Channel, ts)
 		if m == nil {
 			continue
 		}
 		_, card := ct.replyMessage(m, now, l.refs)
-		blocks = append(blocks, carriedCard(card, permalinkRef{channelID: t.Channel, ts: m.TS, threadTS: ct.Thread})...)
+		if row := carriedCard(card, permalinkRef{channelID: t.Channel, ts: m.TS, threadTS: ct.Thread}); row != nil {
+			rows = append(rows, row)
+		}
 	}
-	return blocks
+	return rows
+}
+
+func (l *liveCards) withCarried(t *liveThread, blocks []slack.Block, now time.Time) ([]slack.Block, [][]slack.Block) {
+	rows := l.carried(t, now)
+	head := min(len(rows), max(0, cardMaxBlocks-len(blocks)))
+	return append(blocks, rows[:head]...), slices.Collect(slices.Chunk(rows[head:], cardMaxBlocks))
+}
+
+func (l *liveCards) continueCarried(ctx context.Context, api slackAPI, channel, thread string, held []string, pages [][]slack.Block) ([]string, error) {
+	kept := make([]string, 0, len(pages))
+	for n, page := range pages {
+		if n < len(held) {
+			err := updateMessage(ctx, api, channel, held[n], carriedMoreText, page)
+			if err == nil {
+				kept = append(kept, held[n])
+				continue
+			}
+			if !goneCardCodes[errorCode(err)] {
+				return append(kept, held[n:]...), err
+			}
+		}
+		if err := checkBlocks(page); err != nil {
+			return append(kept, held[min(n, len(held)):]...), err
+		}
+		id, err := loadIdentity(ctx, l.plane.DB())
+		if err != nil {
+			return append(kept, held[min(n, len(held)):]...), err
+		}
+		_, ts, err := api.PostMessageContext(ctx, channel, id.postOptions(carriedMoreText, thread, slack.MsgOptionBlocks(page...))...)
+		if err != nil {
+			return append(kept, held[min(n+1, len(held)):]...), err
+		}
+		kept = append(kept, ts)
+	}
+	for at, ts := range held[min(len(pages), len(held)):] {
+		if _, _, err := api.DeleteMessageContext(ctx, channel, ts); err != nil && !goneCardCodes[errorCode(err)] {
+			return append(kept, held[len(pages)+at:]...), err
+		}
+	}
+	return kept, nil
+}
+
+func (l *liveCards) continued(channel, thread string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if t, ok := l.threads[threadKey(channel, thread)]; ok {
+		return slices.Clone(t.Continued)
+	}
+	return nil
 }
 
 func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) {
@@ -795,6 +848,9 @@ type cardWrite struct {
 	text     string
 	blocks   []slack.Block
 	entities []slack.MsgOption
+	carrier  bool
+	held     []string
+	more     [][]slack.Block
 }
 
 func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root bool) cardWrite {
@@ -802,10 +858,11 @@ func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root boo
 	if root {
 		text, blocks = t.rootMessage(now, l.refs)
 	}
-	if m.TS == t.Thread {
-		blocks = append(blocks, l.carried(t, now)...)
-	}
 	w := cardWrite{m: m, ts: m.TS, text: text, blocks: blocks}
+	if m.TS == t.Thread {
+		w.blocks, w.more = l.withCarried(t, blocks, now)
+		w.carrier, w.held = true, slices.Clone(t.Continued)
+	}
 	if m.Tapped == "" {
 		w.entities = m.Card.entities()
 	}
@@ -840,8 +897,22 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 	redrawn := map[string]bool{}
 	var gone []*liveMessage
 	var errs []error
+	var continued []string
+	carried := false
 	for _, w := range writes {
 		err := l.update(ctx, api, t.Channel, w)
+		if err == nil && w.carrier {
+			held := w.held
+			if carried {
+				held = continued
+			}
+			var more error
+			continued, more = l.continueCarried(ctx, api, t.Channel, t.Thread, held, w.more)
+			carried = true
+			if more != nil {
+				errs = append(errs, fmt.Errorf("continue card %s/%s in its thread: %w", t.Channel, w.ts, more))
+			}
+		}
 		switch {
 		case err != nil && goneCardCodes[errorCode(err)]:
 			l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, w.ts, errorCode(err))
@@ -858,6 +929,9 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 	l.mu.Lock()
 	for _, m := range gone {
 		t.drop(m)
+	}
+	if carried {
+		t.Continued = continued
 	}
 	if whole {
 		t.Drawn, t.Stale = now, len(errs) > 0

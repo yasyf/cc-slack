@@ -281,7 +281,7 @@ func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
 func prCards(l *liveDaemon, channelID string) []fakePost {
 	var cards []fakePost
 	for _, p := range l.slack.sentTo(channelID) {
-		carries := p.threadTS == "" && strings.Contains(p.blocks, cardCopyBlock+"-")
+		carries := (p.threadTS == "" || p.text == carriedMoreText) && strings.Contains(p.blocks, cardCopyBlock+"-")
 		if strings.Contains(p.blocks, testWaits) && !carries {
 			cards = append(cards, p)
 		}
@@ -1145,8 +1145,8 @@ func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 			return !strings.HasPrefix(b.ActionID, cardCopyAction+card.ts+":")
 		})
 	}
-	if buttons := carriedOf(card41); len(buttons) != 2 || strings.Contains(sent["warning"], "NO APPROVE") {
-		t.Fatalf("notice blocks = %s, warning %q, want #41's Merge and Hold in the notice itself and no warning", notice().blocks, sent["warning"])
+	if buttons := carriedOf(card41); len(buttons) != 1 || buttons[0].Text.Text != "Merge (Recommended)" || strings.Contains(sent["warning"], "NO APPROVE") {
+		t.Fatalf("notice blocks = %s, warning %q, want #41's Merge in the notice itself and no warning", notice().blocks, sent["warning"])
 	}
 	if beside := slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return p.threadTS != sent["ts"] }); len(beside) != 0 {
 		t.Fatalf("posts in the notice's thread = %+v, want none: the notice is the card to tap", beside)
@@ -1164,7 +1164,7 @@ func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 	if at < 0 {
 		t.Fatal("no card for the PR the edit adds")
 	}
-	if got41, got42 := carriedOf(card41), carriedOf(l.slack.sentTo(testDM)[at]); len(got41) != 2 || len(got42) != 2 {
+	if got41, got42 := carriedOf(card41), carriedOf(l.slack.sentTo(testDM)[at]); len(got41) != 1 || len(got42) != 1 {
 		t.Fatalf("notice blocks = %s, want each PR's answers in it once", notice().blocks)
 	}
 
@@ -1184,6 +1184,64 @@ func TestACardAtTheDMRootCarriesEachPRCardInItselfOnce(t *testing.T) {
 	}
 	if got := cmd.requests(t); !slices.ContainsFunc(got, func(r string) bool { return strings.Contains(r, `"answer"`) }) {
 		t.Fatalf("card command requests = %v, want the answer recorded through it", got)
+	}
+}
+
+func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApprove(t *testing.T) {
+	for _, count := range []int{8, 30, 60} {
+		t.Run(fmt.Sprintf("%d PRs", count), func(t *testing.T) {
+			var cards []providedCard
+			var drive, taps []string
+			for n := 41; n < 41+count; n++ {
+				card, url := mergeRowCard(), fmt.Sprintf("https://github.com/acme/app/pull/%d", n)
+				card.Number, card.Card.Title, card.Card.Waits = n, fmt.Sprintf("Merge #%d at e718a74?", n), fmt.Sprintf("merge:%d:e718a74", n)
+				card.Card.Refs = []cardLink{{URL: url, Label: fmt.Sprintf("acme/app#%d", n)}}
+				cards, drive, taps = append(cards, card), append(drive, fmt.Sprintf("acme/app#%d", n)), append(taps, url)
+			}
+			cmd := fakeCardCommand(t, drive, cards...)
+			l, _ := cardingDaemon(t, cmd.argv, drive...)
+			var sent map[string]string
+			list := map[string]any{"card": statusCard{Status: "needs_you", Title: "PR approvals waiting on you", Body: "Each waits on your tap.", Key: "approvals"}, "tap_prs": taps}
+			if err := json.Unmarshal(l.do(opDMStatus, list).Body, &sent); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(sent["warning"], "NO APPROVE") {
+				t.Fatalf("warning = %q, want every PR's Approve carried", sent["warning"])
+			}
+			carriers := []string{sent["ts"]}
+			for _, p := range l.slack.sentTo(testDM) {
+				if p.threadTS == sent["ts"] && p.text == carriedMoreText {
+					carriers = append(carriers, p.ts)
+				}
+			}
+			if continued := len(carriers) > 1; continued != (count > cardMaxBlocks) {
+				t.Fatalf("%d PRs drew %d messages, want a continuation in the thread only past %d rows", count, len(carriers), cardMaxBlocks)
+			}
+			var carried []slack.Block
+			for _, ts := range carriers {
+				message, err := messageAt(l.ctx, l.slack, testDM, sent["ts"], ts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if held := len(message.Blocks.BlockSet); held > cardMaxBlocks {
+					t.Fatalf("message %s holds %d blocks, past Slack's %d", ts, held, cardMaxBlocks)
+				}
+				carried = append(carried, message.Blocks.BlockSet...)
+			}
+			posts := l.slack.sentTo(testDM)
+			for n := 41; n < 41+count; n++ {
+				waits := fmt.Sprintf("merge:%d:e718a74", n)
+				at := slices.IndexFunc(posts, func(p fakePost) bool {
+					return p.threadTS == "" && p.ts != sent["ts"] && strings.Contains(p.blocks, waits)
+				})
+				if at < 0 {
+					t.Fatalf("no card for #%d", n)
+				}
+				if !approvesOn(carried, posts[at].ts) {
+					t.Fatalf("#%d has no button in the notice or its thread", n)
+				}
+			}
+		})
 	}
 }
 

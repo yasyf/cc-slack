@@ -2287,8 +2287,10 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
 	placed := t.Reply
 	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.refs)
-	if asked != nil && asked.TS == t.Thread {
-		blocks = append(blocks, a.cards.carried(t, a.now())...)
+	carrier := asked != nil && asked.TS == t.Thread
+	var more [][]slack.Block
+	if carrier {
+		blocks, more = a.cards.withCarried(t, blocks, a.now())
 	}
 	write := func(do func() error) error {
 		if !placed.Card.hostsFiles() {
@@ -2302,6 +2304,15 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 			return updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, asked.TS, text, blocks, placed.Card.entities()...)
 		}); err != nil {
 			return nil, fmt.Errorf("edit card %q in place: %w", cmp.Or(placed.Card.Waits, placed.Card.Group, placed.Card.Key), err)
+		}
+		if !carrier {
+			return placed, nil
+		}
+		continued, err := a.cards.continueCarried(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, t.Continued, more)
+		t.Continued = continued
+		if err != nil {
+			t.Stale = true
+			a.poller.log.Printf("card %s/%s: the cards it carries past Slack's %d blocks did not all reach its thread, so the next redraw tries again: %v", id.DMChannelID, asked.TS, cardMaxBlocks, err)
 		}
 		return placed, nil
 	}
