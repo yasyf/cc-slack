@@ -18,7 +18,7 @@ import (
 	"github.com/slack-go/slack"
 )
 
-var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true}
+var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 const (
 	readyTries    = 40

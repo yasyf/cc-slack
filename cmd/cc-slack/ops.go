@@ -2110,7 +2110,7 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]
 		return nil, err
 	}
 	if !images {
-		return nil, errors.New("a card attaches PNG, JPEG, or GIF images only")
+		return nil, errors.New("a card attaches PNG, JPEG, GIF, or WebP images only")
 	}
 	var drawn []string
 	for _, artifact := range b.Card.Artifacts {
@@ -2122,7 +2122,7 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]
 		return nil, err
 	}
 	if !images {
-		return nil, errors.New("an artifact's image is a PNG, JPEG, or GIF")
+		return nil, errors.New("an artifact's image is a PNG, JPEG, GIF, or WebP")
 	}
 	pictures := slices.Concat(b.Files, drawn)
 	if b.Card.ImagesHash, err = hashFiles(pictures); err != nil {
