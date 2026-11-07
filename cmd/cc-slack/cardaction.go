@@ -274,8 +274,12 @@ func slackLabel(k askTap) string {
 }
 
 func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
+	return threadWatches(ctx, db, channelID, threadTS, false)
+}
+
+func threadWatches(ctx context.Context, db *sql.DB, channelID, threadTS string, ended bool) ([]watch, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id, subject_id, owner_agent_id, kind, channel_id, thread_ts FROM watches
-		WHERE kind = 'dm' AND status = 'active' AND channel_id = ? AND thread_ts = ? ORDER BY id`, channelID, threadTS)
+		WHERE kind = 'dm' AND (? OR status = 'active') AND channel_id = ? AND thread_ts = ? ORDER BY id`, ended, channelID, threadTS)
 	if err != nil {
 		return nil, fmt.Errorf("find DM message watches %s/%s: %w", channelID, threadTS, err)
 	}
@@ -375,6 +379,14 @@ func (p *poller) handOn(ctx context.Context, id identity, tapped, a cardActionPu
 		p.log.Printf("card action %s on %s: sent to %s, but not to every listener: %v", a.ActionID, a.MessageTS, strings.Join(heard, " and "), err)
 	}
 	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
+	if k.ID != "" {
+		db := p.plane.DB()
+		ended, err := threadWatches(ctx, db, a.Channel, a.ThreadTS, true)
+		if err != nil {
+			p.log.Printf("waiting ask %s: the board was not told: %v", k.ID, err)
+		}
+		p.forwardAnswer(ctx, db, ended, boardAnswer{Waits: k.ID, Label: k.Label, Other: k.Other, At: at, Permalink: id.permalink(a.Channel, a.MessageTS, a.ThreadTS)})
+	}
 	if err := p.markAnswer(ctx, id, a.ref(), k.ID, "✓ *"+label+"* · answered "+clock(at, p.now())+" · sent to "+strings.Join(heard, " and ")); err != nil {
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
