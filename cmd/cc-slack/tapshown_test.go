@@ -324,6 +324,25 @@ func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAsAnOwedReply(t *test
 	}
 }
 
+func TestATapPassedOnFromACardWhoseSessionEndedStillTellsTheBoard(t *testing.T) {
+	calls := fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	endWatches(t, l, c.thread)
+	if _, _, err := insertWatch(l.ctx, l.srv.DB(), l.subID, agent.TopLevel, kindChannel, c.id.DMChannelID, "", "1700000000.000000", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before := presentCalls(t, calls)
+
+	l.tap(c.id, mergeTap(c, 2))
+
+	got := strings.TrimPrefix(presentCalls(t, calls), before)
+	if !strings.Contains(got, testSession+" slack-sync answered --session "+testSession) || !strings.Contains(got, `"waits":"step-3:merge"`) || !strings.Contains(got, `"label":"Merge"`) {
+		t.Fatalf("cc-present calls after the tap %q, want the answer sent to the card's board", got)
+	}
+}
+
 func TestATapReplayedAfterItsAnswerWasRecordedButNotDeliveredIsDeliveredThen(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
