@@ -16,6 +16,8 @@ import (
 
 const pluginRootEnv = "BINRUN_PLUGIN_ROOT"
 
+var checkPostScript = filepath.Join("skills", "slack", "scripts", "check-post")
+
 var releaseDir = regexp.MustCompile(`^\d+(\.\d+)*$`)
 
 type exitStatus int
@@ -37,7 +39,7 @@ not hold.`,
 			if err != nil {
 				return fmt.Errorf("check-post: %w", err)
 			}
-			check := exec.CommandContext(c.Context(), filepath.Join(root, "skills", "slack", "scripts", "check-post"), args...) //nolint:gosec // G204: the plugin's own check-post script, never a shell
+			check := exec.CommandContext(c.Context(), filepath.Join(root, checkPostScript), args...) //nolint:gosec // G204: the plugin's own check-post script, never a shell
 			check.Stdin, check.Stdout, check.Stderr = c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr()
 			err = check.Run()
 			if exited, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -50,7 +52,9 @@ not hold.`,
 
 func pluginRoot() (string, error) {
 	if root := os.Getenv(pluginRootEnv); root != "" {
-		return root, nil
+		if _, err := os.Stat(filepath.Join(root, checkPostScript)); err == nil { //nolint:gosec // G703: the plugin root its launcher exported, checked for this plugin's own script
+			return root, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

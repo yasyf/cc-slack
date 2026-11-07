@@ -25,9 +25,20 @@ func TestCheckPostFindsTheNewestPluginVersionInUseWithoutTheLauncher(t *testing.
 	if root, err := pluginRoot(); err != nil || root != filepath.Join(versions, "0.11.2") {
 		t.Fatalf("plugin root = %q, %v; want 0.11.2, the newest version Claude Code has not orphaned", root, err)
 	}
-	t.Setenv(pluginRootEnv, "/launcher/root")
-	if root, err := pluginRoot(); err != nil || root != "/launcher/root" {
+	launcher := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(launcher, filepath.Dir(checkPostScript)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launcher, checkPostScript), nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(pluginRootEnv, launcher)
+	if root, err := pluginRoot(); err != nil || root != launcher {
 		t.Fatalf("plugin root = %q, %v; want the launcher's root", root, err)
+	}
+	t.Setenv(pluginRootEnv, t.TempDir())
+	if root, err := pluginRoot(); err != nil || root != filepath.Join(versions, "0.11.2") {
+		t.Fatalf("plugin root = %q, %v; want 0.11.2 when the inherited root is another plugin's", root, err)
 	}
 }
 
