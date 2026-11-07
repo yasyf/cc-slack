@@ -46,6 +46,7 @@ type liveMessage struct {
 
 	Final    bool `json:"final,omitempty"`
 	Unfolded bool `json:"unfolded,omitempty"`
+	Edited   bool `json:"edited,omitempty"`
 }
 
 type liveThread struct {
@@ -482,6 +483,68 @@ func (l *liveCards) holding(channel string, threads []string, card statusCard) *
 	})
 }
 
+func (l *liveCards) reword(channel string, threads []string, card statusCard) (cardRef, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.holding(channel, threads, card)
+	if t == nil {
+		return cardRef{}, false
+	}
+	asked := t.kept(card)
+	if _, done := t.Answers[card.Waits]; asked == nil || !done {
+		return cardRef{}, false
+	}
+	card.Status, card.Replaces, card.Images = asked.Card.Status, "", asked.Card.Images
+	if !sameCard(card.unworded(), asked.Card.unworded()) {
+		return cardRef{}, false
+	}
+	ts := asked.TS
+	for _, m := range t.messages() {
+		if m != nil && m.TS == ts {
+			m.Card, m.Edited = card, false
+		}
+	}
+	t.Updated = l.now()
+	l.save()
+	return cardRef{channel, t.Thread, ts}, true
+}
+
+func (l *liveCards) holds(channel string, threads []string, card statusCard) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.holding(channel, threads, card) != nil
+}
+
+func (l *liveCards) editByHand(channel, ts string, edit func() error) error {
+	key := ""
+	l.mu.Lock()
+	for k, t := range l.threads {
+		if t.Channel == channel && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {
+			key = k
+			break
+		}
+	}
+	l.mu.Unlock()
+	if key == "" {
+		return edit()
+	}
+	defer l.drawLock(key)()
+	if err := edit(); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if t, ok := l.threads[key]; ok {
+		for _, m := range append(t.messages(), t.Root) {
+			if m != nil && m.TS == ts {
+				m.Edited = true
+			}
+		}
+		l.save()
+	}
+	return nil
+}
+
 func (l *liveCards) rooted(channel string, threads []string) *liveThread {
 	return l.sessionThread(channel, threads, func(t *liveThread) bool { return t.Root != nil })
 }
@@ -913,7 +976,7 @@ func (l *liveCards) plan(t *liveThread, now time.Time, first string) []cardWrite
 			writes = append(writes, l.write(t, m, now, m == t.Root))
 		}
 	}
-	return writes
+	return slices.DeleteFunc(writes, func(w cardWrite) bool { return w.m.Edited })
 }
 
 func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writes []cardWrite, now time.Time, whole bool) (map[string]bool, error) {
@@ -1193,7 +1256,7 @@ func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, c
 		writes = l.plan(t, now, "")
 	}
 	for _, m := range t.PRCards {
-		if m.cites(changed) {
+		if m.cites(changed) && !m.Edited {
 			prCards = append(prCards, l.write(t, m, now, false))
 		}
 	}
@@ -1277,7 +1340,7 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 	case m.Tapped == cardNoLongerWaits || drawn.Waits != m.Card.Waits:
 		m.Tapped = ""
 	}
-	m.Card, m.Final = drawn, drawn.Waits == ""
+	m.Card, m.Final, m.Edited = drawn, drawn.Waits == "", false
 	t.Updated = now
 	w := l.write(t, m, now, false)
 	l.mu.Unlock()
