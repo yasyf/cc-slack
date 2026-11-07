@@ -269,6 +269,21 @@ func (l *liveCards) carry(channel, thread, card string, at time.Time) bool {
 	return true
 }
 
+func (l *liveCards) keepCarried(channel, thread string, keys map[string]bool, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.draft(channel, thread)
+	kept := slices.DeleteFunc(slices.Clone(t.Carries), func(card string) bool {
+		_, m := l.liveMessage(channel, card)
+		return !m.cites(keys)
+	})
+	if len(kept) == len(t.Carries) {
+		return
+	}
+	t.Carries, t.Updated = kept, at
+	l.commit(t)
+}
+
 func (l *liveCards) live(channel, ts string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

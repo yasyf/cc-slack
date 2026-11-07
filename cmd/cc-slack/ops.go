@@ -1986,7 +1986,7 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 		}
 		card, _ = a.shareCardPictures(hc.Ctx, hc.DB, id, card, pictures, cmp.Or(ref.threadTS, ref.ts))
 	}
-	thread, ts, err := a.replaceCard(hc.Ctx, id, card, tag)
+	thread, ts, err := a.replaceCard(hc.Ctx, id, card, tag, b.TapPRs)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -2068,7 +2068,7 @@ func (a *app) postPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, 
 	return nil
 }
 
-func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag cardTag) (string, string, error) {
+func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag cardTag, taps []string) (string, string, error) {
 	ref, err := parsePermalink(card.Replaces)
 	if err != nil {
 		return "", "", err
@@ -2077,6 +2077,13 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	card.Replaces = ""
 	api := a.newAPI(id.Token)
 	now := a.now()
+	tapped := map[string]bool{}
+	for _, pr := range taps {
+		if found, ok := parseRef(pr); ok {
+			tapped[found.key()] = true
+		}
+	}
+	a.cards.keepCarried(id.DMChannelID, thread, tapped, now)
 	if a.cards.markReply(id.DMChannelID, thread, ref.ts, func(m *liveMessage) {
 		m.Card, m.Tapped, m.Hint, m.Final, m.Unfolded, m.Edited = card, "", "", true, false, false
 	}) {
