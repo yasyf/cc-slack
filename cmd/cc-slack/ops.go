@@ -802,7 +802,9 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
-		return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
+		return a.cards.editByHand(channelID, b.TS, func() error {
+			return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
+		})
 	})
 }
 
@@ -1950,6 +1952,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, msg.tag, pictures)
 	}
+	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
+		return reply
+	}
 	under, err := a.dmThreadOf(hc, sub, id, b)
 	if err != nil {
 		return fail(err.Error())
@@ -1987,6 +1992,42 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	}
 	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+}
+
+func (a *app) rewordAnswered(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (daemon.Reply, bool) {
+	if b.Card == nil || !b.Mirrored || b.Card.Waits == "" {
+		return daemon.Reply{}, false
+	}
+	threads, err := sessionThreads(hc.Ctx, hc.DB, sub.ID, id.DMChannelID)
+	if err != nil {
+		return fail(err.Error()), true
+	}
+	if !a.cards.holds(id.DMChannelID, threads, *b.Card) {
+		return a.refuseClosedPost(hc.Ctx, id, *b.Card)
+	}
+	card, reworded := a.cards.reword(id.DMChannelID, threads, *b.Card)
+	if !reworded {
+		return daemon.Reply{}, false
+	}
+	if _, err := a.cards.redraw(hc.Ctx, a.newAPI(id.Token), card.channel, card.thread, card.ts, a.now()); err != nil {
+		return fail(fmt.Sprintf("edit answered card %q in place: %v", b.Card.Waits, err)), true
+	}
+	return ok(a.dmStatusReply(hc, sub.ID, id, card.thread, card.ts, b)), true
+}
+
+func (a *app) refuseClosedPost(ctx context.Context, id identity, card statusCard) (daemon.Reply, bool) {
+	if card.Replaces == "" {
+		return daemon.Reply{}, false
+	}
+	ref, _ := parsePermalink(card.Replaces)
+	post, err := messageAt(ctx, a.newAPI(id.Token), id.DMChannelID, ref.threadTS, ref.ts)
+	if err != nil {
+		return fail(fmt.Sprintf("read the post waiting card %q replaces: %v", card.Waits, err)), true
+	}
+	if drawn, answers := copiedCard(post.Blocks.BlockSet, ref); drawn == nil || answers > 0 {
+		return daemon.Reply{}, false
+	}
+	return fail(fmt.Errorf("waiting card %q replaces %s, a card with no answer left to tap; %w", card.Waits, card.Replaces, errAskedAgain).Error()), true
 }
 
 func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, error) {
@@ -2037,7 +2078,7 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	api := a.newAPI(id.Token)
 	now := a.now()
 	if a.cards.markReply(id.DMChannelID, thread, ref.ts, func(m *liveMessage) {
-		m.Card, m.Tapped, m.Hint, m.Final, m.Unfolded = card, "", "", true, false
+		m.Card, m.Tapped, m.Hint, m.Final, m.Unfolded, m.Edited = card, "", "", true, false, false
 	}) {
 		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
 	} else {

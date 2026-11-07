@@ -616,6 +616,215 @@ func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsItAgain(t *testin
 	}
 }
 
+func portCard(answered postedCard) statusCard {
+	card := mergeCard()
+	card.Title = "Port, old tree to new: dev #41: Merge it now?"
+	card.Body = "CI is green on dev."
+	card.Replaces = answered.url()
+	return card
+}
+
+func TestNewWordsOnAnAnsweredBoardCardRedrawItInPlaceAndAskNothing(t *testing.T) {
+	calls := fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	answerOnBoard(t, l, c, "Hold")
+	l.inject(agent.TopLevel)
+	posts, edits, told := len(l.slack.sent()), len(editsOf(l.slack.edited(), c.ts)), presentCalls(t, calls)
+
+	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
+
+	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts {
+		t.Fatalf("new words on an answered card gave %+v and %d new posts, want the card at %s and no post", again, len(l.slack.sent())-posts, c.ts)
+	}
+	drawn := editsOf(l.slack.edited(), c.ts)
+	if len(drawn) != edits+1 {
+		t.Fatalf("card edits %v, want one more after the new words", drawn)
+	}
+	last := drawn[len(drawn)-1]
+	if !strings.Contains(last, "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(last, "✓ *Hold* · answered") || strings.Contains(last, cardWaitAction) {
+		t.Fatalf("card redrawn as %s, want the new title over his answer and no buttons", last)
+	}
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("new words on an answered card steered %q", got)
+	}
+	if got := presentCalls(t, calls); got != told {
+		t.Fatalf("new words on an answered card told the board %q", strings.TrimPrefix(got, told))
+	}
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != "Hold" {
+		t.Fatalf("answer after new words = %+v, %v; want his Hold kept", ans, done)
+	}
+
+	redrawCard(t, l, c)
+	if redrawn := editsOf(l.slack.edited(), c.ts); len(redrawn) != edits+2 || !strings.Contains(redrawn[len(redrawn)-1], "Port, old tree to new: dev #41: Merge it now?") ||
+		strings.Contains(redrawn[len(redrawn)-1], "Merge #41 now?") || !strings.Contains(redrawn[len(redrawn)-1], "✓ *Hold* · answered") {
+		t.Fatalf("card edits %v, want the next redraw to keep the new title over his answer", redrawn)
+	}
+}
+
+func TestNewWordsOnAWithdrawnBoardCardKeepItWithdrawn(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "the port card asks it now", "withdrawn": true, "via": c.id.permalink(c.id.DMChannelID, "1800000009.000100", "")})
+	posts, edits, unreacted := len(l.slack.sent()), len(editsOf(l.slack.edited(), c.ts)), l.slack.callCount("reactions.remove")
+
+	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
+
+	drawn := editsOf(l.slack.edited(), c.ts)
+	if again.ts != c.ts || len(l.slack.sent()) != posts || len(drawn) != edits+1 {
+		t.Fatalf("new words on a withdrawn card gave %+v, %d new posts and edits %v, want one edit in place and no post", again, len(l.slack.sent())-posts, drawn)
+	}
+	if last := drawn[len(drawn)-1]; !strings.Contains(last, "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(last, "*Replaced:*") || strings.Contains(last, cardWaitAction) {
+		t.Fatalf("card redrawn as %s, want the new title over its replaced line and no buttons", last)
+	}
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || !ans.Withdrawn || l.slack.callCount("reactions.remove") != unreacted {
+		t.Fatalf("answer after new words = %+v, %v; want the card still withdrawn with its mark", ans, done)
+	}
+}
+
+func redrawCard(t *testing.T, l *liveDaemon, c postedCard) {
+	t.Helper()
+	if _, err := l.app.cards.redraw(l.ctx, l.app.newAPI(c.id.Token), c.id.DMChannelID, c.thread, c.ts, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func handEdit(t *testing.T, l *liveDaemon, c postedCard, blocks ...map[string]any) {
+	t.Helper()
+	title := map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": "Port, old tree to new: dev #41: Merge it now?"}}
+	l.post(opEdit, map[string]any{"channel_id": testUser, "ts": c.ts, "text": "Port, old tree to new: dev #41: Merge it now?", "blocks": append([]map[string]any{title}, blocks...)})
+}
+
+func TestAHandEditedCardPostKeepsItsWordsWhenItsCardRedraws(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "the port card asks it now", "withdrawn": true, "via": c.id.permalink(c.id.DMChannelID, "1800000009.000100", "")})
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Replaced:*") {
+		t.Fatalf("card edits %v, want the replaced line drawn", edits)
+	}
+	handEdit(t, l, c, map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "Landed on dev."}})
+	edits := len(editsOf(l.slack.edited(), c.ts))
+
+	redrawCard(t, l, c)
+
+	if got := editsOf(l.slack.edited(), c.ts); len(got) != edits || strings.Contains(got[len(got)-1], "Replaced:") || !strings.Contains(got[len(got)-1], "Landed on dev.") {
+		t.Fatalf("card edits %v after a redraw, want the hand edit left as it is", got)
+	}
+}
+
+func TestATapOnAHandEditedCardPostDrawsOnTheEditedPost(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	handEdit(t, l, c, map[string]any{"type": "section", "block_id": cardWaitBlock, "text": map[string]any{"type": "mrkdwn", "text": "Waiting on you."}})
+
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardExplainAction + "step-3:merge", Value: string(mustJSON(askTap{ID: "step-3:merge", Label: cardExplainLabel, Question: "Merge #41 now?"})),
+		ActionTS: fmt.Sprintf("%d.000700", time.Now().Unix()), Seq: "001800000100000-abcd0700"})
+
+	edits := editsOf(l.slack.edited(), c.ts)
+	if last := edits[len(edits)-1]; !strings.Contains(last, "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(last, "You asked for more") || strings.Contains(last, "Merge #41 now?") {
+		t.Fatalf("card after Explain more = %s, want the hint drawn on the hand-edited post", last)
+	}
+}
+
+func TestAResendOfABoardCardCCSlackNoLongerHoldsRefusesAClosedPost(t *testing.T) {
+	for name, forget := range map[string]func(*liveDaemon, postedCard){
+		"its live cards were pruned": func(l *liveDaemon, c postedCard) {
+			l.app.cards.mu.Lock()
+			delete(l.app.cards.threads, threadKey(c.id.DMChannelID, c.thread))
+			l.app.cards.mu.Unlock()
+		},
+		"its session let go of its thread": func(l *liveDaemon, c postedCard) {
+			if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE kind = 'dm' AND thread_ts = ?`, c.thread); err != nil {
+				l.t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+			answerOnBoard(t, l, c, "Hold")
+			forget(l, c)
+			posts, edits := len(l.slack.sent()), len(l.slack.edited())
+
+			raw := mustJSON(map[string]any{"card": portCard(c), "mirrored": true})
+			if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), "no answer left to tap") || !strings.Contains(err.Error(), errAskedAgain.Error()) {
+				t.Fatalf("a resend over his answered post: %v, want it refused", err)
+			}
+			if len(l.slack.sent()) != posts || len(l.slack.edited()) != edits {
+				t.Fatal("a refused resend wrote to Slack")
+			}
+		})
+	}
+}
+
+func TestAResendOfAnOpenBoardCardCCSlackForgotStillRedrawsIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+	l.app.cards.mu.Lock()
+	delete(l.app.cards.threads, threadKey(c.id.DMChannelID, c.thread))
+	l.app.cards.mu.Unlock()
+
+	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
+
+	if edits := editsOf(l.slack.edited(), c.ts); again.ts != c.ts || len(edits) != 1 || !strings.Contains(edits[0], "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(edits[0], cardWaitAction) {
+		t.Fatalf("resend of an open card gave %+v with edits %v, want it redrawn in place with its buttons", again, edits)
+	}
+}
+
+func TestAnAnsweredBoardCardRefusesNewAnswers(t *testing.T) {
+	for name, change := range map[string]func(*statusCard){
+		"a relabeled option":  func(c *statusCard) { c.Options = []string{"Merge now", "Hold"} },
+		"reordered options":   func(c *statusCard) { c.Options = []string{"Hold", "Merge"} },
+		"another recommended": func(c *statusCard) { c.Recommended = "Merge" },
+		"an added option":     func(c *statusCard) { c.Options = append(c.Options, "Ship") },
+		"another PR head":     func(c *statusCard) { c.PRs = []cardPR{{URL: "https://github.com/acme/app/pull/41", Head: "c0ffee1"}} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			first := mergeCard()
+			first.PRs = []cardPR{{URL: "https://github.com/acme/app/pull/41", Head: "5480445"}}
+			c := mirroredCard(t, l, map[string]any{"card": first})
+			answerOnBoard(t, l, c, "Hold")
+			posts, edits := len(l.slack.sent()), len(editsOf(l.slack.edited(), c.ts))
+
+			card := portCard(c)
+			card.PRs = first.PRs
+			change(&card)
+			raw := mustJSON(map[string]any{"card": card, "mirrored": true})
+			if _, err := invoke(l.ctx, l.deps, testSession, "/any", opDMStatus, raw); err == nil || !strings.Contains(err.Error(), `was answered with "Hold"`) || !strings.Contains(err.Error(), errAskedAgain.Error()) {
+				t.Fatalf("%s on an answered card: %v, want it refused", name, err)
+			}
+			if len(l.slack.sent()) != posts || len(editsOf(l.slack.edited(), c.ts)) != edits {
+				t.Fatalf("%s on an answered card wrote to Slack", name)
+			}
+		})
+	}
+}
+
+func TestNewWordsOnAnOpenBoardCardStillAskItAgain(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
+
+	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
+
+	sent, edits := l.slack.sent(), editsOf(l.slack.edited(), c.ts)
+	if again.ts != c.ts || len(sent) != 2 || sent[1].text != cardCopyLead || len(edits) != 1 {
+		t.Fatalf("new words on an open card gave %+v with posts %+v and edits %v, want it edited in place and one copy beside it", again, sent, edits)
+	}
+	if !strings.Contains(edits[0], "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(edits[0], cardWaitAction) {
+		t.Fatalf("open card redrawn as %s, want the new title and its buttons", edits[0])
+	}
+}
+
 func TestAnOldThreadTakesNoNewPostAndACardThereStaysPut(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

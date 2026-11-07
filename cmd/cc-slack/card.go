@@ -1281,6 +1281,17 @@ func (c statusCard) gainsRows(previous statusCard) bool {
 	})
 }
 
+func (c statusCard) unworded() statusCard {
+	c.Title, c.Body, c.Drive, c.Phase = "", "", "", ""
+	c.Links, c.Refs, c.Facts, c.Artifacts, c.Hints = nil, nil, nil, nil, nil
+	c.Progress, c.StartedAt, c.ETA, c.Rollup = nil, nil, nil, nil
+	c.PRs = slices.Clone(c.PRs)
+	for i, p := range c.PRs {
+		c.PRs[i] = cardPR{URL: p.URL, Head: p.Head}
+	}
+	return c
+}
+
 func (c statusCard) replyBlocks(v cardView) []slack.Block {
 	blocks, _ := c.layout(v)
 	return blocks
