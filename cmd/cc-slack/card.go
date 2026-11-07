@@ -1195,6 +1195,7 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 	text := p.markdown(v, "\n")
 	if answered {
+		p.Head = ""
 		text = p.headline(v)
 	}
 	return bodyPages(text, cardMaxBlocks, cardMaxVisible, false)[0]
