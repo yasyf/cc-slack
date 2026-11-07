@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	pngBytes = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-	gifBytes = "GIF89a\x01\x00\x01\x00"
+	pngBytes  = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+	gifBytes  = "GIF89a\x01\x00\x01\x00"
+	webpBytes = "RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00"
 )
 
 func writeFile(t *testing.T, name, body string) string {

@@ -177,3 +177,16 @@ func TestAnArtifactWithoutItsPartsIsRefusedBeforeItPosts(t *testing.T) {
 		t.Fatalf("posts = %+v, want none", l.slack.sent())
 	}
 }
+
+func TestAWebPImageArtifactUploadsAndIsDrawnOnTheCard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	shot := cardArtifact{Title: "The board after the fix", Kind: "image", URL: testDiagramURL, Image: writeFile(t, "board.webp", webpBytes)}
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "The new bar.", Artifacts: []cardArtifact{shot}}})
+
+	post := l.slack.sent()[0]
+	ids := imageIDs(t, lastEdit(t, l, post.ts).blocks)
+	if len(ids) != 1 || string(l.slack.uploads[ids[0]]) != webpBytes {
+		t.Fatalf("image blocks %v, want the WebP upload drawn on the card", ids)
+	}
+}

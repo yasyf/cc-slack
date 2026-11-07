@@ -107,7 +107,7 @@ var (
 	}
 	filesProp = map[string]any{
 		"type": "array", "items": map[string]any{"type": "string"},
-		"description": "absolute paths of files to attach, up to 1 GB each; PNG, JPEG, and GIF images show under the text",
+		"description": "absolute paths of files to attach, up to 1 GB each; PNG, JPEG, GIF, and WebP images show under the text",
 	}
 	blocksProp = map[string]any{
 		"type": "array", "items": map[string]any{"type": "object"},
