@@ -762,6 +762,14 @@ func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 	}
 }
 
+func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Pick one", Options: []string{"A", "B"}, Waits: "card-x", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: "It changes.", Plan: "Plan: step 3.", ELI5: "Plainly.", Lands: "the change below it, #6, lands"}}}
+	got := blocksJSON(t, card.replyBlocks(view()))
+	if !strings.Contains(got, "*Blocks landing*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
+		t.Fatalf("want the wait under Blocks landing: %s", got)
+	}
+}
+
 func TestACardBodyRepeatingItsPRsWhatChangesSaysItOnce(t *testing.T) {
 	change := "Serve now builds a chat's agent when it opens the chat.\n\nThe swap is gone."
 	card := statusCard{Status: "needs_you", Title: "Land #7?", Body: "Serve now builds a chat's agent when it opens the chat. The swap is gone. It passed its checks and review and waits only on your tap.", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", ELI5: "Chats come with their agent.", Blocks: "Only your approval."}}}

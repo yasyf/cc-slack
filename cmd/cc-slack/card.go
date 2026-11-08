@@ -352,7 +352,11 @@ func (p cardPR) check() error {
 }
 
 func (p cardPR) fields() []cardFact {
-	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"ELI5", p.ELI5}, {"Blocks landing", p.Blocks}, {"Lands once", p.Lands}}
+	blocks := p.Blocks
+	if blocks == "" && p.Lands != "" {
+		blocks = "It lands once " + strings.TrimSuffix(p.Lands, ".") + "."
+	}
+	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"ELI5", p.ELI5}, {"Blocks landing", blocks}}
 }
 
 func (c statusCard) checkReplaces() error {
