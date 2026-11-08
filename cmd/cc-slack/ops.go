@@ -1364,19 +1364,27 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	posted := a.cards.postedPRCards()
+	var listing []cardRef
 	if b.PR != "" {
 		only, found := parseRef(b.PR)
 		if !found {
 			return fail(fmt.Sprintf("pr takes a pull request URL, not %q", b.PR))
 		}
 		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return card.pr.key() != only.key() })
+		listing = a.cards.cardsListing(only)
 	}
 	go func(ctx context.Context) {
 		for _, card := range posted {
 			a.recardPR(ctx, id, card.card, card.pr)
 		}
+		for _, card := range listing {
+			a.poller.redrawWithFreshPRLines(ctx, id, card)
+			if err := a.redrawCopies(ctx, id, card); err != nil {
+				a.poller.log.Printf("card %s: its copies keep the lines they were drawn with: %v", card.ts, err)
+			}
+		}
 	}(context.WithoutCancel(hc.Ctx))
-	return ok(map[string]int{"redrawing": len(posted)})
+	return ok(map[string]int{"redrawing": len(posted) + len(listing)})
 }
 
 func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {
