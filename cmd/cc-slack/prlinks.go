@@ -370,7 +370,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
-		notePostWarning(ctx, a.linesCarried(ctx, id, cardRef{channelID, t.Thread, m.TS}, p.Card))
+		notePostWarning(ctx, a.linesCarried(ctx, id, cardRef{channelID, t.Thread, m.TS}, nil, &p.Card))
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
 		cards.commit(t)
@@ -438,20 +438,20 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 	return ""
 }
 
-func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, card statusCard) string {
-	if !slices.ContainsFunc(card.allPRs(), func(pr *cardPR) bool { return len(pr.lines()) > 0 }) {
+func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, pages []string, card *statusCard) string {
+	if card == nil || !slices.ContainsFunc(card.allPRs(), func(pr *cardPR) bool { return len(pr.lines()) > 0 }) {
 		return ""
 	}
 	link := id.permalink(post.channel, post.ts, post.thread)
 	var held []slack.Block
-	for _, ts := range append([]string{post.ts}, a.cards.continued(post.channel, post.thread)...) {
+	for _, ts := range append([]string{post.ts}, pages...) {
 		message, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, ts)
 		if err != nil {
 			return fmt.Sprintf("NO LINES READ: reading %s back from Slack failed, so whether it shows each PR's lines is unknown: %v", link, err)
 		}
 		held = append(held, message.Blocks.BlockSet...)
 	}
-	if missing := linesLacking(held, card); len(missing) > 0 {
+	if missing := linesLacking(held, *card); len(missing) > 0 {
 		return fmt.Sprintf("NO LINES: %s, read back from Slack, lacks %s for a PR it carries", link, strings.Join(missing, ", "))
 	}
 	return ""
