@@ -329,6 +329,7 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 	for _, p := range provided {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil {
 			a.poller.log.Printf("PR card for %s#%d refused: a card command answers with a card that passes the card checks: %v", p.Repo, p.Number, err)
+			a.tellRefused(ctx, id, p, err)
 			continue
 		}
 		posted, found := a.cards.posted(channelID, thread, p.Card)
@@ -338,6 +339,7 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 		}
 		if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, now); err != nil {
 			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
+			a.tellRefused(ctx, id, p, err)
 			continue
 		}
 		placed, shown = append(placed, posted), append(shown, shownCard(p))
@@ -555,6 +557,13 @@ func (a *app) tellShown(ctx context.Context, id identity, shown []map[string]any
 	}
 }
 
+func (a *app) tellRefused(ctx context.Context, id identity, p providedCard, refusal error) {
+	refused := map[string]any{"repo": p.Repo, "number": p.Number, "reason": refusal.Error()}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"refused": []map[string]any{refused}}); err != nil {
+		a.poller.log.Printf("PR card for %s#%d was refused, and the card command did not record it, so its row will ask again: %v", p.Repo, p.Number, err)
+	}
+}
+
 func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]providedCard, error) {
 	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
 	if err != nil {
@@ -588,9 +597,11 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		return a.poller.markOption(ctx, id, card, cardNoLongerWaits)
 	}
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
+		a.tellRefused(ctx, id, provided[0], err)
 		return err
 	}
 	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now()); err != nil {
+		a.tellRefused(ctx, id, provided[0], err)
 		return err
 	}
 	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
