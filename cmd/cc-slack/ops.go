@@ -1972,6 +1972,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
+	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
 	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
 	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
