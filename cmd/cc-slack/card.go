@@ -157,7 +157,7 @@ type cardPR struct {
 	Review      string `json:"review,omitempty"`
 	Change      string `json:"change"`
 	Plan        string `json:"plan"`
-	Risk        string `json:"risk"`
+	ELI5        string `json:"eli5"`
 	Blocks      string `json:"blocks"`
 	Lands       string `json:"lands,omitempty"`
 	Description string `json:"description,omitempty"`
@@ -352,7 +352,7 @@ func (p cardPR) check() error {
 }
 
 func (p cardPR) fields() []cardFact {
-	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"Risk", p.Risk}, {"Blocks landing", p.Blocks}, {"Lands once", p.Lands}}
+	return []cardFact{{"What changes", p.Change}, {"Against the plan", p.Plan}, {"ELI5", p.ELI5}, {"Blocks landing", p.Blocks}, {"Lands once", p.Lands}}
 }
 
 func (c statusCard) checkReplaces() error {
@@ -740,7 +740,7 @@ func (c statusCard) visible() statusCard {
 
 func (p cardPR) visible() cardPR {
 	p.Title, p.Review, p.Change = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Change)
-	p.Plan, p.Risk, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.Risk), withoutHidden(p.Blocks), withoutHidden(p.Lands)
+	p.Plan, p.ELI5, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.ELI5), withoutHidden(p.Blocks), withoutHidden(p.Lands)
 	return p
 }
 

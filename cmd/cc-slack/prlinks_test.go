@@ -191,7 +191,7 @@ var tapPR41 = []string{"https://github.com/acme/app/pull/41"}
 func mergeRowCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Merge #41 at e718a74?",
-		Body:    "*Fix the chat list*\n*What changes:* chats load faster\n*Against the plan:* nothing differed\n*Risk:* one cache key\n*Review and CI:* every other gate is met\n*Blocks landing:* your approval",
+		Body:    "*Fix the chat list*\n*What changes:* chats load faster\n*Against the plan:* nothing differed\n*ELI5:* one cache key\n*Review and CI:* every other gate is met\n*Blocks landing:* your approval",
 		Refs:    []cardLink{{URL: "https://github.com/acme/app/pull/41", Label: "acme/app#41"}},
 		Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testWaits,
 	}}
@@ -367,7 +367,7 @@ func TestACardPRCarryingItsDescriptionKeepsItOverGitHubs(t *testing.T) {
 	l, _ := linkingDaemon(t, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Approve it?", "card": map[string]any{"title": "Approve it?", "prs": []map[string]any{{
 		"url": "https://github.com/acme/app/pull/41", "title": "One credential per team", "description": "The ledger's description.",
-		"change": "Launches stop waiting", "plan": "Nothing differed", "risk": "None", "blocks": "Your approval",
+		"change": "Launches stop waiting", "plan": "Nothing differed", "eli5": "None", "blocks": "Your approval",
 	}}}})
 	card := lastPost(l)
 	id, err := loadIdentity(l.ctx, l.srv.DB())
@@ -486,7 +486,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
 	tap := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Approve #41 at e718a74?",
-		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Change: "Chats load faster", Plan: "Nothing differed", Risk: "One cache key", Blocks: "Your approval"}},
+		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Change: "Chats load faster", Plan: "Nothing differed", ELI5: "One cache key", Blocks: "Your approval"}},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, tap)
@@ -1369,11 +1369,11 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 
 func TestATappedCardRedrawsItsPRLinesAsTheCardCommandSaysNow(t *testing.T) {
 	now := headRowCard()
-	now.Card.PRs[0].Change, now.Card.PRs[0].Plan, now.Card.PRs[0].Risk, now.Card.PRs[0].Blocks = "Chats load faster.", "Nothing differed.", "One cache key.", "Only your tap."
+	now.Card.PRs[0].Change, now.Card.PRs[0].Plan, now.Card.PRs[0].ELI5, now.Card.PRs[0].Blocks = "Chats load faster.", "Nothing differed.", "One cache key.", "Only your tap."
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, now)
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	asked := statusCard{Status: "needs_you", Title: "Tap: #41", Body: "Fixes the chat list.", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testPick,
-		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Head: "e718a74", Change: "Chats load faster.", Plan: "Nothing differed.", Risk: "One cache key.", Blocks: "No approving review at this head."}}}
+		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Head: "e718a74", Change: "Chats load faster.", Plan: "Nothing differed.", ELI5: "One cache key.", Blocks: "No approving review at this head."}}}
 	posted := postPick(t, l, map[string]any{"card": asked})
 	tapMergeOnPick(t, l, posted)
 	eventually(t, "the tapped card redrawn with the PR's wait as the card command says now", func() bool {

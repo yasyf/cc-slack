@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A PR card's Risk line is now ELI5, a one- or two-line plain explainer of the change from the reviewer bot, drawn in Risk's place beside What changes, Against the plan and Blocks landing. The card command and a `pr` block send it as `eli5`.
 - An operator reply in a DM thread under a live card, or under a copy of one ("Answer it here:"), now carries `thread_card` in its `slack.message` payload: the card's `waits` id, the copied card's for a copy. A session that reads his replies can route them to the lane that drew the card; before, a reply under a copy named no card at all.
 - `cc-slack follows [--session <id>]` lists a session's active Slack watches, channel follows first, from stored state with no Slack call. Before, nothing showed which channels a session followed: `cc-slack status --session` printed only a watcher count.
 - `cc-slack check-post <file|->` runs the plugin's post checker with its findings, output and exit status. A session's PATH keeps the plugin `bin/` it started with, so a bare `check-post` was missing in any session older than the plugin version that shipped it; `cc-slack` always reaches the newest installed version.
