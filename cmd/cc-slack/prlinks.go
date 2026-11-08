@@ -370,6 +370,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
+		notePostWarning(ctx, a.linesCarried(ctx, id, cardRef{channelID, t.Thread, m.TS}, p.Card))
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
 		cards.commit(t)
@@ -435,6 +436,70 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 		return fmt.Sprintf("NO APPROVE: %s, read back from Slack, carries no button to answer the card at %s", link, strings.Join(missing, ", "))
 	}
 	return ""
+}
+
+func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, card statusCard) string {
+	if !slices.ContainsFunc(card.allPRs(), func(pr *cardPR) bool { return len(pr.lines()) > 0 }) {
+		return ""
+	}
+	link := id.permalink(post.channel, post.ts, post.thread)
+	var held []slack.Block
+	for _, ts := range append([]string{post.ts}, a.cards.continued(post.channel, post.thread)...) {
+		message, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, ts)
+		if err != nil {
+			return fmt.Sprintf("NO LINES READ: reading %s back from Slack failed, so whether it shows each PR's lines is unknown: %v", link, err)
+		}
+		held = append(held, message.Blocks.BlockSet...)
+	}
+	if missing := linesLacking(held, card); len(missing) > 0 {
+		return fmt.Sprintf("NO LINES: %s, read back from Slack, lacks %s for a PR it carries", link, strings.Join(missing, ", "))
+	}
+	return ""
+}
+
+func (p cardPR) lines() []string {
+	var labels []string
+	for _, f := range p.visible().fields() {
+		if strings.TrimSpace(f.Value) != "" {
+			labels = append(labels, f.Label)
+		}
+	}
+	return labels
+}
+
+func linesLacking(held []slack.Block, card statusCard) []string {
+	want := map[string]int{}
+	for _, pr := range card.allPRs() {
+		for _, label := range pr.lines() {
+			want[label]++
+		}
+	}
+	said := sectionText(held)
+	var missing []string
+	for label, n := range want {
+		if strings.Count(said, "*"+label+"*") < n {
+			missing = append(missing, label)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func sectionText(blocks []slack.Block) string {
+	var text strings.Builder
+	for _, block := range blocks {
+		section, ok := block.(*slack.SectionBlock)
+		if !ok {
+			continue
+		}
+		if section.Text != nil {
+			text.WriteString(section.Text.Text + "\n")
+		}
+		for _, field := range section.Fields {
+			text.WriteString(field.Text + "\n")
+		}
+	}
+	return text.String()
 }
 
 func approvesOn(blocks []slack.Block, card string) bool {

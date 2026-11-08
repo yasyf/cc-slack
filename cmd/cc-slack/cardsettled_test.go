@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -256,5 +257,38 @@ func TestPlainWritesDrawNoHiddenComment(t *testing.T) {
 	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "fixed <!-- cci 442236 -->"})
 	if edits := l.slack.edited(); len(edits) != 1 || edits[0].text != "fixed" {
 		t.Fatalf("edits = %+v, want the comment gone", edits)
+	}
+}
+
+func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Approve both?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-1", PRs: []cardPR{fullPR(1), fullPR(2)}}
+	held := card.replyBlocks(view())
+	if missing := linesLacking(held, card); len(missing) != 0 {
+		t.Fatalf("missing = %q from the card as drawn, want none", missing)
+	}
+	noRisk := slices.DeleteFunc(slices.Clone(held), func(b slack.Block) bool {
+		s, ok := b.(*slack.SectionBlock)
+		return ok && s.Text != nil && strings.HasPrefix(s.Text.Text, "*Risk*")
+	})
+	if missing := linesLacking(noRisk, card); !slices.Equal(missing, []string{"Risk"}) {
+		t.Fatalf("missing = %q, want Risk named", missing)
+	}
+	v := view()
+	v.tapped = "✓ *Approve* · answered 1:44am"
+	if missing := linesLacking(card.replyBlocks(v), card); len(missing) != 0 {
+		t.Fatalf("missing = %q from the tapped card, want none", missing)
+	}
+}
+
+func TestAPostedPRCardThatSlackHoldsWholeWarnsNothing(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := statusCard{Status: "needs_you", Title: "Approve #49622?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-49622", PRs: []cardPR{fullPR(49622)}}
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent["warning"], "NO LINES") {
+		t.Fatalf("warning = %q, want none for a card Slack holds whole", sent["warning"])
 	}
 }
