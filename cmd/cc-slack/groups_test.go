@@ -214,9 +214,9 @@ func TestARefusedPRCardRowAsksAgainWithNoLine(t *testing.T) {
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], "did not count") || !strings.Contains(edits[len(edits)-1], cardRowAction+"0:") {
 		t.Fatalf("card edits %v, want the row asking again with no line", edits)
 	}
-	asked := len(cmd.requests(t))
+	asked := len(answersOf(cmd.requests(t)))
 	l.tap(c.id, rowTap(c, row, 0, 501))
-	if got := len(cmd.requests(t)); got != asked+1 {
+	if got := len(answersOf(cmd.requests(t))); got != asked+1 {
 		t.Fatalf("a second tap after a refusal asked %d times, want %d", got, asked+1)
 	}
 }
