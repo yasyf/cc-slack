@@ -260,10 +260,16 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	if missing := linesLacking(held, card); len(missing) != 0 {
 		t.Fatalf("missing = %q from the card as drawn, want none", missing)
 	}
-	noRisk := slices.DeleteFunc(slices.Clone(held), func(b slack.Block) bool {
+	noRisk := make([]slack.Block, 0, len(held))
+	for _, b := range held {
 		s, ok := b.(*slack.SectionBlock)
-		return ok && s.Text != nil && strings.HasPrefix(s.Text.Text, "*Risk*")
-	})
+		if !ok || s.Text != nil {
+			noRisk = append(noRisk, b)
+			continue
+		}
+		fields := slices.DeleteFunc(slices.Clone(s.Fields), func(f *slack.TextBlockObject) bool { return strings.HasPrefix(f.Text, "*Risk*") })
+		noRisk = append(noRisk, slack.NewSectionBlock(nil, fields, nil))
+	}
 	if missing := linesLacking(noRisk, card); !slices.Equal(missing, []string{"Risk"}) {
 		t.Fatalf("missing = %q, want Risk named", missing)
 	}
