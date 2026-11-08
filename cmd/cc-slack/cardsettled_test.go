@@ -260,18 +260,18 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	if missing := linesLacking(held, card); len(missing) != 0 {
 		t.Fatalf("missing = %q from the card as drawn, want none", missing)
 	}
-	noRisk := make([]slack.Block, 0, len(held))
+	noELI5 := make([]slack.Block, 0, len(held))
 	for _, b := range held {
 		s, ok := b.(*slack.SectionBlock)
 		if !ok || s.Text != nil {
-			noRisk = append(noRisk, b)
+			noELI5 = append(noELI5, b)
 			continue
 		}
-		fields := slices.DeleteFunc(slices.Clone(s.Fields), func(f *slack.TextBlockObject) bool { return strings.HasPrefix(f.Text, "*Risk*") })
-		noRisk = append(noRisk, slack.NewSectionBlock(nil, fields, nil))
+		fields := slices.DeleteFunc(slices.Clone(s.Fields), func(f *slack.TextBlockObject) bool { return strings.HasPrefix(f.Text, "*ELI5*") })
+		noELI5 = append(noELI5, slack.NewSectionBlock(nil, fields, nil))
 	}
-	if missing := linesLacking(noRisk, card); !slices.Equal(missing, []string{"Risk"}) {
-		t.Fatalf("missing = %q, want Risk named", missing)
+	if missing := linesLacking(noELI5, card); !slices.Equal(missing, []string{"ELI5"}) {
+		t.Fatalf("missing = %q, want ELI5 named", missing)
 	}
 	v := view()
 	v.tapped = "✓ *Approve* · answered 1:44am"

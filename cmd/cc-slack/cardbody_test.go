@@ -49,7 +49,7 @@ func tables(blocks []slack.Block) []*slack.TableBlock {
 func fullPR(n int) cardPR {
 	return cardPR{
 		URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: "One credential per team", Head: "7bf3ea0123",
-		Change: "Launches stop waiting on a new credential", Plan: "Nothing differed", Risk: "A stale credential on disk", Blocks: "Your approval",
+		Change: "Launches stop waiting on a new credential", Plan: "Nothing differed", ELI5: "A stale credential on disk", Blocks: "Your approval",
 	}
 }
 
@@ -268,7 +268,7 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 		}
 	}
 	fields := asSection(t, blocks[2]).Fields
-	for i, want := range []string{"*What changes*\nLaunches", "*Against the plan*\nNothing", "*Risk*\nA stale", "*Blocks landing*\nYour"} {
+	for i, want := range []string{"*What changes*\nLaunches", "*Against the plan*\nNothing", "*ELI5*\nA stale", "*Blocks landing*\nYour"} {
 		if i >= len(fields) || !strings.HasPrefix(fields[i].Text, want) {
 			t.Fatalf("fields %+v, want field %d to start %q", fields, i, want)
 		}
@@ -300,7 +300,7 @@ func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *test
 
 func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	pr := fullPR(49722)
-	pr.Risk, pr.Blocks = "", " "
+	pr.ELI5, pr.Blocks = "", " "
 	for name, card := range map[string]statusCard{
 		"card": {Status: "needs_you", Title: "x", PRs: []cardPR{pr}},
 		"row":  {Status: "needs_you", Title: "x", Group: "g", Rows: []cardRow{{ID: "r", PR: &pr, Buttons: []string{"Approve", "Hold"}}}},
@@ -313,7 +313,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		got := blocksJSON(t, blocks)
-		if !strings.Contains(got, "*What changes*") || !strings.Contains(got, "*Against the plan*") || strings.Contains(got, "*Risk*") || strings.Contains(got, "*Blocks landing*") {
+		if !strings.Contains(got, "*What changes*") || !strings.Contains(got, "*Against the plan*") || strings.Contains(got, "*ELI5*") || strings.Contains(got, "*Blocks landing*") {
 			t.Fatalf("%s: blocks %s, want the two lines it has and no empty field", name, got)
 		}
 	}
@@ -325,7 +325,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 
 func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
 	pr := fullPR(7)
-	pr.Risk = strings.Repeat("A risk worth a long explanation. ", 100)
+	pr.ELI5 = strings.Repeat("An explainer worth a long read. ", 100)
 	long := []string{"Keep it", "Drop it"}
 	card := statusCard{Status: "needs_you", Title: "x", Options: long, Recommended: long[0], Waits: "w", PRs: []cardPR{pr}, Hints: map[string]string{long[1]: strings.Repeat("A reason to drop it. ", 200)}}
 	if err := card.check(bodyAt, false, ""); err != nil {
@@ -336,8 +336,8 @@ func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := blocksJSON(t, blocks)
-	if strings.Count(got, "A risk worth") != 100 || strings.Count(got, "A reason to drop") != 200 {
-		t.Fatalf("a line or hint was cut: %d of 100, %d of 200", strings.Count(got, "A risk worth"), strings.Count(got, "A reason to drop"))
+	if strings.Count(got, "An explainer worth") != 100 || strings.Count(got, "A reason to drop") != 200 {
+		t.Fatalf("a line or hint was cut: %d of 100, %d of 200", strings.Count(got, "An explainer worth"), strings.Count(got, "A reason to drop"))
 	}
 }
 
@@ -721,7 +721,7 @@ func TestAPRCardSaysWhatItsButtonsDoAndClaimsNoLaneStops(t *testing.T) {
 
 func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 	hidden := " <!-- cci #453550 -->"
-	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Change: "It changes." + hidden, Plan: "Plan." + hidden, Risk: "Low." + hidden, Blocks: "Nothing." + hidden}
+	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Change: "It changes." + hidden, Plan: "Plan." + hidden, ELI5: "Low." + hidden, Blocks: "Nothing." + hidden}
 	row := pr
 	card := statusCard{
 		Status: "needs_you", Title: "Land it?" + hidden, Body: "First sentence." + hidden + " Second sentence.",
@@ -743,16 +743,16 @@ func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 	if got := blocksJSON(t, labeled.replyBlocks(view())); !strings.Contains(got, "*1. Keep the long chapter shape as it is*") {
 		t.Errorf("a pick's row draws its comment: %s", got)
 	}
-	if card.Body != "First sentence."+hidden+" Second sentence." || !strings.Contains(card.PRs[0].Risk, "453550") {
+	if card.Body != "First sentence."+hidden+" Second sentence." || !strings.Contains(card.PRs[0].ELI5, "453550") {
 		t.Error("drawing a card edits what it stores")
 	}
 }
 
-func TestAPRCardDrawsRiskAndWhatChangesWhole(t *testing.T) {
-	change, risk := strings.Repeat("It changes a thing. ", 25)+"The end of the change.", strings.Repeat("A real risk here. ", 30)+"The last risk."
-	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", Risk: risk, Blocks: "Only your approval."}}}
+func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
+	change, eli5 := strings.Repeat("It changes a thing. ", 25)+"The end of the change.", strings.Repeat("Chats come back on their own. ", 30)+"The last line."
+	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", ELI5: eli5, Blocks: "Only your approval."}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
-	for _, whole := range []string{"The end of the change.", "The last risk."} {
+	for _, whole := range []string{"The end of the change.", "The last line."} {
 		if !strings.Contains(got, whole) {
 			t.Errorf("the card cuts %q: %s", whole, got)
 		}
