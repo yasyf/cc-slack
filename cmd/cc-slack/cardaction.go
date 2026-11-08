@@ -337,7 +337,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	}
 	err := p.takeTap(ctx, id, card, k)
 	if errors.Is(err, errNoStatusSession) && !k.Explain {
-		err = p.handOn(ctx, id, a, card, k, at)
+		err = p.handOn(ctx, id, card, k, at)
 	}
 	if why, dropped := droppedBecause(err); dropped {
 		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
@@ -359,7 +359,7 @@ func tapKey(a cardActionPush) string {
 	return fmt.Sprintf("slack-action:%s:%s:%s", a.Channel, a.MessageTS, a.ActionTS)
 }
 
-func (p *poller) handOn(ctx context.Context, id identity, tapped, a cardActionPush, k askTap, at time.Time) error {
+func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) error {
 	label := mrkdwnEscapes.Replace(k.Label)
 	if k.ID != "" {
 		if won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other, Undelivered: tapKey(a)}); !won {
@@ -367,7 +367,6 @@ func (p *poller) handOn(ctx context.Context, id identity, tapped, a cardActionPu
 			return nil
 		}
 	}
-	p.noteTap(ctx, id, tapped.ref(), a.ref(), at, "⏳ *"+label+"* · the session that posted this card has ended, so this goes on to whoever can act on it.")
 	heard, err := p.handOver(ctx, id, a, k, at)
 	if len(heard) == 0 {
 		if k.ID != "" {
