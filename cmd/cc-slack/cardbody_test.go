@@ -168,6 +168,9 @@ func blockLead(t *testing.T, b slack.Block) string {
 	case *slack.HeaderBlock:
 		return block.Text.Text
 	case *slack.SectionBlock:
+		if block.Text == nil {
+			return block.Fields[0].Text
+		}
 		return block.Text.Text
 	case *slack.ContextBlock:
 		text, ok := block.ContextElements.Elements[0].(*slack.TextBlockObject)
@@ -192,7 +195,7 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	blocks, fold := card.layout(view())
 	want := []string{
 		"🙋 Keep it or revert it?", "*<https://github.com/acme/app/pull/50659|app PR 50659>*",
-		"*What changes*", "*Against the plan*", "*Risk*", "*Blocks landing*", "It landed with no tap from you.",
+		"*What changes*", "It landed with no tap from you.",
 		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
 	if len(blocks) != len(want) {
@@ -264,9 +267,10 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 			t.Fatalf("link line %q lacks %q", link, want)
 		}
 	}
+	fields := asSection(t, blocks[2]).Fields
 	for i, want := range []string{"*What changes*\nLaunches", "*Against the plan*\nNothing", "*Risk*\nA stale", "*Blocks landing*\nYour"} {
-		if got := asSection(t, blocks[2+i]).Text.Text; !strings.HasPrefix(got, want) {
-			t.Fatalf("paragraph %d = %q, want it to start %q", i, got, want)
+		if i >= len(fields) || !strings.HasPrefix(fields[i].Text, want) {
+			t.Fatalf("fields %+v, want field %d to start %q", fields, i, want)
 		}
 	}
 	if got := blocksJSON(t, blocks); strings.Contains(got, "It keeps one storage credential per team.") {

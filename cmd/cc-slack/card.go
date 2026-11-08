@@ -548,7 +548,7 @@ func (c statusCard) rowChars() int {
 	for _, r := range c.Rows {
 		chars += runes(r.Text)
 		if r.PR != nil {
-			chars += runes(r.PR.markdown(cardView{}, "\n"))
+			chars += runes(r.PR.markdown(cardView{}))
 		}
 	}
 	return chars
@@ -1059,9 +1059,13 @@ func (c statusCard) facts() []slack.Block {
 	}
 	fields := make([]*slack.TextBlockObject, 0, len(c.Facts))
 	for _, f := range c.Facts {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, "*"+mrkdwnEscapes.Replace(f.Label)+"*\n"+mrkdwnLine(f.Value), false, false))
+		fields = append(fields, cardField(f.Label, mrkdwnLine(f.Value)))
 	}
 	return []slack.Block{slack.NewSectionBlock(nil, fields, nil, slack.SectionBlockOptionBlockID("card-facts"))}
+}
+
+func cardField(label, value string) *slack.TextBlockObject {
+	return slack.NewTextBlockObject(slack.MarkdownType, "*"+mrkdwnEscapes.Replace(label)+"*\n"+value, false, false)
 }
 
 func refLine(target, label string, id refID, state refState, status string) string {
@@ -1189,12 +1193,34 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 }
 
 func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
-	text := p.markdown(v, "\n")
 	if answered {
-		p.Head = ""
-		text = strings.TrimSuffix(p.headline(v)+"\n\n"+p.facts("\n"), "\n\n")
+		p.Head, p.Review = "", ""
 	}
-	return bodyPages(text, cardMaxBlocks, cardMaxVisible, false)[0]
+	lead := p.headline(v)
+	if p.Review != "" {
+		lead += "\n" + plainMrkdwn(p.Review)
+	}
+	return append([]slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, lead, false, false), nil, nil)}, p.grid()...)
+}
+
+func (p cardPR) grid() []slack.Block {
+	var fields []*slack.TextBlockObject
+	var long []slack.Block
+	for _, f := range p.fields() {
+		if strings.TrimSpace(f.Value) == "" {
+			continue
+		}
+		said := cardField(f.Label, plainMrkdwn(f.Value))
+		if runes(said.Text) <= slackMaxField {
+			fields = append(fields, said)
+			continue
+		}
+		long = append(long, sections(said.Text)...)
+	}
+	if len(fields) == 0 {
+		return long
+	}
+	return append([]slack.Block{slack.NewSectionBlock(nil, fields, nil)}, long...)
 }
 
 func (p cardPR) headline(v cardView) string {
@@ -1212,25 +1238,21 @@ func (p cardPR) headline(v cardView) string {
 	return line
 }
 
-func (p cardPR) markdown(v cardView, betweenFacts string) string {
+func (p cardPR) markdown(v cardView) string {
 	line := p.headline(v)
 	if p.Review != "" {
 		line += "\n" + plainMrkdwn(p.Review)
 	}
-	if facts := p.facts(betweenFacts); facts != "" {
-		return line + "\n\n" + facts
-	}
-	return line
-}
-
-func (p cardPR) facts(between string) string {
 	facts := make([]string, 0, len(p.fields()))
 	for _, f := range p.fields() {
 		if strings.TrimSpace(f.Value) != "" {
 			facts = append(facts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	return strings.Join(facts, between)
+	if len(facts) > 0 {
+		return line + "\n\n" + strings.Join(facts, "\n")
+	}
+	return line
 }
 
 func sections(text string) []slack.Block {
@@ -1338,7 +1360,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	if v.tapped != "" {
 		settled := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
 		for _, p := range c.PRs {
-			settled = append(settled, sections(p.facts("\n\n"))...)
+			settled = append(settled, p.grid()...)
 		}
 		settled = append(settled, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
 		return append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))), nil
@@ -1349,15 +1371,13 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		fold = append(fold, p.folded()...)
 	}
 	tail := c.tail(v)
-	parts := make([]string, 0, len(c.PRs)+1)
+	visible := cardMaxVisible
 	for _, p := range c.PRs {
-		parts = append(parts, p.markdown(v, "\n\n"))
+		lead = append(lead, p.blocks(v, false)...)
+		visible -= runes(p.markdown(v))
 	}
 	if c.Body != "" {
-		parts = append(parts, c.Body)
-	}
-	if len(parts) > 0 {
-		body := bodyPages(strings.Join(parts, "\n\n"), cardMaxBlocks-len(lead)-len(tail)-1, cardMaxVisible, true)
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(tail)-1, max(visible, 0), true)
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}

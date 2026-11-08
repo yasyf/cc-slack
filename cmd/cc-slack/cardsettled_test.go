@@ -225,13 +225,7 @@ func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("Slack would refuse the tapped card: %v", err)
 	}
-	var said []string
-	for _, b := range blocks {
-		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil {
-			said = append(said, s.Text.Text)
-		}
-	}
-	text := strings.Join(said, "\n\n")
+	text := sectionText(blocks)
 	for _, f := range pr.fields() {
 		if f.Value == "" {
 			continue
@@ -266,10 +260,16 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	if missing := linesLacking(held, card); len(missing) != 0 {
 		t.Fatalf("missing = %q from the card as drawn, want none", missing)
 	}
-	noRisk := slices.DeleteFunc(slices.Clone(held), func(b slack.Block) bool {
+	noRisk := make([]slack.Block, 0, len(held))
+	for _, b := range held {
 		s, ok := b.(*slack.SectionBlock)
-		return ok && s.Text != nil && strings.HasPrefix(s.Text.Text, "*Risk*")
-	})
+		if !ok || s.Text != nil {
+			noRisk = append(noRisk, b)
+			continue
+		}
+		fields := slices.DeleteFunc(slices.Clone(s.Fields), func(f *slack.TextBlockObject) bool { return strings.HasPrefix(f.Text, "*Risk*") })
+		noRisk = append(noRisk, slack.NewSectionBlock(nil, fields, nil))
+	}
 	if missing := linesLacking(noRisk, card); !slices.Equal(missing, []string{"Risk"}) {
 		t.Fatalf("missing = %q, want Risk named", missing)
 	}
