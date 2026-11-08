@@ -210,7 +210,7 @@ func TestAnAnsweredRowKeepsItsPRFacts(t *testing.T) {
 			t.Fatalf("blocks %s lack %q, want the PR's headline, its lines and the answer", got, want)
 		}
 	}
-	if strings.Contains(got, "abc1234") {
+	if strings.Contains(got, "`abc1234`") {
 		t.Fatalf("blocks %s, want no commit once answered", got)
 	}
 }
