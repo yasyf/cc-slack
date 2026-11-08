@@ -195,7 +195,7 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	blocks, fold := card.layout(view())
 	want := []string{
 		"🙋 Keep it or revert it?", "*<https://github.com/acme/app/pull/50659|app PR 50659>*",
-		"*What changes*", "It landed with no tap from you.",
+		"*ELI5*", "It landed with no tap from you.",
 		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
 	if len(blocks) != len(want) {
@@ -268,7 +268,7 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 		}
 	}
 	fields := asSection(t, blocks[2]).Fields
-	for i, want := range []string{"*What changes*\nLaunches", "*Against the plan*\nNothing", "*ELI5*\nA stale", "*Blocks landing*\nYour"} {
+	for i, want := range []string{"*ELI5*\nA stale", "*What changes*\nLaunches", "*Against the plan*\nNothing", "*Blocks landing*\nYour"} {
 		if i >= len(fields) || !strings.HasPrefix(fields[i].Text, want) {
 			t.Fatalf("fields %+v, want field %d to start %q", fields, i, want)
 		}
