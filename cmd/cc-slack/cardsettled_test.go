@@ -225,13 +225,7 @@ func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("Slack would refuse the tapped card: %v", err)
 	}
-	var said []string
-	for _, b := range blocks {
-		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil {
-			said = append(said, s.Text.Text)
-		}
-	}
-	text := strings.Join(said, "\n\n")
+	text := sectionText(blocks)
 	for _, f := range pr.fields() {
 		if f.Value == "" {
 			continue
