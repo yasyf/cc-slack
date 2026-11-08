@@ -42,7 +42,7 @@ OUTAGE = "C0OUTAGE"
 TEAM = "C0TEAMROOM"
 SHARED = "C0NORTHWIND"
 DM = "D0DANA0001"
-CHANNELS = {f"{CC_SLACK} channel-info --channel {channel['id']}": json.dumps(channel) for channel in [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}, {"id": SHARED, "name": "northwind-team", "ext_shared": True}]}
+CHANNELS = {f"{CC_SLACK} channel-info --channel {channel['id']}": json.dumps(channel) for channel in [{"id": THREAD["channel_id"], "name": "acc-dana"}, {"id": OUTAGE, "name": "outage"}, {"id": TEAM, "name": "platform-eng"}, {"id": SHARED, "name": "northwind-team", "ext_shared": True}, {"id": DM, "name": "dana"}]}
 
 
 def posts(evt: PreToolUseEvent) -> list[tuple[Write, str]]:
