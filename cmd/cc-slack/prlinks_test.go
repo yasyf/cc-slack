@@ -155,7 +155,16 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 
 func (c cardCommand) requests(t *testing.T) []string {
 	t.Helper()
-	return slices.DeleteFunc(readAsks(t, c.asked), isShown)
+	return slices.DeleteFunc(readAsks(t, c.asked), func(ask string) bool { return isShown(ask) || isRefused(ask) })
+}
+
+func (c cardCommand) refused(t *testing.T) []string {
+	t.Helper()
+	return slices.DeleteFunc(readAsks(t, c.asked), func(ask string) bool { return !isRefused(ask) })
+}
+
+func isRefused(ask string) bool {
+	return strings.Contains(ask, `"refused"`)
 }
 
 func (c cardCommand) shown(t *testing.T) []string {
@@ -851,6 +860,28 @@ func TestRedrawPRCardsCanTakeOnePR(t *testing.T) {
 		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "From the ledger")
 	})
 	l.refused(opRedrawPRCards, map[string]any{"pr": "not a link"}, "pull request URL")
+}
+
+func TestARedrawSlackWouldRefuseTellsTheCardCommandWhy(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	awaitPRCards(t, l, testDM)
+	long := mergeRowCard()
+	long.Card.Title = strings.Repeat("x", 141)
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{long}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]})
+	eventually(t, "the card command told of the refusal", func() bool { return len(cmd.refused(t)) > 0 })
+	asked, err := os.ReadFile(cmd.asked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"refused":[{"number":41,"reason":"card needs a title of 1 to 140 characters","repo":"acme/app"}]}`
+	if got := strings.Count(string(asked), want); got != 1 {
+		t.Fatalf("card command asks = %s, want %s once", asked, want)
+	}
 }
 
 func TestARefsOnlyCardOffersNoAckOrPause(t *testing.T) {
