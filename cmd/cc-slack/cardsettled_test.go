@@ -198,17 +198,50 @@ func TestAWithdrawalNamingAnotherPostSaysReplacedAndLinksIt(t *testing.T) {
 	}
 }
 
-func TestAnAnsweredRowDropsItsPRFacts(t *testing.T) {
+func TestAnAnsweredRowKeepsItsPRFacts(t *testing.T) {
 	row := prCardRow()
+	row.PR.Head = "abc1234def"
 	card := groupCard(row, prRow(42))
-	if open := blocksJSON(t, card.replyBlocks(view())); !strings.Contains(open, "Chats load faster.") {
-		t.Fatalf("an open row lost its facts: %s", open)
-	}
 	v := view()
 	v.answers = map[string]askAnswer{row.ID: {At: bodyAt, Label: "Approve"}}
 	got := blocksJSON(t, card.replyBlocks(v))
-	if strings.Contains(got, "Chats load faster.") || !strings.Contains(got, "app PR 41") || !strings.Contains(got, "✓ *Approve* · answered") {
-		t.Fatalf("blocks %s, want the PR's headline and the answer", got)
+	for _, want := range []string{"app PR 41", "Chats load faster.", "Checked.", "Only your approval.", "✓ *Approve* · answered"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("blocks %s lack %q, want the PR's headline, its lines and the answer", got, want)
+		}
+	}
+	if strings.Contains(got, "abc1234") {
+		t.Fatalf("blocks %s, want no commit once answered", got)
+	}
+}
+
+func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
+	pr := fullPR(52590)
+	card := statusCard{Status: "needs_you", Title: "#52590, release status names the envs", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-52590", PRs: []cardPR{pr}}
+	v := view()
+	v.tapped = "✓ *Approve* · answered 1:44am"
+	blocks := card.replyBlocks(v)
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the tapped card: %v", err)
+	}
+	var said []string
+	for _, b := range blocks {
+		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil {
+			said = append(said, s.Text.Text)
+		}
+	}
+	text := strings.Join(said, "\n\n")
+	for _, f := range pr.fields() {
+		if f.Value == "" {
+			continue
+		}
+		if want := "*" + f.Label + "*\n" + f.Value; !strings.Contains(text, want) {
+			t.Fatalf("tapped card sections %q lack %q", text, want)
+		}
+	}
+	got := blocksJSON(t, blocks)
+	if !strings.Contains(got, "app PR 52590") || !strings.Contains(got, "✓ *Approve* · answered") || strings.Contains(got, "7bf3ea0") {
+		t.Fatalf("blocks %s, want the PR's name and the answer, and no commit", got)
 	}
 }
 

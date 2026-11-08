@@ -1172,11 +1172,7 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 	if answered {
 		text = strings.TrimSpace(text + "\n✓ *" + mrkdwnEscapes.Replace(ans.Label) + "* · answered " + clock(ans.At, v.now))
 	}
-	if text != "" {
-		for _, part := range splitSection(text, cardMaxSectionLen) {
-			blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
-		}
-	}
+	blocks = append(blocks, sections(text)...)
 	if answered {
 		return blocks
 	}
@@ -1196,7 +1192,7 @@ func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 	text := p.markdown(v, "\n")
 	if answered {
 		p.Head = ""
-		text = p.headline(v)
+		text = strings.TrimSuffix(p.headline(v)+"\n\n"+p.facts("\n"), "\n\n")
 	}
 	return bodyPages(text, cardMaxBlocks, cardMaxVisible, false)[0]
 }
@@ -1221,17 +1217,32 @@ func (p cardPR) markdown(v cardView, betweenFacts string) string {
 	if p.Review != "" {
 		line += "\n" + plainMrkdwn(p.Review)
 	}
+	if facts := p.facts(betweenFacts); facts != "" {
+		return line + "\n\n" + facts
+	}
+	return line
+}
+
+func (p cardPR) facts(between string) string {
 	facts := make([]string, 0, len(p.fields()))
 	for _, f := range p.fields() {
 		if strings.TrimSpace(f.Value) != "" {
 			facts = append(facts, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	parts := []string{line}
-	if len(facts) > 0 {
-		parts = append(parts, strings.Join(facts, betweenFacts))
+	return strings.Join(facts, between)
+}
+
+func sections(text string) []slack.Block {
+	if text == "" {
+		return nil
 	}
-	return strings.Join(parts, "\n\n")
+	parts := splitSection(text, cardMaxSectionLen)
+	blocks := make([]slack.Block, 0, len(parts))
+	for _, part := range parts {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
+	}
+	return blocks
 }
 
 func (p cardPR) folded() [][]slack.Block {
@@ -1325,7 +1336,11 @@ func (c statusCard) outcome(v cardView) string {
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
 	if v.tapped != "" {
-		settled := append([]slack.Block{header(cmp.Or(c.Title, c.emoji()))}, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
+		settled := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
+		for _, p := range c.PRs {
+			settled = append(settled, sections(p.facts("\n\n"))...)
+		}
+		settled = append(settled, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
 		return append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))), nil
 	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
