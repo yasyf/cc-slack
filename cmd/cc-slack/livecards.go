@@ -1330,6 +1330,24 @@ func (l *liveCards) postedPRCards() []postedPRCard {
 	return posted
 }
 
+// cardsListing lists every card that lists pr among its PRs, its own PR cards aside.
+func (l *liveCards) cardsListing(pr refID) []cardRef {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var listing []cardRef
+	for _, t := range l.threads {
+		for _, m := range t.messages() {
+			if m == nil || slices.Contains(t.PRCards, m) {
+				continue
+			}
+			if slices.ContainsFunc(m.Card.allPRs(), func(p *cardPR) bool { r, ok := parseRef(p.URL); return ok && r.key() == pr.key() }) {
+				listing = append(listing, cardRef{t.Channel, t.Thread, m.TS})
+			}
+		}
+	}
+	return listing
+}
+
 // replacePRCard redraws a posted PR card in place from what its command says now.
 func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, now time.Time) error {
 	key := threadKey(card.channel, card.thread)

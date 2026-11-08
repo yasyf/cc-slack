@@ -726,6 +726,7 @@ func (c statusCard) visible() statusCard {
 	c.PRs = slices.Clone(c.PRs)
 	for i := range c.PRs {
 		c.PRs[i] = c.PRs[i].visible()
+		c.Body = withoutSaid(c.Body, c.PRs[i].Change)
 	}
 	c.Rows = slices.Clone(c.Rows)
 	for i := range c.Rows {
@@ -736,6 +737,15 @@ func (c statusCard) visible() statusCard {
 		}
 	}
 	return c
+}
+
+func withoutSaid(body, said string) string {
+	said = strings.Join(strings.Fields(said), " ")
+	flat := strings.Join(strings.Fields(body), " ")
+	if said == "" || !strings.Contains(flat, said) {
+		return body
+	}
+	return strings.TrimSpace(strings.Replace(flat, said, "", 1))
 }
 
 func (p cardPR) visible() cardPR {

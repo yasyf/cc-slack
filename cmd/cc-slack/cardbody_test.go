@@ -762,6 +762,15 @@ func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 	}
 }
 
+func TestACardBodyRepeatingItsPRsWhatChangesSaysItOnce(t *testing.T) {
+	change := "Serve now builds a chat's agent when it opens the chat.\n\nThe swap is gone."
+	card := statusCard{Status: "needs_you", Title: "Land #7?", Body: "Serve now builds a chat's agent when it opens the chat. The swap is gone. It passed its checks and review and waits only on your tap.", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", ELI5: "Chats come with their agent.", Blocks: "Only your approval."}}}
+	got := blocksJSON(t, card.replyBlocks(view()))
+	if n := strings.Count(got, "The swap is gone."); n != 1 || !strings.Contains(got, "It passed its checks and review and waits only on your tap.") {
+		t.Fatalf("What changes drawn %d times, want once with the rest of the body kept: %s", n, got)
+	}
+}
+
 func TestALongPickLabelDrawsWholeOnARowWithAShortButton(t *testing.T) {
 	label := strings.Repeat("x", cardMaxOptionLen)
 	card := statusCard{Status: "needs_you", Title: "Which?", Options: []string{label, "No"}, Waits: "card-x"}
