@@ -1366,3 +1366,22 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 		t.Fatalf("shown = %v, want the one posted card, none for the failed post", shown)
 	}
 }
+
+func TestATappedCardRedrawsItsPRLinesAsTheCardCommandSaysNow(t *testing.T) {
+	now := headRowCard()
+	now.Card.PRs[0].Change, now.Card.PRs[0].Plan, now.Card.PRs[0].Risk, now.Card.PRs[0].Blocks = "Chats load faster.", "Nothing differed.", "One cache key.", "Only your tap."
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, now)
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	asked := statusCard{Status: "needs_you", Title: "Tap: #41", Body: "Fixes the chat list.", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testPick,
+		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Head: "e718a74", Change: "Chats load faster.", Plan: "Nothing differed.", Risk: "One cache key.", Blocks: "No approving review at this head."}}}
+	posted := postPick(t, l, map[string]any{"card": asked})
+	tapMergeOnPick(t, l, posted)
+	eventually(t, "the tapped card redrawn with the PR's wait as the card command says now", func() bool {
+		edits := editsOf(l.slack.edited(), posted.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "Only your tap.")
+	})
+	edits := editsOf(l.slack.edited(), posted.ts)
+	if last := edits[len(edits)-1]; strings.Contains(last, "No approving review") || !strings.Contains(last, "✓ *Merge* · answered") {
+		t.Fatalf("the card's last edit = %s, want the answer and only the wait as it stands now", last)
+	}
+}

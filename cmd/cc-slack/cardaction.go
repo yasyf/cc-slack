@@ -965,6 +965,7 @@ func (p *poller) drawTap(ctx context.Context, id identity, r cardRef, blockID, l
 	if tracked {
 		redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now())
 		if redrawn[r.ts] {
+			go p.redrawWithFreshPRLines(context.WithoutCancel(ctx), id, r)
 			return err
 		}
 		if err != nil {
@@ -972,6 +973,51 @@ func (p *poller) drawTap(ctx context.Context, id identity, r cardRef, blockID, l
 		}
 	}
 	return p.confirmTap(ctx, id, r, blockID, line)
+}
+
+func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r cardRef) {
+	if len(id.Config.PRLinks.CardCommand) == 0 {
+		return
+	}
+	var asked []map[string]any
+	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) {
+		for _, pr := range m.Card.allPRs() {
+			if ref, ok := parseRef(pr.URL); ok {
+				asked = append(asked, map[string]any{"repo": ref.Owner + "/" + ref.Repo, "number": ref.Number})
+			}
+		}
+	})
+	if len(asked) == 0 {
+		return
+	}
+	provided, err := askPRCards(ctx, id, asked)
+	if err != nil {
+		p.log.Printf("card %s keeps the PR lines it was drawn with: %v", r.ts, err)
+		return
+	}
+	changed := false
+	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) {
+		for _, pr := range m.Card.allPRs() {
+			ref, _ := parseRef(pr.URL)
+			at := slices.IndexFunc(provided, func(c providedCard) bool {
+				return c.Number == ref.Number && strings.EqualFold(c.Repo, ref.Owner+"/"+ref.Repo) && len(c.Card.PRs) > 0
+			})
+			if at < 0 {
+				continue
+			}
+			now := provided[at].Card.PRs[0]
+			fresh := *pr
+			fresh.Review, fresh.Change, fresh.Plan, fresh.Risk, fresh.Blocks, fresh.Lands = now.Review, now.Change, now.Plan, now.Risk, now.Blocks, now.Lands
+			changed = changed || fresh != *pr
+			*pr = fresh
+		}
+	})
+	if !changed {
+		return
+	}
+	if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now()); err != nil {
+		p.log.Printf("card %s: its redraw with the PR lines as they stand now failed: %v", r.ts, err)
+	}
 }
 
 func (p *poller) tapDrawn(r cardRef, tapped time.Time, err error) error {
