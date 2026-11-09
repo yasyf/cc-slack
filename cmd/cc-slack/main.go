@@ -88,6 +88,8 @@ func root() *cobra.Command {
 		dmPeerCmd(d),
 		channelInfoCmd(d),
 		dmOwedCmd(d),
+		driveCardsCmd(d),
+		canvasCmd(d),
 		redrawPRCardsCmd(d),
 		channelsCmd(d),
 		usersCmd(d),
