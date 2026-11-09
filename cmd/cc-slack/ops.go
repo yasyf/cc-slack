@@ -1406,12 +1406,12 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		if !found {
 			return fail(fmt.Sprintf("pr takes a pull request URL, not %q", b.PR))
 		}
-		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return card.pr.key() != only.key() })
+		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return !card.carries(only) })
 		listing = a.cards.cardsListing(only)
 	}
 	go func(ctx context.Context) {
 		for _, card := range posted {
-			a.recardPR(ctx, id, card.card, card.pr)
+			a.recardPR(ctx, id, card.card, card.prs[0])
 		}
 		for _, card := range listing {
 			a.poller.redrawWithFreshPRLines(ctx, id, card)

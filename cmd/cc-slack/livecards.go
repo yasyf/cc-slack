@@ -1318,19 +1318,23 @@ func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[stri
 		return
 	}
 	for _, posted := range l.postedPRCards() {
-		if moved[posted.pr.key()] {
-			l.recard(ctx, id, posted.card, posted.pr)
+		if slices.ContainsFunc(posted.prs, func(pr refID) bool { return moved[pr.key()] }) {
+			l.recard(ctx, id, posted.card, posted.prs[0])
 		}
 	}
 }
 
 type postedPRCard struct {
 	card cardRef
-	pr   refID
+	prs  []refID
 }
 
-// postedPRCards lists every PR card, answered ones too, since each follows its
-// PR's row for as long as it stays in the thread.
+func (p postedPRCard) carries(pr refID) bool {
+	return slices.ContainsFunc(p.prs, func(r refID) bool { return r.key() == pr.key() })
+}
+
+// postedPRCards lists every PR card, answered ones too, since each follows the
+// rows of the PRs it carries for as long as it stays in the thread.
 func (l *liveCards) postedPRCards() []postedPRCard {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1338,11 +1342,26 @@ func (l *liveCards) postedPRCards() []postedPRCard {
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
 			if ids := m.Card.refIDs(); len(ids) > 0 {
-				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids[0]})
+				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids})
 			}
 		}
 	}
 	return posted
+}
+
+// uncarded lists the PRs in waiting that none of the cards carries.
+func (l *liveCards) uncarded(cards []cardRef, waiting []refID) []refID {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	carried := map[string]bool{}
+	for _, card := range cards {
+		if _, m := l.liveMessage(card.channel, card.ts); m != nil {
+			for _, id := range m.Card.refIDs() {
+				carried[id.key()] = true
+			}
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(waiting), func(pr refID) bool { return carried[pr.key()] })
 }
 
 // cardsListing lists every card that lists pr among its PRs, its own PR cards aside.

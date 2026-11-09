@@ -194,7 +194,7 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 	blocks, fold := card.layout(view())
 	want := []string{
-		"🙋 Keep it or revert it?", "A stale credential on disk",
+		"🙋 Keep it or revert it?", "*ELI5*\nA stale credential on disk",
 		"*What changes for you*", "It landed with no tap from you.",
 		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
@@ -261,8 +261,8 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	if _, ok := blocks[0].(*slack.HeaderBlock); !ok {
 		t.Fatalf("first block %T, want the header", blocks[0])
 	}
-	if eli5 := asSection(t, blocks[1]).Text.Text; eli5 != "A stale credential on disk" {
-		t.Fatalf("second block %q, want the ELI5 alone, leading the card", eli5)
+	if eli5 := asSection(t, blocks[1]).Text.Text; eli5 != "*ELI5*\nA stale credential on disk" {
+		t.Fatalf("second block %q, want the labeled ELI5 alone, leading the card", eli5)
 	}
 	fields := asSection(t, blocks[2]).Fields
 	for i, want := range []string{"*What changes for you*\nLaunches", "*Where it stands*\n", "*Waits on*\nYour"} {
@@ -862,10 +862,10 @@ func TestATableIsASortablePagedDataTableWithItsNumberColumnsNumeric(t *testing.T
 	}
 }
 
-func TestAPRCardLeadsWithItsPortAndELI5AndShowsItsRiskAndShowMe(t *testing.T) {
+func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *testing.T) {
 	pr := fullPR(52857)
 	pr.Port = "Port of [#51000](https://github.com/acme/app/pull/51000): the new tree keeps chats in its own database"
-	pr.Risk = "A reconnect storm still pages once."
+	pr.HateMost = "A reconnect storm still pages once."
 	pr.ShowMe = "Before: a page per reconnect. After: a page when errors keep coming for five minutes."
 	card := statusCard{Status: "needs_you", Title: "Port: approve #52857?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-52857", PRs: []cardPR{pr}}
 	blocks := card.replyBlocks(view())
@@ -875,16 +875,23 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsItsRiskAndShowMe(t *testing.T) {
 	if port := asSection(t, blocks[1]).Text.Text; !strings.HasPrefix(port, "Port of <https://github.com/acme/app/pull/51000|#51000>") {
 		t.Fatalf("second block %q, want the port line first", port)
 	}
-	if eli5 := asSection(t, blocks[2]).Text.Text; eli5 != "A stale credential on disk" {
-		t.Fatalf("third block %q, want the ELI5 right under the port line", eli5)
+	if eli5 := asSection(t, blocks[2]).Text.Text; eli5 != "*ELI5*\nA stale credential on disk" {
+		t.Fatalf("third block %q, want the labeled ELI5 right under the port line", eli5)
+	}
+	showMe := slices.IndexFunc(blocks, func(b slack.Block) bool {
+		section, ok := b.(*slack.SectionBlock)
+		return ok && section.Text != nil && strings.HasPrefix(section.Text.Text, "*Show me*\nBefore: a page per reconnect.")
+	})
+	if showMe < 4 || asSection(t, blocks[3]).Fields == nil {
+		t.Fatalf("blocks %s, want Show me on its own full-width row under the fields", blocksJSON(t, blocks))
 	}
 	got := blocksJSON(t, blocks)
-	for _, want := range []string{"*Risk*\\nA reconnect storm still pages once.", "*Show me*\\nBefore: a page per reconnect."} {
+	for _, want := range []string{"*What you'll hate most*\\nA reconnect storm still pages once.", "*Show me*\\nBefore: a page per reconnect."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("blocks %s lack %q", got, want)
 		}
 	}
-	if strings.Contains(got, "*ELI5*") || strings.Contains(got, "*Against the plan*") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
+	if strings.Contains(got, "*Risk*") || strings.Contains(got, "*Against the plan*") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
 		t.Fatalf("blocks %s, want no old labels and no commit", got)
 	}
 }

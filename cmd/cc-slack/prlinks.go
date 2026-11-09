@@ -276,7 +276,7 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, waiting)
 }
 
-func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked []map[string]any, standing []cardRef, waiting []string) {
+func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked []map[string]any, standing []cardRef, waiting []refID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
@@ -285,10 +285,12 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 		if pr.state.terminal() || post.carded(keys) {
 			continue
 		}
-		waiting = append(waiting, fmt.Sprintf("https://github.com/%s/%s/pull/%d", pr.ref.Owner, pr.ref.Repo, pr.ref.Number))
+		waiting = append(waiting, pr.ref)
 		open := func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) }
 		if card, found := l.rootPRCard(channelID, open); found {
-			standing = append(standing, card)
+			if !slices.Contains(standing, card) {
+				standing = append(standing, card)
+			}
 			continue
 		}
 		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
@@ -427,13 +429,21 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 	return nil
 }
 
-func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, placed []cardRef, waiting []string) string {
+func prURLs(prs []refID) string {
+	urls := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		urls = append(urls, prURL(pr))
+	}
+	return strings.Join(urls, ", ")
+}
+
+func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, placed []cardRef, waiting []refID) string {
 	link := id.permalink(post.channel, post.ts, post.thread)
 	var held []slack.Block
 	for _, ts := range append([]string{post.ts}, a.cards.continued(post.channel, post.thread)...) {
 		message, err := messageAt(ctx, a.newAPI(id.Token), post.channel, post.thread, ts)
 		if err != nil {
-			return fmt.Sprintf("NO APPROVE READ: %s lists %s for his tap, and reading it back from Slack failed, so whether it carries Approve is unknown: %v", link, strings.Join(waiting, ", "), err)
+			return fmt.Sprintf("NO APPROVE READ: %s lists %s for his tap, and reading it back from Slack failed, so whether it carries Approve is unknown: %v", link, prURLs(waiting), err)
 		}
 		held = append(held, message.Blocks.BlockSet...)
 	}
@@ -443,9 +453,10 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 			missing = append(missing, id.permalink(card.channel, card.ts, card.thread))
 		}
 	}
+	uncarded := a.cards.uncarded(placed, waiting)
 	switch {
-	case len(placed) < len(waiting):
-		return fmt.Sprintf("NO APPROVE: %s lists %s for his tap, and %d of them drew no card, so it carries no Approve for them; the daemon log says why", link, strings.Join(waiting, ", "), len(waiting)-len(placed))
+	case len(uncarded) > 0:
+		return fmt.Sprintf("NO APPROVE: %s lists %s for his tap, and %s drew no card, so it carries no Approve for them; the daemon log says why", link, prURLs(waiting), prURLs(uncarded))
 	case len(missing) > 0:
 		return fmt.Sprintf("NO APPROVE: %s, read back from Slack, carries no button to answer the card at %s", link, strings.Join(missing, ", "))
 	}
@@ -481,6 +492,9 @@ func (p cardPR) lines() []cardFact {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, cardFact{f.Label, "*" + f.Label + "*"})
 		}
+	}
+	if strings.TrimSpace(shown.ShowMe) != "" {
+		lines = append(lines, cardFact{"Show me", "*Show me*"})
 	}
 	return lines
 }
