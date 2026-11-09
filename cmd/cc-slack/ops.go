@@ -29,6 +29,7 @@ import (
 const (
 	opSessionStart  daemon.Op = "session-start"
 	opLogin         daemon.Op = "login"
+	opReload        daemon.Op = "reload"
 	opWhoami        daemon.Op = "whoami"
 	opSend          daemon.Op = "send"
 	opReply         daemon.Op = "reply"
@@ -307,6 +308,7 @@ func (a *app) register(s *daemon.Server) {
 	}
 	s.Register(opSessionStart, a.handleSessionStart)
 	s.Register(opLogin, a.handleLogin)
+	s.Register(opReload, a.handleReload)
 	s.Register(opWhoami, a.handleWhoami)
 	s.Register(opSend, a.handlePost(false))
 	s.Register(opReply, a.handlePost(true))
@@ -516,6 +518,36 @@ func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
 	id.AvatarKeyID, id.AvatarSecret, id.Config = b.AvatarKey, b.AvatarSec, b.Config
 	if id.AvatarURL, err = a.avatar(hc.Ctx, id); err != nil {
 		return fail(fmt.Sprintf("login: agent avatar: %v", err))
+	}
+	if err := saveIdentity(hc.Ctx, hc.DB, id); err != nil {
+		return fail(err.Error())
+	}
+	a.poller.reconcileAll()
+	a.socket.restart()
+	return ok(newWhoami(id, a.socket.status()))
+}
+
+func (a *app) handleReload(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if err := b.Config.validate(); err != nil {
+		return fail("reload: " + err.Error())
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionRead, err))
+	}
+	if b.Config.Avatars.enabled() && (id.AvatarKeyID == "" || id.AvatarSecret == "") {
+		return fail("reload: the config sets [avatars], and the last login read no avatar key: run `cc-slack login`")
+	}
+	avatarsChanged := b.Config.Avatars != id.Config.Avatars
+	id.Config = b.Config
+	if avatarsChanged {
+		if id.AvatarURL, err = a.avatar(hc.Ctx, id); err != nil {
+			return fail(fmt.Sprintf("reload: agent avatar: %v", err))
+		}
 	}
 	if err := saveIdentity(hc.Ctx, hc.DB, id); err != nil {
 		return fail(err.Error())

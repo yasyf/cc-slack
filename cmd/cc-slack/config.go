@@ -62,6 +62,7 @@ type tokenSource struct {
 }
 
 type ssmSource struct {
+	Profile      string `toml:"profile"`
 	Region       string `toml:"region"`
 	BotToken     string `toml:"bot_token"`
 	SocketURL    string `toml:"socket_url"`

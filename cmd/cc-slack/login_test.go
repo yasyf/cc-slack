@@ -9,13 +9,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-interact/cmd"
 	"github.com/yasyf/cc-interact/store"
 )
 
@@ -146,14 +149,19 @@ func archives(t *testing.T) []string {
 
 func runLogin(t *testing.T, ensure func(context.Context) error) (string, error) {
 	t.Helper()
+	return runCommand(t, loginCmd, requireCurrentState(ensure), "--email", "ym@example.com")
+}
+
+func runCommand(t *testing.T, command func(cmd.Deps) *cobra.Command, ensure func(context.Context) error, args ...string) (string, error) {
+	t.Helper()
 	d := deps()
-	d.EnsureCurrent = requireCurrentState(ensure)
+	d.EnsureCurrent = ensure
 	d.ClaudePID = func() int { return testPID }
-	c := loginCmd(d)
+	c := command(d)
 	var out bytes.Buffer
 	c.SetOut(&out)
 	c.SetErr(&out)
-	c.SetArgs([]string{"--email", "ym@example.com", "--repo", "/repo", "--session", testSession, "--cwd", "/any"})
+	c.SetArgs(append(args, "--repo", "/repo", "--session", testSession, "--cwd", "/any"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	err := c.ExecuteContext(ctx)
@@ -195,6 +203,65 @@ func TestLoginReadsParametersWithTheAWSCLICredentialsAndArchivesTheStaleState(t 
 	backups := archives(t)
 	if len(backups) != 1 || !bytes.Equal(readState(t, backups[0]), stale) {
 		t.Fatalf("archives = %q, want exactly the stale state.db", backups)
+	}
+}
+
+func TestLoginSignsInToAWSWithTheProfileTheConfigNames(t *testing.T) {
+	shortHome(t)
+	aws, ssm := awsSSOShell(t, awsExportsCredentials)
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv(configEnv, writeConfig(t, t.TempDir(), strings.Replace(testSSMConfig, "[ssm]\n", "[ssm]\nprofile = \""+ssoProfile+"\"\n", 1)))
+
+	_, err := runLogin(t, func(context.Context) error {
+		l := launchDaemon(t)
+		l.slack.setUser(&slack.User{ID: testUser, Name: "ym", Profile: slack.UserProfile{Email: "ym@example.com", DisplayName: "yasyf"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if args := string(readState(t, aws+".args")); args != "configure export-credentials --format process --profile "+ssoProfile {
+		t.Fatalf("aws argv = %q, want the [ssm] profile passed as --profile", args)
+	}
+	if profile := string(readState(t, aws+".profile")); profile != "" {
+		t.Fatalf("aws ran with AWS_PROFILE=%q, want the shell's empty profile", profile)
+	}
+	if requests := ssm.requests(); len(requests) != 4 {
+		t.Fatalf("SSM requests = %q, want all four parameters read with the profile's credentials", requests)
+	}
+}
+
+func TestReloadTakesAConfigChangeWithoutReadingSSM(t *testing.T) {
+	shortHome(t)
+	aws, ssm := awsSSOShell(t, awsRefreshFails)
+	drawCard := filepath.Join(filepath.Dir(aws), "draw-card")
+	if err := os.WriteFile(drawCard, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(configEnv, writeConfig(t, t.TempDir(), testSSMConfig+"\n[pr_links]\ncard_command = [\"draw-card\", \"--lane\", \"pr-cards\"]\n"))
+	l := launchDaemon(t)
+	l.refused(opReload, map[string]any{"config": map[string]any{}}, "no Slack identity")
+	loggedIn(t, l)
+
+	out, err := runCommand(t, reloadCmd, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if requests := ssm.requests(); len(requests) != 0 {
+		t.Fatalf("SSM requests = %q, want none for a config change", requests)
+	}
+	want := []string{drawCard, "--lane", "pr-cards"}
+	for _, raw := range [][]byte{[]byte(out), l.do(opWhoami, map[string]string{}).Body} {
+		var who whoami
+		if err := json.Unmarshal(raw, &who); err != nil {
+			t.Fatalf("whoami %q: %v", raw, err)
+		}
+		if !slices.Equal(who.Config.PRLinks.CardCommand, want) || who.Config.Avatars.Bucket != "avatars" {
+			t.Fatalf("config after reload = %+v, want card_command %q and the avatar bucket", who.Config, want)
+		}
+		if who.Username != "yasyf (agent)" || who.DMChannelID != "D"+testUser || who.BotID != "BBOT" {
+			t.Fatalf("whoami after reload = %+v, want the logged-in identity kept", who)
+		}
 	}
 }
 

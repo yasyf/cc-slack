@@ -153,23 +153,12 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 				}
 				email = resolved
 			}
-			root, err := repoRoot(ctx, cwdOr(f.cwd), repo)
-			if err != nil {
-				return err
-			}
 			captHook, err := captHookPath()
 			if err != nil {
 				return err
 			}
-			path, required, err := configPath(configFlag, root)
+			root, cfg, err := readConfig(ctx, f, repo, configFlag)
 			if err != nil {
-				return err
-			}
-			cfg, err := loadConfig(path, required)
-			if err != nil {
-				return err
-			}
-			if err := cfg.resolveTokens(); err != nil {
 				return err
 			}
 			params, err := readParameters(ctx, cfg)
@@ -195,6 +184,49 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&postOnly, "post-only", runtime.GOOS != "darwin", "never open the Slack socket, so this host posts and reads but takes no button taps (defaults on everywhere but macOS)")
 	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+", then ~/.config/cc-slack/config.toml)")
 	return c
+}
+
+func reloadCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f          sessionFlags
+		repo       string
+		configFlag string
+	)
+	c := &cobra.Command{
+		Use:   "reload",
+		Short: "Re-read the cc-slack config into this machine's login, keeping its bot token, socket URL, and avatar key",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			_, cfg, err := readConfig(c.Context(), f, repo, configFlag)
+			if err != nil {
+				return err
+			}
+			return runOp(c, d, f, opReload, map[string]any{"config": cfg})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&repo, "repo", "", "checkout whose "+repoConfig+" to read (defaults to the main checkout of the current directory's repo)")
+	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+", then ~/.config/cc-slack/config.toml)")
+	return c
+}
+
+func readConfig(ctx context.Context, f sessionFlags, repo, configFlag string) (string, config, error) {
+	root, err := repoRoot(ctx, cwdOr(f.cwd), repo)
+	if err != nil {
+		return "", config{}, err
+	}
+	path, required, err := configPath(configFlag, root)
+	if err != nil {
+		return "", config{}, err
+	}
+	cfg, err := loadConfig(path, required)
+	if err != nil {
+		return "", config{}, err
+	}
+	if err := cfg.resolveTokens(); err != nil {
+		return "", config{}, err
+	}
+	return root, cfg, nil
 }
 
 func gitEmail(ctx context.Context) (string, error) {
@@ -258,8 +290,14 @@ func readParameters(ctx context.Context, cfg config) (parameters, error) {
 		return envParameters(cfg)
 	}
 	src := cfg.SSM
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(src.Region),
-		awsconfig.WithCredentialsProvider(processcreds.NewProviderCommand(processcreds.NewCommandBuilderFunc(awsCLICredentials))))
+	opts := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithRegion(src.Region),
+		awsconfig.WithCredentialsProvider(processcreds.NewProviderCommand(awsCLICredentials(src.Profile))),
+	}
+	if src.Profile != "" {
+		opts = append(opts, awsconfig.WithSharedConfigProfile(src.Profile))
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return parameters{}, fmt.Errorf("load AWS config: %w", err)
 	}
@@ -270,7 +308,7 @@ func readParameters(ctx context.Context, cfg config) (parameters, error) {
 	}
 	values := make([]string, 4)
 	for i, name := range names {
-		if values[i], err = readParameter(ctx, client, name); err != nil {
+		if values[i], err = readParameter(ctx, client, src.Profile, name); err != nil {
 			return parameters{}, err
 		}
 	}
@@ -291,22 +329,35 @@ func envParameters(cfg config) (parameters, error) {
 	return p, nil
 }
 
-func awsCLICredentials(ctx context.Context) (*exec.Cmd, error) {
-	c := exec.CommandContext(ctx, "aws", "configure", "export-credentials", "--format", "process")
-	c.Stderr = os.Stderr
-	return c, nil
+func awsCLICredentials(profile string) processcreds.NewCommandBuilderFunc {
+	return func(ctx context.Context) (*exec.Cmd, error) {
+		args := []string{"configure", "export-credentials", "--format", "process"}
+		if profile != "" {
+			args = append(args, "--profile", profile)
+		}
+		c := exec.CommandContext(ctx, "aws", args...)
+		c.Stderr = os.Stderr
+		return c, nil
+	}
 }
 
-func readParameter(ctx context.Context, client *ssm.Client, name string) (string, error) {
+func readParameter(ctx context.Context, client *ssm.Client, profile, name string) (string, error) {
 	out, err := client.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(name), WithDecryption: aws.Bool(true)})
 	if err != nil {
-		return "", fmt.Errorf("read SSM parameter %s (sign in to AWS with a role that can read it): %w", name, err)
+		return "", fmt.Errorf("read SSM parameter %s with %s (sign in to AWS with a role that can read it, or set profile under [ssm] in the cc-slack config to an AWS profile that can): %w", name, awsProfile(profile), err)
 	}
 	value := aws.ToString(out.Parameter.Value)
 	if value == tokenPlaceholder {
 		return "", fmt.Errorf("%s still holds its placeholder: it has not been written yet", name)
 	}
 	return value, nil
+}
+
+func awsProfile(profile string) string {
+	if profile == "" {
+		return "the shell's AWS profile"
+	}
+	return "AWS profile " + profile
 }
 
 func whoamiCmd(d cmd.Deps) *cobra.Command {
