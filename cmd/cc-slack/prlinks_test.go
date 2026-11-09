@@ -1059,6 +1059,26 @@ func TestATapOnAPickForThatPRAndHeadClosesItsCardAndCountsInTheLedger(t *testing
 	}
 }
 
+func TestATapOnAWaitingCardNamingAPRWithNoPRCardStillReachesTheCardCommand(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
+	tapMergeOnPick(t, l, pick)
+	answers := answersOf(cmd.requests(t))
+	var got struct {
+		Answer struct {
+			Label, Repo, Waits string
+			Number             int
+		}
+	}
+	if len(answers) != 1 || json.Unmarshal([]byte(answers[0]), &got) != nil || got.Answer.Label != "Merge" || got.Answer.Number != 41 || got.Answer.Repo != "acme/app" || got.Answer.Waits != testPick {
+		t.Fatalf("card command answers = %v, want Merge on #41 for the waiting card", answers)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "Merge") {
+		t.Fatalf("the waiting lane heard %q, want the tap too", got)
+	}
+}
+
 func TestATapOnThePRCardAnswersItsPickAndTellsTheLaneWaitingOnIt(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")

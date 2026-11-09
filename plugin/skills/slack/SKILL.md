@@ -268,7 +268,9 @@ alone. A link never draws a card or a button. With `card_command` set, a PR the
 user has to tap gets its card only when the call lists its URL in `tap_prs` (the
 CLI's repeatable `--tap-pr` on `dm-status`), once per PR and head. A tap on it,
 or on a pick card whose `prs` names that one PR at that head with the same
-answers, closes every other such card and counts once. A reply carrying its own
+answers, closes every other such card and counts once. A tap on a waiting card
+whose `prs` names a PR, with no PR card for it, also goes to the card command,
+which records it when the PR is its own. A reply carrying its own
 picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM the
 card opens at the root in its own thread, wherever the post sits; a post lands in
 a DM thread only when its call names that thread. In a listed channel the card
@@ -737,10 +739,13 @@ message or use a reaction to replace a reply you owe.
 ## Keep the conversation going
 
 Post to a person unprompted only when they must act or the fix they reported
-is live, and only once per fix. Your own tests, progress, and "a follow-up" are
-never posts. Hold that one post until the fix is live and checked, and put the
-check's result and whatever they must do in it, such as starting a new run.
-Fix a mistake or a gap in it by editing it. This narrows what a lane asks to
+is live. In a bug report's thread that is one post, after the fix ships and is
+checked, never before: one or two sentences of plain English saying what is
+fixed, with no jargon and no asks, so never "please retry", "please confirm"
+or "let us know". Your own tests, progress, and "a follow-up" are never posts.
+An ask card that offers to ask a reporter something is a defect: the fix is
+proven before the post, never by them. Fix a mistake or a gap in it by editing
+it. This narrows what a lane asks to
 send and changes no permission rule. Questions they ask are not limited:
 write every post so a person can answer it, and answer each reply as it lands.
 
@@ -757,10 +762,12 @@ write every post so a person can answer it, and answer each reply as it lands.
 - When you need something, end with one direct question to one mentioned
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
-- A message telling its reader something waits on their yes or no carries
-  the buttons, in that message or its thread, and only such a message may say
-  it. Link a card only when the post cannot carry one. When a card was removed
-  or went stale, say so in the same breath and name its replacement.
+- A message telling its reader something waits on them carries the card with
+  its buttons, in that message or its thread, and only such a message may say
+  it: a summary, a catch-up or a link line that names an open card is followed
+  by `cc-slack card-copy` of it in the same thread. A link alone is never
+  enough. When a card was removed or went stale, say so in the same breath and
+  name its replacement.
 - Keep answering as the thread continues. Once the user has told you to
   answer someone there, each new question gets its reply without asking again.
 

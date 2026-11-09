@@ -1491,6 +1491,19 @@ func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
 	return refID{}, false
 }
 
+func (l *liveCards) waitingPR(channel, thread, waits string) (refID, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok || t.Waiting[waits] == nil {
+		return refID{}, false
+	}
+	if ids := t.Waiting[waits].Card.refIDs(); len(ids) > 0 {
+		return ids[0], true
+	}
+	return refID{}, false
+}
+
 func (l *liveCards) prRow(channel, thread, row string) (refID, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
