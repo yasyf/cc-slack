@@ -337,6 +337,11 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			rest = append(rest, p)
 			continue
 		}
+		if err := a.pictureRedrawnPRCard(ctx, id, posted, &p.Card); err != nil {
+			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
+			a.tellRefused(ctx, id, p, err)
+			continue
+		}
 		if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, now); err != nil {
 			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
 			a.tellRefused(ctx, id, p, err)
@@ -362,6 +367,12 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			placed, shown = append(placed, asking), append(shown, shownCard(p))
 			continue
 		}
+		pictures, err := uploadPRCardPictures(ctx, a.newAPI(id.Token), &p.Card)
+		if err != nil {
+			a.poller.log.Printf("PR card for %s#%d refused: its pictures did not upload: %v", p.Repo, p.Number, err)
+			a.tellRefused(ctx, id, p, err)
+			continue
+		}
 		t := cards.draft(channelID, thread)
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.refs)
@@ -372,6 +383,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
+		a.showPRCardPictures(ctx, db, id, t, m, pictures, now, cards.refs)
 		notePostWarning(ctx, a.linesCarried(ctx, id, cardRef{channelID, t.Thread, m.TS}, nil, &p.Card))
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
@@ -605,12 +617,68 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		a.tellRefused(ctx, id, provided[0], err)
 		return err
 	}
+	if err := a.pictureRedrawnPRCard(ctx, id, card, &provided[0].Card); err != nil {
+		a.tellRefused(ctx, id, provided[0], err)
+		return err
+	}
 	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now()); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
 		return err
 	}
 	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
 	return a.redrawCopies(ctx, id, card)
+}
+
+func uploadPRCardPictures(ctx context.Context, api slackAPI, card *statusCard) ([]slack.FileSummary, error) {
+	if err := hashPRCardPictures(card); err != nil || card.ImagesHash == "" {
+		return nil, err
+	}
+	return uploadFiles(ctx, api, card.Pictures)
+}
+
+func hashPRCardPictures(card *statusCard) error {
+	images, err := allImages(card.Pictures)
+	if err != nil {
+		return err
+	}
+	if !images {
+		return errors.New("a PR card's pictures are PNG, JPEG, GIF, or WebP images")
+	}
+	card.ImagesHash, err = hashFiles(card.Pictures)
+	return err
+}
+
+func (a *app) pictureRedrawnPRCard(ctx context.Context, id identity, card cardRef, drawn *statusCard) error {
+	if err := hashPRCardPictures(drawn); err != nil || drawn.ImagesHash == "" {
+		return err
+	}
+	if shown := a.cards.prCardImages(card, drawn.ImagesHash); shown != nil {
+		drawn.Images = shown
+		return nil
+	}
+	files, err := uploadFiles(ctx, a.newAPI(id.Token), drawn.Pictures)
+	if err != nil {
+		return err
+	}
+	*drawn, _ = a.shareCardPictures(ctx, a.poller.plane.DB(), id, *drawn, files, card.thread)
+	return nil
+}
+
+func (a *app) showPRCardPictures(ctx context.Context, db *sql.DB, id identity, t *liveThread, m *liveMessage, pictures []slack.FileSummary, now time.Time, refs map[string]refState) {
+	if len(pictures) == 0 {
+		return
+	}
+	shown, shared := a.shareCardPictures(ctx, db, id, m.Card, pictures, t.Thread)
+	if !shared {
+		return
+	}
+	m.Card = shown
+	text, blocks := t.replyMessage(m, now, refs)
+	if err := whileProcessing(ctx, func() error {
+		return updateMessage(ctx, a.newAPI(id.Token), t.Channel, m.TS, text, blocks, m.Card.entities(m.Card.prEntities(t.view(m, now, refs))...)...)
+	}); err != nil {
+		a.poller.log.Printf("PR card %s posted without its pictures: %v", m.TS, err)
+	}
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {

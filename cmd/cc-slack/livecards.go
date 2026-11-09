@@ -776,6 +776,21 @@ func (l *liveCards) shownImages(channel string, card statusCard) []slack.FileSum
 	return nil
 }
 
+func (l *liveCards) prCardImages(card cardRef, hash string) []slack.FileSummary {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(card.channel, card.thread)]
+	if !ok {
+		return nil
+	}
+	for _, m := range t.PRCards {
+		if m.TS == card.ts && m.Card.ImagesHash == hash {
+			return m.Card.Images
+		}
+	}
+	return nil
+}
+
 func (l *liveCards) answerDrawn(channel, thread, askID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
