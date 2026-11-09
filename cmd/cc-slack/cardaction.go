@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1031,8 +1032,8 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 			}
 			now := provided[at].Card.PRs[0]
 			fresh := *pr
-			fresh.Review, fresh.Change, fresh.Plan, fresh.ELI5, fresh.Blocks, fresh.Lands = now.Review, now.Change, now.Plan, now.ELI5, now.Blocks, now.Lands
-			changed = changed || fresh != *pr
+			fresh.Review, fresh.Surprise, fresh.Plan, fresh.Refresher, fresh.Blocks, fresh.Lands = now.Review, now.Surprise, now.Plan, now.Refresher, now.Blocks, now.Lands
+			changed = changed || !reflect.DeepEqual(fresh, *pr)
 			*pr = fresh
 		}
 	})

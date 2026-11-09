@@ -260,20 +260,21 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	if missing := linesLacking(held, card); len(missing) != 0 {
 		t.Fatalf("missing = %q from the card as drawn, want none", missing)
 	}
-	noELI5 := make([]slack.Block, 0, len(held))
+	noSurprise := make([]slack.Block, 0, len(held))
 	for _, b := range held {
-		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil && s.Text.Text == "*ELI5*\n"+fullPR(1).ELI5 {
+		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil && strings.Contains(s.Text.Text, "*"+cardSurprise+"*") && strings.Contains(s.Text.Text, fullPR(1).Refresher) {
 			continue
 		}
-		noELI5 = append(noELI5, b)
+		noSurprise = append(noSurprise, b)
 	}
-	if missing := linesLacking(noELI5, card); !slices.Equal(missing, []string{"ELI5"}) {
-		t.Fatalf("missing = %q, want ELI5 named", missing)
+	if missing := linesLacking(noSurprise, card); !slices.Contains(missing, cardSurprise) {
+		t.Fatalf("missing = %q, want %s named", missing, cardSurprise)
 	}
 	v := view()
 	v.tapped = "✓ *Approve* · answered 1:44am"
-	if missing := linesLacking(card.replyBlocks(v), card); len(missing) != 0 {
-		t.Fatalf("missing = %q from the tapped card, want none", missing)
+	settled := sectionText(card.replyBlocks(v))
+	if strings.Contains(settled, "*"+cardRefresher+"*") || !strings.Contains(settled, fullPR(1).URL) || !strings.Contains(settled, fullPR(2).URL) {
+		t.Fatalf("tapped card says %q, want it folded to one line per PR", settled)
 	}
 }
 

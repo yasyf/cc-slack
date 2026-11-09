@@ -536,9 +536,6 @@ func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, pages
 func (p cardPR) lines() []cardFact {
 	shown := p.visible()
 	var lines []cardFact
-	if eli5 := strings.TrimSpace(shown.ELI5); eli5 != "" {
-		lines = append(lines, cardFact{"ELI5", plainMrkdwn(eli5)})
-	}
 	for _, f := range shown.fields(cardView{}) {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, cardFact{f.Label, "*" + f.Label + "*"})

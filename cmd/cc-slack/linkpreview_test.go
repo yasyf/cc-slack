@@ -223,7 +223,7 @@ func TestAStatusCardCarriesItsPRPreviewInItsThreadAndLosesItsBareLine(t *testing
 func TestACardPreviewsNoPRItDraws(t *testing.T) {
 	const mixedCase = "https://github.com/Acme/App/pull/41"
 	for name, card := range map[string]statusCard{
-		"in its prs":  {PRs: []cardPR{{URL: mixedCase, Change: "Chats load faster"}}},
+		"in its prs":  {PRs: []cardPR{{URL: mixedCase, Surprise: "Chats load faster"}}},
 		"in its refs": {Refs: []cardLink{{URL: mixedCase}}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -249,7 +249,7 @@ func TestACardStillPreviewsALinkItDoesNotDraw(t *testing.T) {
 	const other = "https://github.com/acme/app/pull/42"
 	rows := fakePRRows(t, readyRow(41), readyRow(42))
 	l := previewingDaemon(t, rows.argv, "acme/app#41", "acme/app#42")
-	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Fixed.\n" + testPR + "\n" + other, PRs: []cardPR{{URL: testPR, Change: "Chats load faster"}}}})
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Fixed.\n" + testPR + "\n" + other, PRs: []cardPR{{URL: testPR, Surprise: "Chats load faster"}}}})
 	post := lastPost(l)
 	if post.text != linkPreviewsLead || !strings.Contains(post.attachments, other) || strings.Contains(post.attachments, testPR) {
 		t.Fatalf("post = %+v, want a preview of the PR the card does not draw and no other", post)
@@ -543,7 +543,7 @@ func TestAPreviewKeepsAllOfWhatThePRChangesAndLinksGitHub(t *testing.T) {
 func TestAPRCardDrawsInBlocksAboveItsButtonsWithItsWorkObjectBelow(t *testing.T) {
 	l := previewingDaemon(t, fakePRRows(t).argv, "acme/app#41")
 	long := strings.Repeat("A sentence of the description. ", 200)
-	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m41", PRs: []cardPR{{URL: testPR, Change: "Chats load faster", Description: long}}}
+	card := statusCard{Status: "needs_you", Title: "Approve?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "m41", PRs: []cardPR{{URL: testPR, Surprise: "Chats load faster", Description: long}}}
 	l.do(opDMStatus, map[string]any{"card": card})
 	post := l.slack.sent()[0]
 	if entities := entitiesOf(t, post.metadata); len(entities) != 1 || entities[0].URL != testPR || post.attachments != "" {
