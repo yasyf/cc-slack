@@ -49,7 +49,7 @@ func tables(blocks []slack.Block) []*slack.DataTableBlock {
 func fullPR(n int) cardPR {
 	return cardPR{
 		URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: "One credential per team", Head: "7bf3ea0123",
-		Change: "Launches stop waiting on a new credential", Plan: "Nothing differed", ELI5: "A stale credential on disk", Blocks: "Your approval",
+		Surprise: "Launches stop waiting on a new credential", Plan: "Nothing differed", Refresher: "A stale credential on disk", Blocks: "Your approval",
 	}
 }
 
@@ -194,8 +194,8 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 	blocks, fold := card.layout(view())
 	want := []string{
-		"🙋 Keep it or revert it?", "*ELI5*\nA stale credential on disk",
-		"*What changes for you*", "It landed with no tap from you.",
+		"🙋 Keep it or revert it?", "*Refresher*\nA stale credential on disk",
+		"*Biggest surprise*", "It landed with no tap from you.",
 		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
 	if len(blocks) != len(want) {
@@ -261,31 +261,27 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	if _, ok := blocks[0].(*slack.HeaderBlock); !ok {
 		t.Fatalf("first block %T, want the header", blocks[0])
 	}
-	if eli5 := asSection(t, blocks[1]).Text.Text; eli5 != "*ELI5*\nA stale credential on disk" {
-		t.Fatalf("second block %q, want the labeled ELI5 alone, leading the card", eli5)
+	if _, ok := blocks[1].(*slack.DividerBlock); !ok {
+		t.Fatalf("second block %T, want a divider opening the PR's section", blocks[1])
 	}
-	fields := asSection(t, blocks[2]).Fields
-	for i, want := range []string{"*What changes for you*\nLaunches", "*Where it stands*\n", "*Waits on*\nYour"} {
-		if i >= len(fields) || !strings.HasPrefix(fields[i].Text, want) {
-			t.Fatalf("fields %+v, want field %d to start %q", fields, i, want)
+	head := asSection(t, blocks[2])
+	if head.Text.Text != "*One credential per team*\n<https://github.com/acme/app/pull/49622|app PR 49622>" || head.Accessory == nil || head.Accessory.ButtonElement.URL != pr.URL {
+		t.Fatalf("third block %+v, want the PR's title and link first, with its Open button", head)
+	}
+	said := asSection(t, blocks[3]).Text.Text
+	if !strings.HasPrefix(said, "*Refresher*\nA stale credential on disk") || strings.Contains(said, "*Where it stands*") {
+		t.Fatalf("fourth block %q, want the refresher first and no Where it stands while CI passed", said)
+	}
+	for _, want := range []string{"*Biggest surprise*\nLaunches", "*Waits on*\nYour", "*Differs from the plan*\nNothing"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("fourth block %q lacks %q", said, want)
 		}
-	}
-	if !strings.Contains(fields[1].Text, "CI passed") {
-		t.Fatalf("where it stands %q, want the live CI state", fields[1].Text)
 	}
 	got := blocksJSON(t, blocks)
-	if !strings.Contains(sectionText(blocks), "*The change*\n<https://github.com/acme/app/pull/49622|app PR 49622> · One credential per team") {
-		t.Fatalf("blocks %s, want the PR's link and title under The change", got)
-	}
-	for _, want := range []string{"*Differs from the plan*\\nNothing"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("blocks %s lack %q", got, want)
-		}
-	}
-	if strings.Contains(got, "It keeps one storage credential per team.") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
+	if strings.Contains(got, "It keeps one storage credential per team.") || strings.Contains(sectionText(blocks)+pr.headline(0, 1), "7bf3ea0") {
 		t.Fatalf("blocks %s, want the PR's description behind Explain more and no commit", got)
 	}
-	buttons := cardButtons(t, blocks)
+	buttons := cardButtons(t, blocks)[1:]
 	if buttons[0].Text.Text != "Approve (Recommended)" || buttons[1].Text.Text != "Hold" {
 		t.Fatalf("buttons %q %q, want Approve and Hold", buttons[0].Text.Text, buttons[1].Text.Text)
 	}
@@ -309,7 +305,7 @@ func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *test
 
 func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	pr := fullPR(49722)
-	pr.ELI5, pr.Blocks = "", " "
+	pr.Refresher, pr.Blocks = "", " "
 	for name, card := range map[string]statusCard{
 		"card": {Status: "needs_you", Title: "x", PRs: []cardPR{pr}},
 		"row":  {Status: "needs_you", Title: "x", Group: "g", Rows: []cardRow{{ID: "r", PR: &pr, Buttons: []string{"Approve", "Hold"}}}},
@@ -322,7 +318,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		got := blocksJSON(t, blocks)
-		if !strings.Contains(got, "*What changes for you*") || !strings.Contains(got, "*Differs from the plan*") || strings.Contains(got, "A stale credential") || strings.Contains(got, "*Waits on*") {
+		if !strings.Contains(got, "*Biggest surprise*") || !strings.Contains(got, "*Differs from the plan*") || strings.Contains(got, "A stale credential") || strings.Contains(got, "*Waits on*") {
 			t.Fatalf("%s: blocks %s, want the two lines it has and no empty field", name, got)
 		}
 	}
@@ -334,7 +330,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 
 func TestAnOverLongLineOrHintPostsWholeInSections(t *testing.T) {
 	pr := fullPR(7)
-	pr.ELI5 = strings.Repeat("An explainer worth a long read. ", 100)
+	pr.Refresher = strings.Repeat("An explainer worth a long read. ", 100)
 	long := []string{"Keep it", "Drop it"}
 	card := statusCard{Status: "needs_you", Title: "x", Options: long, Recommended: long[0], Waits: "w", PRs: []cardPR{pr}, Hints: map[string]string{long[1]: strings.Repeat("A reason to drop it. ", 200)}}
 	if err := card.check(bodyAt, false, ""); err != nil {
@@ -430,7 +426,7 @@ func TestAGroupCardOfPRRowsFitsAMessage(t *testing.T) {
 		t.Fatalf("blocks %s, want each row's description behind Explain more", got)
 	}
 	wordy := fullPR(9)
-	wordy.Change = strings.Repeat("words ", cardMaxVisible/6)
+	wordy.Surprise = strings.Repeat("words ", cardMaxVisible/6)
 	over := statusCard{Status: "needs_you", Title: "Login", Group: "pg:login", Rows: append(slices.Clone(rows), cardRow{ID: "pg:9:abc", PR: &wordy, Buttons: []string{"Hold"}})}
 	if err := over.check(bodyAt, false, ""); err == nil {
 		t.Fatal("a group card past the PR-row limit whose words overflow a screen passed its check")
@@ -730,7 +726,7 @@ func TestAPRCardSaysWhatItsButtonsDoAndClaimsNoLaneStops(t *testing.T) {
 
 func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 	hidden := " <!-- cci #453550 -->"
-	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Change: "It changes." + hidden, Plan: "Plan." + hidden, ELI5: "Low." + hidden, Blocks: "Nothing." + hidden}
+	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Surprise: "It changes." + hidden, Plan: "Plan." + hidden, Refresher: "Low." + hidden, Blocks: "Nothing." + hidden}
 	row := pr
 	card := statusCard{
 		Status: "needs_you", Title: "Land it?" + hidden, Body: "First sentence." + hidden + " Second sentence.",
@@ -752,14 +748,14 @@ func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 	if got := blocksJSON(t, labeled.replyBlocks(view())); !strings.Contains(got, "*1. Keep the long chapter shape as it is*") {
 		t.Errorf("a pick's row draws its comment: %s", got)
 	}
-	if card.Body != "First sentence."+hidden+" Second sentence." || !strings.Contains(card.PRs[0].ELI5, "453550") {
+	if card.Body != "First sentence."+hidden+" Second sentence." || !strings.Contains(card.PRs[0].Refresher, "453550") {
 		t.Error("drawing a card edits what it stores")
 	}
 }
 
 func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 	change, eli5 := strings.Repeat("It changes a thing. ", 25)+"The end of the change.", strings.Repeat("Chats come back on their own. ", 30)+"The last line."
-	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", ELI5: eli5, Blocks: "Only your approval."}}}
+	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: change, Plan: "As planned.", Refresher: eli5, Blocks: "Only your approval."}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
 	for _, whole := range []string{"The end of the change.", "The last line."} {
 		if !strings.Contains(got, whole) {
@@ -772,7 +768,7 @@ func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 }
 
 func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
-	card := statusCard{Status: "needs_you", Title: "Pick one", Options: []string{"A", "B"}, Waits: "card-x", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: "It changes.", Plan: "Plan: step 3.", ELI5: "Plainly.", Lands: "the change below it, #6, lands"}}}
+	card := statusCard{Status: "needs_you", Title: "Pick one", Options: []string{"A", "B"}, Waits: "card-x", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: "It changes.", Plan: "Plan: step 3.", Refresher: "Plainly.", Lands: "the change below it, #6, lands"}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
 	if !strings.Contains(got, "*Waits on*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
 		t.Fatalf("want the wait under Waits on: %s", got)
@@ -781,7 +777,7 @@ func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
 
 func TestACardBodyRepeatingItsPRsWhatChangesSaysItOnce(t *testing.T) {
 	change := "Serve now builds a chat's agent when it opens the chat.\n\nThe swap is gone."
-	card := statusCard{Status: "needs_you", Title: "Land #7?", Body: "Serve now builds a chat's agent when it opens the chat. The swap is gone. It passed its checks and review and waits only on your tap.", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: change, Plan: "As planned.", ELI5: "Chats come with their agent.", Blocks: "Only your approval."}}}
+	card := statusCard{Status: "needs_you", Title: "Land #7?", Body: "Serve now builds a chat's agent when it opens the chat. The swap is gone. It passed its checks and review and waits only on your tap.", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: change, Plan: "As planned.", Refresher: "Chats come with their agent.", Blocks: "Only your approval."}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
 	if n := strings.Count(got, "The swap is gone."); n != 1 || !strings.Contains(got, "It passed its checks and review and waits only on your tap.") {
 		t.Fatalf("What changes drawn %d times, want once with the rest of the body kept: %s", n, got)
@@ -821,21 +817,20 @@ func TestAPRCardOpensEachPROnGitHubAndItsCopyKeepsTheButton(t *testing.T) {
 		urls := map[string]string{}
 		for _, b := range cardButtons(t, blocks) {
 			if b.URL != "" {
-				urls[b.Text.Text] = b.URL
+				urls[b.URL] = b.Text.Text
 			}
 		}
 		return urls
 	}
 	blocks := card.replyBlocks(view())
-	if got := opens(blocks); !maps.Equal(got, map[string]string{cardGitHubLabel: card.PRs[0].URL}) {
+	if got := opens(blocks); !maps.Equal(got, map[string]string{card.PRs[0].URL: cardOpenLabel}) {
 		t.Fatalf("a waiting PR card opens %v", got)
 	}
-	copied, answers := copiedCard(blocks, permalinkRef{channelID: "D1", ts: "1.2"})
-	if got := opens(copied); answers != 2 || !maps.Equal(got, map[string]string{cardGitHubLabel: card.PRs[0].URL}) {
-		t.Fatalf("its copy answers %d and opens %v, want Approve and Hold and the PR", answers, got)
+	if _, answers := copiedCard(blocks, permalinkRef{channelID: "D1", ts: "1.2"}); answers != 2 {
+		t.Fatalf("its copy answers %d, want Approve and Hold", answers)
 	}
 	info := statusCard{Status: "info", Title: "Two PRs", PRs: []cardPR{fullPR(7), fullPR(8)}}
-	want := map[string]string{"Open #7 on GitHub": fullPR(7).URL, "Open #8 on GitHub": fullPR(8).URL}
+	want := map[string]string{fullPR(7).URL: cardOpenLabel, fullPR(8).URL: cardOpenLabel}
 	if got := opens(info.replyBlocks(view())); !maps.Equal(got, want) {
 		t.Fatalf("a card naming two PRs opens %v, want %v", got, want)
 	}
@@ -872,18 +867,12 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *te
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("Slack would refuse the card: %v", err)
 	}
-	if port := asSection(t, blocks[1]).Text.Text; !strings.HasPrefix(port, "Port of <https://github.com/acme/app/pull/51000|#51000>") {
-		t.Fatalf("second block %q, want the port line first", port)
+	said := asSection(t, blocks[3]).Text.Text
+	if !strings.HasPrefix(said, "Port of <https://github.com/acme/app/pull/51000|#51000>") {
+		t.Fatalf("fourth block %q, want the port line first under the PR's title", said)
 	}
-	if eli5 := asSection(t, blocks[2]).Text.Text; eli5 != "*ELI5*\nA stale credential on disk" {
-		t.Fatalf("third block %q, want the labeled ELI5 right under the port line", eli5)
-	}
-	showMe := slices.IndexFunc(blocks, func(b slack.Block) bool {
-		section, ok := b.(*slack.SectionBlock)
-		return ok && section.Text != nil && strings.HasPrefix(section.Text.Text, "*Show me*\nBefore: a page per reconnect.")
-	})
-	if showMe < 4 || asSection(t, blocks[3]).Fields == nil {
-		t.Fatalf("blocks %s, want Show me on its own full-width row under the fields", blocksJSON(t, blocks))
+	if !strings.Contains(said, "\n\n*Refresher*\nA stale credential on disk") || !strings.HasSuffix(said, "*Show me*\nBefore: a page per reconnect. After: a page when errors keep coming for five minutes.") {
+		t.Fatalf("fourth block %q, want the refresher under the port line and Show me last", said)
 	}
 	got := blocksJSON(t, blocks)
 	for _, want := range []string{"*What you'll hate most*\\nA reconnect storm still pages once.", "*Show me*\\nBefore: a page per reconnect."} {
@@ -891,7 +880,7 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *te
 			t.Fatalf("blocks %s lack %q", got, want)
 		}
 	}
-	if strings.Contains(got, "*Risk*") || strings.Contains(got, "*Against the plan*") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
+	if strings.Contains(got, "*Risk*") || strings.Contains(got, "*Against the plan*") || strings.Contains(sectionText(blocks)+pr.headline(0, 1), "7bf3ea0") {
 		t.Fatalf("blocks %s, want no old labels and no commit", got)
 	}
 }

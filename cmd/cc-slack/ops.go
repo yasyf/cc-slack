@@ -2297,8 +2297,8 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 func checkDMStatus(b opBody, now time.Time, id identity) error {
 	tailnet := id.Config.Links.Tailnet
 	switch {
-	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || (len(b.Files) > 0 && (!b.Mirrored || b.Card.Waits == ""))):
-		return errors.New("dm-status takes a card, or blocks and files, never both; only a waiting card cc-present sends carries images")
+	case b.Card != nil && (b.Text != "" || len(b.Blocks) > 0 || (len(b.Files) > 0 && b.Card.Waits == "")):
+		return errors.New("dm-status takes a card, or blocks and files, never both; only a waiting card carries images")
 	case b.Card == nil && b.Text == "" && len(b.Files) == 0:
 		return errors.New("dm-status needs a card, text, or files")
 	case b.RootOnly && (b.Card == nil || b.ThreadTS != ""):

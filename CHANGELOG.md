@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A PR card gives each PR its own section: a divider, then the PR's title and link with its own Open button, then a Refresher for someone who knows the codebase but has not read this code lately, the Biggest surprise, what you'll hate most, and its Show me with that PR's pictures inline under it. A card's body, such as a stack's own summary, leads the card above the PR sections. "Where it stands" is left out while CI is green and the PR is open, and "Waits on" while it would only say it lands once you approve. The card reads `refresher`, `surprise` and per-PR `pictures` where it read `eli5` and `change`; the Open on GitHub buttons in the bottom row are gone.
+- An answered PR card folds to its title, your pick, and one line per PR with its link and state.
+- A waiting card takes image files with `dm-status`, from any sender, and shows them inside the card; before, only a waiting card cc-present sent could.
+
 ### Added
 
 - `cc-slack canvas --title <t> [--canvas <id>]` draws the markdown on stdin as a canvas tabbed in your DM with the app, and redraws it in place on later calls, so a drive's status page lives as a tab at the top of that DM. `cc-slack drive-cards --drive <name>` lists the drive's open question cards and the PR cards still waiting on your tap, with links, for the drive's queue.

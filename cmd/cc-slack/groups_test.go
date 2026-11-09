@@ -181,7 +181,7 @@ func TestRowTapTheBoardRefusesShowsWhyAndLeavesTheRowOpen(t *testing.T) {
 }
 
 func prCardRow() cardRow {
-	return cardRow{ID: testWaits, Buttons: []string{"Approve", "Hold"}, PRCard: true, PR: &cardPR{URL: tapPR41[0], Change: "Chats load faster.", Plan: "Checked.", Blocks: "Only your approval."}}
+	return cardRow{ID: testWaits, Buttons: []string{"Approve", "Hold"}, PRCard: true, PR: &cardPR{URL: tapPR41[0], Surprise: "Chats load faster.", Plan: "Checked.", Blocks: "Only your approval."}}
 }
 
 func TestAPRCardRowTapAppliesThroughTheCardCommandNotTheBoard(t *testing.T) {
@@ -228,11 +228,11 @@ func TestAGroupCardCarriesMorePRRowsOnlyWhileTheirWordsAndBlocksFit(t *testing.T
 		row := prCardRow()
 		row.ID = fmt.Sprintf("merge:%d:e718a74", number)
 		pr := *row.PR
-		pr.Change = strings.Repeat("words ", 30)
+		pr.Surprise = strings.Repeat("words ", 30)
 		row.PR = &pr
 		short = append(short, row)
 		wide := pr
-		wide.Change = strings.Repeat("words ", 200)
+		wide.Surprise = strings.Repeat("words ", 200)
 		row.PR = &wide
 		long = append(long, row)
 	}

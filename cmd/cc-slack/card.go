@@ -83,7 +83,10 @@ const (
 	cardPermission    = "slack-"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
-	prLinkLabel       = "The change"
+	cardOpenLabel     = "Open"
+	cardRefresher     = "Refresher"
+	cardSurprise      = "Biggest surprise"
+	cardDefaultLands  = "you approve"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
 
@@ -152,19 +155,20 @@ type cardRow struct {
 }
 
 type cardPR struct {
-	URL         string `json:"url"`
-	Title       string `json:"title,omitempty"`
-	Head        string `json:"head,omitempty"`
-	Review      string `json:"review,omitempty"`
-	Change      string `json:"change"`
-	HateMost    string `json:"hate_most,omitempty"`
-	Plan        string `json:"plan"`
-	ELI5        string `json:"eli5"`
-	ShowMe      string `json:"show_me,omitempty"`
-	Port        string `json:"port,omitempty"`
-	Blocks      string `json:"blocks"`
-	Lands       string `json:"lands,omitempty"`
-	Description string `json:"description,omitempty"`
+	URL         string   `json:"url"`
+	Title       string   `json:"title,omitempty"`
+	Head        string   `json:"head,omitempty"`
+	Review      string   `json:"review,omitempty"`
+	Surprise    string   `json:"surprise,omitempty"`
+	HateMost    string   `json:"hate_most,omitempty"`
+	Plan        string   `json:"plan"`
+	Refresher   string   `json:"refresher"`
+	ShowMe      string   `json:"show_me,omitempty"`
+	Pictures    []string `json:"pictures,omitempty"`
+	Port        string   `json:"port,omitempty"`
+	Blocks      string   `json:"blocks"`
+	Lands       string   `json:"lands,omitempty"`
+	Description string   `json:"description,omitempty"`
 }
 
 type cardLink struct {
@@ -356,18 +360,43 @@ func (p cardPR) check() error {
 }
 
 func (p cardPR) waitsOn() string {
-	if p.Blocks == "" && p.Lands != "" {
+	if p.Blocks == "" && p.Lands != "" && strings.TrimSuffix(p.Lands, ".") != cardDefaultLands {
 		return "It lands once " + strings.TrimSuffix(p.Lands, ".") + "."
 	}
 	return p.Blocks
 }
 
-func (p cardPR) fields(v cardView) []cardFact {
-	id, _ := parseRef(p.URL)
-	return []cardFact{
-		{"What changes for you", p.Change}, {"What you'll hate most", p.HateMost}, {"Where it stands", cmp.Or(p.Review, v.refs[id.key()].text())},
-		{"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
+func (p cardPR) stands(v cardView) string {
+	if p.Review != "" {
+		return p.Review
 	}
+	id, _ := parseRef(p.URL)
+	live := v.refs[id.key()]
+	if live.State == "open" && (live.Checks == "" || live.Checks == "passed") {
+		return ""
+	}
+	return live.text()
+}
+
+func (p cardPR) fields(v cardView) []cardFact {
+	return []cardFact{
+		{cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
+		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
+	}
+}
+
+func (p cardPR) pictured(image slack.FileSummary) bool {
+	return slices.ContainsFunc(p.Pictures, func(path string) bool { return filepath.Base(path) == image.Title })
+}
+
+func (p cardPR) images(all []slack.FileSummary) []slack.FileSummary {
+	return slices.DeleteFunc(slices.Clone(all), func(image slack.FileSummary) bool { return !p.pictured(image) })
+}
+
+func (c statusCard) unplacedImages() []slack.FileSummary {
+	return slices.DeleteFunc(slices.Clone(c.Images), func(image slack.FileSummary) bool {
+		return slices.ContainsFunc(c.PRs, func(p cardPR) bool { return p.pictured(image) })
+	})
 }
 
 func (c statusCard) checkReplaces() error {
@@ -740,7 +769,6 @@ func (c statusCard) visible() statusCard {
 	c.PRs = slices.Clone(c.PRs)
 	for i := range c.PRs {
 		c.PRs[i] = c.PRs[i].visible()
-		c.Body = withoutSaid(c.Body, c.PRs[i].Change)
 	}
 	c.Rows = slices.Clone(c.Rows)
 	for i := range c.Rows {
@@ -753,18 +781,9 @@ func (c statusCard) visible() statusCard {
 	return c
 }
 
-func withoutSaid(body, said string) string {
-	said = strings.Join(strings.Fields(said), " ")
-	flat := strings.Join(strings.Fields(body), " ")
-	if said == "" || !strings.Contains(flat, said) {
-		return body
-	}
-	return strings.TrimSpace(strings.Replace(flat, said, "", 1))
-}
-
 func (p cardPR) visible() cardPR {
-	p.Title, p.Review, p.Change = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Change)
-	p.Plan, p.ELI5, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.ELI5), withoutHidden(p.Blocks), withoutHidden(p.Lands)
+	p.Title, p.Review, p.Surprise = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Surprise)
+	p.Plan, p.Refresher, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.Refresher), withoutHidden(p.Blocks), withoutHidden(p.Lands)
 	p.ShowMe, p.HateMost, p.Port = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port)
 	return p
 }
@@ -1001,22 +1020,7 @@ func (c statusCard) actions() slack.Block {
 	pause := button(cardPauseAction, cardPauseLabel)
 	pause.Style = slack.StyleDanger
 	buttons = append(buttons, button(cardAckAction, cardAckLabel), pause)
-	return slack.NewActionBlock(cardActionsBlock, append(buttons, c.gitHubButtons()...)...)
-}
-
-func (c statusCard) gitHubButtons() []slack.BlockElement {
-	buttons := make([]slack.BlockElement, 0, len(c.PRs))
-	for _, p := range c.PRs {
-		id, _ := parseRef(p.URL)
-		label := cardGitHubLabel
-		if len(c.PRs) > 1 {
-			label = fmt.Sprintf("Open #%d on GitHub", id.Number)
-		}
-		b := slack.NewButtonBlockElement(fmt.Sprintf("%sgithub-%d", cardLinkAction, id.Number), "", slack.NewTextBlockObject(slack.PlainTextType, label, true, false))
-		b.URL = p.URL
-		buttons = append(buttons, b)
-	}
-	return buttons
+	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 
 func (c statusCard) answers() []string {
@@ -1047,7 +1051,7 @@ func (c statusCard) waitActions() slack.Block {
 	buttons = append(buttons,
 		slack.NewButtonBlockElement(cardOtherAction+c.Waits, other, slack.NewTextBlockObject(slack.PlainTextType, write, true, false)),
 		slack.NewButtonBlockElement(cardExplainAction+c.Waits, explain, slack.NewTextBlockObject(slack.PlainTextType, cardExplainLabel, true, false)))
-	return slack.NewActionBlock(cardActionsBlock, append(buttons, c.gitHubButtons()...)...)
+	return slack.NewActionBlock(cardActionsBlock, buttons...)
 }
 
 func (c statusCard) waitHint() string {
@@ -1223,20 +1227,29 @@ func (r cardRow) blocks(v cardView) []slack.Block {
 
 func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 	if answered {
-		p.Review = ""
+		return []slack.Block{section("", p.settledLine(v))}
 	}
-	return p.grid(v)
+	return p.section(v, 0, 1, nil)
 }
 
-func (p cardPR) leads() []string {
-	var leads []string
-	if port := strings.TrimSpace(p.Port); port != "" {
-		leads = append(leads, plainMrkdwn(port))
+func (p cardPR) settledLine(v cardView) string {
+	id, _ := parseRef(p.URL)
+	return refLine(p.URL, "", id, v.refs[id.key()], p.Title)
+}
+
+func (p cardPR) section(v cardView, at, of int, images []slack.FileSummary) []slack.Block {
+	blocks := append([]slack.Block{p.head(at, of)}, sections(p.body(v))...)
+	for _, image := range p.images(images) {
+		blocks = append(blocks, imageBlock(image))
 	}
-	if eli5 := strings.TrimSpace(p.ELI5); eli5 != "" {
-		leads = append(leads, "*ELI5*\n"+plainMrkdwn(eli5))
-	}
-	return leads
+	return blocks
+}
+
+func (p cardPR) head(at, of int) slack.Block {
+	id, _ := parseRef(p.URL)
+	open := slack.NewButtonBlockElement(fmt.Sprintf("%sgithub-%d", cardLinkAction, id.Number), "", slack.NewTextBlockObject(slack.PlainTextType, cardOpenLabel, true, false))
+	open.URL = p.URL
+	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, p.headline(at, of), false, false), nil, slack.NewAccessory(open))
 }
 
 func (p cardPR) showMe() string {
@@ -1246,49 +1259,37 @@ func (p cardPR) showMe() string {
 	return ""
 }
 
-func (p cardPR) grid(v cardView) []slack.Block {
-	var blocks []slack.Block
-	for _, lead := range p.leads() {
-		blocks = append(blocks, sections(lead)...)
-	}
-	var fields []*slack.TextBlockObject
-	var long []slack.Block
-	for _, f := range p.fields(v) {
-		if strings.TrimSpace(f.Value) == "" {
-			continue
-		}
-		said := cardField(f.Label, plainMrkdwn(f.Value))
-		if runes(said.Text) <= slackMaxField {
-			fields = append(fields, said)
-			continue
-		}
-		long = append(long, sections(said.Text)...)
-	}
-	fields = append(fields, cardField(prLinkLabel, p.headline()))
-	return append(append(append(blocks, slack.NewSectionBlock(nil, fields, nil)), long...), sections(p.showMe())...)
-}
-
-func (p cardPR) headline() string {
+func (p cardPR) headline(at, of int) string {
 	id, _ := parseRef(p.URL)
-	line := slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number))
-	if p.Title != "" {
-		line += " · " + plainMrkdwn(p.Title)
+	place := ""
+	if of > 1 {
+		place = fmt.Sprintf("%d of %d · ", at+1, of)
 	}
-	return line
+	link := slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number))
+	if p.Title == "" {
+		return "*" + place + "*" + link
+	}
+	return "*" + place + plainMrkdwn(p.Title) + "*\n" + link
 }
 
-func (p cardPR) markdown(v cardView) string {
-	lines := p.leads()
+func (p cardPR) body(v cardView) string {
+	var lines []string
+	if port := strings.TrimSpace(p.Port); port != "" {
+		lines = append(lines, plainMrkdwn(port))
+	}
 	for _, f := range p.fields(v) {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	lines = append(lines, "*"+prLinkLabel+"*\n"+p.headline())
 	if shown := p.showMe(); shown != "" {
 		lines = append(lines, shown)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n\n")
+}
+
+func (p cardPR) markdown(v cardView) string {
+	return strings.TrimSpace(p.headline(0, 1) + "\n" + p.body(v))
 }
 
 func sections(text string) []slack.Block {
@@ -1395,8 +1396,12 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
 	if v.tapped != "" {
 		settled := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
-		for _, p := range c.PRs {
-			settled = append(settled, p.grid(v)...)
+		if len(c.PRs) > 0 {
+			lines := make([]string, 0, len(c.PRs))
+			for _, p := range c.PRs {
+				lines = append(lines, p.settledLine(v))
+			}
+			settled = append(settled, section("card-prs", strings.Join(lines, "\n")))
 		}
 		settled = append(settled, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
 		return append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))), nil
@@ -1408,15 +1413,18 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	}
 	tail := c.tail(v)
 	visible := cardMaxVisible
-	for _, p := range c.PRs {
-		lead = append(lead, p.blocks(v, false)...)
+	var prs []slack.Block
+	for i, p := range c.PRs {
+		prs = append(prs, slack.NewDividerBlock())
+		prs = append(prs, p.section(v, i, len(c.PRs), c.Images)...)
 		visible -= runes(p.markdown(v))
 	}
 	if c.Body != "" {
-		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(tail)-1, max(visible, 0), true)
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(prs)-len(tail)-1, max(visible, 0), true)
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}
+	lead = append(lead, prs...)
 	if len(fold) > 0 && !v.unfolded && c.Waits == "" {
 		tail = slices.Insert(tail, len(tail)-1, slack.Block(slack.NewActionBlock(cardFoldBlock, button(cardFoldAction, cardExplainLabel))))
 	}
@@ -1425,7 +1433,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 
 func (c statusCard) tail(v cardView) []slack.Block {
 	blocks := make([]slack.Block, 0, len(c.Images)+len(c.Options)+len(c.Rows)+cardMaxFacts)
-	for _, image := range c.Images {
+	for _, image := range c.unplacedImages() {
 		blocks = append(blocks, imageBlock(image))
 	}
 	blocks = append(blocks, c.progress(v.now)...)

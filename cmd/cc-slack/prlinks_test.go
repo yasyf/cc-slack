@@ -376,7 +376,7 @@ func TestACardPRCarryingItsDescriptionKeepsItOverGitHubs(t *testing.T) {
 	l, _ := linkingDaemon(t, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Approve it?", "card": map[string]any{"title": "Approve it?", "prs": []map[string]any{{
 		"url": "https://github.com/acme/app/pull/41", "title": "One credential per team", "description": "The ledger's description.",
-		"change": "Launches stop waiting", "plan": "Nothing differed", "eli5": "None", "blocks": "Your approval",
+		"surprise": "Launches stop waiting", "plan": "Nothing differed", "refresher": "None", "blocks": "Your approval",
 	}}}})
 	card := lastPost(l)
 	id, err := loadIdentity(l.ctx, l.srv.DB())
@@ -495,7 +495,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
 	tap := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Approve #41 at e718a74?",
-		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Change: "Chats load faster", Plan: "Nothing differed", ELI5: "One cache key", Blocks: "Your approval"}},
+		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Surprise: "Chats load faster", Plan: "Nothing differed", Refresher: "One cache key", Blocks: "Your approval"}},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, tap)
@@ -513,7 +513,7 @@ func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
 			t.Fatalf("payload = %s, want %s in it", payload, want)
 		}
 	}
-	for _, want := range []string{"Approve (Recommended)", `"Hold"`, cardGitHubLabel, "What changes"} {
+	for _, want := range []string{"Approve (Recommended)", `"Hold"`, `"` + cardOpenLabel + `"`, cardSurprise} {
 		if !strings.Contains(card.blocks, want) {
 			t.Fatalf("blocks = %s, want %s beside the PR card", card.blocks, want)
 		}
@@ -1421,11 +1421,11 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 
 func TestATappedCardRedrawsItsPRLinesAsTheCardCommandSaysNow(t *testing.T) {
 	now := headRowCard()
-	now.Card.PRs[0].Change, now.Card.PRs[0].Plan, now.Card.PRs[0].ELI5, now.Card.PRs[0].Blocks = "Chats load faster.", "Nothing differed.", "One cache key.", "Only your tap."
+	now.Card.PRs[0].Surprise, now.Card.PRs[0].Plan, now.Card.PRs[0].Refresher, now.Card.PRs[0].Blocks = "Chats load faster.", "Nothing differed.", "One cache key.", "Only your tap."
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, now)
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	asked := statusCard{Status: "needs_you", Title: "Tap: #41", Body: "Fixes the chat list.", Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testPick,
-		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Head: "e718a74", Change: "Chats load faster.", Plan: "Nothing differed.", ELI5: "One cache key.", Blocks: "No approving review at this head."}}}
+		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Head: "e718a74", Surprise: "Chats load faster.", Plan: "Nothing differed.", Refresher: "One cache key.", Blocks: "No approving review at this head."}}}
 	posted := postPick(t, l, map[string]any{"card": asked})
 	tapMergeOnPick(t, l, posted)
 	eventually(t, "the tapped card redrawn with the PR's wait as the card command says now", func() bool {
@@ -1489,8 +1489,8 @@ func stackCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Fix: approve 2 PRs: one cache key · drop the old key?",
 		PRs: []cardPR{
-			{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Change: "Chats load faster", ELI5: "One key for every chat"},
-			{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Change: "Nothing you see", HateMost: "Old builds lose their cache once", ELI5: "The old key goes"},
+			{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Surprise: "Chats load faster", Refresher: "One key for every chat"},
+			{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Surprise: "Nothing you see", HateMost: "Old builds lose their cache once", Refresher: "The old key goes"},
 		},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
@@ -1519,7 +1519,7 @@ func TestAStackCardCarriesEveryPRItListsAndRedrawsWhenAnyOfThemMoves(t *testing.
 	}
 
 	moved := stackCard()
-	moved.Card.PRs[1].Change = "Nothing you see, and the old key's last reader is gone"
+	moved.Card.PRs[1].Surprise = "Nothing you see, and the old key's last reader is gone"
 	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{moved}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
