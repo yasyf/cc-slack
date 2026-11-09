@@ -549,7 +549,7 @@ func TestAPRCardDrawsInBlocksAboveItsButtonsWithItsWorkObjectBelow(t *testing.T)
 	if entities := entitiesOf(t, post.metadata); len(entities) != 1 || entities[0].URL != testPR || post.attachments != "" {
 		t.Fatalf("metadata = %s, attachments = %s, want the PR's Work Object and no preview", post.metadata, post.attachments)
 	}
-	at, buttons := strings.Index(post.blocks, "What changes"), strings.Index(post.blocks, cardExplainAction+"m41")
+	at, buttons := strings.Index(post.blocks, cardSurprise), strings.Index(post.blocks, cardExplainAction+"m41")
 	if at < 0 || buttons < 0 || at > buttons {
 		t.Fatalf("blocks = %s, want the PR above its buttons", post.blocks)
 	}

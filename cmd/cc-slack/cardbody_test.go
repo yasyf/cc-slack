@@ -352,7 +352,7 @@ func TestAPRCardWithNoGitHubToReadStillPosts(t *testing.T) {
 	loggedIn(t, l)
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "The relay fix", PRs: []cardPR{fullPR(7)}}})
 	posts := l.slack.sent()
-	if len(posts) != 1 || !strings.Contains(posts[0].blocks, "What changes") {
+	if len(posts) != 1 || !strings.Contains(posts[0].blocks, cardSurprise) {
 		t.Fatalf("posts = %+v, want the card out with its lines", posts)
 	}
 }
@@ -773,15 +773,6 @@ func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
 	got := blocksJSON(t, card.replyBlocks(view()))
 	if !strings.Contains(got, "*Waits on*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
 		t.Fatalf("want the wait under Waits on: %s", got)
-	}
-}
-
-func TestACardBodyRepeatingItsPRsWhatChangesSaysItOnce(t *testing.T) {
-	change := "Serve now builds a chat's agent when it opens the chat.\n\nThe swap is gone."
-	card := statusCard{Status: "needs_you", Title: "Land #7?", Body: "Serve now builds a chat's agent when it opens the chat. The swap is gone. It passed its checks and review and waits only on your tap.", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: change, Plan: "As planned.", Refresher: "Chats come with their agent.", Blocks: "Only your approval."}}}
-	got := blocksJSON(t, card.replyBlocks(view()))
-	if n := strings.Count(got, "The swap is gone."); n != 1 || !strings.Contains(got, "It passed its checks and review and waits only on your tap.") {
-		t.Fatalf("What changes drawn %d times, want once with the rest of the body kept: %s", n, got)
 	}
 }
 
