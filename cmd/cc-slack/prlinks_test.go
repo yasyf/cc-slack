@@ -1470,3 +1470,52 @@ func TestAPRCardRedrawShowsItsPictureUploadedOnceAndReusesItAfter(t *testing.T) 
 		t.Fatalf("image blocks %v after %d uploads, want %v drawn again with no new upload", again, uploads(), first)
 	}
 }
+
+func stackCard() providedCard {
+	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
+		Status: "needs_you", Title: "Fix: approve 2 PRs: one cache key · drop the old key?",
+		PRs: []cardPR{
+			{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Change: "Chats load faster", ELI5: "One key for every chat"},
+			{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Change: "Nothing you see", HateMost: "Old builds lose their cache once", ELI5: "The old key goes"},
+		},
+		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
+	}}
+}
+
+func TestAStackCardCarriesEveryPRItListsAndRedrawsWhenAnyOfThemMoves(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", stackCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41", "acme/app#42")
+	stack := []string{tapPR41[0], "https://github.com/acme/app/pull/42"}
+	notice := statusCard{Status: "needs_you", Title: "PR approvals waiting on you", Body: "One stack waits on your tap.", Key: "approvals"}
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": notice, "tap_prs": stack}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	cards := rootCards(awaitPRCards(t, l, testDM))
+	if len(cards) != 1 || strings.Contains(sent["warning"], "NO APPROVE") {
+		t.Fatalf("cards = %+v, warning %q, want one card for the stack and no warning", cards, sent["warning"])
+	}
+	for _, want := range []string{"app PR 41", "app PR 42", "*What you'll hate most*\nOld builds lose their cache once"} {
+		if !strings.Contains(shown(t, cards[0]), want) {
+			t.Fatalf("card shows %q, want %q in it", shown(t, cards[0]), want)
+		}
+	}
+	if got := cmd.requests(t); !reflect.DeepEqual(got, []string{`{"prs":[{"number":41,"repo":"acme/app"},{"number":42,"repo":"acme/app"}]}`}) {
+		t.Fatalf("card command asked %v, want both PRs in one ask", got)
+	}
+
+	moved := stackCard()
+	moved.Card.PRs[1].Change = "Nothing you see, and the old key's last reader is gone"
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{moved}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#42": true})
+	edits := editsOf(l.slack.edited(), cards[0].ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "the old key's last reader is gone") {
+		t.Fatalf("card edits = %v, want the stack card redrawn when its second PR moves", edits)
+	}
+}

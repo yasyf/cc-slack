@@ -125,7 +125,10 @@ that no card in the post's thread cites and no open card at the DM root
 cites. A merged or closed PR gets no card. A card the program draws for a PR and
 head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
-one that passes the card checks. In the bot's DM the card opens at the root in
+one that passes the card checks. A card whose `prs` lists several PRs, such as
+one stack, is the card of each of them: it is asked for and posted once, no
+PR it lists counts as uncarded, and any of them changing redraws it, asked for
+by its first PR. In the bot's DM the card opens at the root in
 its own thread, watched by the session whose post named the PR, wherever that
 post sits; a post lands in a DM thread only when its call names that thread.
 Each PR's card, a pick card already offering it included, then shows with the
@@ -142,8 +145,8 @@ message holds no button answering a card it carries, or a PR it lists drew no
 card. In
 a listed channel the card is a reply in the post's thread. It keeps them in
 `live-cards.json`, so a PR at one head is carded once at the DM root, and once
-per thread in a channel, and the ref poller redraws a card when its PR changes
-state. A PR the program leaves out
+per thread in a channel, and the ref poller redraws a card when any PR it
+carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
 the daemon logs why. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other

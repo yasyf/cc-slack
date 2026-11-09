@@ -157,10 +157,10 @@ type cardPR struct {
 	Head        string `json:"head,omitempty"`
 	Review      string `json:"review,omitempty"`
 	Change      string `json:"change"`
+	HateMost    string `json:"hate_most,omitempty"`
 	Plan        string `json:"plan"`
 	ELI5        string `json:"eli5"`
 	ShowMe      string `json:"show_me,omitempty"`
-	Risk        string `json:"risk,omitempty"`
 	Port        string `json:"port,omitempty"`
 	Blocks      string `json:"blocks"`
 	Lands       string `json:"lands,omitempty"`
@@ -365,8 +365,8 @@ func (p cardPR) waitsOn() string {
 func (p cardPR) fields(v cardView) []cardFact {
 	id, _ := parseRef(p.URL)
 	return []cardFact{
-		{"What changes for you", p.Change}, {"Where it stands", cmp.Or(p.Review, v.refs[id.key()].text())}, {"Waits on", p.waitsOn()},
-		{"Differs from the plan", p.Plan}, {"Risk", p.Risk}, {"Show me", p.ShowMe},
+		{"What changes for you", p.Change}, {"What you'll hate most", p.HateMost}, {"Where it stands", cmp.Or(p.Review, v.refs[id.key()].text())},
+		{"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
 	}
 }
 
@@ -765,7 +765,7 @@ func withoutSaid(body, said string) string {
 func (p cardPR) visible() cardPR {
 	p.Title, p.Review, p.Change = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Change)
 	p.Plan, p.ELI5, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.ELI5), withoutHidden(p.Blocks), withoutHidden(p.Lands)
-	p.ShowMe, p.Risk, p.Port = withoutHidden(p.ShowMe), withoutHidden(p.Risk), withoutHidden(p.Port)
+	p.ShowMe, p.HateMost, p.Port = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port)
 	return p
 }
 
@@ -1228,12 +1228,28 @@ func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 	return p.grid(v)
 }
 
+func (p cardPR) leads() []string {
+	var leads []string
+	if port := strings.TrimSpace(p.Port); port != "" {
+		leads = append(leads, plainMrkdwn(port))
+	}
+	if eli5 := strings.TrimSpace(p.ELI5); eli5 != "" {
+		leads = append(leads, "*ELI5*\n"+plainMrkdwn(eli5))
+	}
+	return leads
+}
+
+func (p cardPR) showMe() string {
+	if shown := strings.TrimSpace(p.ShowMe); shown != "" {
+		return "*Show me*\n" + plainMrkdwn(shown)
+	}
+	return ""
+}
+
 func (p cardPR) grid(v cardView) []slack.Block {
 	var blocks []slack.Block
-	for _, lead := range []string{p.Port, p.ELI5} {
-		if lead = strings.TrimSpace(lead); lead != "" {
-			blocks = append(blocks, sections(plainMrkdwn(lead))...)
-		}
+	for _, lead := range p.leads() {
+		blocks = append(blocks, sections(lead)...)
 	}
 	var fields []*slack.TextBlockObject
 	var long []slack.Block
@@ -1249,7 +1265,7 @@ func (p cardPR) grid(v cardView) []slack.Block {
 		long = append(long, sections(said.Text)...)
 	}
 	fields = append(fields, cardField(prLinkLabel, p.headline()))
-	return append(append(blocks, slack.NewSectionBlock(nil, fields, nil)), long...)
+	return append(append(append(blocks, slack.NewSectionBlock(nil, fields, nil)), long...), sections(p.showMe())...)
 }
 
 func (p cardPR) headline() string {
@@ -1262,18 +1278,17 @@ func (p cardPR) headline() string {
 }
 
 func (p cardPR) markdown(v cardView) string {
-	var lines []string
-	for _, lead := range []string{p.Port, p.ELI5} {
-		if strings.TrimSpace(lead) != "" {
-			lines = append(lines, plainMrkdwn(lead))
-		}
-	}
+	lines := p.leads()
 	for _, f := range p.fields(v) {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	return strings.Join(append(lines, "*"+prLinkLabel+"*\n"+p.headline()), "\n")
+	lines = append(lines, "*"+prLinkLabel+"*\n"+p.headline())
+	if shown := p.showMe(); shown != "" {
+		lines = append(lines, shown)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func sections(text string) []slack.Block {
