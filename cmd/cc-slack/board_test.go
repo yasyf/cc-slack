@@ -933,6 +933,30 @@ func TestAHandPostedQuestionCardIsPostedWithAWarningNamingTheBoard(t *testing.T)
 	}
 }
 
+func TestADriveQuestionCardPostsWithNoBoardWarning(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	post := func(card statusCard) map[string]string {
+		t.Helper()
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	driven := mergeCard()
+	driven.Drive = "checkout-rewrite"
+	if res := post(driven); res["ts"] == "" || res["warning"] != "" {
+		t.Fatalf("a drive's question card got %v, want it posted with no warning", res)
+	}
+	undriven := mergeCard()
+	undriven.Waits = "step-4:deploy"
+	if res := post(undriven); res["ts"] == "" || !strings.Contains(res["warning"], "cc-present update-block") {
+		t.Fatalf("a question card naming no drive got %v, want it posted with the board warning", res)
+	}
+}
+
 func TestPermissionCardTapNamesItsGrantOrRevokeLabel(t *testing.T) {
 	options := []string{"Yes", "No"}
 	for _, c := range []struct {
