@@ -46,6 +46,30 @@ class CheckPostTest(unittest.TestCase):
         )
         self.assertEqual(kinds(text), [])
 
+    def test_accepts_a_bare_slack_message_link_so_it_unfurls(self) -> None:
+        text = "Alert: https://acme.slack.com/archives/C0123ABCDE/p1731123456789012"
+        self.assertEqual(kinds(text), [])
+
+    def test_accepts_a_bare_sentry_issue_link_so_it_unfurls(self) -> None:
+        text = "Issue: https://acme.sentry.io/issues/4512345678/"
+        self.assertEqual(kinds(text), [])
+
+    def test_accepts_a_bare_sentry_organization_issue_link_so_it_unfurls(self) -> None:
+        text = "Issue: https://sentry.io/organizations/acme/issues/4512345678/"
+        self.assertEqual(kinds(text), [])
+
+    def test_accepts_bare_datadog_monitor_incident_and_event_links_so_they_unfurl(self) -> None:
+        text = (
+            "Monitor: https://app.datadoghq.com/monitors/123456\n"
+            "Incident: https://app.datadoghq.com/incidents/42\n"
+            "Event: https://app.datadoghq.com/event/event?id=7890"
+        )
+        self.assertEqual(kinds(text), [])
+
+    def test_flags_a_bare_github_link_beside_an_unfurling_one(self) -> None:
+        text = "Fix: https://github.com/acme/app/pull/27801 for https://acme.sentry.io/issues/4512345678/"
+        self.assertEqual(kinds(text), [("bare-url", "https://github.com/acme/app/pull/27801")])
+
     def test_ignores_ordinary_words_and_versions(self) -> None:
         text = "app 0.162.9 deployed 3 services to R2 storage; the facade and 1,000+ pods are fine; L4 balancer."
         self.assertEqual(kinds(text), [])

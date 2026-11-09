@@ -761,7 +761,9 @@ order.
    plugin's checker, which a bare `check-post` on an older session's PATH may
    not reach. Fix every line it prints; it exits 1 on a finding. It flags raw commit
    shas, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
-   and build or PR numbers, bare URLs, one-letter codenames such as "D",
+   and build or PR numbers, bare URLs other than a Slack message, Sentry
+   issue, or Datadog monitor, incident, or event link, which stay bare so
+   Slack unfurls them, one-letter codenames such as "D",
    multi-agent terms such as lane, desk, walker, parity, and fence, zone
    labels such as `PT` or `17:35Z`, a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`

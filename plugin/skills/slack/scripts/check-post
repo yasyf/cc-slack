@@ -13,6 +13,12 @@ SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
 FENCE = re.compile(r"^\s*```")
 MAX_SENTENCES = 3
+UNFURLING_URLS = (
+    r"[\w-]+\.slack\.com/archives/",
+    r"[\w-]+\.sentry\.io/issues/",
+    r"sentry\.io/organizations/[\w-]+/issues/",
+    r"app\.datadoghq\.com/(?:monitors|incidents|event)/",
+)
 
 
 @dataclass(frozen=True)
@@ -66,8 +72,8 @@ RULES = (
     ),
     Rule(
         "bare-url",
-        re.compile(r"https?://\S+"),
-        "wrap it as <url|short label>",
+        re.compile(rf"https?://(?!{'|'.join(UNFURLING_URLS)})\S+"),
+        "wrap it as <url|short label>; only a Slack message, Sentry issue, or Datadog monitor, incident, or event link stays bare so Slack unfurls it",
     ),
     Rule(
         "plain-name",
