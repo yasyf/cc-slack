@@ -169,6 +169,35 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestCardAnswerFindsTheCardAtItsPermalinkWhateverIDTheCallerKnowsItBy(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	boardCard := mergeCard()
+	boardCard.Waits = "card-rmw8sh2p2"
+	c := postWaiting(t, l, boardCard)
+	via := "http://127.0.0.1:7000/p/asks--ab12"
+
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"waits": "rmw8sh2p2", "url": c.url(), "label": "Hold", "via": via}).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("answer under the board's id = %+v, %v; want the card at the permalink answered", res, err)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "card-rmw8sh2p2" with "Hold"`) {
+		t.Fatalf("directive = %q, want the answer under the card's own waits id", got)
+	}
+
+	unnamed := statusCard{Status: "needs_you", Title: "Release now?", Body: "The build is green.", Options: []string{"Release", "Wait"}, Recommended: "Wait", Waits: "step-5:release"}
+	c2 := postWaiting(t, l, unnamed)
+	res = cardAnswerResult{}
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"url": c2.url(), "label": "Wait", "via": via}).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("answer with no waits id = %+v, %v; want the card at the permalink answered", res, err)
+	}
+
+	nowhere := c.id.permalink(c.id.DMChannelID, "1800000099.000100", "")
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{"url": nowhere, "label": "Hold", "via": via})); err == nil || !strings.Contains(err.Error(), "no waiting card") {
+		t.Fatalf("an answer at a permalink with no waiting card: %v", err)
+	}
+}
+
 func TestAWithdrawnCardKeepsItsWholeReason(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

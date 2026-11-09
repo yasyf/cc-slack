@@ -976,8 +976,8 @@ func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 		},
 	}
 	f.bind(c)
-	c.Flags().StringVar(&waits, "waits", "", "the waiting card's waits id")
-	c.Flags().StringVar(&card, "card", "", "the waiting card's Slack permalink, which tells it from another session's card with the same waits id")
+	c.Flags().StringVar(&waits, "waits", "", "the id you know the card by, such as its waits id or a board's id; --card finds the card")
+	c.Flags().StringVar(&card, "card", "", "the waiting card's Slack permalink, which finds the card whichever session posted it")
 	c.Flags().StringVar(&label, "label", "", "the answer: one of the card's options, or the written-in text with --other")
 	c.Flags().BoolVar(&other, "other", false, "the label is a written-in answer, not one of the card's options")
 	c.Flags().StringVar(&via, "via", "", "url of the surface the answer came from; the card and the capture name it")

@@ -215,7 +215,7 @@ The tool names below have the full prefix
 | Replace the text of the bot's own post | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
 | Delete or rewrite a reviewed batch of the bot's own posts in the user's DM, archiving each first | CLI only: `cc-slack apply --plan <file> [--dry-run]`, below |
-| Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(waits, url, label, via, other?, settled?)` |
+| Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(url, label, via, waits?, other?, settled?)`; the permalink `url` finds the card, whichever session posted it |
 | Read a thread, with each shared message's original author, channel, text, and files under `shares` and each image's local `path`; a rate-limited read returns the cached copy with `stale: true` and `retry_after` | `slack_thread(channel_id, thread_ts, limit?)` |
 | Read a channel's latest top-level messages, newest first, with reply counts and permalinks | `slack_history(channel_id, limit?)` |
 | Download a file attachment, such as a screenshot, to a local path you can Read (CLI `cc-slack file <permalink or id> [--out <path>]`) | `slack_file(file_id or url, out?)` |
