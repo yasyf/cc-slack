@@ -262,7 +262,7 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	}
 	noELI5 := make([]slack.Block, 0, len(held))
 	for _, b := range held {
-		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil && s.Text.Text == fullPR(1).ELI5 {
+		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil && s.Text.Text == "*ELI5*\n"+fullPR(1).ELI5 {
 			continue
 		}
 		noELI5 = append(noELI5, b)
