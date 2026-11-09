@@ -471,3 +471,17 @@ func TestACardListsLongOptionsOnceEachBesideItsOwnButton(t *testing.T) {
 		t.Fatalf("option buttons %q=%q, %q; want a pick button that taps the full option", buttons[0].Text.Text, buttons[0].Value, buttons[1].ActionID)
 	}
 }
+
+func TestAnAnsweredPRCardKeepsItsPicture(t *testing.T) {
+	at := time.Date(2026, 11, 9, 0, 32, 0, 0, time.UTC)
+	card := statusCard{Status: "info", Title: "#52810, send an answer back once when it tags a name nothing bound", Images: []slack.FileSummary{{ID: "F0PICTURE", Title: "the answer goes back once"}},
+		PRs: []cardPR{{URL: "https://github.com/acme/app/pull/52810"}}}
+	blocks := card.replyBlocks(cardView{at: at, now: at, tapped: "✓ *Approve* · answered 12:32am"})
+	raw, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := imageIDs(t, string(raw)); !slices.Equal(ids, []string{"F0PICTURE"}) {
+		t.Fatalf("image blocks %v on the answered card, want its picture still drawn", ids)
+	}
+}

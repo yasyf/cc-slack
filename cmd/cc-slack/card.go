@@ -1377,6 +1377,9 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
 	if v.tapped != "" {
 		settled := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
+		for _, image := range c.Images {
+			settled = append(settled, imageBlock(image))
+		}
 		for _, p := range c.PRs {
 			settled = append(settled, p.grid(v)...)
 		}
