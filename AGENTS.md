@@ -124,9 +124,12 @@ channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`
 that no card in the post's thread cites and no open card at the DM root
 cites. A merged or closed PR gets no card. A card the program draws for a PR and
-head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
+head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}], "skipped": [{"repo", "number", "reason"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
-one that passes the card checks. A card whose `prs` lists several PRs, such as
+one that passes the card checks. The `repo` it is asked about is lowercase, so
+the program matches it case-insensitively. `skipped` lists each PR the program
+will not draw, such as one whose body lacks a section the card needs, with the
+reason in plain words. A card whose `prs` lists several PRs, such as
 one stack, is the card of each of them: it is asked for and posted once, no
 PR it lists counts as uncarded, and any of them changing redraws it, asked for
 by its first PR. In the bot's DM the card opens at the root in
@@ -140,16 +143,20 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
 gets a working copy of the card in its thread. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call waits for its cards, then reads a status card that carries
-them back from Slack, and its `warning` starts with NO APPROVE when the
-message holds no button answering a card it carries, or a PR it lists drew no
-card. In
+names. The call waits for its cards. When an open PR its `tap_prs` names drew no card,
+the call fails even though the post went out: the error names the post's
+permalink, so the caller does not post it again, and each such PR with the
+reason, such as the program's `skipped` reason or no card in its answer, and the
+daemon logs the same. A status card that carries cards is then read back from
+Slack, and the call's `warning` starts with NO APPROVE when the message holds no
+button answering a card it carries. In
 a listed channel the card is a reply in the post's thread. It keeps them in
 `live-cards.json`, so a PR at one head is carded once at the DM root, and once
 per thread in a channel, and the ref poller redraws a card when any PR it
 carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
-the daemon logs why. Every other channel, a thread we posted in it included,
+the daemon logs why. A redraw the program skips leaves the card as drawn and logs
+the reason; a redraw with no card and no skip means the PR no longer waits. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
 "waits", "label"}}` instead of to a session. When the program exits 0, the
@@ -234,7 +241,7 @@ surfaces cannot drift.
 | `thread` | `slack_thread` | Reads a thread through the read cache below. Each message carries `ts`, `user`, `user_name`, `from_user` when the engineer wrote it, `from_claude` when the shared bot did, and `text`. A message with attachments carries `files`, each with `id`, `name`, `mimetype`, and `permalink`. A file the bot shared arrives as an image block holding only its id, so `files.info` fills in the rest. |
 | `dm-peer` | | Reads `conversations.info` and `conversations.members` for `--channel` once per daemon run, since a conversation's kind and a DM's members never change, and prints `{channel_id, peer, peer_name}`: the one person an IM or group DM reaches besides the bot and the logged-in user, the user for their own DM with the bot, or an empty `peer` for any other conversation, one the bot cannot see included. A user id is its own peer. The write hook and the ticket spend both place DM writes by it. |
 | `dm-owed` | | Lists the replies in the user's DM that no bot or agent has answered in their thread, as `{"replies": [{thread_ts, ts, text, permalink}], "holder_session": "<session>"}`, from `owed-replies.db` with no Slack call. `holder_session` is the session whose channel watch on the DM is oldest and active, or empty, and only that session owes the replies. A thread whose `dm` watch belongs to another live session is left out: a reply there is delivered only to that session, and the poller drops the holder's channel watch and other sessions' thread watches for it. Deleting a thread's root forgets the replies owed there, and a `+1` from the bot on a reply answers that reply. The poller records every DM message from the user it reads, and it reads every DM thread a nudge names whether or not a session watches it. A post in the thread clears every earlier reply there, at once for a post through this daemon and on the next read for another host's. This store is its own file because any change to `state.db`'s schema makes `login` archive it, which drops every watch. The daemon posts nothing of its own in reply. |
-| `drive-cards` | | Prints the workspace's `team_url` and lists, from stored state with no Slack call, the open waiting cards whose `drive` is `--drive`, each as `{question, options, recommended, asked, url}`, and every PR card still waiting on a tap, each as `{prs, asked, url}`, oldest first. A long-running drive reads it to put his questions and taps in its queue. |
+| `drive-cards` | | Prints the workspace's `team_url` and lists, from stored state with no Slack call, the open waiting cards whose `drive` is `--drive`, each as `{question, options, recommended, asked, url}`, and every PR card still waiting on a tap, each as `{prs, asked, url}`, oldest first. A waiting status card with no `drive` whose `prs` lists PRs counts as a PR card, so a card posted by hand with `dm-status --card` is listed too. A long-running drive reads it to put his questions and taps in its queue. |
 | `canvas` | | Draws the markdown on stdin as a canvas. With `--canvas <id>` it replaces that canvas's whole content through `canvases.edit`; without one, or when Slack answers that the canvas is gone, it creates a canvas titled `--title` through `canvases.create` with `channel_id` set to the user's DM with the app, so it shows as a tab there. It prints `{canvas_id, url, created}`. A long-running drive draws its status page with it. |
 | `history` | `slack_history` | Reads a channel's most recent top-level messages, newest first, through `conversations.history`, skipping thread replies broadcast to the channel; `--limit` defaults to 20. Each message carries `ts`, `user`, `user_name`, `from_user` when the engineer wrote it, `from_claude`, `text`, `permalink`, `reply_count` and `latest_reply` when it has replies, and `files`, each with `id`, `name`, `mimetype`, and `permalink`, when it has attachments. It bypasses the read cache and never joins the channel. |
 | `file` | `slack_file` | Downloads a file attachment through `files.info` and its `url_private_download`, sent with the bot token as a bearer header, and prints its `path`, `mimetype`, and `size`; `--json` prints the whole result with `file_id` and `name`. It takes a file id (`F…`) or a file permalink, `…/files/<user>/<file id>/<name>`, as `thread` and `history` list them, and writes to `--out` (`out`, an absolute path) or to `files/<file id><ext>` under the state directory. A download whose size differs from what `files.info` reports, such as the login page Slack serves when the bot cannot read a file, is refused and leaves nothing behind. No Slack MCP tool stands in. |
@@ -383,7 +390,8 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   `group`, or `key`) and `title` while the card is live, and `ended` once the
   session's process is gone. The directive names the card and the session, and
   says when nobody else will act on the reply. The session that posted the card
-  gets no `thread_owner`. Any operator reply in a DM thread whose root is a live
+  gets no `thread_owner`, nor does a DM holder of the same drive, which takes
+  that thread over (see `drives.go`). Any operator reply in a DM thread whose root is a live
   card, or a copy of one, carries `thread_card`: the `waits` id of that card, the
   copied card's for a copy.
 - `slack.message@<agent_id>` is a message on a subagent's watch. The daemon's
