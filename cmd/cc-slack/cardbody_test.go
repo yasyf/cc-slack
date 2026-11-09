@@ -261,20 +261,26 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	if _, ok := blocks[0].(*slack.HeaderBlock); !ok {
 		t.Fatalf("first block %T, want the header", blocks[0])
 	}
-	link := asSection(t, blocks[1]).Text.Text
-	for _, want := range []string{"<https://github.com/acme/app/pull/49622|app PR 49622>", "One credential per team", "`7bf3ea0`", "CI passed"} {
-		if !strings.Contains(link, want) {
-			t.Fatalf("link line %q lacks %q", link, want)
-		}
+	if eli5 := asSection(t, blocks[1]).Text.Text; eli5 != "A stale credential on disk" {
+		t.Fatalf("second block %q, want the ELI5 alone, leading the card", eli5)
 	}
 	fields := asSection(t, blocks[2]).Fields
-	for i, want := range []string{"*ELI5*\nA stale", "*What changes*\nLaunches", "*Against the plan*\nNothing", "*Blocks landing*\nYour"} {
+	for i, want := range []string{"*What changes for you*\nLaunches", "*Where it stands*\n", "*Waits on*\nYour"} {
 		if i >= len(fields) || !strings.HasPrefix(fields[i].Text, want) {
 			t.Fatalf("fields %+v, want field %d to start %q", fields, i, want)
 		}
 	}
-	if got := blocksJSON(t, blocks); strings.Contains(got, "It keeps one storage credential per team.") {
-		t.Fatalf("blocks %s, want the PR's description behind Explain more", got)
+	if !strings.Contains(fields[1].Text, "CI passed") {
+		t.Fatalf("where it stands %q, want the live CI state", fields[1].Text)
+	}
+	got := blocksJSON(t, blocks)
+	for _, want := range []string{"*Differs from the plan*\\nNothing", "<https://github.com/acme/app/pull/49622|app PR 49622> · One credential per team"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("blocks %s lack %q", got, want)
+		}
+	}
+	if strings.Contains(got, "It keeps one storage credential per team.") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
+		t.Fatalf("blocks %s, want the PR's description behind Explain more and no commit", got)
 	}
 	buttons := cardButtons(t, blocks)
 	if buttons[0].Text.Text != "Approve (Recommended)" || buttons[1].Text.Text != "Hold" {
@@ -292,9 +298,9 @@ func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *test
 	id, _ := parseRef(pr.URL)
 	v := view()
 	v.refs = map[string]refState{id.key(): {State: "open", Checks: "passed"}}
-	link := asSection(t, card.replyBlocks(v)[1]).Text.Text
-	if strings.Contains(link, "CI passed") || !strings.Contains(link, "CI red; approved by poetic-svc") {
-		t.Fatalf("link line %q, want the ledger's review alone, never GitHub's live state beside it", link)
+	stands := asSection(t, card.replyBlocks(v)[2]).Fields[1].Text
+	if strings.Contains(stands, "CI passed") || !strings.Contains(stands, "CI red; approved by poetic-svc") {
+		t.Fatalf("where it stands %q, want the ledger's review alone, never GitHub's live state beside it", stands)
 	}
 }
 
@@ -313,7 +319,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		got := blocksJSON(t, blocks)
-		if !strings.Contains(got, "*What changes*") || !strings.Contains(got, "*Against the plan*") || strings.Contains(got, "*ELI5*") || strings.Contains(got, "*Blocks landing*") {
+		if !strings.Contains(got, "*What changes for you*") || !strings.Contains(got, "*Differs from the plan*") || strings.Contains(got, "A stale credential") || strings.Contains(got, "*Waits on*") {
 			t.Fatalf("%s: blocks %s, want the two lines it has and no empty field", name, got)
 		}
 	}
@@ -765,8 +771,8 @@ func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
 	card := statusCard{Status: "needs_you", Title: "Pick one", Options: []string{"A", "B"}, Waits: "card-x", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Change: "It changes.", Plan: "Plan: step 3.", ELI5: "Plainly.", Lands: "the change below it, #6, lands"}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
-	if !strings.Contains(got, "*Blocks landing*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
-		t.Fatalf("want the wait under Blocks landing: %s", got)
+	if !strings.Contains(got, "*Waits on*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
+		t.Fatalf("want the wait under Waits on: %s", got)
 	}
 }
 
@@ -850,5 +856,32 @@ func TestATableIsASortablePagedDataTableWithItsNumberColumnsNumeric(t *testing.T
 	}
 	if _, ok := table.Rows[3][0].(*slack.DataTableRawTextCell); !ok {
 		t.Fatalf("PR cell = %#v, want text", table.Rows[3][0])
+	}
+}
+
+func TestAPRCardLeadsWithItsPortAndELI5AndShowsItsRiskAndShowMe(t *testing.T) {
+	pr := fullPR(52857)
+	pr.Port = "Port of [#51000](https://github.com/acme/app/pull/51000): the new tree keeps chats in its own database"
+	pr.Risk = "A reconnect storm still pages once."
+	pr.ShowMe = "Before: a page per reconnect. After: a page when errors keep coming for five minutes."
+	card := statusCard{Status: "needs_you", Title: "Port: approve #52857?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-52857", PRs: []cardPR{pr}}
+	blocks := card.replyBlocks(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the card: %v", err)
+	}
+	if port := asSection(t, blocks[1]).Text.Text; !strings.HasPrefix(port, "Port of <https://github.com/acme/app/pull/51000|#51000>") {
+		t.Fatalf("second block %q, want the port line first", port)
+	}
+	if eli5 := asSection(t, blocks[2]).Text.Text; eli5 != "A stale credential on disk" {
+		t.Fatalf("third block %q, want the ELI5 right under the port line", eli5)
+	}
+	got := blocksJSON(t, blocks)
+	for _, want := range []string{"*Risk*\\nA reconnect storm still pages once.", "*Show me*\\nBefore: a page per reconnect."} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("blocks %s lack %q", got, want)
+		}
+	}
+	if strings.Contains(got, "*ELI5*") || strings.Contains(got, "*Against the plan*") || strings.Contains(sectionText(blocks)+pr.headline(), "7bf3ea0") {
+		t.Fatalf("blocks %s, want no old labels and no commit", got)
 	}
 }

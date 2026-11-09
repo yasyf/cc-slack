@@ -461,7 +461,8 @@ func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, pages
 
 func (p cardPR) lines() []string {
 	var labels []string
-	for _, f := range p.visible().fields() {
+	shown := p.visible()
+	for _, f := range append(shown.fields(cardView{}), shown.notes()...) {
 		if strings.TrimSpace(f.Value) != "" {
 			labels = append(labels, f.Label)
 		}
