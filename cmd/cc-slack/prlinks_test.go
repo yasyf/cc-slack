@@ -190,7 +190,7 @@ func readAsks(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Fields(string(raw))
+	return strings.FieldsFunc(string(raw), func(r rune) bool { return r == '\n' })
 }
 
 const testPick = "card-41"
