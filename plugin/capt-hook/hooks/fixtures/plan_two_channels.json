@@ -1,0 +1,18 @@
+[
+ {
+  "ts": "1791900000.000200",
+  "thread_ts": "1791900000.000200",
+  "permalink": "https://acme.slack.com/archives/D0OWNDM0001/p1791900000000200",
+  "verdict": "delete",
+  "why": "the cleanup pass",
+  "new_text": null
+ },
+ {
+  "ts": "1791900000.000300",
+  "thread_ts": "1791900000.000300",
+  "permalink": "https://acme.slack.com/archives/C0APPFOLLOW/p1791900000000300",
+  "verdict": "delete",
+  "why": "the cleanup pass",
+  "new_text": null
+ }
+]

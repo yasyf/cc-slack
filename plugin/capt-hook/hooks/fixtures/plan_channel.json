@@ -1,0 +1,10 @@
+[
+ {
+  "ts": "1791900000.000200",
+  "thread_ts": "1791900000.000200",
+  "permalink": "https://acme.slack.com/archives/C0APPFOLLOW/p1791900000000200",
+  "verdict": "delete",
+  "why": "the cleanup pass",
+  "new_text": null
+ }
+]

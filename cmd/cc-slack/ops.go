@@ -128,6 +128,7 @@ type opBody struct {
 	Done      bool     `json:"done"`
 	State     string   `json:"state"`
 	Recipient string   `json:"recipient"`
+	Verdict   string   `json:"verdict"`
 	ticketSpend
 }
 
@@ -318,6 +319,8 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opStream, a.handleStream)
 	s.Register(opEdit, a.handleEdit)
 	s.Register(opDelete, a.handleDelete)
+	s.Register(opApplyRead, a.handleApplyRead)
+	s.Register(opApplyChange, a.handleApplyChange)
 	s.Register(opThread, a.handleThread)
 	s.Register(opHistory, a.handleHistory)
 	s.Register(opFile, a.handleFile)
@@ -1515,7 +1518,11 @@ func peerNames(ctx context.Context, api slackAPI, peer, name string) []string {
 var fallbackMarker = regexp.MustCompile(`^\s*_\([^)\n]+['’]s Claude\)_`)
 
 func (id identity) fromClaude(m slack.Message) bool {
-	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID) || fallbackMarker.MatchString(m.Text)
+	return id.botPosted(m) || fallbackMarker.MatchString(m.Text)
+}
+
+func (id identity) botPosted(m slack.Message) bool {
+	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID)
 }
 
 func (id identity) fromOperator(m slack.Message) bool {

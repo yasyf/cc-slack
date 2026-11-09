@@ -76,8 +76,8 @@ join goes ahead only when a captain-hook ticket covers its place. This
 plugin's permission hook checks every such write on the cc-slack tools,
 the `cc-slack` CLI, any posting CLI the project's config names, and the
 user-level `mcp__slack__*` write tools, and mints a ticket when the user's
-words approve it. Reactions, `slack_dm_status`, reads, and `slack_revoke`
-need no ticket. Sessions in any other project write without a ticket.
+words approve it. Reactions, `slack_dm_status`, reads, `slack_revoke`, and
+`cc-slack apply` need no ticket. Sessions in any other project write without a ticket.
 
 ### Opt a project in
 
@@ -214,6 +214,7 @@ The tool names below have the full prefix
 | Remove the bot's reaction | `slack_unreact(channel_id, ts, name)` |
 | Replace the text of the bot's own post | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
+| Delete or rewrite a reviewed batch of the bot's own posts in the user's DM, archiving each first | CLI only: `cc-slack apply --plan <file> [--dry-run]`, below |
 | Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(waits, url, label, via, other?, settled?)` |
 | Read a thread, with each shared message's original author, channel, text, and files under `shares` and each image's local `path`; a rate-limited read returns the cached copy with `stale: true` and `retry_after` | `slack_thread(channel_id, thread_ts, limit?)` |
 | Read a channel's latest top-level messages, newest first, with reply counts and permalinks | `slack_history(channel_id, limit?)` |
@@ -230,6 +231,20 @@ The tool names below have the full prefix
 | Invite approved people to a channel | `slack_channel_invite(channel_id, users)` |
 | Set an approved channel topic | `slack_channel_topic(channel_id, topic)` |
 | Add the bot to an approved channel, private ones included | `slack_channel_join(channel_id)` |
+
+`cc-slack apply --plan <file>` cleans up the user's DM in one command. The
+plan is a JSON list of entries with `ts`, `thread_ts`, `permalink`, `verdict`
+(`delete`, `rewrite`, or `keep`), and `new_text` for a rewrite, all in the
+user's DM with the bot. The permission hook passes it with no ticket when
+the plan parses and names only those verdicts in one DM. The daemon refuses
+any entry that is not the bot's own post in that DM and logs it, and the
+run goes on. Before each change it appends the message, as Slack returns
+it, to `<plan>.archive.jsonl` beside the plan, with the plan's extension
+dropped, and it records each entry done in `<plan>.done.jsonl`, so a rerun
+skips those. It waits out Slack's `Retry-After`, paces itself under the
+delete and update rate limits, and ends with one line: deleted, rewritten,
+skipped, refused, failed. Run `--dry-run` first: it reads and checks every
+entry and changes nothing.
 
 Every `slack_send` and `slack_reply` arms a top-level watch on the post's
 thread and returns its `watch_id`, so replies to your own post reach this

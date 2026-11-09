@@ -134,6 +134,22 @@ func (f *fakeSlack) RawMessages(_ context.Context, _, _, _ string) (map[string]j
 	return found, nil
 }
 
+const methodRawMessage = methodReplies + " one message"
+
+func (f *fakeSlack) RawMessage(_ context.Context, channelID, _, ts string) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call(methodRawMessage); err != nil {
+		return nil, err
+	}
+	for _, m := range f.channels[channelID] {
+		if m.Timestamp == ts {
+			return mustJSON(m), nil
+		}
+	}
+	return nil, errMessageGone
+}
+
 func historyOf(channelID string) string { return methodHistory + " " + channelID }
 
 func (f *fakeSlack) fail(method string, err error) {
