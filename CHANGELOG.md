@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A card's pictures show once, inside the card. They were shared into the card's own thread so Slack would let you open them, which drew every picture a second time under the card. They are now shared into one thread in your DM with the app that holds every card's pictures, posted once the first time a card carries one.
+
 ### Changed
 
 - A PR card gives each PR its own section: a divider, then the PR's title and link with its own Open button, then a Refresher for someone who knows the codebase but has not read this code lately, the Biggest surprise, what you'll hate most, and its Show me with that PR's pictures inline under it. A card's body, such as a stack's own summary, leads the card above the PR sections. "Where it stands" is left out while CI is green and the PR is open, and "Waits on" while it would only say it lands once you approve. The card reads `refresher`, `surprise` and per-PR `pictures` where it read `eli5` and `change`; the Open on GitHub buttons in the bottom row are gone.

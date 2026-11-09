@@ -88,6 +88,7 @@ const (
 	cardSurprise      = "Biggest surprise"
 	cardDefaultLands  = "you approve"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
+	cardShelfText     = "The pictures on cards in this DM are kept in this thread, so Slack lets you open them where each card shows them."
 )
 
 var (

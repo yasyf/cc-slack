@@ -2046,11 +2046,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
 	card := *b.Card
 	if len(pictures) > 0 {
-		ref, err := parsePermalink(card.Replaces)
-		if err != nil {
-			return fail(fallback(actionWrite, err))
-		}
-		card, _ = a.shareCardPictures(hc.Ctx, hc.DB, id, card, pictures, cmp.Or(ref.threadTS, ref.ts))
+		card, _ = a.shareCardPictures(hc.Ctx, hc.DB, id, card, pictures)
 	}
 	thread, ts, err := a.replaceCard(hc.Ctx, id, card, tag, b.TapPRs)
 	if err != nil {
@@ -2217,8 +2213,12 @@ func hashFiles(paths []string) (string, error) {
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
-func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, card statusCard, files []slack.FileSummary, thread string) (statusCard, bool) {
-	if err := shareProcessed(ctx, a.newAPI(id.Token), postRecorder(ctx, db, a.poller.log), id, id.DMChannelID, thread, files); err != nil {
+func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, card statusCard, files []slack.FileSummary) (statusCard, bool) {
+	shelf, err := a.pictureShelf(ctx, db, id)
+	if err == nil {
+		err = shareProcessed(ctx, a.newAPI(id.Token), postRecorder(ctx, db, a.poller.log), id, id.DMChannelID, shelf, files)
+	}
+	if err != nil {
 		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
 		return card, false
 	}
@@ -2226,11 +2226,25 @@ func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, ca
 	return card, true
 }
 
+func (a *app) pictureShelf(ctx context.Context, db *sql.DB, id identity) (string, error) {
+	a.cards.shelfMu.Lock()
+	defer a.cards.shelfMu.Unlock()
+	if ts := a.cards.shelf(id.DMChannelID); ts != "" {
+		return ts, nil
+	}
+	res, err := a.post(ctx, db, id, id.DMChannelID, "", cardShelfText, nil, nil)
+	if err != nil {
+		return "", fmt.Errorf("post the thread that keeps card pictures: %w", err)
+	}
+	a.cards.keepShelf(id.DMChannelID, res.TS)
+	return res.TS, nil
+}
+
 func (a *app) showCardPictures(ctx context.Context, db *sql.DB, id identity, card *statusCard, files []slack.FileSummary, thread, ts string) {
 	if len(files) == 0 || thread == "" {
 		return
 	}
-	shown, shared := a.shareCardPictures(ctx, db, id, *card, files, thread)
+	shown, shared := a.shareCardPictures(ctx, db, id, *card, files)
 	if !shared {
 		return
 	}

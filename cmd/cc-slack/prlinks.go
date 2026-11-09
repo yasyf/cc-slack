@@ -730,7 +730,7 @@ func (a *app) pictureRedrawnPRCard(ctx context.Context, id identity, card cardRe
 	if err != nil {
 		return err
 	}
-	*drawn, _ = a.shareCardPictures(ctx, a.poller.plane.DB(), id, *drawn, files, card.thread)
+	*drawn, _ = a.shareCardPictures(ctx, a.poller.plane.DB(), id, *drawn, files)
 	return nil
 }
 
@@ -738,7 +738,7 @@ func (a *app) showPRCardPictures(ctx context.Context, db *sql.DB, id identity, t
 	if len(pictures) == 0 {
 		return
 	}
-	shown, shared := a.shareCardPictures(ctx, db, id, m.Card, pictures, t.Thread)
+	shown, shared := a.shareCardPictures(ctx, db, id, m.Card, pictures)
 	if !shared {
 		return
 	}

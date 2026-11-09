@@ -504,9 +504,9 @@ func TestABoardCardReachesSlackWithItsImageAndButtonsAndATapAnswersTheBoard(t *t
 	if ids := imageIDs(t, post.blocks); len(ids) != 0 {
 		t.Fatalf("first post names files %v before they are shared", ids)
 	}
-	shares := slices.DeleteFunc(l.slack.sent(), func(p fakePost) bool { return p.threadTS != c.thread || p.ts == c.ts || p.blocks != "" })
+	shares := slices.DeleteFunc(l.slack.sent(), func(p fakePost) bool { return p.threadTS == "" || p.threadTS == c.thread || p.blocks != "" })
 	if len(shares) != 1 || shares[0].channelID != c.id.DMChannelID {
-		t.Fatalf("shares %+v, want the card's one picture shared into its thread %s", shares, c.thread)
+		t.Fatalf("shares %+v, want the card's one picture shared into the DM's picture thread, never the card's thread %s", shares, c.thread)
 	}
 	shown := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
 	if len(shown) == 0 || len(imageIDs(t, shown[0].blocks)) != 1 {
@@ -590,13 +590,12 @@ func TestPicturesArrivingAfterATapKeepTheTap(t *testing.T) {
 	}
 }
 
-func TestOnlyACardFromTheBoardCarriesImages(t *testing.T) {
+func TestOnlyAWaitingCardCarriesImages(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	png := writeFile(t, "a.png", pngBytes)
 	card := mergeCard()
 	for name, body := range map[string]map[string]any{
-		"a hand-posted question":  {"card": card, "files": []string{png}},
 		"a status card":           {"card": statusCard{Status: "info", Title: "Landed"}, "mirrored": true, "files": []string{png}},
 		"a file that is no image": {"card": card, "mirrored": true, "files": []string{writeFile(t, "a.txt", "plain words")}},
 	} {
