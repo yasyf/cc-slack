@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `slack_card_answer` and `cc-slack card-answer` find the waiting card by its permalink, whichever session posted it, so a session can settle a card an earlier drive session posted. Before, the call also had to give the card's exact `waits` id and refused a board's id such as `rmw8sh2p2` for a card posted as `card-rmw8sh2p2`, so a card he answered in its thread kept its live buttons. `waits` is now optional.
 - A thread reply no longer needs a full `slack_thread` read first when the thread's newest message, as the daemon last read it, is one the daemon delivered to the replying agent or one the agent called `slack_pickup` on. Before, the read-before-reply hook refused every ack until a full read, so each acknowledgment of your message waited on one. A reply into a thread with a newer message the agent never got still needs the full read. The hook asks the daemon through the new hidden `cc-slack thread-seen`.
 - `slack_pickup` (`cc-slack pickup`) fails, naming Slack's error, when Slack refuses the working line, where it used to answer `ok` with a `line_error` beside it that sessions read past. The eyes stay on. A refusal while clearing the line with `done` still answers `ok` with `line_error`.
 - `cc-slack drive-cards` lists a waiting status card that carries PR rows and names no drive as a PR card, so a PR card posted by hand with `dm-status --card` no longer shows in a drive's queue as "no Slack card yet".

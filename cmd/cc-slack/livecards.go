@@ -830,6 +830,21 @@ func (l *liveCards) waiting(channel, waits string, at func(thread, ts string) bo
 	return "", liveMessage{}, false
 }
 
+func (l *liveCards) waitingAt(channel, thread, ts string) (string, liveMessage, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return "", liveMessage{}, false
+	}
+	for waits, m := range t.Waiting {
+		if m.TS == ts {
+			return waits, *m, true
+		}
+	}
+	return "", liveMessage{}, false
+}
+
 func (l *liveCards) asks(channel, thread, waits, question string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

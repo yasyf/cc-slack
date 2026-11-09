@@ -905,10 +905,15 @@ func (p *poller) noteSuperseded(ctx context.Context, id identity, posts []string
 	}
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, waits, card, label string, other, settled, withdrawn bool, via string) (cardAnswerResult, error) {
-	thread, m, ok := p.cards.waiting(id.DMChannelID, waits, func(thread, ts string) bool { return id.permalink(id.DMChannelID, ts, thread) == card })
-	if !ok {
-		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", waits, card)
+func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via string) (cardAnswerResult, error) {
+	ref, err := parsePermalink(card)
+	if err != nil {
+		return cardAnswerResult{}, err
+	}
+	thread := ref.threadTS
+	waits, m, ok := p.cards.waitingAt(id.DMChannelID, thread, ref.ts)
+	if ref.channelID != id.DMChannelID || !ok {
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
 	}
 	answers := m.Card.answers()
 	if !other && !withdrawn && !slices.Contains(answers, label) {

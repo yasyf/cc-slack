@@ -2268,8 +2268,6 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	switch {
-	case !askIDPattern.MatchString(b.Waits):
-		return fail(fmt.Sprintf("card-answer waits id %q must be 1 to 64 letters, digits, dots, colons, underscores, or hyphens", b.Waits))
 	case strings.TrimSpace(b.Label) == "":
 		return fail("card-answer needs the answer's label, or a write-in with other")
 	case b.URL == "":

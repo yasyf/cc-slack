@@ -455,14 +455,14 @@ var (
 				"and every post the card supersedes shows the outcome. settled closes a question that what happened answered, such as the pull request landing, with no slack.action. Needs no ticket.",
 			op: opCardAnswer, failure: actionWrite,
 			properties: map[string]any{
-				"waits":   map[string]any{"type": "string", "pattern": askIDPattern.String(), "description": "the waiting card's waits id"},
+				"waits":   map[string]any{"type": "string", "description": "the id you know the card by, such as its waits id or a board's id; the permalink finds the card, whichever session posted it"},
 				"url":     map[string]any{"type": "string", "description": "the waiting card's Slack permalink"},
 				"label":   map[string]any{"type": "string", "description": "the answer: one of the card's options, or the user's words with other"},
 				"other":   map[string]any{"type": "boolean", "description": "label is the user's own words, not one of the card's options"},
 				"via":     map[string]any{"type": "string", "description": "permalink of where the user answered; the card links it"},
 				"settled": map[string]any{"type": "boolean", "description": "the question was settled by what happened; label, with other, says how"},
 			},
-			required: []string{"waits", "url", "label", "via"},
+			required: []string{"url", "label", "via"},
 		},
 		{
 			name: "slack_dm_status",
