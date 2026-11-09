@@ -625,7 +625,7 @@ func TestABlockSlackWouldRefuseIsNamedBeforeItPosts(t *testing.T) {
 	}{
 		"long section":  {[]slack.Block{head, section(long)}, "block 2 (section): its text is 3001 characters"},
 		"empty section": {[]slack.Block{section("")}, "block 1 (section): its text is 0 characters"},
-		"two tables":    {[]slack.Block{tableBlock([][]string{{"a"}}), tableBlock([][]string{{"b"}})}, "block 2 (table): a message holds one table"},
+		"two tables":    {[]slack.Block{tableBlock([][]string{{"a"}}), tableBlock([][]string{{"b"}})}, "block 2 (data_table): a message holds one table"},
 		"long field": {[]slack.Block{slack.NewSectionBlock(nil, []*slack.TextBlockObject{slack.NewTextBlockObject(slack.MarkdownType, long, false, false)}, nil)},
 			"block 1 (section): a field is 3001 characters"},
 		"too many": {slices.Repeat([]slack.Block{section("a")}, cardMaxBlocks+1), "the message holds 51 blocks"},
