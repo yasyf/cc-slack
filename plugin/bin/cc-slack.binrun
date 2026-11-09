@@ -3,26 +3,26 @@
   "schema": 1,
   "name": "cc-slack",
   "kind": "release-binary",
-  "version": {"static": "0.19.9"},
+  "version": {"static": "0.19.11"},
   "platforms": {
     "macos-aarch64": {
-      "size": 9845998,
+      "size": 9845957,
       "hash": "sha256",
-      "digest": "df7196c682c8a9f8d445a79b58971d265798f3b4fb13f2de73f5bd2eb357ef18",
+      "digest": "b8ab8a8013c7b7b65adce9984c0fa25cc979f5666e2adfbfd80f579d0710c4a0",
       "format": "tar.gz",
       "path": "cc-slack",
       "providers": [
-        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.19.9", "name": "cc-slack_0.19.9_darwin_arm64.tar.gz"}
+        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.19.11", "name": "cc-slack_0.19.11_darwin_arm64.tar.gz"}
       ]
     },
     "macos-x86_64": {
-      "size": 10706515,
+      "size": 10706535,
       "hash": "sha256",
-      "digest": "c65c3b886243745365efae8e2d1d11c706c16fb315cfea7e1723ecca39d99877",
+      "digest": "6000abf9313b95ff8c6f0417cf0e6931e2f653c814c30882c81e7cffbb80f992",
       "format": "tar.gz",
       "path": "cc-slack",
       "providers": [
-        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.19.9", "name": "cc-slack_0.19.9_darwin_amd64.tar.gz"}
+        {"type": "github-release", "repo": "yasyf/cc-slack", "tag": "v0.19.11", "name": "cc-slack_0.19.11_darwin_amd64.tar.gz"}
       ]
     }
   }
