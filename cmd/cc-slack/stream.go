@@ -26,7 +26,10 @@ const (
 	taskInProgress = "in_progress"
 )
 
-var pickupLoading = []string{"Reading the thread…", "Looking at this…"}
+var (
+	pickupLoading  = []string{"Reading the thread…", "Looking at this…"}
+	arrivalLoading = []string{"Picked up…"}
+)
 
 type pickupResult struct {
 	OK        bool   `json:"ok"`
@@ -125,7 +128,12 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil && errorCode(err) != settled {
 		return fail(fallback(act, err))
 	}
-	return ok(pickupResult{OK: true, LineError: setWorkingLine(hc.Ctx, api, id, channelID, cmp.Or(b.ThreadTS, b.TS), status, loading)})
+	thread := cmp.Or(b.ThreadTS, b.TS)
+	line := setWorkingLine(hc.Ctx, api, id, channelID, thread, status, loading)
+	if line != "" && !b.Done {
+		return fail(fmt.Sprintf("the eyes are on %s, but Slack refused the working line under thread %s: %s", b.TS, thread, line))
+	}
+	return ok(pickupResult{OK: true, LineError: line})
 }
 
 func (a *app) startStream(hc daemon.HandlerCtx, api slackAPI, id identity, channelID string, b opBody, chunks []slack.MsgOption) daemon.Reply {

@@ -698,9 +698,37 @@ func TestPollerListsSessionsForAnAmbiguousDM(t *testing.T) {
 	if len(f.plane.events) != 0 {
 		t.Fatalf("ambiguous DM routed to a session: %+v", f.plane.events)
 	}
+	if n := f.slack.callCount("reactions.add"); n != 0 {
+		t.Fatalf("reactions.add calls = %d, want no eyes on a message no session received", n)
+	}
 	last := f.slack.sent()[len(f.slack.sent())-1]
 	if last.threadTS != "1800000009.000000" || strings.Count(last.text, "• ") != 2 {
 		t.Fatalf("session list post = %+v", last)
+	}
+}
+
+func TestTheDaemonPutsEyesAndTheWorkingLineOnAnOperatorMessageAsItReachesASession(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	f.tick()
+
+	ownerReplies(f, thread, "1800000001.500000", "ship it")
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.600000", ThreadTimestamp: thread, User: "UOTHER", Text: "not the operator"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000001.600000", ThreadTS: thread})
+	f.tick()
+
+	if got := f.slack.reactedTo("1800000001.500000"); !slices.Equal(got, []string{pickupReaction}) {
+		t.Fatalf("reactions on the operator's reply = %v, want eyes", got)
+	}
+	if got := f.slack.reactedTo("1800000001.600000"); len(got) != 0 {
+		t.Fatalf("reactions on another user's message = %v, want none", got)
+	}
+	f.slack.mu.Lock()
+	defer f.slack.mu.Unlock()
+	if len(f.slack.statuses) != 1 || f.slack.statuses[0].ThreadTS != thread || f.slack.statuses[0].Status != workingStatus || !slices.Equal(f.slack.statuses[0].LoadingMessages, arrivalLoading) {
+		t.Fatalf("working lines = %+v, want one %v line under thread %s", f.slack.statuses, arrivalLoading, thread)
 	}
 }
 
@@ -969,6 +997,9 @@ func TestOneMessageReachesASessionOnceAcrossItsWatches(t *testing.T) {
 	f.tick()
 	if len(f.plane.directives) != 1 {
 		t.Fatalf("directives = %d, want the message delivered once under its own ts", len(f.plane.directives))
+	}
+	if n := f.slack.callCount("reactions.add"); n != 1 {
+		t.Fatalf("reactions.add calls = %d, want eyes only when the message first reached the session", n)
 	}
 }
 

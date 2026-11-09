@@ -119,6 +119,16 @@ func TestARefusedWorkingLineKeepsTheStepsAndSaysSo(t *testing.T) {
 	}
 }
 
+func TestAPickupSlackRefusesTheWorkingLineForFailsAndSaysWhy(t *testing.T) {
+	l := startDaemon(t)
+	loginAs(t, l, "yasyf")
+	l.slack.fail("assistant.threads.setStatus", slack.SlackErrorResponse{Err: "invalid_thread_ts"})
+	l.refused(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.2", "thread_ts": "1.1"}, "refused the working line under thread 1.1: invalid_thread_ts")
+	if got := l.slack.reactedTo("1.2"); !slices.Equal(got, []string{"eyes"}) {
+		t.Fatalf("reactions = %v, want the eyes kept", got)
+	}
+}
+
 func TestPickupAndStepsRefuseAnAgentNameThatWouldShowAsWords(t *testing.T) {
 	l := startDaemon(t)
 	dm := loginAs(t, l, "yasyf").DMChannelID

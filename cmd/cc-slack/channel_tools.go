@@ -260,6 +260,8 @@ var (
 		{
 			name: "slack_pickup",
 			description: "Show you have picked up a message: adds eyes to it and Slack's working line under its thread, together and nothing else. " +
+				"Your operator's message in your DM with the app arrives with both already on, so there it only sets what the line says. " +
+				"Fails with Slack's error when Slack refuses the working line; the eyes stay on. " +
 				"Pass state to name what you are doing now on the working line, again each time it changes. " +
 				"Pass done when you finish without working on it, or once the work is finished, to take both away.",
 			op: opPickup, failure: actionReact,

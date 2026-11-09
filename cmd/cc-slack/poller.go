@@ -531,20 +531,8 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		if g.idle() {
 			continue
 		}
-		route, err := p.routable(ctx, db, g, m)
-		if err != nil {
+		if err := p.route(ctx, db, api, id, g, m); err != nil {
 			return c, err
-		}
-		if !route {
-			continue
-		}
-		if err := p.routeAll(ctx, db, api, id, slices.Concat(g.watches, g.covering), m); err != nil {
-			return c, err
-		}
-		if len(g.sessions) > 0 && operatorRoot(id, m) && !g.held() {
-			if err := p.routeRoot(ctx, db, api, id, g.sessions, m); err != nil {
-				return c, err
-			}
 		}
 	}
 	c.oldest = latest
@@ -555,6 +543,37 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 	}
 	p.consumed(g.key, g.since)
 	return c, nil
+}
+
+func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, m slack.Message) error {
+	route, err := p.routable(ctx, db, g, m)
+	if err != nil || !route {
+		return err
+	}
+	watching := slices.Concat(g.watches, g.covering)
+	rooted := len(g.sessions) > 0 && operatorRoot(id, m) && !g.held()
+	reaching := watching
+	if rooted && len(g.sessions) == 1 {
+		reaching = append(slices.Clone(watching), g.sessions[0])
+	}
+	arrived := false
+	if g.key.channelID == id.DMChannelID && id.fromOperator(m) {
+		if arrived, err = p.newToAny(ctx, db, reaching, m); err != nil {
+			return err
+		}
+	}
+	if err := p.routeAll(ctx, db, api, id, watching, m); err != nil {
+		return err
+	}
+	if rooted {
+		if err := p.routeRoot(ctx, db, api, id, g.sessions, m); err != nil {
+			return err
+		}
+	}
+	if arrived {
+		p.pickUp(ctx, api, id, m)
+	}
+	return nil
 }
 
 func (p *poller) cacheObserver(ctx context.Context, key cursorKey) func(since string, msgs []slack.Message, fetchErr error) {
@@ -613,6 +632,26 @@ func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) er
 		return p.owed.answered(ctx, thread, m.Timestamp)
 	}
 	return nil
+}
+
+func (p *poller) newToAny(ctx context.Context, db *sql.DB, watches []watch, m slack.Message) (bool, error) {
+	for _, w := range watches {
+		seen, err := delivered(ctx, db, w.SubjectID, messageDedup(w, m.Timestamp))
+		if err != nil || !seen {
+			return err == nil, err
+		}
+	}
+	return false, nil
+}
+
+func (p *poller) pickUp(ctx context.Context, api slackAPI, id identity, m slack.Message) {
+	if err := api.AddReactionContext(ctx, pickupReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: m.Timestamp}); err != nil && errorCode(err) != "already_reacted" {
+		p.log.Printf("pick up %s: eyes: %v", m.Timestamp, err)
+	}
+	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
+	if line := setWorkingLine(ctx, api, id, id.DMChannelID, thread, workingStatus, arrivalLoading); line != "" {
+		p.log.Printf("pick up %s: working line under thread %s: %s", m.Timestamp, thread, line)
+	}
 }
 
 func operatorRoot(id identity, m slack.Message) bool {
