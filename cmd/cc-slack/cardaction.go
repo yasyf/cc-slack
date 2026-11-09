@@ -925,7 +925,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
 		kind, surface, name = "Answer relayed", "Slack message", "Slack"
 	}
-	res, err := p.answerWaits(ctx, id, waitsAnswer{
+	answer := waitsAnswer{
 		card:      cardRef{id.DMChannelID, thread, m.TS},
 		tap:       askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
 		other:     other,
@@ -937,7 +937,12 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		dedup:     fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
 		settled:   settled,
 		withdrawn: withdrawn,
-	})
+	}
+	res, err := p.answerWaits(ctx, id, answer)
+	if errors.Is(err, errNoStatusSession) {
+		answer.settled = true
+		res, err = p.answerWaits(ctx, id, answer)
+	}
 	if err == nil && res.Answered && !other && !withdrawn {
 		p.answerCopies(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, label, false, at)
 	}

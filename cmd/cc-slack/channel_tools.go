@@ -451,7 +451,7 @@ var (
 		{
 			name: "slack_card_answer",
 			description: "Answer a waiting card in your DM with the app with an answer the user gave somewhere else, such as a reply in a thread or on another card, which you relay. " +
-				"The card collapses to its title and the answer, the asking session gets the answer's slack.action as from a tap, the board card resolves, " +
+				"The card collapses to its title and the answer, the asking session gets the answer's slack.action as from a tap (when that session has ended, the card still shows the answer and no session is told), the board card resolves, " +
 				"and every post the card supersedes shows the outcome. settled closes a question that what happened answered, such as the pull request landing, with no slack.action. Needs no ticket.",
 			op: opCardAnswer, failure: actionWrite,
 			properties: map[string]any{
