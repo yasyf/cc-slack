@@ -125,6 +125,7 @@ type opBody struct {
 	Tasks     []task   `json:"tasks"`
 	Stop      bool     `json:"stop"`
 	Done      bool     `json:"done"`
+	State     string   `json:"state"`
 	Recipient string   `json:"recipient"`
 	ticketSpend
 }

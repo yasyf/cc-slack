@@ -29,6 +29,21 @@ func TestPickupShowsEyesAndTheWorkingLineTogetherAndNothingElse(t *testing.T) {
 	}
 }
 
+func TestAPickupWithAStateNamesItOnTheWorkingLine(t *testing.T) {
+	l := startDaemon(t)
+	loginAs(t, l, "yasyf")
+	l.do(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.2", "thread_ts": "1.1"})
+	l.do(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.2", "thread_ts": "1.1", "state": "Waiting for a subagent…"})
+	l.slack.mu.Lock()
+	defer l.slack.mu.Unlock()
+	if got := l.slack.statuses[0].LoadingMessages; !slices.Equal(got, pickupLoading) {
+		t.Fatalf("first working line = %v, want %v", got, pickupLoading)
+	}
+	if last := l.slack.statuses[len(l.slack.statuses)-1]; last.ThreadTS != "1.1" || !slices.Equal(last.LoadingMessages, []string{"Waiting for a subagent…"}) {
+		t.Fatalf("working line after the state = %+v, want it to say Waiting for a subagent… under thread 1.1", last)
+	}
+}
+
 func TestALookWithNoWorkTakesTheEyesAndLineAwayWithNoSteps(t *testing.T) {
 	l := startDaemon(t)
 	loginAs(t, l, "yasyf")

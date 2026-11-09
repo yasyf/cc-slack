@@ -113,6 +113,9 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionReact, err))
 	}
 	act, settled, apply, status, loading := actionReact, "already_reacted", slackAPI.AddReactionContext, workingStatus, pickupLoading
+	if b.State != "" {
+		loading = []string{b.State}
+	}
 	if b.Done {
 		act, settled, apply, status, loading = actionUnreact, "no_reaction", slackAPI.RemoveReactionContext, "", nil
 	}
@@ -215,6 +218,7 @@ func pickupCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f         messageFlags
 		done      bool
+		state     string
 		agentName string
 	)
 	c := &cobra.Command{
@@ -224,6 +228,7 @@ func pickupCmd(d cmd.Deps) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
 			body["done"] = done
+			body["state"] = state
 			body["agent"] = agentName
 			return runOp(c, d, f.sessionFlags, opPickup, body)
 		},
@@ -231,6 +236,7 @@ func pickupCmd(d cmd.Deps) *cobra.Command {
 	f.bind(c)
 	c.Flags().StringVar(&f.ts, "ts", "", "the message you are looking at")
 	c.Flags().BoolVar(&done, "done", false, "take the eyes and the working line away")
+	c.Flags().StringVar(&state, "state", "", "what the working line says you are doing now, such as \"Waiting for a subagent…\"")
 	bindAgent(c, &agentName)
 	return c
 }

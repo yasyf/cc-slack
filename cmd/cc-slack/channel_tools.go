@@ -258,6 +258,7 @@ var (
 		{
 			name: "slack_pickup",
 			description: "Show you have picked up a message: adds eyes to it and Slack's working line under its thread, together and nothing else. " +
+				"Pass state to name what you are doing now on the working line, again each time it changes. " +
 				"Pass done when you finish without working on it, or once the work is finished, to take both away.",
 			op: opPickup, failure: actionReact,
 			properties: map[string]any{
@@ -266,6 +267,7 @@ var (
 				"thread_ts":  map[string]any{"type": "string", "description": "ts of its thread's parent; omit when the message is the parent"},
 				"url":        urlProp,
 				"done":       map[string]any{"type": "boolean", "description": "take the eyes and the working line away"},
+				"state":      map[string]any{"type": "string", "description": "what the working line says you are doing now, such as \"Waiting for a subagent…\"; call again with a new state as it changes"},
 				"agent":      agentProp,
 			},
 		},
