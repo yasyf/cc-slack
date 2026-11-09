@@ -39,6 +39,20 @@ type cardActionPush struct {
 	Value     string `json:"value"`
 	ActionTS  string `json:"action_ts"`
 	Seq       string `json:"seq"`
+	Typed     bool   `json:"-"`
+}
+
+// cardPress says how his answer reached a PR card: the Slack action or message it came from, and whether he pressed the button, typed its number in the thread, or answered another card it copies.
+type cardPress struct {
+	ActionTS string
+	Source   string
+}
+
+func (a cardActionPush) press() cardPress {
+	if a.Typed {
+		return cardPress{a.ActionTS, "typed its number in the thread"}
+	}
+	return cardPress{a.ActionTS, "pressed the button"}
 }
 
 type actionPayload struct {
@@ -647,18 +661,18 @@ func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool
 	}
 	ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, strings.TrimSpace(m.Text))
 	return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
-		ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp}, ok
+		ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp, Typed: true}, ok
 }
 
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
 	card := offeredCard{ref: a.ref(), waits: k.ID, pr: pr}
-	if p.answerPRCard(ctx, id, card, k.Label, at, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), false) {
+	if p.answerPRCard(ctx, id, card, k.Label, at, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), false, a.press()) {
 		p.answerCopies(ctx, id, a.ref(), k.Label, true, at)
 	}
 	return nil
 }
 
-func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool) bool {
+func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool, press cardPress) bool {
 	won, prior := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, askAnswer{At: at, Label: label})
 	if !won {
 		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
@@ -670,7 +684,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	if applied {
 		return true
 	}
-	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label}
+	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label, "action_ts": press.ActionTS, "source": press.Source}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(c.ref.channel, c.ref.thread, c.waits)
 		p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
@@ -693,7 +707,7 @@ func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, 
 	link := id.permalink(tapped.channel, tapped.ts, tapped.thread)
 	line := "✓ *" + mrkdwnEscapes.Replace(label) + "* · answered " + clock(at, p.now()) + " on " + slackLink(link, "the other card")
 	for _, c := range prs {
-		if applied = p.answerPRCard(ctx, id, c, label, at, line, applied); !applied {
+		if applied = p.answerPRCard(ctx, id, c, label, at, line, applied, cardPress{tapped.ts, "answered " + link}); !applied {
 			break
 		}
 	}
@@ -751,7 +765,8 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 	if err := p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)); err != nil {
 		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label}
+	press := a.press()
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label, "action_ts": press.ActionTS, "source": press.Source}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(a.Channel, a.ThreadTS, k.ID)
 		p.log.Printf("PR row %s: %q not applied: %v", k.ID, k.Label, err)
