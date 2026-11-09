@@ -83,6 +83,7 @@ const (
 	cardPermission    = "slack-"
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
+	prLinkLabel       = "The change"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
 
@@ -362,11 +363,10 @@ func (p cardPR) waitsOn() string {
 
 func (p cardPR) fields(v cardView) []cardFact {
 	id, _ := parseRef(p.URL)
-	return []cardFact{{"What changes for you", p.Change}, {"Where it stands", cmp.Or(p.Review, v.refs[id.key()].text())}, {"Waits on", p.waitsOn()}}
-}
-
-func (p cardPR) notes() []cardFact {
-	return []cardFact{{"Differs from the plan", p.Plan}, {"Risk", p.Risk}, {"Show me", p.ShowMe}}
+	return []cardFact{
+		{"What changes for you", p.Change}, {"Where it stands", cmp.Or(p.Review, v.refs[id.key()].text())}, {"Waits on", p.waitsOn()},
+		{"Differs from the plan", p.Plan}, {"Risk", p.Risk}, {"Show me", p.ShowMe},
+	}
 }
 
 func (c statusCard) checkReplaces() error {
@@ -1221,7 +1221,7 @@ func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 	if answered {
 		p.Review = ""
 	}
-	return append(p.grid(v), slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, p.headline(), false, false)))
+	return p.grid(v)
 }
 
 func (p cardPR) grid(v cardView) []slack.Block {
@@ -1244,16 +1244,8 @@ func (p cardPR) grid(v cardView) []slack.Block {
 		}
 		long = append(long, sections(said.Text)...)
 	}
-	if len(fields) > 0 {
-		blocks = append(blocks, slack.NewSectionBlock(nil, fields, nil))
-	}
-	blocks = append(blocks, long...)
-	for _, n := range p.notes() {
-		if strings.TrimSpace(n.Value) != "" {
-			blocks = append(blocks, sections(cardField(n.Label, plainMrkdwn(n.Value)).Text)...)
-		}
-	}
-	return blocks
+	fields = append(fields, cardField(prLinkLabel, p.headline()))
+	return append(append(blocks, slack.NewSectionBlock(nil, fields, nil)), long...)
 }
 
 func (p cardPR) headline() string {
@@ -1272,12 +1264,12 @@ func (p cardPR) markdown(v cardView) string {
 			lines = append(lines, plainMrkdwn(lead))
 		}
 	}
-	for _, f := range append(p.fields(v), p.notes()...) {
+	for _, f := range p.fields(v) {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	return strings.Join(append(lines, p.headline()), "\n")
+	return strings.Join(append(lines, "*"+prLinkLabel+"*\n"+p.headline()), "\n")
 }
 
 func sections(text string) []slack.Block {

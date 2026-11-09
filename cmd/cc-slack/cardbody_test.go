@@ -194,8 +194,8 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 	blocks, fold := card.layout(view())
 	want := []string{
-		"🙋 Keep it or revert it?", "*<https://github.com/acme/app/pull/50659|app PR 50659>*",
-		"*ELI5*", "It landed with no tap from you.",
+		"🙋 Keep it or revert it?", "A stale credential on disk",
+		"*What changes for you*", "It landed with no tap from you.",
 		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
 	if len(blocks) != len(want) {
@@ -274,7 +274,10 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 		t.Fatalf("where it stands %q, want the live CI state", fields[1].Text)
 	}
 	got := blocksJSON(t, blocks)
-	for _, want := range []string{"*Differs from the plan*\\nNothing", "<https://github.com/acme/app/pull/49622|app PR 49622> · One credential per team"} {
+	if !strings.Contains(sectionText(blocks), "*The change*\n<https://github.com/acme/app/pull/49622|app PR 49622> · One credential per team") {
+		t.Fatalf("blocks %s, want the PR's link and title under The change", got)
+	}
+	for _, want := range []string{"*Differs from the plan*\\nNothing"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("blocks %s lack %q", got, want)
 		}
