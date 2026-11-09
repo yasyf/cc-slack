@@ -418,7 +418,9 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
 
-func (l *liveCards) shelfPath() string { return filepath.Join(filepath.Dir(l.path), "picture-shelf.json") }
+func (l *liveCards) shelfPath() string {
+	return filepath.Join(filepath.Dir(l.path), "picture-shelf.json")
+}
 
 func (l *liveCards) shelves() map[string]string {
 	shelves := map[string]string{}

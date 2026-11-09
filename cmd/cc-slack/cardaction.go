@@ -1007,7 +1007,6 @@ func (p *poller) drawTap(ctx context.Context, id identity, r cardRef, blockID, l
 	if tracked {
 		redrawn, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now())
 		if redrawn[r.ts] {
-			go p.redrawWithFreshPRLines(context.WithoutCancel(ctx), id, r)
 			return err
 		}
 		if err != nil {

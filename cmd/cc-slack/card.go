@@ -1267,10 +1267,10 @@ func (p cardPR) headline(at, of int) string {
 		place = fmt.Sprintf("%d of %d · ", at+1, of)
 	}
 	link := slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number))
-	if p.Title == "" {
-		return "*" + place + "*" + link
+	if lead := strings.TrimSuffix(place+plainMrkdwn(p.Title), " · "); lead != "" {
+		return "*" + lead + "*\n" + link
 	}
-	return "*" + place + plainMrkdwn(p.Title) + "*\n" + link
+	return link
 }
 
 func (p cardPR) body(v cardView) string {

@@ -199,24 +199,24 @@ func TestAWithdrawalNamingAnotherPostSaysReplacedAndLinksIt(t *testing.T) {
 	}
 }
 
-func TestAnAnsweredRowKeepsItsPRFacts(t *testing.T) {
+func TestAnAnsweredRowFoldsToItsPRLine(t *testing.T) {
 	row := prCardRow()
 	row.PR.Head = "abc1234def"
 	card := groupCard(row, prRow(42))
 	v := view()
 	v.answers = map[string]askAnswer{row.ID: {At: bodyAt, Label: "Approve"}}
 	got := blocksJSON(t, card.replyBlocks(v))
-	for _, want := range []string{"app PR 41", "Chats load faster.", "Checked.", "Only your approval.", "✓ *Approve* · answered"} {
+	for _, want := range []string{"app PR 41", "✓ *Approve* · answered"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("blocks %s lack %q, want the PR's headline, its lines and the answer", got, want)
+			t.Fatalf("blocks %s lack %q, want the PR's line and the answer", got, want)
 		}
 	}
-	if strings.Contains(got, "`abc1234`") {
-		t.Fatalf("blocks %s, want no commit once answered", got)
+	if strings.Contains(got, "Checked.") || strings.Contains(got, "`abc1234`") {
+		t.Fatalf("blocks %s, want the answered row folded to its PR line, with no lines or commit", got)
 	}
 }
 
-func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
+func TestATappedPRCardFoldsToOneLinePerPR(t *testing.T) {
 	pr := fullPR(52590)
 	card := statusCard{Status: "needs_you", Title: "#52590, release status names the envs", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-52590", PRs: []cardPR{pr}}
 	v := view()
@@ -225,18 +225,9 @@ func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("Slack would refuse the tapped card: %v", err)
 	}
-	text := sectionText(blocks)
-	for _, f := range pr.fields(v) {
-		if f.Value == "" {
-			continue
-		}
-		if want := "*" + f.Label + "*\n" + f.Value; !strings.Contains(text, want) {
-			t.Fatalf("tapped card sections %q lack %q", text, want)
-		}
-	}
 	got := blocksJSON(t, blocks)
-	if !strings.Contains(got, "app PR 52590") || !strings.Contains(got, "✓ *Approve* · answered") || strings.Contains(got, "7bf3ea0") {
-		t.Fatalf("blocks %s, want the PR's name and the answer, and no commit", got)
+	if !strings.Contains(got, "app PR 52590") || !strings.Contains(got, "✓ *Approve* · answered") || strings.Contains(got, cardRefresher) || strings.Contains(got, "7bf3ea0") {
+		t.Fatalf("blocks %s, want the PR's line and the answer, and no lines or commit", got)
 	}
 }
 
