@@ -477,7 +477,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
-| `recommended` | on an ask card, the one option you recommend; the card shows it first, marked (Recommended) |
+| `recommended` | the one option you recommend, on an ask card or a reply card; the card shows it first, marked (Recommended). An ask card needs one; on a reply card nothing waits on it |
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, or 8 carrying a `pr` shaped as in `prs`, each with up to 4 buttons |
 | `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
 
@@ -516,6 +516,13 @@ an older card may be stale, since the directive names when that card was
 posted. Ack means the user saw the card and needs nothing. Pause means start
 no new lanes, applies, deploys, or PRs. Let in-flight work settle, then post
 a `needs_you` card naming what is paused and what resuming would start.
+
+A question you keep working past, such as a design choice you go ahead on
+with your recommended answer, is a reply card with `options` and
+`recommended` and no `waits`. The card shows the recommended option first,
+marked (Recommended), keeps its Ack and Pause, and says nothing about a
+stopped lane. A tap on another option arrives as a `slack.action` like any
+reply card's, so change course when it comes.
 
 ### Ask the user with an ask card
 
