@@ -70,9 +70,9 @@ func TestADiagramArtifactPostsItsPictureOnTheCardBesideItsWorkObject(t *testing.
 	if strings.Contains(post.blocks+post.metadata, "slack_file") {
 		t.Fatalf("post = %+v, want the first post to name no file before its share", post)
 	}
-	share := l.slack.sent()[1]
-	if share.channelID != post.channelID || share.threadTS != post.ts {
-		t.Fatalf("share = %+v, want it in the thread of the card at %s", share, post.ts)
+	shelf, share := l.slack.sent()[1], l.slack.sent()[2]
+	if shelf.threadTS != "" || shelf.text != cardShelfText || share.channelID != post.channelID || share.threadTS != shelf.ts {
+		t.Fatalf("shelf = %+v, share = %+v, want the picture shared into the DM's one picture thread, not the card's", shelf, share)
 	}
 	shown := lastEdit(t, l, post.ts)
 	ids := imageIDs(t, shown.blocks)

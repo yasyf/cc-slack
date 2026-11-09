@@ -240,6 +240,7 @@ type liveCards struct {
 	wakeCh chan struct{}
 
 	mu      sync.Mutex
+	shelfMu sync.Mutex
 	threads map[string]*liveThread
 	refs    map[string]refState
 	hosts   map[string]*refHost
@@ -416,6 +417,27 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 }
 
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
+
+func (l *liveCards) shelfPath() string { return filepath.Join(filepath.Dir(l.path), "picture-shelf.json") }
+
+func (l *liveCards) shelves() map[string]string {
+	shelves := map[string]string{}
+	data, err := os.ReadFile(l.shelfPath())
+	if err == nil {
+		if err := json.Unmarshal(data, &shelves); err != nil {
+			l.log.Printf("decode %s: %v", l.shelfPath(), err)
+		}
+	}
+	return shelves
+}
+
+func (l *liveCards) shelf(channel string) string { return l.shelves()[channel] }
+
+func (l *liveCards) keepShelf(channel, ts string) {
+	shelves := l.shelves()
+	shelves[channel] = ts
+	l.saveFile(l.shelfPath(), shelves)
+}
 
 func (l *liveCards) load() error {
 	l.mu.Lock()

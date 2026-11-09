@@ -180,6 +180,8 @@ func blockLead(t *testing.T, b slack.Block) string {
 		return text.Text
 	case *slack.ActionBlock:
 		return block.BlockID
+	case *slack.DividerBlock:
+		return ""
 	}
 	t.Fatalf("no lead for a %T", b)
 	return ""
@@ -194,9 +196,8 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 	blocks, fold := card.layout(view())
 	want := []string{
-		"🙋 Keep it or revert it?", "*Refresher*\nA stale credential on disk",
-		"*Biggest surprise*", "It landed with no tap from you.",
-		"*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
+		"🙋 Keep it or revert it?", "It landed with no tap from you.", "", "*One credential per team*",
+		"*Refresher*\nA stale credential on disk", "*1. Keep it*", "*2. Revert it now*", cardPRHint, cardActionsBlock, "",
 	}
 	if len(blocks) != len(want) {
 		t.Fatalf("%d blocks %s, want %d: the first screen and nothing past it", len(blocks), blocksJSON(t, blocks), len(want))
@@ -297,8 +298,8 @@ func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *test
 	id, _ := parseRef(pr.URL)
 	v := view()
 	v.refs = map[string]refState{id.key(): {State: "open", Checks: "passed"}}
-	stands := asSection(t, card.replyBlocks(v)[2]).Fields[1].Text
-	if strings.Contains(stands, "CI passed") || !strings.Contains(stands, "CI red; approved by poetic-svc") {
+	stands := asSection(t, card.replyBlocks(v)[3]).Text.Text
+	if strings.Contains(stands, "CI passed") || !strings.Contains(stands, "*Where it stands*\nCI red; approved by poetic-svc") {
 		t.Fatalf("where it stands %q, want the ledger's review alone, never GitHub's live state beside it", stands)
 	}
 }
