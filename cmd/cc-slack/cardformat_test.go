@@ -12,15 +12,13 @@ import (
 	"time"
 )
 
-func TestAnAnsweredPRRowShowsItsTitleAndNoCommit(t *testing.T) {
+func TestAPRRowShowsItsTitleAndNeverItsCommit(t *testing.T) {
 	p := cardPR{URL: "https://github.com/acme/app/pull/41", Title: "Fix the login form", Head: "abc1234def"}
 	v := cardView{refs: map[string]refState{}}
-	answered := string(mustJSON(p.blocks(v, true)))
-	if !strings.Contains(answered, "Fix the login form") || strings.Contains(answered, "abc1234") {
-		t.Fatalf("answered row = %s, want the PR's title and no commit", answered)
-	}
-	if waiting := string(mustJSON(p.blocks(v, false))); !strings.Contains(waiting, "abc1234") {
-		t.Fatalf("waiting row = %s, want the commit its tap answers", waiting)
+	for _, answered := range []bool{true, false} {
+		if got := string(mustJSON(p.blocks(v, answered))); !strings.Contains(got, "Fix the login form") || strings.Contains(got, "abc1234") {
+			t.Fatalf("answered=%v row = %s, want the PR's title and no commit", answered, got)
+		}
 	}
 }
 

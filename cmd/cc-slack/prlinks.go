@@ -459,28 +459,33 @@ func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, pages
 	return ""
 }
 
-func (p cardPR) lines() []string {
-	var labels []string
-	for _, f := range p.visible().fields() {
+func (p cardPR) lines() []cardFact {
+	shown := p.visible()
+	var lines []cardFact
+	if eli5 := strings.TrimSpace(shown.ELI5); eli5 != "" {
+		lines = append(lines, cardFact{"ELI5", plainMrkdwn(eli5)})
+	}
+	for _, f := range shown.fields(cardView{}) {
 		if strings.TrimSpace(f.Value) != "" {
-			labels = append(labels, f.Label)
+			lines = append(lines, cardFact{f.Label, "*" + f.Label + "*"})
 		}
 	}
-	return labels
+	return lines
 }
 
 func linesLacking(held []slack.Block, card statusCard) []string {
-	want := map[string]int{}
+	want, labels := map[string]int{}, map[string]string{}
 	for _, pr := range card.allPRs() {
-		for _, label := range pr.lines() {
-			want[label]++
+		for _, line := range pr.lines() {
+			want[line.Value]++
+			labels[line.Value] = line.Label
 		}
 	}
 	said := sectionText(held)
 	var missing []string
-	for label, n := range want {
-		if strings.Count(said, "*"+label+"*") < n {
-			missing = append(missing, label)
+	for marker, n := range want {
+		if strings.Count(said, marker) < n {
+			missing = append(missing, labels[marker])
 		}
 	}
 	slices.Sort(missing)

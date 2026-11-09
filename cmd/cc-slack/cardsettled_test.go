@@ -226,7 +226,7 @@ func TestATappedPRCardKeepsEachOfItsFourLines(t *testing.T) {
 		t.Fatalf("Slack would refuse the tapped card: %v", err)
 	}
 	text := sectionText(blocks)
-	for _, f := range pr.fields() {
+	for _, f := range pr.fields(v) {
 		if f.Value == "" {
 			continue
 		}
@@ -262,13 +262,10 @@ func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	}
 	noELI5 := make([]slack.Block, 0, len(held))
 	for _, b := range held {
-		s, ok := b.(*slack.SectionBlock)
-		if !ok || s.Text != nil {
-			noELI5 = append(noELI5, b)
+		if s, ok := b.(*slack.SectionBlock); ok && s.Text != nil && s.Text.Text == fullPR(1).ELI5 {
 			continue
 		}
-		fields := slices.DeleteFunc(slices.Clone(s.Fields), func(f *slack.TextBlockObject) bool { return strings.HasPrefix(f.Text, "*ELI5*") })
-		noELI5 = append(noELI5, slack.NewSectionBlock(nil, fields, nil))
+		noELI5 = append(noELI5, b)
 	}
 	if missing := linesLacking(noELI5, card); !slices.Equal(missing, []string{"ELI5"}) {
 		t.Fatalf("missing = %q, want ELI5 named", missing)
