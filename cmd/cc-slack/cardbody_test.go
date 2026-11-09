@@ -36,10 +36,10 @@ func sectionTexts(blocks []slack.Block) []string {
 	return texts
 }
 
-func tables(blocks []slack.Block) []*slack.TableBlock {
-	var found []*slack.TableBlock
+func tables(blocks []slack.Block) []*slack.DataTableBlock {
+	var found []*slack.DataTableBlock
 	for _, b := range blocks {
-		if table, ok := b.(*slack.TableBlock); ok {
+		if table, ok := b.(*slack.DataTableBlock); ok {
 			found = append(found, table)
 		}
 	}
@@ -66,7 +66,7 @@ func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 			t.Fatalf("blocks %s carry the raw mark %q", got, raw)
 		}
 	}
-	for _, want := range []string{"*Storage*", "*Fixed* in <https://github.com/acme/app/pull/2|the PR>", "• one", `"type":"table"`, `"url":"https://ci.example.com/1"`, `"bold":true`, cardEmptyCell} {
+	for _, want := range []string{"*Storage*", "*Fixed* in <https://github.com/acme/app/pull/2|the PR>", "• one", `"type":"data_table"`, `"url":"https://ci.example.com/1"`, `"bold":true`, cardEmptyCell} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("blocks %s lack %q", got, want)
 		}
@@ -829,5 +829,26 @@ func TestAPRCardOpensEachPROnGitHubAndItsCopyKeepsTheButton(t *testing.T) {
 	want := map[string]string{"Open #7 on GitHub": fullPR(7).URL, "Open #8 on GitHub": fullPR(8).URL}
 	if got := opens(info.replyBlocks(view())); !maps.Equal(got, want) {
 		t.Fatalf("a card naming two PRs opens %v, want %v", got, want)
+	}
+}
+
+func TestATableIsASortablePagedDataTableWithItsNumberColumnsNumeric(t *testing.T) {
+	rows := make([][]string, 0, 13)
+	rows = append(rows, []string{"PR", "age"})
+	for i := range 12 {
+		rows = append(rows, []string{fmt.Sprintf("#%d", i), fmt.Sprint(i * 3)})
+	}
+	table := tableBlock(rows)
+	if table.Type != slack.MBTDataTable || table.PageSize != cardTablePage || table.Caption != "PR · age" {
+		t.Fatalf("table = %+v, want a data_table paged at %d with its header as caption", table, cardTablePage)
+	}
+	if _, ok := table.Rows[0][1].(*slack.DataTableRawTextCell); !ok {
+		t.Fatalf("header cell = %#v, want raw text", table.Rows[0][1])
+	}
+	if age, ok := table.Rows[3][1].(*slack.DataTableRawNumberCell); !ok || age.Value != 6 {
+		t.Fatalf("age cell = %#v, want the number 6 so the column sorts numerically", table.Rows[3][1])
+	}
+	if _, ok := table.Rows[3][0].(*slack.DataTableRawTextCell); !ok {
+		t.Fatalf("PR cell = %#v, want text", table.Rows[3][0])
 	}
 }
