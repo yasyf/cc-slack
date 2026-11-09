@@ -42,6 +42,7 @@ type app struct {
 
 	peers    sync.Map
 	channels sync.Map
+	owned    sync.Map
 }
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret

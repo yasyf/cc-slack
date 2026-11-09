@@ -83,9 +83,11 @@ UNREAD = (
     " with literal `--text`, `--file`, and `--blocks` values and no `--ticket` flags."
 )
 DRAFTED = (
-    "This command writes the `--text-file` it sends, and the check reads that file before the command runs, so it would judge"
+    "This command writes the `--{flag}` file it sends, and the check reads that file before the command runs, so it would judge"
     " what the file held before. Write the file in its own Bash call first, then send it in the next."
 )
+PLAN_VERDICTS = frozenset({"delete", "rewrite", "keep"})
+UNPLANNED = "This plan cannot run: {reason}. `cc-slack apply` only deletes, rewrites, or keeps the bot's own posts in one DM, so fix the plan and run it again."
 REFUSED = (
     "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
     " `slack_dm_status` and the second card when cc-present is missing, its body opened by a `Why:` line, then retry once they tap Yes."
@@ -681,13 +683,43 @@ def written_files(evt: PreToolUseEvent) -> set[str]:
     return redirected | {arg for call in evt.cmd.calls("tee") for arg in call.args if not arg.startswith("-")}
 
 
+def plan_refusal(path: Path) -> str | None:
+    try:
+        entries = json.loads(path.read_text())
+    except OSError as exc:
+        return f"{path.name} cannot be read ({exc.strerror})"
+    except ValueError as exc:
+        return f"{path.name} does not parse ({str(exc)[:60]})"
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        return f"{path.name} is not a JSON list of entries"
+    if bad := next((entry for entry in entries if entry.get("verdict") not in PLAN_VERDICTS), None):
+        return f"entry {str(bad.get('ts'))[:20]} has verdict {str(bad.get('verdict'))[:20]!r}"
+    if len(channels := sorted({permalink(str(entry.get("permalink") or ""))[0] for entry in entries})) != 1:
+        return f"it names {len(channels)} channels ({', '.join(channels[:3])})" if channels else "it names no channel"
+    if not channels[0].startswith("D"):
+        return f"its channel {channels[0]} is not a DM"
+    return None
+
+
+def plan_checked(evt: PreToolUseEvent, write: Write) -> HookResult:
+    named = str(write.fields.get("plan") or "")
+    if named in written_files(evt):
+        return evt.block(DRAFTED.format(flag="plan"))
+    path = Path(named).expanduser()
+    reason = plan_refusal(path if path.is_absolute() else evt.cwd / path)
+    logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=reason is None, detail=reason or named).info("slack plan checked")
+    return evt.allow() if reason is None else evt.block(UNPLANNED.format(reason=reason))
+
+
 def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
     writes = pending(evt)
     if len(writes) > 1 or not writes[0].readable:
         return evt.block(UNREAD)
     write = writes[0]
+    if write.verb == "apply":
+        return plan_checked(evt, write)
     if write.fields.get("text_file") in written_files(evt):
-        return evt.block(DRAFTED)
+        return evt.block(DRAFTED.format(flag="text-file"))
     conv = Conversation(write.channel, write.thread)
     try:
         with check_deadline():
@@ -1143,6 +1175,16 @@ on(
             case(command=f"{CLI} send --channel {FOLLOWERS} --text 'a post' --ticket 0123456789ab") >> Block(pattern="literal values"),
             case(command=f'{CLI} send --channel {FOLLOWERS} --text "$(cat reply.txt)"') >> Block(pattern="literal values"),
             case(command=f"{CLI} send --channel {FOLLOWERS} --text a && {CLI} reply --channel {FOLLOWERS} --thread 1 --text b") >> Block(pattern="one write per command"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_dm.json'}") >> Allow(explicit=True),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_dm.json'} --dry-run 2>&1 | tail -3") >> Allow(explicit=True),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_two_channels.json'}") >> Block(pattern=r"names 2 channels \(C0APPFOLLOW, D0OWNDM0001\)"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_post.json'}") >> Block(pattern="entry 1791900000.000300 has verdict 'post'"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_channel.json'}") >> Block(pattern="its channel C0APPFOLLOW is not a DM"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'missing_plan.json'}") >> Block(pattern=r"missing_plan.json cannot be read \(No such file or directory\)"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'page_reply.txt'}") >> Block(pattern=r"page_reply.txt does not parse \(Expecting value"),
+            case(command=f"{CLI} apply --plan {FIXTURES / 'plan_dm.json'} && {CLI} send --channel {FOLLOWERS} --text a") >> Block(pattern="one write per command"),
+            case(command=f"{CLI} apply --plan \"$(ls {FIXTURES}/plan_*.json | head -1)\"") >> Block(pattern="literal values"),
+            case(command=f"cat > {FIXTURES / 'plan_dm.json'} <<'EOF'\n[]\nEOF\n{CLI} apply --plan {FIXTURES / 'plan_dm.json'}") >> Block(pattern="writes the `--plan` file it sends"),
             case(command=f"cat > {FIXTURES / 'page_reply.txt'} <<'EOF'\nthe new draft\nEOF\n{PAGE_REPLY}", **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Block(pattern="in its own Bash call first"),
             case(command=f"printf 'the new draft' | tee {FIXTURES / 'page_reply.txt'} && {PAGE_REPLY}", **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Block(pattern="in its own Bash call first"),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'", tickets=[retrying(DANA | {"text": DANA_TEXT})]) >> Allow(explicit=True),

@@ -81,6 +81,7 @@ func root() *cobra.Command {
 		streamCmd(d),
 		editCmd(d),
 		deleteCmd(d),
+		applyCmd(d),
 		threadCmd(d),
 		historyCmd(d),
 		fileCmd(d),

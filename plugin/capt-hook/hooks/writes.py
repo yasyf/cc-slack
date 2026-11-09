@@ -43,6 +43,7 @@ CLI_VERBS = {
     "channel-invite": "invite",
     "channel-topic": "topic",
     "channel-join": "join",
+    "apply": "apply",
 }
 MESSAGE_VERBS = frozenset({"post", "edit", "delete"})
 READ_TOOLS = frozenset({"slack_thread", "slack_get_thread"})
@@ -55,7 +56,7 @@ CLI = CommandSchema(
     operands=(Operand("verb"),),
     options=(
         *(Option(name, (f"--{name}",)) for name in VALUED),
-        *(Option(name, (f"--{name}",), bool) for name in ("broadcast", "no-watch", "stop")),
+        *(Option(name, (f"--{name}",), bool) for name in ("broadcast", "no-watch", "stop", "dry-run")),
         HELP,
     ),
 )

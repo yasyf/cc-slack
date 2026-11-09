@@ -54,6 +54,7 @@ type slackAPI interface {
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
 	RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error)
+	RawMessage(ctx context.Context, channelID, threadTS, ts string) (json.RawMessage, error)
 }
 
 type fileShare struct {
@@ -353,6 +354,26 @@ func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS
 	if threadTS != "" {
 		query.Set("ts", threadTS)
 	}
+	return c.rawMessages(ctx, method, query)
+}
+
+// RawMessage reads the one message ts in the thread threadTS as Slack sends it, or errMessageGone when the thread no longer holds it.
+func (c *apiClient) RawMessage(ctx context.Context, channelID, threadTS, ts string) (json.RawMessage, error) {
+	found, err := c.rawMessages(ctx, methodReplies, url.Values{
+		"channel": {channelID}, "ts": {threadTS}, "oldest": {ts}, "latest": {ts}, "inclusive": {"true"},
+		"include_all_metadata": {"true"}, "limit": {strconv.Itoa(pageLimit)},
+	})
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := found[ts]
+	if !ok {
+		return nil, errMessageGone
+	}
+	return raw, nil
+}
+
+func (c *apiClient) rawMessages(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+method+"?"+query.Encode(), http.NoBody)
 	if err != nil {
 		return nil, err
@@ -363,6 +384,10 @@ func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return nil, &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
+	}
 	var answer struct {
 		slack.SlackResponse
 		Messages []json.RawMessage `json:"messages"`
