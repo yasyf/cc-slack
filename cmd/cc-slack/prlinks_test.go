@@ -592,7 +592,7 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("not held", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"})
 		l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-		l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+		l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": the card command answered no card for it")
 		eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
 		if got := l.slack.sentTo(testDM); len(got) != 1 {
 			t.Fatalf("posted %+v after %d asks, want the linked post alone after one ask", got, len(cmd.requests(t)))
@@ -1353,28 +1353,27 @@ func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApp
 func TestATapPostWhoseCardNeverDrawsFailsNamingThePostAndThePR(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	reply := l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}, "tap_prs": tapPR41})
-	if reply.OK {
-		t.Fatalf("a tap post whose card never drew answered ok: %s", reply.Body)
-	}
-	for _, want := range []string{"posted ", "archives/", "do not post it again", tapPR41[0] + ": the card command answered no card for it"} {
-		if !strings.Contains(reply.Error, want) {
-			t.Fatalf("error = %q, want it to say %q", reply.Error, want)
+	notice := statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}
+	_, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"card": notice, "tap_prs": tapPR41}))
+	for _, want := range []string{"posted https://acme.slack.com/archives/" + testDM + "/p", "so do not post it again, but drew no card for tap_prs " + tapPR41[0] + ": the card command answered no card for it"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("dm-status error = %v, want it to say %q", err, want)
 		}
 	}
 }
 
 func TestATapPostFailsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "card")
-	answer := `{"cards": [], "skipped": [{"repo": "acme/app", "number": 41, "reason": "its body has no What you'll hate most section"}]}`
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho '"+answer+"'\n"), 0o700); err != nil {
+	dir := t.TempDir()
+	script, answer := filepath.Join(dir, "card"), filepath.Join(dir, "answer.json")
+	skipped := map[string]any{"cards": []any{}, "skipped": []map[string]any{{"repo": "acme/app", "number": 41, "reason": "its body has no What you'll hate most section"}}}
+	if err := os.WriteFile(answer, mustJSON(skipped), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+answer+"'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	l, _ := cardingDaemon(t, []string{script}, "acme/app#41")
-	reply := l.do(opDMStatus, map[string]any{"text": "Here it is.", "tap_prs": tapPR41})
-	if reply.OK || !strings.Contains(reply.Error, tapPR41[0]+": its body has no What you'll hate most section") {
-		t.Fatalf("reply = ok %v, error %q, want a failure carrying the card command's reason", reply.OK, reply.Error)
-	}
+	l.refused(opDMStatus, map[string]any{"text": "Here it is.", "tap_prs": tapPR41}, tapPR41[0]+": its body has no What you'll hate most section")
 }
 
 func cardCopies(l *liveDaemon, card fakePost) []fakePost {
@@ -1403,7 +1402,7 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.slack.fail("chat.postMessage", nil)
 	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "fatal_error"})
-	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": its card was not posted; the daemon log says why")
 	eventually(t, "the card command asked for the card", func() bool { return len(cmd.requests(t)) > 0 })
 	eventually(t, "the failed post", func() bool { return l.slack.callCount("chat.postMessage") >= 2 })
 	if cards := prCards(l, testDM); len(cards) != 0 {

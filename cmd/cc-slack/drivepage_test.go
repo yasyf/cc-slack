@@ -70,7 +70,6 @@ func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	stack := mergeCard()
-	stack.Waits = "merge:acme:app:41-42"
 	stack.PRs = []cardPR{
 		{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Change: "Chats load faster", ELI5: "One key for every chat"},
 		{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Change: "Nothing you see", ELI5: "The old key goes away"},
