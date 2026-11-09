@@ -454,7 +454,11 @@ without the session list. The exception is the thread of a status card or
 `slack_dm_status` update another live session posted: a reply there reaches only
 that session, the holder neither sees nor owes it, and any other session's watch
 on the thread stays quiet. Once the posting session ends, the holder has that
-thread back. Other bots' messages stay out of it.
+thread back. A session of the holder's own drive is no other session: when the
+posting session's cards name the holder's drive (`drive` on a card), or a drive a
+session of it also posted under, the holder takes the thread over, sees and owes
+the reply, and the posting session no longer gets it. Other bots' messages stay
+out of it.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
 no bot or agent has answered in its thread yet, leaving out another live session's

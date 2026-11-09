@@ -98,6 +98,7 @@ type cursorGroup struct {
 	watches  []watch
 	sessions []watch
 	covering []watch
+	mates    driveMates
 }
 
 type cursorRow struct {
@@ -280,7 +281,11 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	groups := groupWatches(watches, id.DMChannelID, since)
+	mates, err := loadDriveMates(ctx, db, p.cards, id.DMChannelID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	groups := groupWatches(watches, id.DMChannelID, since, mates)
 	p.keepWatched(groups, seen)
 	api := p.newAPI(id.Token)
 	if p.reconcile.Swap(false) {
@@ -381,21 +386,7 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
 	return live, nil
 }
 
-func onAnotherSessionsCard(w watch, inThread []watch) bool {
-	carded := false
-	for _, o := range inThread {
-		if o.Kind != kindDM {
-			continue
-		}
-		if o.SubjectID == w.SubjectID || o.PID == w.PID {
-			return false
-		}
-		carded = true
-	}
-	return carded
-}
-
-func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string) []cursorGroup {
+func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
@@ -403,7 +394,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		if !ok {
 			i = len(groups)
 			index[key] = i
-			groups = append(groups, cursorGroup{key: key})
+			groups = append(groups, cursorGroup{key: key, mates: mates})
 		}
 		return &groups[i]
 	}
@@ -417,7 +408,10 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	for i := range groups {
 		inThread := slices.Clone(groups[i].watches)
-		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return onAnotherSessionsCard(w, inThread) })
+		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return mates.onAnotherSessionsCard(w, inThread) })
+		if held := channels[dmChannelID]; len(held) > 0 && groups[i].key.channelID == dmChannelID && groups[i].key.threadTS != "" {
+			groups[i].watches = mates.takeOver(groups[i].watches, held[0])
+		}
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
@@ -427,7 +421,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		g := group(key)
 		g.since = since[key]
 		for _, w := range channels[key.channelID] {
-			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !onAnotherSessionsCard(w, g.watches) {
+			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !mates.onAnotherSessionsCard(w, g.watches) {
 				g.covering = append(g.covering, w)
 			}
 		}
@@ -562,11 +556,11 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 			return err
 		}
 	}
-	if err := p.routeAll(ctx, db, api, id, watching, m); err != nil {
+	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates); err != nil {
 		return err
 	}
 	if rooted {
-		if err := p.routeRoot(ctx, db, api, id, g.sessions, m); err != nil {
+		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates); err != nil {
 			return err
 		}
 	}
@@ -600,12 +594,12 @@ func (g cursorGroup) held() bool {
 	return slices.ContainsFunc(g.watches, func(w watch) bool { return w.Kind == kindChannel })
 }
 
-func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message) error {
+func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates) error {
 	for _, w := range watches {
 		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		d, err := p.messageDelivery(ctx, api, id, w, m)
+		d, err := p.messageDelivery(ctx, api, id, w, m, mates)
 		if err != nil {
 			return err
 		}

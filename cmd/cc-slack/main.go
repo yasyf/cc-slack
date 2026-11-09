@@ -94,6 +94,7 @@ func root() *cobra.Command {
 		followCmd(d),
 		unfollowCmd(d),
 		followsCmd(d),
+		threadSeenCmd(d),
 		dmStatusCmd(d),
 		cardAnswerCmd(d),
 		cardCopyCmd(d),

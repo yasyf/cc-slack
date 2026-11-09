@@ -168,6 +168,60 @@ func TestTheHolderGetsACardThreadBackWhenItsSessionEnds(t *testing.T) {
 	}
 }
 
+func cardForDrive(f *fixture, thread, drive string) {
+	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
+		Waiting: map[string]*liveMessage{"card-" + thread: {TS: thread, Card: statusCard{Title: "Ship it?", Waits: "card-" + thread, Drive: drive}}}}
+}
+
+func TestTheDMHolderTakesOverRepliesUnderItsDrivesOtherSessions(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
+	earlier := cardSessionElsewhere(t, f)
+	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents-rebuild")
+	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents")
+	const laneID, lanePID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", testPID + 3
+	f.alive[lanePID] = true
+	if _, err := storeSubjects(f).Create(f.ctx, laneID, "", "sess-lane", scopeName, lanePID, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	lane, err := storeSubjects(f).Get(f.ctx, laneID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := dmMessageOf(t, f, lane)
+	cardForDrive(f, thread, "durable-agents-rebuild")
+	f.tick()
+
+	ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+
+	got := payloads(t, f)
+	if len(got) != 1 || got[0].Kind != kindChannel || got[0].ThreadOwner != nil {
+		t.Fatalf("delivered %+v, want the reply on the DM holder's channel watch alone, with no other owner", got)
+	}
+	if owed := owedToHolder(t, f); len(owed) != 1 {
+		t.Fatalf("the DM holder owes %+v, want the reply", owed)
+	}
+}
+
+func TestAReplyUnderAnotherDrivesCardStaysWithItsSession(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
+	thread := dmMessageOf(t, f, cardSessionElsewhere(t, f))
+	cardForDrive(f, thread, "long-running rewrite")
+	f.tick()
+
+	ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+
+	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindDM}) {
+		t.Fatalf("delivered to %v, want only the other drive's session", got)
+	}
+	if owed := owedToHolder(t, f); len(owed) != 0 {
+		t.Fatalf("the DM holder owes %+v, want nothing from another drive's card", owed)
+	}
+}
+
 func TestAReplyOnACardFromTheHoldersOwnProcessStillReachesTheHolder(t *testing.T) {
 	f := newFixture(t)
 	holdDM(t, f)
