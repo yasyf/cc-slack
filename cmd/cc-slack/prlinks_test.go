@@ -629,10 +629,11 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pressed := fmt.Sprintf("%d.000100", time.Now().Unix())
 	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
 		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
-		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0300"})
-	want := `{"answer":{"label":"Merge","number":41,"repo":"acme/app","waits":"merge:41:e718a74"}}`
+		ActionTS: pressed, Seq: "001800000100000-abcd0300"})
+	want := `{"answer":{"action_ts":"` + pressed + `","label":"Merge","number":41,"repo":"acme/app","source":"pressed the button","waits":"merge:41:e718a74"}}`
 	if got := cmd.requests(t); len(got) != 2 || got[1] != want {
 		t.Fatalf("card command asked %v, want the Merge answer last", got)
 	}
@@ -1043,9 +1044,15 @@ func TestATapOnAPickForThatPRAndHeadClosesItsCardAndCountsInTheLedger(t *testing
 	card := awaitPRCards(t, l, testDM)[0]
 	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
 	tapMergeOnPick(t, l, pick)
-	want := `{"answer":{"label":"Merge","number":41,"repo":"acme/app","waits":"merge:41:e718a74"}}`
-	if answers := answersOf(cmd.requests(t)); len(answers) != 1 || answers[0] != want {
-		t.Fatalf("card command answers = %v, want %s", answers, want)
+	answers := answersOf(cmd.requests(t))
+	var got struct {
+		Answer struct {
+			Label, Repo, Waits, Source string
+			Number                     int
+		}
+	}
+	if len(answers) != 1 || json.Unmarshal([]byte(answers[0]), &got) != nil || got.Answer.Label != "Merge" || got.Answer.Number != 41 || got.Answer.Repo != "acme/app" || got.Answer.Waits != "merge:41:e718a74" || !strings.HasPrefix(got.Answer.Source, "answered ") {
+		t.Fatalf("card command answers = %v, want Merge on #41 at e718a74 marked as answered on the pick", answers)
 	}
 	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
 		t.Fatalf("the PR card's edits = %v, want the answer from the pick", edits)
