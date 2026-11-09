@@ -143,7 +143,9 @@ var (
 			},
 			"recommended": map[string]any{
 				"type": "string", "maxLength": cardMaxOptionLen,
-				"description": "with waits, the option you recommend; the card shows it first, marked (Recommended). Never put (Recommended) or an Other option in options",
+				"description": "the option you recommend; the card shows it first, marked (Recommended). An ask card needs it. A reply card without waits may carry it too, " +
+					"for a question the lane goes on past: the card keeps its Ack and Pause, its tap arrives as a slack.action with nothing waiting, and it says nothing about a stopped lane. " +
+					"An ask card draws its own Other, so never add one to options",
 			},
 			"supersedes": map[string]any{
 				"type": "array", "maxItems": cardMaxSupersedes, "items": map[string]any{"type": "string"},

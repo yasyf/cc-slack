@@ -412,6 +412,9 @@ func (c statusCard) checkOptions(rootOnly bool) error {
 		}
 		seen[o] = true
 	}
+	if c.Recommended != "" && !slices.Contains(c.Options, c.Recommended) {
+		return fmt.Errorf("a card recommends one of its options: recommended %q is not among them", c.Recommended)
+	}
 	return nil
 }
 
@@ -441,8 +444,6 @@ func (c statusCard) supersedesIn(channel string) bool {
 
 func (c statusCard) checkWaits(rootOnly bool) error {
 	switch {
-	case c.Waits == "" && c.Recommended != "":
-		return errors.New("recommended marks a waiting card's answer; set waits too")
 	case c.Waits == "":
 		return nil
 	case !askIDPattern.MatchString(c.Waits):
@@ -455,8 +456,6 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 		return fmt.Errorf("a waiting card carries its own %s and %s buttons; no option may repeat them", cardOtherLabel, cardExplainLabel)
 	case slices.ContainsFunc(c.Options, func(o string) bool { return strings.Contains(o, cardRecommended) }):
 		return fmt.Errorf("name the recommended answer in recommended, never as %s in an option", cardRecommended)
-	case c.Recommended != "" && !slices.Contains(c.Options, c.Recommended):
-		return fmt.Errorf("a waiting card recommends one of its options: recommended %q is not among them", c.Recommended)
 	}
 	return nil
 }
@@ -993,7 +992,11 @@ func (c statusCard) actions() slack.Block {
 	picks := c.inlinePicks()
 	buttons := make([]slack.BlockElement, 0, len(picks)+2)
 	for _, p := range picks {
-		buttons = append(buttons, slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, p.label, true, false)))
+		b := slack.NewButtonBlockElement(p.actionID, p.value, slack.NewTextBlockObject(slack.PlainTextType, p.label, true, false))
+		if p.option == c.Recommended {
+			b.Style = slack.StylePrimary
+		}
+		buttons = append(buttons, b)
 	}
 	pause := button(cardPauseAction, cardPauseLabel)
 	pause.Style = slack.StyleDanger
