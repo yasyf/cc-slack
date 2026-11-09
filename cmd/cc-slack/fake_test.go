@@ -83,6 +83,11 @@ type fakeSlack struct {
 	cards     []slack.WorkObjectEntity
 	asked     []string
 	clock     int64
+	canvases  map[string]fakeCanvas
+}
+
+type fakeCanvas struct {
+	tab, title, page string
 }
 
 func newFakeSlack() *fakeSlack {
@@ -99,6 +104,7 @@ func newFakeSlack() *fakeSlack {
 		files:     map[string]slack.File{},
 		invites:   map[string][]string{},
 		topics:    map[string]string{},
+		canvases:  map[string]fakeCanvas{},
 		clock:     1_800_000_000,
 	}
 }
@@ -716,6 +722,38 @@ func (f *fakeSlack) SetTopicOfConversationContext(_ context.Context, channelID, 
 	ch := &slack.Channel{}
 	ch.ID = channelID
 	return ch, nil
+}
+
+func (f *fakeSlack) TabCanvasContext(_ context.Context, channelID, title string, page slack.DocumentContent) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("canvases.create"); err != nil {
+		return "", err
+	}
+	id := fmt.Sprintf("FCANVAS%d", len(f.canvases)+1)
+	f.canvases[id] = fakeCanvas{channelID, title, page.Markdown}
+	return id, nil
+}
+
+func (f *fakeSlack) EditCanvasContext(_ context.Context, params slack.EditCanvasParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("canvases.edit"); err != nil {
+		return err
+	}
+	canvas, found := f.canvases[params.CanvasID]
+	if !found {
+		return slack.SlackErrorResponse{Err: "canvas_not_found"}
+	}
+	canvas.page = params.Changes[0].DocumentContent.Markdown
+	f.canvases[params.CanvasID] = canvas
+	return nil
+}
+
+func (f *fakeSlack) canvasPages() map[string]fakeCanvas {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.canvases)
 }
 
 func (f *fakeSlack) channelChanges() ([]string, []string, map[string][]string, map[string]string) {

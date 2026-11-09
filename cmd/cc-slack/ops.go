@@ -329,6 +329,8 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opDMPeer, a.handleDMPeer)
 	s.Register(opChannelInfo, a.handleChannelInfo)
 	s.Register(opDMOwed, a.handleDMOwed)
+	s.Register(opDriveCards, a.handleDriveCards)
+	s.Register(opCanvas, a.handleCanvas)
 	s.Register(opRedrawPRCards, a.handleRedrawPRCards)
 	s.Register(opFollow, a.handleFollow)
 	s.Register(opHoldDelivery, a.handleHoldDelivery)
