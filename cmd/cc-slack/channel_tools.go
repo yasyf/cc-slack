@@ -124,7 +124,7 @@ var (
 			"status": map[string]any{"type": "string", "enum": []string{"info", "progress", "needs_you", "incident", "done"}},
 			"title":  map[string]any{"type": "string", "description": "one line, shown as the card header and the phone notification"},
 			"body":   map[string]any{"type": "string", "description": "1-3 sentences of mrkdwn"},
-			"drive":  map[string]any{"type": "string", "description": "the long-running drive's name, when this session runs one"},
+			"drive":  map[string]any{"type": "string", "description": "the long-running drive's name, when this session runs one; set it on every card a drive posts, so a waits card reads as the drive's question, whose home is Slack, and carries no board warning"},
 			"phase":  map[string]any{"type": "string", "description": "the drive's current phase"},
 			"links":  map[string]any{"type": "array", "maxItems": cardMaxLinks, "items": schemaLink("label", "url")},
 			"options": map[string]any{
@@ -138,7 +138,7 @@ var (
 					"Other opens a Slack modal, and the text typed there answers the card with other: true. " +
 					"Explain more answers nothing; reply with text and about set to this id, which opens the reply with a link back to the card. " +
 					"With cc-present installed, ask on the board instead: cc-present update-block the card and it reaches Slack by itself; a waits card posted here still lands on the board, " +
-					"its reply carries a warning, and the first answer on either surface wins. " +
+					"its reply carries a warning unless the card sets drive, and the first answer on either surface wins. A long-running drive asks here, with drive set. " +
 					"Needs options and recommended; takes no asks. Reusing an open waits id edits that card in place",
 			},
 			"recommended": map[string]any{

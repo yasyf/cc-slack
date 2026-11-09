@@ -466,7 +466,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji; defaults to `needs_you` on a waiting card and `info` otherwise |
 | `title` | one line; the card header and the phone notification; defaults to the body's first line |
 | `body` | 1-3 sentences of mrkdwn, under the post rules below |
-| `drive`, `phase` | the long-running drive's name and phase, when there is one |
+| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts with no board warning |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
 | `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
@@ -535,7 +535,9 @@ each question card there with `cc-present update-block` or `push`, and
 cc-present posts it here as an ask card by itself, with the card's images.
 `cc-present ask <card>` does the same for a single card. A `waits` card posted with
 `slack_dm_status` or `dm-status` is still posted, but its reply carries a
-`warning` saying so. The rest of this section describes the Slack card those
+`warning` saying so. A long-running drive asks in Slack by design: a `waits`
+card that sets `drive` is a drive's question, posts with no warning, and
+still lands on the board. The rest of this section describes the Slack card those
 calls post, and how to post one directly when cc-present is not installed. Set
 `waits` to a question id that leads with the asking lane's name, such as
 `step-3:merge`. Write the question verbatim as the `title`, the context

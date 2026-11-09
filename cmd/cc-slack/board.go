@@ -147,7 +147,7 @@ func (p *poller) decideOnBoard(ctx context.Context, db *sql.DB, watches []watch,
 }
 
 func handPostedQuestion(b opBody) bool {
-	if b.Card == nil || b.Card.Waits == "" || b.Mirrored || b.RootOnly {
+	if b.Card == nil || b.Card.Waits == "" || b.Card.Drive != "" || b.Mirrored || b.RootOnly {
 		return false
 	}
 	_, err := exec.LookPath(presentBinary)
