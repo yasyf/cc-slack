@@ -1205,8 +1205,10 @@ func TestAPickThatIsNotTheSameOfferLeavesTheCardOpen(t *testing.T) {
 			card := awaitPRCards(t, l, testDM)[0]
 			posted := postPick(t, l, pick)
 			tapMergeOnPick(t, l, posted)
-			if answers := answersOf(cmd.requests(t)); len(answers) != 0 {
-				t.Fatalf("card command answers = %v, want none", answers)
+			for _, answer := range answersOf(cmd.requests(t)) {
+				if !strings.Contains(answer, `"waits":"`+testPick+`"`) {
+					t.Fatalf("card command answer = %s, want only the pick's own waits, never the PR card's", answer)
+				}
 			}
 			if edits := editsOf(l.slack.edited(), card.ts); len(edits) != 0 {
 				t.Fatalf("the PR card was edited: %v", edits)
