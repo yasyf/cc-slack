@@ -65,3 +65,24 @@ func TestCanvasTabsAPageInHisDMRedrawsItAndRecreatesOneHeDeleted(t *testing.T) {
 		t.Fatalf("after he deleted it: %+v, want a new canvas in his DM", again)
 	}
 }
+
+func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	stack := mergeCard()
+	stack.Waits = "merge:acme:app:41-42"
+	stack.PRs = []cardPR{
+		{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Change: "Chats load faster", ELI5: "One key for every chat"},
+		{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Change: "Nothing you see", ELI5: "The old key goes away"},
+	}
+	c := postWaiting(t, l, stack)
+
+	listed := driveCards(t, l, "pier")
+	if len(listed.Questions) != 0 || len(listed.PRCards) != 1 || listed.PRCards[0].URL != c.url() || len(listed.PRCards[0].PRs) != 2 || listed.PRCards[0].PRs[1] != stack.PRs[1].URL {
+		t.Fatalf("drive cards = %+v, want the stack card as one PR card listing both PRs", listed)
+	}
+	answerOnBoard(t, l, c, "Hold")
+	if listed := driveCards(t, l, "pier").PRCards; len(listed) != 0 {
+		t.Fatalf("PR cards after his answer = %+v, want none", listed)
+	}
+}

@@ -272,8 +272,11 @@ answers, closes every other such card and counts once. A reply carrying its own
 picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM the
 card opens at the root in its own thread, wherever the post sits; a post lands in
 a DM thread only when its call names that thread. In a listed channel the card
-goes in the post's thread. Never post a PR card or add a `refs` entry by hand for
-a PR your text names. With `preview_command` set, a PR
+goes in the post's thread. When an open PR in `tap_prs` draws no card, the call
+fails after the post went out: the error names that post, so never post it again,
+and each PR with the reason; fix the reason, such as a PR body missing What you'll
+hate most, then send `tap_prs` for that PR alone. Never post a PR card or add a
+`refs` entry by hand for a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what
 it changes and where it stands, and a line that only repeats a link is dropped,
 so name each PR once and never draw its state yourself. With `[buildkite]` set, a build link

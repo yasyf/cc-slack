@@ -358,6 +358,13 @@ func ok(v any) daemon.Reply {
 
 func fail(msg string) daemon.Reply { return daemon.Reply{OK: false, Error: msg} }
 
+func okUnlessUndrawn(v any, undrawn error) daemon.Reply {
+	if undrawn != nil {
+		return fail(undrawn.Error())
+	}
+	return ok(v)
+}
+
 func decodeBody(hc daemon.HandlerCtx) (opBody, error) {
 	var b opBody
 	if len(hc.Env.Body) == 0 {
@@ -618,6 +625,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
 		text, previews, ready := a.linkPreviews(hc.Ctx, id, channelID, texts[0], nil)
+		asked := slices.Clone(b.TapPRs)
 		b.TapPRs = append(b.TapPRs, ready...)
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
@@ -640,10 +648,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b))
+		undrawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b, asked)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
-			return ok(res)
+			return okUnlessUndrawn(res, undrawn)
 		}
 		if r.WatchID, err = a.watchPostThread(hc.Ctx, hc.DB, sub.ID, res.ChannelID, res.ThreadTS, res.TS); err != nil {
 			r.WatchError = err.Error()
@@ -654,7 +662,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				res.WatchError = err.Error()
 			}
 		}
-		return ok(a.reportChannel(hc, sub.ID, res))
+		return okUnlessUndrawn(a.reportChannel(hc, sub.ID, res), undrawn)
 	}
 }
 
@@ -1998,9 +2006,10 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
 	}
 	msg, later := a.dmMessageOf(hc, id, b, blocks)
+	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, msg.tapPRs...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
-		return a.replaceCardReply(hc, sub, id, b, msg.tag, pictures)
+		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag, pictures)
 	}
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
@@ -2023,12 +2032,12 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
+	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
 	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
-	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+	return okUnlessUndrawn(a.dmStatusReply(hc, sub.ID, id, thread, ts, b), undrawn)
 }
 
-func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
+func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
 	card := *b.Card
 	if len(pictures) > 0 {
 		ref, err := parsePermalink(card.Replaces)
@@ -2041,8 +2050,8 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	notePostWarning(hc.Ctx, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b))
-	return ok(a.dmStatusReply(hc, sub.ID, id, thread, ts, b))
+	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
+	return okUnlessUndrawn(a.dmStatusReply(hc, sub.ID, id, thread, ts, b), undrawn)
 }
 
 func (a *app) rewordAnswered(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (daemon.Reply, bool) {

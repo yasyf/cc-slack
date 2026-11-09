@@ -54,26 +54,33 @@ type canvasResult struct {
 }
 
 // openDriveCards lists the waiting cards that name drive and are still unanswered, and every PR card still waiting
-// on a tap, oldest first, each with its permalink.
+// on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink.
 func (l *liveCards) openDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	res := driveCardsResult{Questions: []driveQuestion{}, PRCards: []drivePRCard{}}
+	prCard := func(t *liveThread, m *liveMessage) drivePRCard {
+		listed := m.Card.allPRs()
+		prs := make([]string, 0, len(listed))
+		for _, pr := range listed {
+			prs = append(prs, pr.URL)
+		}
+		return drivePRCard{prs, m.At, link(t.Channel, m.TS, t.Thread)}
+	}
 	for _, t := range l.threads {
 		for _, m := range t.Waiting {
-			if m.Card.Drive == drive && t.open(m) {
+			switch {
+			case !t.open(m):
+			case m.Card.Drive == drive:
 				res.Questions = append(res.Questions, driveQuestion{m.Card.Title, m.Card.Options, m.Card.Recommended, m.At, link(t.Channel, m.TS, t.Thread)})
+			case m.Card.Drive == "" && len(m.Card.allPRs()) > 0:
+				res.PRCards = append(res.PRCards, prCard(t, m))
 			}
 		}
 		for _, m := range t.PRCards {
-			if m.Card.Waits == "" || !t.open(m) {
-				continue
+			if m.Card.Waits != "" && t.open(m) {
+				res.PRCards = append(res.PRCards, prCard(t, m))
 			}
-			prs := []string{}
-			for _, pr := range m.Card.allPRs() {
-				prs = append(prs, pr.URL)
-			}
-			res.PRCards = append(res.PRCards, drivePRCard{prs, m.At, link(t.Channel, m.TS, t.Thread)})
 		}
 	}
 	slices.SortFunc(res.Questions, func(a, b driveQuestion) int { return a.Asked.Compare(b.Asked) })

@@ -1350,15 +1350,30 @@ func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApp
 	}
 }
 
-func TestATapPostWhoseCardNeverDrawsWarnsNoApprove(t *testing.T) {
+func TestATapPostWhoseCardNeverDrawsFailsNamingThePostAndThePR(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	var sent map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}, "tap_prs": tapPR41}).Body, &sent); err != nil {
+	reply := l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}, "tap_prs": tapPR41})
+	if reply.OK {
+		t.Fatalf("a tap post whose card never drew answered ok: %s", reply.Body)
+	}
+	for _, want := range []string{"posted ", "archives/", "do not post it again", tapPR41[0] + ": the card command answered no card for it"} {
+		if !strings.Contains(reply.Error, want) {
+			t.Fatalf("error = %q, want it to say %q", reply.Error, want)
+		}
+	}
+}
+
+func TestATapPostFailsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "card")
+	answer := `{"cards": [], "skipped": [{"repo": "acme/app", "number": 41, "reason": "its body has no What you'll hate most section"}]}`
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho '"+answer+"'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(sent["warning"], "NO APPROVE") || !strings.Contains(sent["warning"], tapPR41[0]) {
-		t.Fatalf("warning = %q, want NO APPROVE naming %s", sent["warning"], tapPR41[0])
+	l, _ := cardingDaemon(t, []string{script}, "acme/app#41")
+	reply := l.do(opDMStatus, map[string]any{"text": "Here it is.", "tap_prs": tapPR41})
+	if reply.OK || !strings.Contains(reply.Error, tapPR41[0]+": its body has no What you'll hate most section") {
+		t.Fatalf("reply = ok %v, error %q, want a failure carrying the card command's reason", reply.OK, reply.Error)
 	}
 }
 
