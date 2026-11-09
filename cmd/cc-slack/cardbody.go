@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -16,6 +17,8 @@ const (
 	cardMaxTableRows = 100
 	cardMaxTableCols = 20
 	cardEmptyCell    = "—"
+	cardTablePage    = 10
+	slackMaxCaption  = 150
 	slackMaxHeader   = 150
 	slackMaxSection  = 3000
 	slackMaxField    = 2000
@@ -126,23 +129,33 @@ func tableCells(line string) []string {
 	return append(cells, strings.TrimSpace(cell.String()))
 }
 
-func tableBlock(rows [][]string) *slack.TableBlock {
+func tableBlock(rows [][]string) *slack.DataTableBlock {
 	columns := 0
 	for _, row := range rows {
 		columns = max(columns, len(row))
 	}
-	table := slack.NewTableBlock("")
-	settings := make([]slack.ColumnSetting, columns)
-	for i := range settings {
-		settings[i] = slack.ColumnSetting{Align: slack.ColumnAlignmentLeft, IsWrapped: true}
+	numbers := make([]bool, columns)
+	for i := range numbers {
+		numbers[i] = len(rows) > 1 && !slices.ContainsFunc(rows[1:], func(row []string) bool {
+			_, err := strconv.ParseFloat(cellAt(row, i), 64)
+			return err != nil
+		})
 	}
-	table = table.WithColumnSettings(settings...)
-	for _, row := range rows {
-		cells := make([]slack.TableCell, columns)
+	table := slack.NewDataTableBlock(clipRunes(strings.Join(rows[0], " · "), slackMaxCaption)).WithPageSize(min(max(len(rows)-1, 1), cardTablePage))
+	for at, row := range rows {
+		cells := make([]slack.DataTableCell, columns)
 		for i := range cells {
-			cells[i] = slack.NewTableRawTextCell(cardEmptyCell)
-			if i < len(row) && row[i] != "" {
-				cells[i] = tableCell(row[i])
+			text := cellAt(row, i)
+			switch {
+			case text == "":
+				cells[i] = slack.NewDataTableRawTextCell(cardEmptyCell)
+			case at == 0:
+				cells[i] = slack.NewDataTableRawTextCell(text)
+			case numbers[i]:
+				value, _ := strconv.ParseFloat(text, 64)
+				cells[i] = slack.NewDataTableRawNumberCell(value).WithText(text)
+			default:
+				cells[i] = tableCell(text)
 			}
 		}
 		table = table.AddRow(cells...)
@@ -150,10 +163,17 @@ func tableBlock(rows [][]string) *slack.TableBlock {
 	return table
 }
 
-func tableCell(text string) slack.TableCell {
+func cellAt(row []string, i int) string {
+	if i < len(row) {
+		return row[i]
+	}
+	return ""
+}
+
+func tableCell(text string) slack.DataTableCell {
 	found := cellToken.FindAllStringSubmatchIndex(text, -1)
 	if found == nil {
-		return slack.NewTableRawTextCell(text)
+		return slack.NewDataTableRawTextCell(text)
 	}
 	var elements []slack.RichTextSectionElement
 	plain := func(s string) {
@@ -183,7 +203,7 @@ func tableCell(text string) slack.TableCell {
 		}
 	}
 	plain(text[at:])
-	return slack.NewTableRichTextCell(slack.NewRichTextSection(elements...))
+	return slack.NewDataTableRichTextCell(slack.NewRichTextSection(elements...))
 }
 
 func tableLines(rows [][]string) string {
@@ -336,7 +356,7 @@ func checkBlocks(blocks []slack.Block) error {
 			}
 			ids[id] = true
 		}
-		if _, table := b.(*slack.TableBlock); table {
+		if _, table := b.(*slack.DataTableBlock); table {
 			tables++
 		}
 		if tables > 1 {
@@ -368,8 +388,8 @@ func checkBlock(b slack.Block, refuse func(string, ...any) error) error {
 				}
 			}
 		}
-	case *slack.TableBlock:
-		if len(block.Rows) > cardMaxTableRows || tableTooWideCells(block.Rows) {
+	case *slack.DataTableBlock:
+		if len(block.Rows) > cardMaxTableRows || slices.ContainsFunc(block.Rows, func(row []slack.DataTableCell) bool { return len(row) > cardMaxTableCols }) {
 			return refuse("it runs past %d rows or %d columns", cardMaxTableRows, cardMaxTableCols)
 		}
 	}
@@ -409,8 +429,4 @@ func checkButton(b *slack.ButtonBlockElement, refuse func(string, ...any) error)
 		return refuse("button %q has an action_id past %d characters", b.Text.Text, slackMaxID)
 	}
 	return nil
-}
-
-func tableTooWideCells(rows [][]slack.TableCell) bool {
-	return slices.ContainsFunc(rows, func(row []slack.TableCell) bool { return len(row) > cardMaxTableCols })
 }
