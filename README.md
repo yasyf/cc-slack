@@ -79,8 +79,10 @@ workspace on your laptop with Claude already reading the thread.
 `~/.config/cc-slack/config.toml`. Every section is optional.
 
 ```toml
-# Read credentials from AWS Systems Manager instead of the environment.
+# Read credentials from AWS Systems Manager instead of the environment,
+# signed in as the named AWS profile (the shell's profile when unset).
 [ssm]
+profile = "slack-reader"
 region = "us-west-2"
 bot_token = "/slack/bot-token"
 socket_url = "/slack/socket-url"
@@ -119,7 +121,11 @@ reached someone, and the card closes on your pick. Anything else leaves the card
 reached no one.
 
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
-the config it was logged in with, so rerun `cc-slack login` after a change.
+the config it was logged in with, so run `cc-slack reload` after a change.
+Reload hands the daemon the new config and keeps the bot token, socket URL,
+and avatar key that `cc-slack login` last read, so it needs no AWS access.
+Rerun `cc-slack login` when `[ssm]` names a different parameter, or when
+`[avatars]` turns on after a `login` that read no avatar key.
 
 ## Run a backend
 

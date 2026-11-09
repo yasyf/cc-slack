@@ -36,11 +36,14 @@ On first use, run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" login`, then
 cc-slack config (`--config`, then `$CC_SLACK_CONFIG`, then the checkout's
 `.claude/cc-slack.toml`, then `~/.config/cc-slack/config.toml`), takes the
 shared bot token and socket URL from the config's AWS Systems Manager (SSM)
-parameters or from `CC_SLACK_BOT_TOKEN` and `CC_SLACK_SOCKET_URL`, and
+parameters, signed in as the AWS profile `[ssm] profile` names or else the
+shell's, or from `CC_SLACK_BOT_TOKEN` and `CC_SLACK_SOCKET_URL`, and
 resolves the user's Slack identity by git email. Check the returned
 identity before sending. `capt-hook` must be on PATH; `login` records its
-absolute path for the daemon. A config change takes effect at the next
-`login`. When the store schema changes, every command asks for `login`,
+absolute path for the daemon. After a config change, run
+`"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" reload`: it hands the daemon the new
+config and keeps the token and socket URL the last `login` read, so it needs
+no AWS access. Rerun `login` only when `[ssm]` names a new parameter. When the store schema changes, every command asks for `login`,
 which archives the old `state.db`; re-run `login` and re-arm watches.
 
 For the "Open in Claude" shortcut, run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" login`

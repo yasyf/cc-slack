@@ -71,6 +71,7 @@ func root() *cobra.Command {
 		cmd.SetupChannelsCmd(d, channelPlugin, "cc-slack is on the approved channel allowlist; restart Claude Code to load it with --channels "+channelPlugin.ChannelID()),
 		sessionStartCmd(d),
 		loginCmd(d),
+		reloadCmd(d),
 		whoamiCmd(d),
 		postCmd(d, "send", "Post a Slack message as <display name> (<agent>)", opSend),
 		postCmd(d, "reply", "Reply in a Slack thread as <display name> (<agent>)", opReply),
