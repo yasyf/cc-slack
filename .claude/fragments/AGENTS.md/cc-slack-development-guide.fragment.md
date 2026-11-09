@@ -123,9 +123,12 @@ channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`
 that no card in the post's thread cites and no open card at the DM root
 cites. A merged or closed PR gets no card. A card the program draws for a PR and
-head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}]}`, each
+head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}], "skipped": [{"repo", "number", "reason"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
-one that passes the card checks. A card whose `prs` lists several PRs, such as
+one that passes the card checks. The `repo` it is asked about is lowercase, so
+the program matches it case-insensitively. `skipped` lists each PR the program
+will not draw, such as one whose body lacks a section the card needs, with the
+reason in plain words. A card whose `prs` lists several PRs, such as
 one stack, is the card of each of them: it is asked for and posted once, no
 PR it lists counts as uncarded, and any of them changing redraws it, asked for
 by its first PR. In the bot's DM the card opens at the root in
@@ -139,16 +142,20 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
 gets a working copy of the card in its thread. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call waits for its cards, then reads a status card that carries
-them back from Slack, and its `warning` starts with NO APPROVE when the
-message holds no button answering a card it carries, or a PR it lists drew no
-card. In
+names. The call waits for its cards. When an open PR its `tap_prs` names drew no card,
+the call fails even though the post went out: the error names the post's
+permalink, so the caller does not post it again, and each such PR with the
+reason, such as the program's `skipped` reason or no card in its answer, and the
+daemon logs the same. A status card that carries cards is then read back from
+Slack, and the call's `warning` starts with NO APPROVE when the message holds no
+button answering a card it carries. In
 a listed channel the card is a reply in the post's thread. It keeps them in
 `live-cards.json`, so a PR at one head is carded once at the DM root, and once
 per thread in a channel, and the ref poller redraws a card when any PR it
 carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
-the daemon logs why. Every other channel, a thread we posted in it included,
+the daemon logs why. A redraw the program skips leaves the card as drawn and logs
+the reason; a redraw with no card and no skip means the PR no longer waits. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
 "waits", "label"}}` instead of to a session. When the program exits 0, the

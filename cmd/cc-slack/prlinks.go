@@ -50,6 +50,18 @@ type providedCard struct {
 	Card   statusCard `json:"card"`
 }
 
+type skippedCard struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Reason string `json:"reason"`
+}
+
+func (s skippedCard) ref() refID {
+	r, _ := parseRepo(s.Repo)
+	r.Number = s.Number
+	return r
+}
+
 func prURL(r refID) string {
 	return fmt.Sprintf("https://github.com/%s/%s/pull/%d", r.Owner, r.Repo, r.Number)
 }
@@ -244,22 +256,45 @@ func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) [
 	return prs
 }
 
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody) string {
-	if len(b.TapPRs) == 0 {
-		return ""
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody, asked []string) error {
+	if len(b.TapPRs) == 0 || len(id.Config.PRLinks.CardCommand) == 0 || !cardsAt(id, channelID) {
+		return nil
 	}
 	ctx := context.WithoutCancel(hc.Ctx)
-	return a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, a.tapPRs(ctx, id, hc.Env.Scope, b))
+	prs := a.tapPRs(ctx, id, hc.Env.Scope, b)
+	warning, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, prs)
+	notePostWarning(hc.Ctx, warning)
+	link := id.permalink(channelID, postTS, postThread)
+	var said []string
+	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
+		pr, _ := parseRef(raw)
+		why, missed := undrawn[pr.key()]
+		if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref.key() == pr.key() }) {
+			why, missed = "cc-slack could not read it from GitHub", true
+		}
+		if !missed {
+			continue
+		}
+		a.poller.log.Printf("tap PR %s drew no card beside %s: %s", raw, link, why)
+		if slices.Contains(asked, raw) {
+			said = append(said, raw+": "+why)
+		}
+	}
+	if len(said) == 0 {
+		return nil
+	}
+	return fmt.Errorf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; "))
 }
 
-func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread, postTS string, prs []linkedPR) string {
-	command := id.Config.PRLinks.CardCommand
-	if len(command) == 0 || !cardsAt(id, channelID) {
-		return ""
+func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, postThread, postTS string, prs []linkedPR) (string, map[string]string) {
+	for _, pr := range prs {
+		if pr.state.terminal() {
+			a.poller.log.Printf("tap PR %s draws no card: it is %s", prURL(pr.ref), pr.state.State)
+		}
 	}
 	asked, standing, waiting := a.cards.toCard(channelID, postThread, prs)
 	if len(asked)+len(standing) == 0 {
-		return ""
+		return "", nil
 	}
 	beside := cardBeside{}
 	switch {
@@ -269,14 +304,19 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	default:
 		beside = cardBeside{thread: postTS, carry: true}
 	}
-	placed := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
-	if !beside.carry {
-		return ""
+	placed, undrawn := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
+	for _, pr := range a.cards.uncarded(placed, waiting) {
+		if _, said := undrawn[pr.key()]; !said {
+			undrawn[pr.key()] = "its card was not posted; the daemon log says why"
+		}
 	}
-	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, waiting)
+	if !beside.carry {
+		return "", undrawn
+	}
+	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, waiting), undrawn
 }
 
-func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked []map[string]any, standing []cardRef, waiting []refID) {
+func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked []refID, standing []cardRef, waiting []refID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
@@ -293,7 +333,7 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 			}
 			continue
 		}
-		asked = append(asked, map[string]any{"repo": pr.ref.Owner + "/" + pr.ref.Repo, "number": pr.ref.Number})
+		asked = append(asked, pr.ref)
 		l.refs[pr.ref.key()] = pr.state
 	}
 	return asked, standing, waiting
@@ -304,26 +344,41 @@ type cardBeside struct {
 	carry  bool
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []map[string]any, standing []cardRef) []cardRef {
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []refID, standing []cardRef) ([]cardRef, map[string]string) {
 	placed := standing
+	undrawn := map[string]string{}
 	if len(asked) > 0 {
-		provided, err := askPRCards(ctx, id, asked)
+		provided, skipped, err := askPRCards(ctx, id, asked)
+		why := "the card command answered no card for it"
 		if err != nil {
 			a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
+			why = err.Error()
+		}
+		for _, pr := range asked {
+			undrawn[pr.key()] = why
+		}
+		for _, p := range provided {
+			for _, pr := range p.Card.refIDs() {
+				delete(undrawn, pr.key())
+			}
+		}
+		for _, s := range skipped {
+			a.poller.log.Printf("PR card for %s#%d not drawn: %s", s.Repo, s.Number, s.Reason)
+			undrawn[s.ref().key()] = s.Reason
 		}
 		cards, shown := a.placePRCards(ctx, db, sub, id, channelID, thread, provided)
 		a.tellShown(ctx, id, shown)
 		placed = append(placed, cards...)
 	}
 	if beside.thread == "" {
-		return placed
+		return placed, undrawn
 	}
 	for _, card := range placed {
 		if err := a.showPRCard(ctx, db, id, beside, card); err != nil {
 			a.poller.log.Printf("PR card %s is not shown under %s: %v", card.ts, beside.thread, err)
 		}
 	}
-	return placed
+	return placed, undrawn
 }
 
 func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any) {
@@ -453,11 +508,7 @@ func (a *app) approvesCarried(ctx context.Context, id identity, post cardRef, pl
 			missing = append(missing, id.permalink(card.channel, card.ts, card.thread))
 		}
 	}
-	uncarded := a.cards.uncarded(placed, waiting)
-	switch {
-	case len(uncarded) > 0:
-		return fmt.Sprintf("NO APPROVE: %s lists %s for his tap, and %s drew no card, so it carries no Approve for them; the daemon log says why", link, prURLs(waiting), prURLs(uncarded))
-	case len(missing) > 0:
+	if len(missing) > 0 {
 		return fmt.Sprintf("NO APPROVE: %s, read back from Slack, carries no button to answer the card at %s", link, strings.Join(missing, ", "))
 	}
 	return ""
@@ -595,18 +646,23 @@ func (a *app) tellRefused(ctx context.Context, id identity, p providedCard, refu
 	}
 }
 
-func askPRCards(ctx context.Context, id identity, asked []map[string]any) ([]providedCard, error) {
+func askPRCards(ctx context.Context, id identity, prs []refID) ([]providedCard, []skippedCard, error) {
+	asked := make([]map[string]any, 0, len(prs))
+	for _, pr := range prs {
+		asked = append(asked, map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number})
+	}
 	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var answer struct {
-		Cards []providedCard `json:"cards"`
+		Cards   []providedCard `json:"cards"`
+		Skipped []skippedCard  `json:"skipped"`
 	}
 	if err := json.Unmarshal(out, &answer); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", id.Config.PRLinks.CardCommand[0], err)
+		return nil, nil, fmt.Errorf("decode %s: %w", id.Config.PRLinks.CardCommand[0], err)
 	}
-	return answer.Cards, nil
+	return answer.Cards, answer.Skipped, nil
 }
 
 // recardPR redraws a PR card in place from what the card command says now, so
@@ -620,9 +676,12 @@ func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID)
 }
 
 func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr refID) error {
-	provided, err := askPRCards(ctx, id, []map[string]any{{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number}})
+	provided, skipped, err := askPRCards(ctx, id, []refID{pr})
 	if err != nil {
 		return err
+	}
+	if len(skipped) > 0 {
+		return fmt.Errorf("the card command drew no card for %s: %s", prURL(pr), skipped[0].Reason)
 	}
 	if len(provided) == 0 {
 		return a.poller.markOption(ctx, id, card, cardNoLongerWaits)

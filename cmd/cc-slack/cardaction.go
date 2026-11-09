@@ -993,18 +993,18 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
-	var asked []map[string]any
+	var asked []refID
 	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) {
 		for _, pr := range m.Card.allPRs() {
 			if ref, ok := parseRef(pr.URL); ok {
-				asked = append(asked, map[string]any{"repo": ref.Owner + "/" + ref.Repo, "number": ref.Number})
+				asked = append(asked, ref)
 			}
 		}
 	})
 	if len(asked) == 0 {
 		return
 	}
-	provided, err := askPRCards(ctx, id, asked)
+	provided, _, err := askPRCards(ctx, id, asked)
 	if err != nil {
 		p.log.Printf("card %s keeps the PR lines it was drawn with: %v", r.ts, err)
 		return
