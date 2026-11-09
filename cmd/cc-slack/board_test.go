@@ -169,6 +169,27 @@ func TestACardThatSupersedesAPickClosesTheOldPostWithItsOutcome(t *testing.T) {
 	}
 }
 
+func TestARelayedAnswerSettlesACardWhoseSessionHasEnded(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE kind = 'dm' AND thread_ts = ?`, c.thread); err != nil {
+		t.Fatal(err)
+	}
+	reply := c.id.permalink(c.id.DMChannelID, "1800000009.000100", "")
+
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"url": c.url(), "label": "hold it until the stack lands", "other": true, "via": reply}).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("answer on an ended session's card = %+v, %v; want it settled", res, err)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], reply+"|hold it until the stack lands") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the answer drawn in place of the buttons", edits)
+	}
+	if got := l.inject(agent.TopLevel); strings.Contains(got, "hold it until the stack lands") {
+		t.Fatalf("directive = %q, want no session told of an answer whose asker ended", got)
+	}
+}
+
 func TestCardAnswerFindsTheCardAtItsPermalinkWhateverIDTheCallerKnowsItBy(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
