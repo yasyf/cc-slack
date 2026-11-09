@@ -178,7 +178,7 @@ func TestReplyCardLeadsWithItsRecommendationAndWaitsOnNothing(t *testing.T) {
 			got = append(got, b.ActionID+"="+b.Text.Text)
 		}
 		want := []string{
-			cardOptionAction + "0=Plan file (Recommended)", cardOptionAction + "1=Keep them in cci",
+			cardOptionAction + "0=Plan file (Recommended)", cardOptionAction + "1=Use cci",
 			cardAckAction + "=" + cardAckLabel, cardPauseAction + "=" + cardPauseLabel,
 		}
 		if !slices.Equal(got, want) {
