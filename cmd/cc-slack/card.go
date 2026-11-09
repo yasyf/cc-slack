@@ -138,6 +138,7 @@ type statusCard struct {
 	Hints       map[string]string `json:"hints,omitempty"`
 	Replaces    string            `json:"replaces,omitempty"`
 
+	Pictures   []string            `json:"pictures,omitempty"`
 	Images     []slack.FileSummary `json:"images,omitempty"`
 	ImagesHash string              `json:"images_hash,omitempty"`
 }

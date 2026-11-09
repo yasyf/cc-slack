@@ -1423,3 +1423,50 @@ func TestATappedCardRedrawsItsPRLinesAsTheCardCommandSaysNow(t *testing.T) {
 		t.Fatalf("the card's last edit = %s, want the answer and only the wait as it stands now", last)
 	}
 }
+
+func TestAPRCardRedrawShowsItsPictureUploadedOnceAndReusesItAfter(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	uploads := func() int {
+		l.slack.mu.Lock()
+		defer l.slack.mu.Unlock()
+		return len(l.slack.uploads)
+	}
+	if got := uploads(); got != 0 {
+		t.Fatalf("a card command with no pictures made %d uploads, want none", got)
+	}
+	redraw := func(body string) []string {
+		pictured := mergeRowCard()
+		pictured.Card.Body += "\n*Show me:* " + body
+		pictured.Card.Pictures = []string{writeFile(t, "diagram.png", pngBytes)}
+		if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{pictured}}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]})
+		var shown fakeEdit
+		eventually(t, "the redraw with "+body, func() bool {
+			edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != card.ts })
+			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1].text+edits[len(edits)-1].blocks, body) {
+				return false
+			}
+			shown = edits[len(edits)-1]
+			return true
+		})
+		return imageIDs(t, shown.blocks)
+	}
+
+	first := redraw("the first diagram")
+	l.slack.mu.Lock()
+	hosted := len(first) == 1 && string(l.slack.uploads[first[0]]) == pngBytes
+	l.slack.mu.Unlock()
+	if !hosted || uploads() != 1 {
+		t.Fatalf("image blocks %v after %d uploads, want the picture's one upload drawn on the card", first, uploads())
+	}
+
+	again := redraw("the same diagram")
+	if !slices.Equal(again, first) || uploads() != 1 {
+		t.Fatalf("image blocks %v after %d uploads, want %v drawn again with no new upload", again, uploads(), first)
+	}
+}
