@@ -332,9 +332,22 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 		dedup: tapKey(a),
 	})
 	if err == nil && res.Answered && !k.Other {
-		p.answerCopies(ctx, id, a.ref(), k.Label, false, at)
+		if !p.answerCopies(ctx, id, a.ref(), k.Label, false, at) {
+			p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
+		}
 	}
 	return err
+}
+
+func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, waits, label string, press cardPress) {
+	pr, ok := p.cards.waitingPR(card.channel, card.thread, waits)
+	if !ok || len(id.Config.PRLinks.CardCommand) == 0 {
+		return
+	}
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": waits, "label": label, "action_ts": press.ActionTS, "source": press.Source}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", waits, label, err)
+	}
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
@@ -405,8 +418,8 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)
-	if k.ID != "" && !k.Other {
-		p.answerCopies(ctx, id, a.ref(), k.Label, false, at)
+	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at) {
+		p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 	}
 	return nil
 }
@@ -700,7 +713,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	return true
 }
 
-func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time) {
+func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time) bool {
 	prs, picks := p.cards.otherOffers(tapped)
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		prs = nil
@@ -727,6 +740,7 @@ func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, 
 			p.log.Printf("waiting ask %s stays open after the tap on %s: %v", c.waits, tapped.ts, err)
 		}
 	}
+	return applied
 }
 
 func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time, permalink string) error {
@@ -945,7 +959,10 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		res, err = p.answerWaits(ctx, id, answer)
 	}
 	if err == nil && res.Answered && !other && !withdrawn {
-		p.answerCopies(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, label, false, at)
+		answered := cardRef{id.DMChannelID, thread, m.TS}
+		if !p.answerCopies(ctx, id, answered, label, false, at) {
+			p.recordPRTap(ctx, id, answered, waits, label, cardPress{"", "answered " + via})
+		}
 	}
 	return res, err
 }
