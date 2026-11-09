@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -132,24 +133,28 @@ func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, 
 	return w, true, nil
 }
 
-func othersCardThreads(ctx context.Context, db *sql.DB, dmChannelID string, hold dmHold) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT w.thread_ts FROM watches w JOIN subjects s ON s.id = w.subject_id
-		WHERE w.channel_id = ? AND w.kind = 'dm' AND w.status = 'active'
-		GROUP BY w.thread_ts HAVING SUM(w.subject_id = ? OR s.claude_pid = ?) = 0`, dmChannelID, hold.subject, hold.pid)
+func othersCardThreads(ctx context.Context, db *sql.DB, dmChannelID string, hold dmHold, mates driveMates) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT w.thread_ts, w.subject_id, s.claude_pid FROM watches w JOIN subjects s ON s.id = w.subject_id
+		WHERE w.channel_id = ? AND w.kind = 'dm' AND w.status = 'active'`, dmChannelID)
 	if err != nil {
 		return nil, fmt.Errorf("find other sessions' card threads: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	threads := map[string]bool{}
+	others, held := map[string]bool{}, map[string]bool{}
 	for rows.Next() {
-		var thread string
-		if err := rows.Scan(&thread); err != nil {
+		var (
+			thread, subjectID string
+			pid               int
+		)
+		if err := rows.Scan(&thread, &subjectID, &pid); err != nil {
 			return nil, fmt.Errorf("scan card thread: %w", err)
 		}
-		threads[thread] = true
+		others[thread] = true
+		held[thread] = held[thread] || subjectID == hold.subject || pid == hold.pid || mates.same(subjectID, hold.subject)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate card threads: %w", err)
 	}
-	return threads, nil
+	maps.DeleteFunc(others, func(thread string, _ bool) bool { return held[thread] })
+	return others, nil
 }

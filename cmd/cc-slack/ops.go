@@ -52,6 +52,7 @@ const (
 	opHoldDelivery  daemon.Op = "hold-delivery"
 	opUnfollow      daemon.Op = "unfollow"
 	opFollows       daemon.Op = "follows"
+	opThreadSeen    daemon.Op = "thread-seen"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
 	opCardCopy      daemon.Op = "card-copy"
@@ -336,6 +337,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opHoldDelivery, a.handleHoldDelivery)
 	s.Register(opUnfollow, a.handleUnfollow)
 	s.Register(opFollows, a.handleFollows)
+	s.Register(opThreadSeen, a.handleThreadSeen)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
 	s.Register(opCardCopy, a.handleCardCopy)
@@ -1462,7 +1464,11 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	others, err := othersCardThreads(hc.Ctx, hc.DB, id.DMChannelID, holder)
+	mates, err := loadDriveMates(hc.Ctx, hc.DB, a.cards, id.DMChannelID)
+	if err != nil {
+		return fail(err.Error())
+	}
+	others, err := othersCardThreads(hc.Ctx, hc.DB, id.DMChannelID, holder, mates)
 	if err != nil {
 		return fail(err.Error())
 	}

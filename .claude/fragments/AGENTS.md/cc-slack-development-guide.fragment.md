@@ -389,7 +389,8 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   `group`, or `key`) and `title` while the card is live, and `ended` once the
   session's process is gone. The directive names the card and the session, and
   says when nobody else will act on the reply. The session that posted the card
-  gets no `thread_owner`. Any operator reply in a DM thread whose root is a live
+  gets no `thread_owner`, nor does a DM holder of the same drive, which takes
+  that thread over (see `drives.go`). Any operator reply in a DM thread whose root is a live
   card, or a copy of one, carries `thread_card`: the `waits` id of that card, the
   copied card's for a copy.
 - `slack.message@<agent_id>` is a message on a subagent's watch. The daemon's

@@ -84,7 +84,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message) (delivery, error) {
+func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates) (delivery, error) {
 	thread := m.ThreadTimestamp
 	if thread == "" {
 		thread = m.Timestamp
@@ -95,7 +95,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread),
 	}
 	if w.ChannelID == id.DMChannelID && thread != m.Timestamp {
-		owner, err := p.threadOwner(ctx, w, thread)
+		owner, err := p.threadOwner(ctx, w, thread, mates)
 		if err != nil {
 			return delivery{}, err
 		}
@@ -122,7 +122,7 @@ func messageDedup(w watch, ts string) string {
 	return fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, ts)
 }
 
-func (p *poller) threadOwner(ctx context.Context, w watch, thread string) (*threadOwner, error) {
+func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates driveMates) (*threadOwner, error) {
 	var (
 		subjectID string
 		owner     threadOwner
@@ -131,7 +131,7 @@ func (p *poller) threadOwner(ctx context.Context, w watch, thread string) (*thre
 	err := p.plane.DB().QueryRowContext(ctx, `SELECT w.subject_id, COALESCE(s.session_id, ''), s.claude_pid FROM watches w
 		JOIN subjects s ON s.id = w.subject_id WHERE w.kind = 'dm' AND w.channel_id = ? AND w.thread_ts = ? ORDER BY w.id DESC LIMIT 1`,
 		w.ChannelID, thread).Scan(&subjectID, &owner.Session, &pid)
-	if errors.Is(err, sql.ErrNoRows) || subjectID == w.SubjectID {
+	if errors.Is(err, sql.ErrNoRows) || subjectID == w.SubjectID || mates.same(subjectID, w.SubjectID) {
 		return nil, nil
 	}
 	if err != nil {
@@ -330,9 +330,9 @@ func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int
 	return endedAt.Int64, status == agent.StatusDone, nil
 }
 
-func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message) error {
+func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message, mates driveMates) error {
 	if len(sessions) == 1 {
-		d, err := p.messageDelivery(ctx, api, id, sessions[0], m)
+		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates)
 		if err != nil {
 			return err
 		}

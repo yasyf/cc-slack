@@ -166,7 +166,7 @@ func (l *liveDaemon) deliver(owner, ts, text string) {
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 	w := watch{ID: 7, SubjectID: l.subID, Owner: owner, Kind: kindThread, ChannelID: testChannel, ThreadTS: testThread}
 	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: testThread, User: "UOTHER", Username: "teammate", Text: text}}
-	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m)
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -267,5 +267,30 @@ func TestADMDirectiveNamesTheThreadItsMessageIsIn(t *testing.T) {
 	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi"}, true)
 	if !strings.Contains(got, "slack_dm_status and thread_ts "+root) {
 		t.Fatalf("thread message directive = %q, want it to name thread %s", got, root)
+	}
+}
+
+func TestThreadSeenSaysWhetherTheThreadsNewestMessageReachedTheAgent(t *testing.T) {
+	l := startDaemon(t)
+	l.deliver(agent.TopLevel, "1800000000.000300", "ship it")
+	seen := func(newest, owner string) threadSeenResult {
+		t.Helper()
+		if _, err := l.srv.DB().ExecContext(l.ctx, `INSERT OR REPLACE INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, ?, ?, 0)`, testChannel, testThread, newest); err != nil {
+			t.Fatal(err)
+		}
+		var res threadSeenResult
+		if err := json.Unmarshal(l.do(opThreadSeen, map[string]string{"channel_id": testChannel, "thread_ts": testThread, "owner": owner}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	if got := seen("1800000000.000300", agent.TopLevel); !got.Delivered || got.Newest != "1800000000.000300" {
+		t.Fatalf("thread-seen = %+v, want the delivered newest message seen", got)
+	}
+	if got := seen("1800000000.000300", "agent-1"); got.Delivered {
+		t.Fatalf("thread-seen for another agent = %+v, want it unseen", got)
+	}
+	if got := seen("1800000000.000400", agent.TopLevel); got.Delivered || got.Newest != "1800000000.000400" {
+		t.Fatalf("thread-seen = %+v, want a newer message the session never got unseen", got)
 	}
 }
