@@ -109,13 +109,17 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	return delivery{
 		base:   eventMessage,
 		origin: origin,
-		dedup:  fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, m.Timestamp),
+		dedup:  messageDedup(w, m.Timestamp),
 		line:   messageLine(msg, id.fromOperator(m)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)
 		},
 	}, nil
+}
+
+func messageDedup(w watch, ts string) string {
+	return fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, ts)
 }
 
 func (p *poller) threadOwner(ctx context.Context, w watch, thread string) (*threadOwner, error) {

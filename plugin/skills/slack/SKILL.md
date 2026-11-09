@@ -687,9 +687,11 @@ On any message you have read and are acting on but have not answered, add
 DM, so its readers can see whether it is being read or worked on:
 
 1. When you first look at it, call `slack_pickup`. It adds `eyes` and Slack's
-   working line under the thread, together and nothing else. If you decide not
-   to work on it, call `slack_pickup` with `done: true`, which takes both away.
-   Such a message never gets step two.
+   working line under the thread, together and nothing else. Your operator's
+   message in your DM with the app already has both: the daemon puts them on
+   as it hands you the message, so `slack_pickup` there only sets what the line
+   says. If you decide not to work on it, call `slack_pickup` with
+   `done: true`, which takes both away. Such a message never gets step two.
 2. Only once you decide to do actual work, call `slack_stream` with
    `recipient` set to the person who asked. It adds each step as its own line
    with a spinner and keeps the working line up. Its first call posts in the
@@ -698,8 +700,9 @@ DM, so its readers can see whether it is being read or worked on:
    itself 6 to 11 minutes after it started, seen once: when an update fails
    because the stream has ended, start a new one with the remaining steps.
 
-A `line_error` in either result means the eyes or the steps landed and Slack
-refused the working line. Carry on, and report it to your lane's owner.
+When Slack refuses the working line, `slack_pickup` fails with Slack's error
+and the eyes stay on; a `line_error` in a `slack_stream` result means the steps
+landed without the line. Carry on, and report it to your lane's owner.
 
 When the ask is done, add `white_check_mark` with `slack_react`, then call
 `slack_pickup` with `done: true`.
