@@ -265,6 +265,39 @@ func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
 	}
 }
 
+func TestATapPostAsksAgainWhenThePRsStandingCardWaitsOnNoTap(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is ready", "tap_prs": tapPR41})
+	var card fakePost
+	eventually(t, "the card drawn with nothing to tap", func() bool {
+		at := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return p.threadTS == "" && strings.Contains(p.blocks, "#41 at e718a74") })
+		if at >= 0 {
+			card = l.slack.sentTo(testDM)[at]
+		}
+		return at >= 0
+	})
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{mergeRowCard()}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	asks := len(cmd.requests(t))
+	l.do(opDMStatus, map[string]any{"text": "#41 now waits on your tap", "tap_prs": tapPR41})
+	if got := cmd.requests(t); len(got) != asks+1 {
+		t.Fatalf("card command asks after the second post = %v, want one fresh ask for #41", got[asks:])
+	}
+	eventually(t, "Merge on the standing card", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "Merge (Recommended)")
+	})
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(card.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the card %s waiting on his tap", listed.PRCards, card.ts)
+	}
+}
+
 func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())

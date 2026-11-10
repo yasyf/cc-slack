@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A post with `tap_prs` asks the card command again when the PR's newest card has no button to tap, and redraws that card and its copies in place with the buttons it now gets. Before, a card drawn while the PR was not yet marked for his tap stood for it, so later posts only copied that buttonless card and `drive-cards` never listed it: on Nov 10 two posts with `tap_prs` for one PR, at 1:03 PM and 1:39 PM, drew no Approve.
 - `slack_card_answer` on a card that was already answered now returns `already_answered: true` beside `answered: false`, with the answer the card shows as `label`. Before, a handler read `answered: false` as "the card is still open": on Nov 10 at 1:00 PM it reported that a card the user had answered in its Other field at 12:45 PM still waited on him.
 - A session with a working channel now gets each linked Slack message and card tap once. The tool-use hook had been delivering it again almost every time, because capt-hook runs that hook outside the Claude window and the daemon could not find the window's channel. Channel proof also survives a daemon restart now, so a session that never calls a cc-slack tool after a release keeps single delivery (cc-interact 0.41.1).
 
