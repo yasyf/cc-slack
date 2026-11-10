@@ -927,12 +927,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		return cardAnswerResult{}, err
 	}
 	thread := ref.threadTS
-	kind, surface, name := "Board answer", "the cc-present board", "the board"
-	if from == surfaceDashboard {
-		kind, surface, name = "Dashboard answer", "the drive dashboard", "the dashboard"
-	} else if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
-		kind, surface, name = "Answer relayed", "Slack message", "Slack"
-	}
+	kind, surface, name := answeredFrom(from, via)
 	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok && ref.channelID == id.DMChannelID && !other && !settled && !withdrawn {
 		return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
 	}
@@ -971,6 +966,16 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		}
 	}
 	return res, err
+}
+
+func answeredFrom(from, via string) (kind, surface, name string) {
+	if from == surfaceDashboard {
+		return "Dashboard answer", "the drive dashboard", "the dashboard"
+	}
+	if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
+		return "Answer relayed", "Slack message", "Slack"
+	}
+	return "Board answer", "the cc-present board", "the board"
 }
 
 func (p *poller) answerPRCardElsewhere(ctx context.Context, id identity, r cardRef, waits string, m liveMessage, label, via, name string) (cardAnswerResult, error) {
