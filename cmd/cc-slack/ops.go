@@ -2023,8 +2023,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	id.Agent = b.Agent
-	pictures, err := a.uploadCardPictures(hc.Ctx, id, b)
-	if err != nil {
+	if err := a.uploadCardPictures(hc.Ctx, id, b); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	if b.Card != nil {
@@ -2034,7 +2033,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, msg.tapPRs...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
-		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag, pictures)
+		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag)
 	}
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
@@ -2059,16 +2058,11 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	a.embedCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, b)
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
-	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)
 	return okUnlessUndrawn(a.dmStatusReply(hc, sub.ID, id, thread, ts, b), undrawn)
 }
 
-func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag, pictures []slack.FileSummary) daemon.Reply {
-	card := *b.Card
-	if len(pictures) > 0 {
-		card, _ = a.shareCardPictures(hc.Ctx, hc.DB, id, card, pictures)
-	}
-	thread, ts, err := a.replaceCard(hc.Ctx, id, card, tag, b.TapPRs)
+func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag) daemon.Reply {
+	thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, tag, b.TapPRs)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -2183,16 +2177,16 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	return thread, ref.ts, nil
 }
 
-func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]slack.FileSummary, error) {
+func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) error {
 	if b.Card == nil {
-		return nil, nil
+		return nil
 	}
 	images, err := allImages(b.Files)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !images {
-		return nil, errors.New("a card attaches PNG, JPEG, GIF, or WebP images only")
+		return errors.New("a card attaches PNG, JPEG, GIF, or WebP images only")
 	}
 	var drawn []string
 	for _, artifact := range b.Card.Artifacts {
@@ -2201,24 +2195,24 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]
 		}
 	}
 	if images, err = allImages(drawn); err != nil {
-		return nil, err
+		return err
 	}
 	if !images {
-		return nil, errors.New("an artifact's image is a PNG, JPEG, GIF, or WebP")
+		return errors.New("an artifact's image is a PNG, JPEG, GIF, or WebP")
 	}
 	pictures := slices.Concat(b.Files, drawn)
+	if len(pictures) == 0 {
+		return nil
+	}
 	if b.Card.ImagesHash, err = hashFiles(pictures); err != nil {
-		return nil, err
+		return err
 	}
 	if shown := a.cards.shownImages(id.DMChannelID, *b.Card); shown != nil {
 		b.Card.Images = shown
-		return nil, nil
+		return nil
 	}
-	if bucket := id.Config.Pictures; bucket.enabled() {
-		b.Card.Images, err = bucket.upload(ctx, id.TeamID, pictures)
-		return nil, err
-	}
-	return uploadFiles(ctx, a.newAPI(id.Token), pictures)
+	b.Card.Images, err = uploadPictures(ctx, id, pictures)
+	return err
 }
 
 func hashFiles(paths []string) (string, error) {
@@ -2235,55 +2229,6 @@ func hashFiles(paths []string) (string, error) {
 		sum.Write(file[:])
 	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
-}
-
-func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, card statusCard, files []slack.FileSummary) (statusCard, bool) {
-	shelf, err := a.pictureShelf(ctx, db, id)
-	if err == nil {
-		err = shareProcessed(ctx, a.newAPI(id.Token), postRecorder(ctx, db, a.poller.log), id, id.DMChannelID, shelf, files)
-	}
-	if err != nil {
-		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
-		return card, false
-	}
-	card.Images = sharedImages(files)
-	return card, true
-}
-
-func (a *app) pictureShelf(ctx context.Context, db *sql.DB, id identity) (string, error) {
-	a.cards.shelfMu.Lock()
-	defer a.cards.shelfMu.Unlock()
-	if ts := a.cards.shelf(id.DMChannelID); ts != "" {
-		return ts, nil
-	}
-	res, err := a.post(ctx, db, id, id.DMChannelID, "", cardShelfText, nil, nil)
-	if err != nil {
-		return "", fmt.Errorf("post the thread that keeps card pictures: %w", err)
-	}
-	a.cards.keepShelf(id.DMChannelID, res.TS)
-	return res.TS, nil
-}
-
-func (a *app) showCardPictures(ctx context.Context, db *sql.DB, id identity, card *statusCard, files []slack.FileSummary, thread, ts string) {
-	if len(files) == 0 || thread == "" {
-		return
-	}
-	shown, shared := a.shareCardPictures(ctx, db, id, *card, files)
-	if !shared {
-		return
-	}
-	at := cmp.Or(ts, thread)
-	if !a.cards.showPictures(id.DMChannelID, thread, at, shown) {
-		notePostWarning(ctx, "the card posted without its pictures: it left the live cards before they were shared")
-		return
-	}
-	api := a.newAPI(id.Token)
-	if err := whileProcessing(ctx, func() error {
-		_, err := a.cards.redraw(ctx, api, id.DMChannelID, thread, at, a.now())
-		return err
-	}); err != nil {
-		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
-	}
 }
 
 func (a *app) dmStatusReply(hc daemon.HandlerCtx, subjectID string, id identity, thread, ts string, b opBody) map[string]string {
