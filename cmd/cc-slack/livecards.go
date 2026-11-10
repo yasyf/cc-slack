@@ -62,6 +62,7 @@ type liveThread struct {
 	Keyed     map[string]*liveMessage `json:"keyed,omitempty"`
 	PRCards   []*liveMessage          `json:"pr_cards,omitempty"`
 	Copies    []liveCardCopy          `json:"copies,omitempty"`
+	TapLines  []liveTapLine           `json:"tap_lines,omitempty"`
 	Carries   []string                `json:"carries,omitempty"`
 	Continued []string                `json:"continued,omitempty"`
 	Timeline  []timelineEntry         `json:"timeline,omitempty"`
@@ -76,6 +77,11 @@ type liveCardCopy struct {
 	Card string `json:"card"`
 	TS   string `json:"ts"`
 	Link bool   `json:"link,omitempty"`
+}
+
+type liveTapLine struct {
+	TS    string   `json:"ts"`
+	Cards []string `json:"cards"`
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -303,6 +309,39 @@ func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at
 	t.Copies = append(t.Copies, copied)
 	t.Updated = at
 	l.commit(t)
+}
+
+func (l *liveCards) rememberTapLine(channel, thread string, line liveTapLine, at time.Time) {
+	if len(line.Cards) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.draft(channel, thread)
+	t.TapLines = append(t.TapLines, line)
+	t.Updated = at
+	l.commit(t)
+}
+
+func (l *liveCards) tapLineCards(channel, thread, ts string) []cardRef {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return nil
+	}
+	var cards []cardRef
+	for _, line := range t.TapLines {
+		if line.TS != ts {
+			continue
+		}
+		for _, card := range line.Cards {
+			if stored, found := l.storedCard(channel, card); found {
+				cards = append(cards, stored)
+			}
+		}
+	}
+	return cards
 }
 
 func (l *liveCards) carry(channel, thread, card string, at time.Time) bool {
@@ -600,7 +639,7 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
 		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
-		c.PRCards, c.Copies, c.Carries = slices.Clone(t.PRCards), slices.Clone(t.Copies), slices.Clone(t.Carries)
+		c.PRCards, c.Copies, c.TapLines, c.Carries = slices.Clone(t.PRCards), slices.Clone(t.Copies), slices.Clone(t.TapLines), slices.Clone(t.Carries)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}

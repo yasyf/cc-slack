@@ -171,11 +171,15 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
 gets a working copy of the card in its thread. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call waits for its cards. When an open PR its `tap_prs` names drew no card,
-the call fails even though the post went out: the error names the post's
-permalink, so the caller does not post it again, and each such PR with the
-reason, such as the program's `skipped` reason or no card in its answer, and the
-daemon logs the same. A status card that carries cards is then read back from
+names. The call asks the program for its cards before it posts anything. When an
+open PR its `tap_prs` names gets no card, such as the program's `skipped` reason,
+no card in its answer, or a card that fails the card checks, the call fails with
+each such PR and its reason and sends nothing. A card the program answered that
+still fails to post fails the call after the post went out, with the post's
+permalink so the caller does not post it again. The result's `card_ts` and
+`card_permalink` name the cards the post drew, space-separated, since the post's
+own `ts` and `permalink` are its text line, and a copy of each is already in the
+post's DM thread. `card-copy` aimed at that text line fails naming those cards. A status card that carries cards is then read back from
 Slack, and the call's `warning` starts with NO APPROVE when the message holds no
 button answering a card it carries. In
 a listed channel the card is a reply in the post's thread. It keeps them in

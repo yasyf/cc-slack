@@ -320,6 +320,21 @@ func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
 	eventually(t, "the copy redrawn", func() bool { return len(editsOf(l.slack.edited(), theCopy.ts)) > 0 })
 }
 
+func TestATapPostNamesItsCardAndACopyOfItsLineNamesThatCard(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	cards := rootCards(awaitPRCards(t, l, testDM))
+	if len(cards) != 1 || sent["card_ts"] != cards[0].ts || !strings.Contains(sent["card_permalink"], "/p"+strings.ReplaceAll(cards[0].ts, ".", "")) {
+		t.Fatalf("dm-status = %v, want it to name the card %+v", sent, cards)
+	}
+	l.refused(opCardCopy, map[string]any{"url": sent["permalink"], "thread_ts": hisThread}, "it is the line a tap_prs post wrote, and its card is "+sent["card_permalink"])
+}
+
 func TestACopyWithNothingToAnswerLeadsWithItsTitleUntilItsCardAsks(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
@@ -856,10 +871,9 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("not held", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"})
 		l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-		l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": the card command answered no card for it")
-		eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
-		if got := l.slack.sentTo(testDM); len(got) != 1 {
-			t.Fatalf("posted %+v after %d asks, want the linked post alone after one ask", got, len(cmd.requests(t)))
+		l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": the card command answered no card for it; nothing was sent")
+		if got := l.slack.sentTo(testDM); len(got) != 0 || len(cmd.requests(t)) != 1 {
+			t.Fatalf("posted %+v after %d asks, want nothing posted after one ask", got, len(cmd.requests(t)))
 		}
 	})
 }
@@ -869,13 +883,16 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	unlisted := "drew no card for tap_prs " + tapPR41[0] + ": PR cards draw only in a DM or a [pr_links] card_channels channel, and " + testChannel + " is neither"
 	l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green", "tap_prs": tapPR41}), unlisted)
-	sent := l.slack.sentTo(testChannel)
-	if len(sent) != 1 {
-		t.Fatalf("unlisted channel got %+v, want the post to go out before the refusal", sent)
+	if sent := l.slack.sentTo(testChannel); len(sent) != 0 {
+		t.Fatalf("unlisted channel got %+v, want nothing posted", sent)
 	}
-	l.refused(opReply, l.hooked(opReply, map[string]any{"channel_id": testChannel, "thread_ts": sent[0].ts, "text": "#41 is green", "tap_prs": tapPR41}), unlisted)
-	if got := l.slack.sentTo(testChannel); len(got) != 2 || len(cmd.requests(t)) != 0 {
-		t.Fatalf("unlisted channel got %+v after %d asks, want two linked posts, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
+	var top postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green"}).Body, &top); err != nil {
+		t.Fatal(err)
+	}
+	l.refused(opReply, l.hooked(opReply, map[string]any{"channel_id": testChannel, "thread_ts": top.TS, "text": "#41 is green", "tap_prs": tapPR41}), unlisted)
+	if got := l.slack.sentTo(testChannel); len(got) != 1 || len(cmd.requests(t)) != 0 {
+		t.Fatalf("unlisted channel got %+v after %d asks, want the one plain post, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
 	}
 	var room postResult
 	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 is green", "tap_prs": tapPR41}).Body, &room); err != nil {
@@ -1677,28 +1694,21 @@ func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApp
 	}
 }
 
-func TestATapPostWhoseCardNeverDrawsFailsNamingThePostAndThePR(t *testing.T) {
+func TestATapPostWhoseCardNeverDrawsSendsNothingAndNamesThePR(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	notice := statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}
-	_, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"card": notice, "tap_prs": tapPR41}))
-	for _, want := range []string{"posted https://acme.slack.com/archives/" + testDM + "/p", "so do not post it again, but drew no card for tap_prs " + tapPR41[0] + ": the card command answered no card for it"} {
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("dm-status error = %v, want it to say %q", err, want)
-		}
+	l.refused(opDMStatus, map[string]any{"card": notice, "tap_prs": tapPR41}, "drew no card for tap_prs "+tapPR41[0]+": the card command answered no card for it; nothing was sent")
+	if posts := l.slack.sentTo(testDM); len(posts) != 0 {
+		t.Fatalf("DM posts = %+v, want nothing posted", posts)
 	}
 }
 
 func TestATapPostUnderALoginWithNoCardCommandFailsSayingSo(t *testing.T) {
 	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}}, "acme/app#41")
-	_, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"text": "#41 is green", "tap_prs": tapPR41}))
-	for _, want := range []string{"posted https://acme.slack.com/archives/" + testDM + "/p", "drew no card for tap_prs " + tapPR41[0] + ": this machine's cc-slack login has no [pr_links] card_command"} {
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("dm-status error = %v, want it to say %q", err, want)
-		}
-	}
-	if posts := l.slack.sentTo(testDM); len(posts) != 1 {
-		t.Fatalf("DM posts = %+v, want the one post and no card", posts)
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, "drew no card for tap_prs "+tapPR41[0]+": this machine's cc-slack login has no [pr_links] card_command")
+	if posts := l.slack.sentTo(testDM); len(posts) != 0 {
+		t.Fatalf("DM posts = %+v, want nothing posted", posts)
 	}
 }
 
