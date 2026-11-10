@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In a channel whose bug threads carry the one-solved-line grant, a thread post that asks the reporter something or carries jargon no longer reaches the judge, which had passed a "could you try it and let me know" line on an unrelated status ruling. Only the owner's own approval of that post, a card tap, his answer or his link, lets it out.
 - A window whose channel comes back after a while no longer gets old Slack messages and card taps from watches that have since ended. The channel resumes from its saved position, and the daemon now holds back any message or tap whose watch is no longer active for that session, so only the watches `cc-slack follows` lists deliver. On Nov 9 a retired window's channel reconnected from a Nov 6 position and replayed about 300 messages and taps from stopped watches into that terminal.
 - A card's pictures show once, inside the card. They were shared into the card's own thread so Slack would let you open them, which drew every picture a second time under the card. They are now shared into one thread in your DM with the app that holds every card's pictures, posted once the first time a card carries one.
 
