@@ -973,16 +973,16 @@ func cardCopyCmd(d cmd.Deps) *cobra.Command {
 
 func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f                       sessionFlags
-		waits, card, label, via string
-		other, settled, gone    bool
+		f                                sessionFlags
+		waits, card, label, via, surface string
+		other, settled, gone             bool
 	)
 	c := &cobra.Command{
 		Use:   "card-answer",
 		Short: "Answer a waiting status card from another surface, such as a cc-present board",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opCardAnswer, map[string]any{"waits": waits, "url": card, "label": label, "other": other, "settled": settled, "withdrawn": gone, "via": via})
+			return runOp(c, d, f, opCardAnswer, map[string]any{"waits": waits, "url": card, "label": label, "other": other, "settled": settled, "withdrawn": gone, "via": via, "surface": surface})
 		},
 	}
 	f.bind(c)
@@ -991,6 +991,7 @@ func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().StringVar(&label, "label", "", "the answer: one of the card's options, or the written-in text with --other")
 	c.Flags().BoolVar(&other, "other", false, "the label is a written-in answer, not one of the card's options")
 	c.Flags().StringVar(&via, "via", "", "url of the surface the answer came from; the card and the capture name it")
+	c.Flags().StringVar(&surface, "surface", "", "dashboard when the answer came from a drive dashboard; empty for a cc-present board")
 	c.Flags().BoolVar(&settled, "settled", false, "the question was settled by what happened, such as the pull request landing: the card shows the written-in label and no session hears a tap")
 	c.Flags().BoolVar(&gone, "withdrawn", false, "the question was withdrawn: the card shows the label as the reason and no session hears a tap")
 	return c

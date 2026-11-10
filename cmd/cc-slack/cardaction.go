@@ -893,6 +893,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 }
 
 const (
+	surfaceDashboard      = "dashboard"
 	cardAnsweredReaction  = "white_check_mark"
 	cardNoLongerWaits     = "This PR no longer waits on your tap."
 	cardWithdrawnReaction = "x"
@@ -920,12 +921,21 @@ func (p *poller) noteSuperseded(ctx context.Context, id identity, posts []string
 	}
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via string) (cardAnswerResult, error) {
+func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via, from string) (cardAnswerResult, error) {
 	ref, err := parsePermalink(card)
 	if err != nil {
 		return cardAnswerResult{}, err
 	}
 	thread := ref.threadTS
+	kind, surface, name := "Board answer", "the cc-present board", "the board"
+	if from == surfaceDashboard {
+		kind, surface, name = "Dashboard answer", "the drive dashboard", "the dashboard"
+	} else if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
+		kind, surface, name = "Answer relayed", "Slack message", "Slack"
+	}
+	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok && ref.channelID == id.DMChannelID && !other && !settled && !withdrawn {
+		return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
+	}
 	waits, m, ok := p.cards.waitingAt(id.DMChannelID, thread, ref.ts)
 	if ref.channelID != id.DMChannelID || !ok {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
@@ -936,10 +946,6 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	}
 	at := p.now()
 	permalink := id.permalink(id.DMChannelID, m.TS, thread)
-	kind, surface, name := "Board answer", "the cc-present board", "the board"
-	if ref, err := parsePermalink(via); err == nil && ref.ts != "" {
-		kind, surface, name = "Answer relayed", "Slack message", "Slack"
-	}
 	answer := waitsAnswer{
 		card:      cardRef{id.DMChannelID, thread, m.TS},
 		tap:       askTap{ID: waits, Label: label, Question: m.Card.Title, Options: answers, Waits: true},
@@ -965,6 +971,27 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		}
 	}
 	return res, err
+}
+
+func (p *poller) answerPRCardElsewhere(ctx context.Context, id identity, r cardRef, waits string, m liveMessage, label, via, name string) (cardAnswerResult, error) {
+	permalink := id.permalink(r.channel, r.ts, r.thread)
+	if answers := m.Card.answers(); !slices.Contains(answers, label) {
+		return cardAnswerResult{}, fmt.Errorf("%q is not one of PR card %q's answers %q", label, waits, answers)
+	}
+	if prior, done := p.cards.answer(r.channel, r.thread, waits); done {
+		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
+	}
+	if len(id.Config.PRLinks.CardCommand) == 0 {
+		return cardAnswerResult{}, fmt.Errorf("PR card %s cannot take an answer: [pr_links] card_command is not set", permalink)
+	}
+	at := p.now()
+	card := offeredCard{ref: r, waits: waits, pr: m.Card.refIDs()[0]}
+	line := "✓ *" + mrkdwnEscapes.Replace(label) + "* · answered on " + slackLink(via, name) + " " + clock(at, p.now())
+	if !p.answerPRCard(ctx, id, card, label, at, line, false, cardPress{"", "answered on " + via}) {
+		return cardAnswerResult{}, fmt.Errorf("PR card %s did not take %q; the daemon log says why", permalink, label)
+	}
+	p.answerCopies(ctx, id, r, label, true, at)
+	return cardAnswerResult{Answered: true, Label: label, At: at}, nil
 }
 
 func (p *poller) showFold(ctx context.Context, id identity, r cardRef) (bool, error) {

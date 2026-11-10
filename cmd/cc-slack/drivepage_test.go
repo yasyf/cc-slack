@@ -37,7 +37,7 @@ func TestDriveCardsListTheDrivesOpenQuestionsUntilHeAnswers(t *testing.T) {
 
 	all := driveCards(t, l, "brook")
 	listed := all.Questions
-	if all.TeamURL != "https://acme.slack.com/" || len(listed) != 1 || listed[0].Question != asked.Title || listed[0].Recommended != "Hold" || listed[0].URL != c.url() || len(listed[0].Options) != 2 {
+	if all.TeamURL != "https://acme.slack.com/" || len(listed) != 1 || listed[0].Question != asked.Title || listed[0].Recommended != "Hold" || listed[0].URL != c.url() || len(listed[0].Options) != 2 || listed[0].Card.Title != asked.Title {
 		t.Fatalf("questions = %+v, want only brook's open card with its options and link", listed)
 	}
 	answerOnBoard(t, l, c, "Hold")
@@ -77,7 +77,7 @@ func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
 	c := postWaiting(t, l, stack)
 
 	listed := driveCards(t, l, "pier")
-	if len(listed.Questions) != 0 || len(listed.PRCards) != 1 || listed.PRCards[0].URL != c.url() || len(listed.PRCards[0].PRs) != 2 || listed.PRCards[0].PRs[1] != stack.PRs[1].URL {
+	if len(listed.Questions) != 0 || len(listed.PRCards) != 1 || listed.PRCards[0].URL != c.url() || len(listed.PRCards[0].PRs) != 2 || listed.PRCards[0].PRs[1] != stack.PRs[1].URL || listed.PRCards[0].Card.PRs[0].Surprise != stack.PRs[0].Surprise {
 		t.Fatalf("drive cards = %+v, want the stack card as one PR card listing both PRs", listed)
 	}
 	answerOnBoard(t, l, c, "Hold")
