@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tapped answer no longer makes the daemon redraw every live card at that moment. The Undo it shows still goes when its ten minutes end: the tap now only moves up when the card loop next wakes. That extra redraw could land between a failed edit of the tapped card and its retry, so the card's own retry and its warning in the thread were lost.
 - A post with `tap_prs` that cannot draw a PR card at all now fails after the post goes out, naming the post and the reason, instead of returning OK. The two reasons are a login whose config sets no `[pr_links] card_command`, or whose card program is not on the daemon's PATH, and a channel that draws no PR cards. On Nov 10 a `cc-slack login` at 2:52 AM read a config with no `card_command`, and three `dm-status` calls with `tap_prs` over the next 12 minutes each returned OK with no card.
 - A DM status line written in Markdown, such as `**Ready.** It deletes nothing.`, now posts its notification text in Slack's own format too, so `slack_thread` reads it back once instead of twice, once with `**` and once in italics.
 - `card-copy` given the link of a copy copies the card that copy came from, with its buttons. Before, it read the copy, whose buttons already point at the original card, counted no answer on it, and refused with "that card has no answer left to tap".
