@@ -8,9 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `slack_thread` and `cc-slack thread` take `since_ts` (`--since-ts`) and return only the messages newer than it. The read-before-reply hook now asks for a read through the thread's newest message with `since_ts` set to the newest ts already read, instead of the whole thread with `limit` 1000; DM threads had grown to 395 messages, each re-read in full before a reply.
 - While a session that holds your DM is compacting, each message you send it gets "Got it, back in a minute." in its thread at once, next to the eyes, instead of nothing for the minutes the compaction takes. The plugin's new `PreCompact` hook marks the session and its next start clears the mark; the message reaches the session with `acked` set, so it posts no second ack. On Nov 9 four messages waited about 3.5 minutes unacked while the session holding the DM compacted. The daemon now logs how long after a message was sent its eyes went on.
 - A line in your DM with the app that says something waits on you draws the card it means, with its buttons, right under it in the same thread. Link the open card by its permalink, and `send`, `reply` and `dm-status` text copy that card in; a tap on either copy answers both. A line that says something waits on you with no open card linked, no `tap_prs`, no PR link and no open card in its thread is refused before it posts, naming the sentence. `check-post` flags the same sentence when the post links no DM card and no PR.
 - A `[pictures]` section names a private S3-compatible bucket for the pictures on cards. With it, a card's pictures upload to the bucket and draw from links signed for 7 days, re-signed on every redraw, so the card is the only message in the DM: no picture-keeping thread and no share. `login` reads the bucket's key from `[ssm] picture_key_id` and `picture_secret`. Without the section, pictures still go to the DM's picture-keeping thread.
+
+### Changed
+
+- A `slack.action` tap no longer carries the card's `question`, `options`, or `capture`. The capture line still arrives in the tap's directive, which names the question and the answer, and the session that posted the card has its options. A tap's payload had averaged 699 bytes, 256 of them the capture.
 
 ### Fixed
 

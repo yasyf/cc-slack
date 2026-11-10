@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -517,14 +518,26 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	push.ActionID, push.Value = cardWaitAction+"0:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title, Options: card.Options}))
 	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", time.Now().Unix()), "001800000100000-abcd0126"
 	l.tap(id, push)
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") {
-		t.Fatalf("directive = %q, want the waiting ask's id, answer, and the hand-off", got)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") ||
+		!strings.Contains(got, `answered "Merge #41 now?" with "Merge" at `) {
+		t.Fatalf("directive = %q, want the waiting ask's id, answer, the hand-off, and the capture", got)
 	}
-	payloads := strings.Join(l.channelPayloads(), "\n")
-	for _, part := range []string{`"id":"step-3:merge"`, `"waits":true`, `"question":"Merge #41 now?"`, `"options":["Merge","Hold"]`, `answered \"Merge #41 now?\" with \"Merge\" at `} {
-		if !strings.Contains(payloads, part) {
-			t.Fatalf("channel payloads %s lack %s", payloads, part)
+	var tap map[string]any
+	for _, raw := range l.channelPayloads() {
+		var got map[string]any
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
 		}
+		if got["type"] == eventAction && got["label"] == "Merge" {
+			tap = got
+		}
+	}
+	keys := slices.Sorted(maps.Keys(tap))
+	if want := []string{"action_ts", "channel_id", "id", "label", "permalink", "thread_ts", "ts", "type", "waits", "watch_id"}; !slices.Equal(keys, want) {
+		t.Fatalf("tap payload %v has keys %v, want %v: the question, options and capture stay in the directive", tap, keys, want)
+	}
+	if tap["id"] != "step-3:merge" || tap["waits"] != true {
+		t.Fatalf("tap payload = %v, want the card id and waits", tap)
 	}
 	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 2 || !strings.Contains(edits[1], "✓ *Merge* · answered") ||
 		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "You asked for more") {

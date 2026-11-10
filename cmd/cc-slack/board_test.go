@@ -95,10 +95,13 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 		t.Fatalf("directive = %q, want the board answer and its capture", got)
 	}
 	payloads := strings.Join(l.channelPayloads(), "\n")
-	for _, part := range []string{`"waits":true`, `"label":"Hold"`, `"via":"http://127.0.0.1:7000/p/asks--ab12"`, `"capture":`} {
+	for _, part := range []string{`"waits":true`, `"label":"Hold"`, `"via":"http://127.0.0.1:7000/p/asks--ab12"`} {
 		if !strings.Contains(payloads, part) {
 			t.Fatalf("channel payloads %s lack %s", payloads, part)
 		}
+	}
+	if strings.Contains(payloads, `"capture":`) {
+		t.Fatalf("channel payloads %s carry the capture, which the directive already holds", payloads)
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Hold* · answered on ") ||
 		!strings.Contains(edits[len(edits)-1], "http://127.0.0.1:7000/p/asks--ab12|the board") || strings.Contains(edits[len(edits)-1], cardWaitAction) {

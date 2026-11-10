@@ -648,6 +648,7 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int
 	var raw bool
+	var since string
 	c := &cobra.Command{
 		Use:   "thread",
 		Short: "Print a Slack thread's messages",
@@ -656,11 +657,13 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 			body := f.body()
 			body["limit"] = limit
 			body["raw"] = raw
+			body["since_ts"] = since
 			return runOp(c, d, f.sessionFlags, opThread, body)
 		},
 	}
 	f.bind(c)
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "most recent messages to print")
+	c.Flags().StringVar(&since, "since-ts", "", "print only messages newer than this ts")
 	c.Flags().BoolVar(&raw, "raw", false, "also print each message as Slack sends it, with its blocks, attachments and metadata")
 	return c
 }

@@ -188,8 +188,10 @@ replies need no human turn between them.
 
 Read before you reply. A post into a thread, through `slack_reply`,
 `slack_send` with a thread, the CLI, or `mcp__slack__slack_send_message`, is
-refused unless this agent read that whole thread in the last 10 minutes with
-`slack_thread`, or `mcp__slack__slack_get_thread` where the bot cannot reach it.
+refused unless this agent read that thread through its newest message in the
+last 10 minutes with `slack_thread`, or `mcp__slack__slack_get_thread` where the
+bot cannot reach it. Pass `since_ts` as the newest ts you have already read, and
+the read returns only what is newer, so a long thread is never read again whole.
 A `truncated` or `stale` read does not count, and neither does a subagent's read
 for its parent or a parent's for its subagent.
 
@@ -392,9 +394,9 @@ registration verbs are `follow --owner <agent_id>` and `unfollow`.
 A `<channel source="cc-slack" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
 from_claude, text, permalink}`. Monitor lines carry the same event data,
-each within the 500 characters a Monitor event holds: a longer line drops a
-card's `capture` and `options`, then its `question`, then the `permalink`, and
-last cuts its own words and sets `cut`. A tap's `id` is never cut.
+each within the 500 characters a Monitor event holds: a longer line drops the
+thread owner's title, then the `permalink`, and last cuts its own words and
+sets `cut`. A tap's `id` is never cut.
 Top-level sessions also receive each message as an injected steering
 directive at their next tool call. Deduplicate all deliveries by
 `(channel_id, ts)` before acting, including deliveries across watches.
@@ -596,10 +598,10 @@ Reusing the id of a card he answered is refused; ask again under a new id. A car
 The lane that asks stops on the card. It starts no dependent work, takes
 no default, and never proceeds on a provisional pick. The answer reaches
 the top-level session as a `slack.action` whose payload carries the `id`,
-`waits: true`, the `question`, the chosen `label`, `other: true` for a
-written-in answer, and a `capture` line. The top-level session hands the
-answer to the lane the id names, by `SendMessage`, and records the capture
-line in cc-notes as the user's answer, with the `slack-grant:` label the
+`waits: true`, the chosen `label`, and `other: true` for a written-in
+answer, and whose directive carries a `capture` line. The top-level session
+hands the answer to the lane the id names, by `SendMessage`, and records the
+capture line in cc-notes as the user's answer, with the `slack-grant:` label the
 line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on his own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of his answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
 wait until that message arrives. Only the first answer counts; a later
 tap is dropped.

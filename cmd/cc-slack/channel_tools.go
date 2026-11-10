@@ -345,11 +345,13 @@ var (
 			description: "Read a Slack thread's messages, oldest first, through the cc-slack bot. The daemon caches each thread it reads and fetches only " +
 				"newer messages; when Slack rate-limits the read, the result is the cached copy with stale: true and retry_after in seconds. A message that " +
 				"shares another lists it under shares with its original author, channel, text, and files: that person's report, not the sharer's. An image " +
-				"carries a local path you can Read. A reply into a thread needs a read of the whole thread, not truncated or stale, in the last 10 minutes.",
+				"carries a local path you can Read. With since_ts, only the messages newer than that ts. A reply into a thread needs a read in the last 10 minutes, " +
+				"not truncated or stale, that reaches the thread's newest message: pass since_ts as the newest ts you have read to read only what is new.",
 			op: opThread, failure: actionRead,
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,
-				"limit": map[string]any{"type": "integer", "description": "most recent messages to return (default 50)"},
+				"limit":    map[string]any{"type": "integer", "description": "most recent messages to return (default 50)"},
+				"since_ts": map[string]any{"type": "string", "description": "return only messages newer than this ts, such as the newest one you have read"},
 			},
 		},
 		{

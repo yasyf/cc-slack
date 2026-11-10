@@ -86,6 +86,7 @@ type opBody struct {
 	Text      string            `json:"text"`
 	Name      string            `json:"name"`
 	Limit     int               `json:"limit"`
+	SinceTS   string            `json:"since_ts"`
 	Owner     string            `json:"owner"`
 	WatchID   int64             `json:"watch_id"`
 	URL       string            `json:"url"`
@@ -1132,6 +1133,9 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if b.ChannelID == "" || b.ThreadTS == "" {
 		return fail("thread needs channel_id and thread_ts (or a Slack url)")
 	}
+	if b.SinceTS != "" && !slackTSPattern.MatchString(b.SinceTS) {
+		return fail(fmt.Sprintf("since_ts %q is not a Slack ts such as 1790210144.444179", b.SinceTS))
+	}
 	limit := b.Limit
 	if limit <= 0 {
 		limit = defaultThreadLimit
@@ -1150,6 +1154,9 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionRead, err))
 	}
 	msgs := read.msgs
+	if b.SinceTS != "" {
+		msgs = slices.DeleteFunc(slices.Clone(msgs), func(m slack.Message) bool { return !tsLess(b.SinceTS, m.Timestamp) })
+	}
 	truncated := len(msgs) > limit
 	if truncated {
 		msgs = msgs[len(msgs)-limit:]
