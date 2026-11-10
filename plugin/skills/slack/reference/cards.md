@@ -27,7 +27,6 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | the one option you recommend, on an ask card or a reply card; the card shows it first, marked (Recommended). An ask card needs one; on a reply card nothing waits on it |
-| `supersedes` | with `waits`, up to 5 permalinks of the bot's earlier posts in this DM that asked the same question; each is edited to point at this card, then to its outcome |
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, or 8 carrying a `pr` shaped as in `prs`, each with up to 4 buttons |
 | `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
 
