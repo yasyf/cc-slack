@@ -732,6 +732,51 @@ func TestTheDaemonPutsEyesAndTheWorkingLineOnAnOperatorMessageAsItReachesASessio
 	}
 }
 
+func TestWhileItsSessionCompactsAnOperatorMessageGetsOneAckThatAnswersNothing(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	holdDM(t, f)
+	thread := postDMThread(t, f)
+	f.tick()
+	f.poller.startCompacting(testSubject)
+
+	ownerReplies(f, thread, "1800000001.500000", "ship it")
+
+	acks := func() []fakePost {
+		return slices.DeleteFunc(f.slack.sent(), func(p fakePost) bool { return p.text != compactionAck })
+	}
+	posted := acks()
+	if len(posted) != 1 || posted[0].threadTS != thread {
+		t.Fatalf("acks = %+v, want one %q in thread %s", posted, compactionAck, thread)
+	}
+	delivered := payloads(t, f)
+	if got := delivered[len(delivered)-1]; got.TS != "1800000001.500000" || got.Acked != posted[0].ts {
+		t.Fatalf("delivery = %+v, want the reply carrying acked %s", got, posted[0].ts)
+	}
+	if got := f.plane.directives[len(f.plane.directives)-1].text; !strings.Contains(got, "do not ack it again") {
+		t.Fatalf("directive = %q, want it to say the reply is already acked", got)
+	}
+	if got := f.slack.reactedTo("1800000001.500000"); !slices.Equal(got, []string{pickupReaction}) {
+		t.Fatalf("reactions on the reply = %v, want eyes", got)
+	}
+	f.poller.nudged(messageNudge{Channel: dm, TS: posted[0].ts, ThreadTS: thread})
+	f.tick()
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.500000"}) {
+		t.Fatalf("owed %v, want the acked reply still owed its answer", got)
+	}
+
+	if !f.poller.endCompacting(testSubject) {
+		t.Fatal("the session was not marked compacting")
+	}
+	ownerReplies(f, thread, "1800000009.500000", "and this")
+	if got := acks(); len(got) != 1 {
+		t.Fatalf("acks = %+v, want none once the session is back", got)
+	}
+	if got := payloads(t, f); got[len(got)-1].Acked != "" {
+		t.Fatalf("delivery = %+v, want no ack once the session is back", got[len(got)-1])
+	}
+}
+
 func TestPollerKeepsANudgeMarkedAfterItsSnapshot(t *testing.T) {
 	f := newFixture(t)
 	key := cursorKey{testChannel, "1800000000.000900"}

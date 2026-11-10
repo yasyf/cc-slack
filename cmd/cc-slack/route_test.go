@@ -190,7 +190,7 @@ func (l *liveDaemon) deliverOn(w watch, ts, text string) {
 	l.t.Helper()
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: w.ThreadTS, User: "UOTHER", Username: "teammate", Text: text}}
-	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -280,6 +280,19 @@ func TestSessionStartIsIdempotentPerWindow(t *testing.T) {
 	l := startDaemon(t)
 	if again := l.do(opSessionStart, nil); again.SubjectID != l.subID {
 		t.Fatalf("second session-start subject %q, want %q", again.SubjectID, l.subID)
+	}
+}
+
+func TestAPreCompactMarksTheWindowCompactingUntilItStartsAgain(t *testing.T) {
+	l := startDaemon(t)
+	held := []watch{{SubjectID: l.subID, Owner: agent.TopLevel}}
+	l.do(opPreCompact, nil)
+	if len(l.app.poller.compacting(held)) == 0 {
+		t.Fatal("the window is not compacting after pre-compact")
+	}
+	l.do(opSessionStart, nil)
+	if len(l.app.poller.compacting(held)) != 0 {
+		t.Fatal("the window is still compacting after it started again")
 	}
 }
 
