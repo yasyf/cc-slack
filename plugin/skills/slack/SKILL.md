@@ -5,7 +5,7 @@ description: Post, reply, or react in Slack through cc-slack with the user's per
 
 # Work in Slack
 
-Prefer `cc-slack` for every post and reaction so Claude acts visibly. The bot posts as `<display name> (<agent>)` with the user's avatar. Pass `agent` on `slack_send`, `slack_reply`, and `slack_dm_status` (or `--agent` on the CLI): `claude` from Claude Code, `codex` from Codex, and `cursor` from Cursor. Tool names use prefix `mcp__plugin_cc-slack_cc-slack__`; the CLI binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack"`. The user-level Slack MCP (`mcp__slack__*`) posts as the user; use it only as the fallback in [references/setup.md](references/setup.md).
+Prefer `cc-slack` for every post and reaction so Claude acts visibly. The bot posts as `<display name> (<agent>)` with the user's avatar. Pass `agent` on `slack_send`, `slack_reply`, and `slack_dm_status` (or `--agent` on the CLI): `claude` from Claude Code, `codex` from Codex, and `cursor` from Cursor. Tool names use prefix `mcp__plugin_cc-slack_cc-slack__`; the CLI binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack"`. The user-level Slack MCP (`mcp__slack__*`) posts as the user; use it only as the fallback in [reference/setup.md](reference/setup.md).
 
 ## Get permission before writing
 
@@ -33,7 +33,7 @@ A DM message or button tap needing no response gets a `+1` reaction and no reply
 
 ## Receive messages
 
-A session hears only its own subscriptions: top-level `slack_watch` calls, its sends and replies, and its `slack_dm_status` thread. When moving from zero subscriptions to one, check the result's `channel` field: if `active`, arm no Monitor; if `pending` or `inactive`, arm the persistent Monitor and run `channel-ack` as references/receive.md says.
+A session hears only its own subscriptions: top-level `slack_watch` calls, its sends and replies, and its `slack_dm_status` thread. When moving from zero subscriptions to one, check the result's `channel` field: if `active`, arm no Monitor; if `pending` or `inactive`, arm the persistent Monitor and run `channel-ack` as reference/receive.md says.
 
 Each thread or channel message and card tap arrives twice to a top-level session: once as a channel tag (or Monitor line) and again as an injected directive at the next tool call. A DM message, `slack.watch_error`, and `slack.owner_stopped` each arrive once: as a channel tag when this window's channel is proven, otherwise as a directive. Deduplicate every delivery by `(channel_id, ts)` before acting.
 
@@ -57,12 +57,12 @@ Before every send, reply, `dm-status`, or fallback post, run `cc-slack check-pos
 
 | When | Read |
 | --- | --- |
-| Setting up a session, running `login`, or the bot cannot read or post somewhere | [references/setup.md](references/setup.md) |
-| A write is refused, before asking for approval or relying on a standing grant, or opting a project in | [references/permission.md](references/permission.md) |
-| A tool you have not used this session, files, PR cards, private channels, channel administration, or DM cleanup | [references/tools.md](references/tools.md) |
-| Arming a watch or Monitor, a `channel.probe`, a watch error or stopped owner, waiting on a reply, or triaging a burst | [references/receive.md](references/receive.md) |
-| Holding the DM, owed replies, or a drive's sessions | [references/dm.md](references/dm.md) |
-| Before authoring a status card, an ask card, or a cc-present board question | [references/cards.md](references/cards.md) |
-| The session brief starts with `[cc-slack shortcut brief]` | [references/shortcut.md](references/shortcut.md) |
-| Picking up, streaming, or closing out a message, or keeping a thread going | [references/conversation.md](references/conversation.md) |
-| Before a long post, a context post, or a timeline | [references/voice.md](references/voice.md) |
+| Setting up a session, running `login`, or the bot cannot read or post somewhere | [reference/setup.md](reference/setup.md) |
+| A write is refused, before asking for approval or relying on a standing grant, or opting a project in | [reference/permission.md](reference/permission.md) |
+| A tool you have not used this session, files, PR cards, private channels, channel administration, or DM cleanup | [reference/tools.md](reference/tools.md) |
+| Arming a watch or Monitor, a `channel.probe`, a watch error or stopped owner, waiting on a reply, or triaging a burst | [reference/receive.md](reference/receive.md) |
+| Holding the DM, owed replies, or a drive's sessions | [reference/dm.md](reference/dm.md) |
+| Before authoring a status card, an ask card, or a cc-present board question | [reference/cards.md](reference/cards.md) |
+| The session brief starts with `[cc-slack shortcut brief]` | [reference/shortcut.md](reference/shortcut.md) |
+| Picking up, streaming, or closing out a message, or keeping a thread going | [reference/conversation.md](reference/conversation.md) |
+| Before a long post, a context post, or a timeline | [reference/voice.md](reference/voice.md) |
