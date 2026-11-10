@@ -141,18 +141,20 @@ type ticketResult struct {
 }
 
 type postResult struct {
-	ChannelID  string              `json:"channel_id"`
-	TS         string              `json:"ts"`
-	ThreadTS   string              `json:"thread_ts"`
-	Permalink  string              `json:"permalink"`
-	WatchID    int64               `json:"watch_id,omitempty"`
-	TicketID   string              `json:"ticket_id,omitempty"`
-	Posted     bool                `json:"posted"`
-	Watched    bool                `json:"watched"`
-	WatchError string              `json:"watch_error,omitempty"`
-	Replayed   bool                `json:"replayed,omitempty"`
-	Warning    string              `json:"warning,omitempty"`
-	Channel    daemon.ChannelState `json:"channel,omitempty"`
+	ChannelID     string              `json:"channel_id"`
+	TS            string              `json:"ts"`
+	ThreadTS      string              `json:"thread_ts"`
+	Permalink     string              `json:"permalink"`
+	WatchID       int64               `json:"watch_id,omitempty"`
+	TicketID      string              `json:"ticket_id,omitempty"`
+	Posted        bool                `json:"posted"`
+	Watched       bool                `json:"watched"`
+	WatchError    string              `json:"watch_error,omitempty"`
+	Replayed      bool                `json:"replayed,omitempty"`
+	Warning       string              `json:"warning,omitempty"`
+	Channel       daemon.ChannelState `json:"channel,omitempty"`
+	CardTS        string              `json:"card_ts,omitempty"`
+	CardPermalink string              `json:"card_permalink,omitempty"`
 }
 
 func (r receipt) result(replayed bool) postResult {
@@ -632,13 +634,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		if replay != nil {
-			res := replay.result(true)
-			posted, err := parsePermalink(res.Permalink)
-			if err != nil {
-				return fail(err.Error())
-			}
-			res.ThreadTS = posted.threadTS
-			return ok(a.reportChannel(hc, sub.ID, res))
+			return a.replayedPost(hc, sub.ID, *replay)
 		}
 		blocks, err := checkMessage(b)
 		if err != nil {
@@ -651,6 +647,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		text, previews, ready := a.linkPreviews(hc.Ctx, id, channelID, texts[0], nil)
 		asked := slices.Clone(b.TapPRs)
 		b.TapPRs = append(b.TapPRs, ready...)
+		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
+		if err != nil {
+			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
+		}
 		if len(previews) > 0 {
 			extra = append(extra, slack.MsgOptionAttachments(previews...))
 		}
@@ -672,11 +672,12 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		undrawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b, asked)
+		drawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, taps, asked)
+		res.CardTS, res.CardPermalink = drawn.named(id)
 		a.embedCards(hc.Ctx, hc.DB, id, res.ChannelID, res.ThreadTS, b)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
-			return okUnlessUndrawn(res, undrawn)
+			return okUnlessUndrawn(res, drawn.err)
 		}
 		if r.WatchID, err = a.watchPostThread(hc.Ctx, hc.DB, sub.ID, res.ChannelID, res.ThreadTS, res.TS); err != nil {
 			r.WatchError = err.Error()
@@ -687,8 +688,18 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				res.WatchError = err.Error()
 			}
 		}
-		return okUnlessUndrawn(a.reportChannel(hc, sub.ID, res), undrawn)
+		return okUnlessUndrawn(a.reportChannel(hc, sub.ID, res), drawn.err)
 	}
+}
+
+func (a *app) replayedPost(hc daemon.HandlerCtx, subjectID string, replay receipt) daemon.Reply {
+	res := replay.result(true)
+	posted, err := parsePermalink(res.Permalink)
+	if err != nil {
+		return fail(err.Error())
+	}
+	res.ThreadTS = posted.threadTS
+	return ok(a.reportChannel(hc, subjectID, res))
 }
 
 func checkPost(b opBody, op daemon.Op, requireThread bool) ([]slack.MsgOption, error) {
@@ -2159,7 +2170,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
 	}
-	under, err := a.dmThreadOf(hc, sub, id, b)
+	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2178,17 +2189,30 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	a.embedCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, b)
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
-	return okUnlessUndrawn(a.dmStatusReply(hc, sub.ID, id, thread, ts, b), undrawn)
+	return a.tappedReply(hc, sub, id, thread, ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
 }
 
 func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag) daemon.Reply {
-	thread, ts, err := a.replaceCard(hc.Ctx, id, *b.Card, tag, b.TapPRs)
+	old, err := a.replacedCard(id, b.Card.Replaces)
 	if err != nil {
+		return fail(err.Error())
+	}
+	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, old.thread, b, asked)
+	if err != nil {
+		return fail(err.Error() + "; nothing was sent")
+	}
+	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, b.TapPRs); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
-	return okUnlessUndrawn(a.dmStatusReply(hc, sub.ID, id, thread, ts, b), undrawn)
+	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, old.thread, old.ts, taps, asked))
+}
+
+func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, b opBody, drawn tapDrawn) daemon.Reply {
+	res := a.dmStatusReply(hc, sub.ID, id, thread, ts, b)
+	if len(drawn.cards) > 0 {
+		res["card_ts"], res["card_permalink"] = drawn.named(id)
+	}
+	return okUnlessUndrawn(res, drawn.err)
 }
 
 func (a *app) rewordAnswered(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (daemon.Reply, bool) {
@@ -2227,14 +2251,22 @@ func (a *app) refuseClosedPost(ctx context.Context, id identity, card statusCard
 	return fail(fmt.Errorf("waiting card %q replaces %s, a card with no answer left to tap; %w", card.Waits, card.Replaces, errAskedAgain).Error()), true
 }
 
-func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, error) {
-	if b.About == "" {
-		return b.ThreadTS, nil
+func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string) (string, tapCards, error) {
+	under := b.ThreadTS
+	if b.About != "" {
+		if b.Card != nil || b.Text == "" {
+			return "", tapCards{}, errors.New("about puts a text reply in a waiting card's thread; send text, not a card")
+		}
+		var err error
+		if under, err = a.cardThread(hc.Ctx, sub.ID, id, b.About); err != nil {
+			return "", tapCards{}, err
+		}
 	}
-	if b.Card != nil || b.Text == "" {
-		return "", errors.New("about puts a text reply in a waiting card's thread; send text, not a card")
+	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, asked)
+	if err != nil {
+		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", err)
 	}
-	return a.cardThread(hc.Ctx, sub.ID, id, b.About)
+	return under, taps, nil
 }
 
 func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
@@ -2265,13 +2297,16 @@ func (a *app) postPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, 
 	return nil
 }
 
-func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag cardTag, taps []string) (string, string, error) {
-	ref, err := parsePermalink(card.Replaces)
+func (a *app) replacedCard(id identity, replaces string) (cardRef, error) {
+	ref, err := parsePermalink(replaces)
 	if err != nil {
-		return "", "", err
+		return cardRef{}, err
 	}
 	stored, _ := a.cards.cardAt(id.DMChannelID, ref.ts)
-	thread := cmp.Or(stored.thread, ref.threadTS, ref.ts)
+	return cardRef{id.DMChannelID, cmp.Or(stored.thread, ref.threadTS, ref.ts), ref.ts}, nil
+}
+
+func (a *app) replaceCard(ctx context.Context, id identity, old cardRef, card statusCard, tag cardTag, taps []string) error {
 	card.Replaces = ""
 	api := a.newAPI(id.Token)
 	now := a.now()
@@ -2281,22 +2316,23 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 			tapped[found.key()] = true
 		}
 	}
-	a.cards.keepCarried(id.DMChannelID, thread, tapped, now)
-	if a.cards.markReply(id.DMChannelID, thread, ref.ts, func(m *liveMessage) {
+	a.cards.keepCarried(id.DMChannelID, old.thread, tapped, now)
+	var err error
+	if a.cards.markReply(id.DMChannelID, old.thread, old.ts, func(m *liveMessage) {
 		m.Card, m.Tapped, m.Hint, m.Final, m.Unfolded, m.Edited = card, "", "", true, false, false
 	}) {
-		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
+		_, err = a.cards.redraw(ctx, api, id.DMChannelID, old.thread, old.ts, now)
 	} else {
 		v := cardView{tag: tag, at: now, now: now, final: true, pictures: id.Config.Pictures}
-		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(v), card.entities(card.prEntities(v)...)...)
+		err = updateMessage(ctx, api, id.DMChannelID, old.ts, card.text(), card.replyBlocks(v), card.entities(card.prEntities(v)...)...)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("replace card %s in place: %w", ref.ts, err)
+		return fmt.Errorf("replace card %s in place: %w", old.ts, err)
 	}
-	if err := api.RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: ref.ts}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
-		a.poller.log.Printf("card %s replaced, but its withdrawn mark stays: %v", ref.ts, err)
+	if err := api.RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: old.ts}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
+		a.poller.log.Printf("card %s replaced, but its withdrawn mark stays: %v", old.ts, err)
 	}
-	return thread, ref.ts, nil
+	return nil
 }
 
 func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) error {

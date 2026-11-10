@@ -24,6 +24,8 @@ const (
 var (
 	messageLink = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
 	alertLink   = regexp.MustCompile(`https://[\w.-]*(?:sentry\.io/\S*?issues|datadoghq\.com/monitors)/\d+`)
+
+	errDrewAsText = errors.New("that message drew as text, with no card to copy")
 )
 
 func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
@@ -50,6 +52,10 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 		}
 	}
 	copied, err := a.cardCopy(hc.Ctx, id, ref, link)
+	if cards := a.cards.tapLineCards(ref.channelID, cmp.Or(ref.threadTS, ref.ts), ref.ts); errors.Is(err, errDrewAsText) && len(cards) > 0 {
+		_, links := tapDrawn{cards: cards}.named(id)
+		return fail(fmt.Sprintf("%v: it is the line a tap_prs post wrote, and its card is %s; copy that", err, links))
+	}
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -112,7 +118,7 @@ func copyBlocks(ctx context.Context, api slackAPI, id identity, ref permalinkRef
 	}
 	blocks, answers := copiedCard(card.Blocks.BlockSet, ref)
 	if blocks == nil {
-		return nil, 0, errors.New("that message drew as text, with no card to copy")
+		return nil, 0, errDrewAsText
 	}
 	return blocks, answers, nil
 }
