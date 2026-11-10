@@ -265,7 +265,6 @@ type liveCards struct {
 	pictures atomic.Pointer[pictureConfig]
 
 	mu      sync.Mutex
-	shelfMu sync.Mutex
 	threads map[string]*liveThread
 	refs    map[string]refState
 	hosts   map[string]*refHost
@@ -466,29 +465,6 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 }
 
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
-
-func (l *liveCards) shelfPath() string {
-	return filepath.Join(filepath.Dir(l.path), "picture-shelf.json")
-}
-
-func (l *liveCards) shelves() map[string]string {
-	shelves := map[string]string{}
-	data, err := os.ReadFile(l.shelfPath())
-	if err == nil {
-		if err := json.Unmarshal(data, &shelves); err != nil {
-			l.log.Printf("decode %s: %v", l.shelfPath(), err)
-		}
-	}
-	return shelves
-}
-
-func (l *liveCards) shelf(channel string) string { return l.shelves()[channel] }
-
-func (l *liveCards) keepShelf(channel, ts string) {
-	shelves := l.shelves()
-	shelves[channel] = ts
-	l.saveFile(l.shelfPath(), shelves)
-}
 
 func (l *liveCards) load() error {
 	l.mu.Lock()
@@ -833,23 +809,6 @@ func (l *liveCards) release(channel, thread, askID string) {
 		delete(t.Answers, askID)
 		l.save()
 	}
-}
-
-func (l *liveCards) showPictures(channel, thread, ts string, shown statusCard) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(channel, thread)]
-	if !ok {
-		return false
-	}
-	found := false
-	for _, m := range append(t.messages(), t.Root) {
-		if m != nil && m.TS == ts {
-			m.Card.Images = shown.Images
-			found = true
-		}
-	}
-	return found
 }
 
 func (l *liveCards) shownImages(channel string, card statusCard) []cardImage {

@@ -467,8 +467,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			placed, shown = append(placed, asking), append(shown, shownCard(p))
 			continue
 		}
-		pictures, err := a.uploadPRCardPictures(ctx, id, &p.Card)
-		if err != nil {
+		if err := uploadPRCardPictures(ctx, id, &p.Card); err != nil {
 			a.poller.log.Printf("PR card for %s#%d refused: its pictures did not upload: %v", p.Repo, p.Number, err)
 			a.tellRefused(ctx, id, p, err)
 			continue
@@ -486,7 +485,6 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
-		a.showPRCardPictures(ctx, db, id, t, m, pictures, now, cards.canvas())
 		notePostWarning(ctx, a.linesCarried(ctx, id, cardRef{channelID, t.Thread, m.TS}, nil, &p.Card))
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
@@ -779,16 +777,13 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	return a.redrawCopies(ctx, id, card)
 }
 
-func (a *app) uploadPRCardPictures(ctx context.Context, id identity, card *statusCard) ([]slack.FileSummary, error) {
+func uploadPRCardPictures(ctx context.Context, id identity, card *statusCard) error {
 	if err := hashPRCardPictures(card); err != nil || card.ImagesHash == "" {
-		return nil, err
+		return err
 	}
-	if bucket := id.Config.Pictures; bucket.enabled() {
-		var err error
-		card.Images, err = bucket.upload(ctx, id.TeamID, card.Pictures)
-		return nil, err
-	}
-	return uploadFiles(ctx, a.newAPI(id.Token), card.Pictures)
+	var err error
+	card.Images, err = uploadPictures(ctx, id, card.Pictures)
+	return err
 }
 
 func hashPRCardPictures(card *statusCard) error {
@@ -811,34 +806,9 @@ func (a *app) pictureRedrawnPRCard(ctx context.Context, id identity, card cardRe
 		drawn.Images = shown
 		return nil
 	}
-	if bucket := id.Config.Pictures; bucket.enabled() {
-		var err error
-		drawn.Images, err = bucket.upload(ctx, id.TeamID, drawn.Pictures)
-		return err
-	}
-	files, err := uploadFiles(ctx, a.newAPI(id.Token), drawn.Pictures)
-	if err != nil {
-		return err
-	}
-	*drawn, _ = a.shareCardPictures(ctx, a.poller.plane.DB(), id, *drawn, files)
-	return nil
-}
-
-func (a *app) showPRCardPictures(ctx context.Context, db *sql.DB, id identity, t *liveThread, m *liveMessage, pictures []slack.FileSummary, now time.Time, d canvas) {
-	if len(pictures) == 0 {
-		return
-	}
-	shown, shared := a.shareCardPictures(ctx, db, id, m.Card, pictures)
-	if !shared {
-		return
-	}
-	m.Card = shown
-	text, blocks := t.replyMessage(m, now, d)
-	if err := whileProcessing(ctx, func() error {
-		return updateMessage(ctx, a.newAPI(id.Token), t.Channel, m.TS, text, blocks, m.Card.entities(m.Card.prEntities(t.view(m, now, d))...)...)
-	}); err != nil {
-		a.poller.log.Printf("PR card %s posted without its pictures: %v", m.TS, err)
-	}
+	var err error
+	drawn.Images, err = uploadPictures(ctx, id, drawn.Pictures)
+	return err
 }
 
 func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {

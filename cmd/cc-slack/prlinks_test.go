@@ -1714,13 +1714,10 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 func TestAPRCardRedrawShowsItsPictureUploadedOnceAndReusesItAfter(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	bucket := withBucket(t, l)
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
-	uploads := func() int {
-		l.slack.mu.Lock()
-		defer l.slack.mu.Unlock()
-		return len(l.slack.uploads)
-	}
+	uploads := bucket.put
 	if got := uploads(); got != 0 {
 		t.Fatalf("a card command with no pictures made %d uploads, want none", got)
 	}
@@ -1741,20 +1738,17 @@ func TestAPRCardRedrawShowsItsPictureUploadedOnceAndReusesItAfter(t *testing.T) 
 			shown = edits[len(edits)-1]
 			return true
 		})
-		return imageIDs(t, shown.blocks)
+		return imageURLs(t, shown.blocks)
 	}
 
 	first := redraw("the first diagram")
-	l.slack.mu.Lock()
-	hosted := len(first) == 1 && string(l.slack.uploads[first[0]]) == pngBytes
-	l.slack.mu.Unlock()
-	if !hosted || uploads() != 1 {
-		t.Fatalf("image blocks %v after %d uploads, want the picture's one upload drawn on the card", first, uploads())
+	if len(first) != 1 || bucket.body(t, first[0]) != pngBytes || uploads() != 1 {
+		t.Fatalf("image urls %v after %d uploads, want the picture's one upload drawn on the card", first, uploads())
 	}
 
 	again := redraw("the same diagram")
-	if !slices.Equal(again, first) || uploads() != 1 {
-		t.Fatalf("image blocks %v after %d uploads, want %v drawn again with no new upload", again, uploads(), first)
+	if len(again) != 1 || bucket.body(t, again[0]) != pngBytes || uploads() != 1 {
+		t.Fatalf("image urls %v after %d uploads, want the same picture drawn again with no new upload", again, uploads())
 	}
 }
 
