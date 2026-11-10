@@ -337,10 +337,9 @@ var (
 		},
 		{
 			name:        "slack_unwatch",
-			description: "Stop a watch; returns remaining, this session's top-level watches.",
+			description: "Stop a watch by watch_id, or a thread by channel_id and thread_ts or url; returns remaining, this session's top-level watches.",
 			op:          opUnfollow, failure: actionWatch,
-			properties: map[string]any{"watch_id": map[string]any{"type": "integer"}},
-			required:   []string{"watch_id"},
+			properties: map[string]any{"watch_id": map[string]any{"type": "integer"}, "channel_id": channelProp, "thread_ts": threadProp, "url": urlProp},
 		},
 		{
 			name:        "slack_channel_create",

@@ -896,17 +896,21 @@ func followCmd(d cmd.Deps) *cobra.Command {
 }
 
 func unfollowCmd(d cmd.Deps) *cobra.Command {
-	var f sessionFlags
+	var f messageFlags
 	c := &cobra.Command{
-		Use:   "unfollow <watch_id>",
-		Short: "Stop a Slack watch",
-		Args:  cobra.ExactArgs(1),
+		Use:   "unfollow [watch_id]",
+		Short: "Stop a Slack watch, by its id or by --channel and --thread or --url",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			watchID, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("watch id %q: %w", args[0], err)
+			body := f.body()
+			if len(args) == 1 {
+				watchID, err := strconv.ParseInt(args[0], 10, 64)
+				if err != nil {
+					return fmt.Errorf("watch id %q: %w", args[0], err)
+				}
+				body["watch_id"] = watchID
 			}
-			return runOp(c, d, f, opUnfollow, map[string]any{"watch_id": watchID})
+			return runOp(c, d, f.sessionFlags, opUnfollow, body)
 		},
 	}
 	f.bind(c)

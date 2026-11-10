@@ -914,36 +914,143 @@ func TestADMRootMessageListsEachSessionOnceByItsNewestMessage(t *testing.T) {
 	}
 }
 
-func TestASessionKeepsItsNewestDMMessageWatches(t *testing.T) {
+func TestEveryDMPostOfASessionSharesOneWatch(t *testing.T) {
 	f := newFixture(t)
 	sub := subjectFor(t, f)
 	dm := f.id.DMChannelID
-	for i := range sessionMessageWatches + 1 {
+	const posts = 501
+	for i := range posts {
 		if err := f.app.openSessionThread(f.ctx, f.db(), sub, dm, fmt.Sprintf("1800000000.%06d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	threads, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+	var rows int
+	if err := f.db().QueryRowContext(f.ctx, `SELECT COUNT(*) FROM watches WHERE subject_id = ?`, sub.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("watch rows = %d after %d posts, want the one DM subscription", rows, posts)
+	}
+	threads, err := f.poller.threads.sessionThreads(f.ctx, dm, sub.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(threads) != sessionMessageWatches || threads[0] != fmt.Sprintf("1800000000.%06d", sessionMessageWatches) || slices.Contains(threads, "1800000000.000000") {
-		t.Fatalf("%d active watches, newest %s: want the newest %d and the oldest released", len(threads), threads[0], sessionMessageWatches)
+	if len(threads) != posts || threads[0] != fmt.Sprintf("1800000000.%06d", posts-1) {
+		t.Fatalf("%d session threads, newest %s: want all %d, newest first", len(threads), threads[0], posts)
 	}
-	if err := f.app.openSessionThread(f.ctx, f.db(), sub, dm, threads[0]); err != nil {
-		t.Fatal(err)
+
+	first := "1800000000.000000"
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000090.000000", ThreadTimestamp: first, User: testUser, Text: "under the first post"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000090.000000", ThreadTS: first})
+	f.tick()
+	if len(f.plane.events) != 1 || !strings.Contains(string(f.plane.events[0].Payload), "under the first post") {
+		t.Fatalf("events = %+v, want the reply under the session's first post", f.plane.events)
 	}
-	again, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+}
+
+func legacyDMWatch(t *testing.T, f *fixture, sub subject.Subject, status string) string {
+	t.Helper()
+	dm := f.id.DMChannelID
+	posted, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "an update", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(again, threads) {
-		t.Fatal("opening a watched message again changed the session's watches")
+	tx, err := f.db().BeginTx(f.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := claimCursor(f.ctx, tx, dm, posted.TS, posted.TS, f.now, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(f.ctx, `INSERT INTO watches(subject_id, owner_agent_id, kind, channel_id, thread_ts, status, created_at)
+		VALUES (?, ?, 'dm', ?, ?, ?, ?)`, sub.ID, agent.TopLevel, dm, posted.TS, status, f.now.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return posted.TS
+}
+
+func TestPerMessageDMWatchesStillDeliverAfterTheUpgrade(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	sub := subjectFor(t, f)
+	released := legacyDMWatch(t, f, sub, "stopped")
+	active := legacyDMWatch(t, f, sub, "active")
+	ended := legacyDMWatch(t, f, cardSessionElsewhere(t, f), "orphaned")
+	if err := f.poller.threads.convert(f.ctx, f.db(), f.now); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.poller.threads.convert(f.ctx, f.db(), f.now); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.db().QueryContext(f.ctx, `SELECT subject_id, thread_ts, status FROM watches WHERE kind = 'dm' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var subjectID, thread, status string
+		if err := rows.Scan(&subjectID, &thread, &status); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, subjectID+"/"+thread+"/"+status)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{sub.ID + "//active", "abcdef0123456789abcdef0123456789//orphaned"}; !slices.Equal(got, want) {
+		t.Fatalf("DM watches after the upgrade = %v, want %v", got, want)
+	}
+	f.tick()
+
+	for i, thread := range []string{released, active, ended} {
+		ts := fmt.Sprintf("18000000%02d.500000", 90+i)
+		f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: testUser, Text: "reply " + thread}})
+		f.poller.nudged(messageNudge{Channel: dm, TS: ts, ThreadTS: thread})
+	}
+	f.tick()
+	delivered := make([]string, 0, len(f.plane.events))
+	for _, e := range f.plane.events {
+		var m messagePayload
+		if err := json.Unmarshal(e.Payload, &m); err != nil {
+			t.Fatal(err)
+		}
+		if e.SubjectID != sub.ID {
+			t.Fatalf("event %+v reached %s, want only the session that posted", m, e.SubjectID)
+		}
+		delivered = append(delivered, m.ThreadTS)
+	}
+	if !slices.Equal(delivered, []string{released, active}) {
+		t.Fatalf("delivered under %v, want the replies under both of the session's messages and none under the ended session's", delivered)
+	}
+}
+
+func TestAReplyUnderAnEndedSessionsPostWaitsUnclaimedWithNoHolder(t *testing.T) {
+	f := newFixture(t)
+	gone := cardSessionElsewhere(t, f)
+	thread := dmMessageOf(t, f, gone)
+	dmMessageOf(t, f, subjectFor(t, f))
+	f.tick()
+	f.alive[gone.ClaudePID] = false
+
+	ownerReplies(f, thread, "1800000001.500000", "A")
+
+	if len(f.plane.events) != 0 {
+		t.Fatalf("events = %+v, want no live session to get a reply under an ended session's post", f.plane.events)
+	}
+	owed, err := f.app.owed.list(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owed) != 1 || owed[0].ThreadTS != thread {
+		t.Fatalf("owed = %+v, want the reply kept for the DM's holder", owed)
 	}
 }
 
 func TestReconnectCallsStayFlatAtAnyMessageCount(t *testing.T) {
-	for _, n := range []int{1, sessionMessageWatches} {
+	for _, n := range []int{1, 500} {
 		f := newFixture(t)
 		sub := subjectFor(t, f)
 		dm := f.id.DMChannelID
@@ -1061,11 +1168,15 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 	dm := f.id.DMChannelID
 	sub := subjectFor(t, f)
 	thread := dmMessageOf(t, f, sub)
-	stopped := dmMessageOf(t, f, sub)
-	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'stopped' WHERE subject_id = ? AND thread_ts = ?`, sub.ID, stopped); err != nil {
+	stopped, _, err := insertWatch(f.ctx, f.db(), sub.ID, agent.TopLevel, kindThread, testChannel, testThread, testThread, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'orphaned' WHERE subject_id = ? AND thread_ts = ?`, sub.ID, thread); err != nil {
+	if _, _, err := insertWatch(f.ctx, f.db(), sub.ID, agent.TopLevel, kindChannel, dm, "", thread, f.now); err != nil {
+		t.Fatal(err)
+	}
+	orphanWatches(t, f, sub.ID)
+	if _, err := f.db().ExecContext(f.ctx, `UPDATE watches SET status = 'stopped' WHERE id = ?`, stopped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1073,15 +1184,26 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back != 1 {
-		t.Fatalf("back = %d, want the one orphaned watch", back)
+	if back != 2 {
+		t.Fatalf("back = %d, want the DM subscription and the DM channel watch", back)
 	}
-	threads, err := sessionThreads(f.ctx, f.db(), sub.ID, dm)
+	var kinds []string
+	rows, err := f.db().QueryContext(f.ctx, `SELECT kind FROM watches WHERE subject_id = ? AND status = 'active' ORDER BY kind`, sub.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(threads, thread) || slices.Contains(threads, stopped) {
-		t.Fatalf("active threads = %v, want %s back and %s still stopped", threads, thread, stopped)
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, kind)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(kinds, []string{kindChannel, kindDM}) || f.watchStatus(stopped) != "stopped" {
+		t.Fatalf("active kinds = %v, thread watch %s: want the channel watch and subscription back and the stopped watch left", kinds, f.watchStatus(stopped))
 	}
 	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, dm); err != nil || again != 0 {
 		t.Fatalf("second pass = %d err=%v, want nothing", again, err)

@@ -176,18 +176,24 @@ func messageDedup(w watch, ts string) string {
 }
 
 func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates driveMates) (*threadOwner, error) {
-	var (
-		subjectID string
-		owner     threadOwner
-		pid       int
-	)
-	err := p.plane.DB().QueryRowContext(ctx, `SELECT w.subject_id, COALESCE(s.session_id, ''), s.claude_pid FROM watches w
-		JOIN subjects s ON s.id = w.subject_id WHERE w.kind = 'dm' AND w.channel_id = ? AND w.thread_ts = ? ORDER BY w.id DESC LIMIT 1`,
-		w.ChannelID, thread).Scan(&subjectID, &owner.Session, &pid)
-	if errors.Is(err, sql.ErrNoRows) || subjectID == w.SubjectID || mates.same(subjectID, w.SubjectID) {
+	bound, err := p.threads.bound(ctx, w.ChannelID, []string{thread})
+	if err != nil {
+		return nil, err
+	}
+	posters := bound[thread]
+	if len(posters) == 0 {
 		return nil, nil
 	}
-	if err != nil {
+	subjectID := posters[len(posters)-1]
+	if subjectID == w.SubjectID || mates.same(subjectID, w.SubjectID) {
+		return nil, nil
+	}
+	var (
+		owner threadOwner
+		pid   int
+	)
+	if err := p.plane.DB().QueryRowContext(ctx, `SELECT COALESCE(session_id, ''), claude_pid FROM subjects WHERE id = ?`, subjectID).
+		Scan(&owner.Session, &pid); err != nil {
 		return nil, fmt.Errorf("find the session that owns %s/%s: %w", w.ChannelID, thread, err)
 	}
 	owner.Card, owner.Title = p.cards.threadCard(w.ChannelID, thread)
@@ -414,7 +420,13 @@ func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id ide
 	}
 	links := make([]string, 0, len(sessions))
 	for _, w := range sessions {
-		links = append(links, "• "+id.permalink(w.ChannelID, w.ThreadTS, ""))
+		threads, err := p.threads.sessionThreads(ctx, w.ChannelID, w.SubjectID)
+		if err != nil {
+			return err
+		}
+		if len(threads) > 0 {
+			links = append(links, "• "+id.permalink(w.ChannelID, threads[0], ""))
+		}
 	}
 	text := "Several Claude sessions are live on this machine. Reply in the thread of the one you mean:\n" + strings.Join(links, "\n")
 	if _, _, err := postMessage(ctx, api, db, p.log, id, id.DMChannelID, m.Timestamp, text, nil, nil); err != nil {

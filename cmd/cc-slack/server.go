@@ -47,7 +47,7 @@ type app struct {
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
-func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, replay *replayCursor) *app {
+func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, threads *dmThreads, replay *replayCursor) *app {
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
 		newAPI:        newAPI,
@@ -82,6 +82,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		now:       time.Now,
 		cache:     cache,
 		owed:      owed,
+		threads:   threads,
 		replay:    replay,
 		shortcuts: shortcuts,
 		cards:     cards,
@@ -158,6 +159,9 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			}
 			a.poller.plane = s
 			a.cards.plane = s
+			if err := a.poller.threads.convert(ctx, s.DB(), a.now()); err != nil {
+				return err
+			}
 			if err := a.cards.load(); err != nil {
 				return err
 			}
@@ -196,11 +200,16 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = owed.Close() }()
+	threads, err := openDMThreads(ctx, dmThreadsPath())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = threads.Close() }()
 	replay, err := loadReplayCursor(replayPath())
 	if err != nil {
 		return err
 	}
-	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, replay).buildServer()
+	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, threads, replay).buildServer()
 	if err != nil {
 		return err
 	}
