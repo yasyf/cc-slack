@@ -97,8 +97,9 @@ The daemon uploads each picture under `cc-slack/pictures/<team>/<sha256>` with
 the key `login` reads from `[ssm] picture_key_id` and `picture_secret`, or from
 `CC_SLACK_PICTURE_KEY_ID` and `CC_SLACK_PICTURE_SECRET`. A card draws each
 picture from a link signed for 7 days, and every redraw signs a fresh one, so a
-card shows its pictures with no other message. Without `[pictures]`, a card's
-pictures are shared into one picture-keeping thread in the DM.
+card shows its pictures with no other message. A WebP picture is stored as a
+PNG, since Slack draws only PNG, JPEG and GIF from a link. Without
+`[pictures]`, a card that carries a picture is refused before it posts.
 
 `[github]` and `[buildkite]` each take exactly one of `token_env` and
 `token_command`, and let status cards show the live state of the pull requests
