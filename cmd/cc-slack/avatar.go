@@ -17,7 +17,6 @@ import (
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	xdraw "golang.org/x/image/draw"
 )
@@ -66,16 +65,7 @@ func (s *avatarStore) publish(ctx context.Context, id identity) (string, error) 
 	}
 	sum := sha256.Sum256(out.Bytes())
 	key := fmt.Sprintf("%s%s/%s/%s%s.png", avatarPrefix, id.TeamID, id.UserID, hex.EncodeToString(sum[:8]), avatarStyle)
-	client := s3.New(s3.Options{
-		Region:                     "auto",
-		BaseEndpoint:               aws.String(bucket.Endpoint),
-		Credentials:                credentials.NewStaticCredentialsProvider(id.AvatarKeyID, id.AvatarSecret, ""),
-		HTTPClient:                 s.http,
-		UsePathStyle:               true,
-		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
-		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
-	})
-	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+	if _, err := r2Client(bucket.Endpoint, id.AvatarKeyID, id.AvatarSecret, s.http).PutObject(ctx, &s3.PutObjectInput{
 		Bucket:       aws.String(bucket.Bucket),
 		Key:          aws.String(key),
 		Body:         bytes.NewReader(out.Bytes()),

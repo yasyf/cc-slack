@@ -20,11 +20,14 @@ const (
 	socketURLEnv     = "CC_SLACK_SOCKET_URL"
 	avatarKeyIDEnv   = "CC_SLACK_AVATAR_KEY_ID"
 	avatarSigningEnv = "CC_SLACK_AVATAR_SECRET"
+	pictureKeyIDEnv  = "CC_SLACK_PICTURE_KEY_ID"
+	pictureSecretEnv = "CC_SLACK_PICTURE_SECRET"
 )
 
 type config struct {
 	SSM         *ssmSource     `toml:"ssm" json:"-"`
 	Avatars     avatarConfig   `toml:"avatars" json:"avatars"`
+	Pictures    pictureConfig  `toml:"pictures" json:"pictures"`
 	DocCards    docCardsConfig `toml:"doc_cards" json:"doc_cards"`
 	Links       linksConfig    `toml:"links" json:"links"`
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
@@ -62,12 +65,14 @@ type tokenSource struct {
 }
 
 type ssmSource struct {
-	Profile      string `toml:"profile"`
-	Region       string `toml:"region"`
-	BotToken     string `toml:"bot_token"`
-	SocketURL    string `toml:"socket_url"`
-	AvatarKeyID  string `toml:"avatar_key_id"`
-	AvatarSecret string `toml:"avatar_secret"`
+	Profile       string `toml:"profile"`
+	Region        string `toml:"region"`
+	BotToken      string `toml:"bot_token"`
+	SocketURL     string `toml:"socket_url"`
+	AvatarKeyID   string `toml:"avatar_key_id"`
+	AvatarSecret  string `toml:"avatar_secret"`
+	PictureKeyID  string `toml:"picture_key_id"`
+	PictureSecret string `toml:"picture_secret"`
 }
 
 type avatarConfig struct {
@@ -85,7 +90,16 @@ type linksConfig struct {
 	Tailnet string `toml:"tailnet" json:"tailnet,omitempty"`
 }
 
+type pictureConfig struct {
+	Endpoint string `toml:"endpoint" json:"endpoint,omitempty"`
+	Bucket   string `toml:"bucket" json:"bucket,omitempty"`
+	KeyID    string `toml:"-" json:"key_id,omitempty"`
+	Secret   string `toml:"-" json:"secret,omitempty"`
+}
+
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
+
+func (p pictureConfig) enabled() bool { return p.Bucket != "" }
 
 func (l linksConfig) validate() error {
 	if t := l.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {
@@ -250,19 +264,28 @@ func (c config) validate() error {
 	if a.PublicBase != "" && !strings.HasSuffix(a.PublicBase, "/") {
 		return fmt.Errorf("[avatars] public_base %q must end in /", a.PublicBase)
 	}
+	if (c.Pictures.Endpoint == "") != (c.Pictures.Bucket == "") {
+		return errors.New("[pictures] needs endpoint and bucket together")
+	}
 	if (c.DocCards.Link == "") != (c.DocCards.URL == "") {
 		return errors.New("[doc_cards] needs link and url together")
 	}
 	if err := errors.Join(c.Links.validate(), c.Permissions.validate(), c.PRLinks.validate(), c.GitHub.validate("github"), c.Buildkite.validate("buildkite")); err != nil {
 		return err
 	}
-	if s := c.SSM; s != nil {
-		if s.Region == "" || s.BotToken == "" || s.SocketURL == "" {
-			return errors.New("[ssm] needs region, bot_token, and socket_url")
-		}
-		if a.enabled() && (s.AvatarKeyID == "" || s.AvatarSecret == "") {
-			return errors.New("[ssm] needs avatar_key_id and avatar_secret when [avatars] is set")
-		}
+	return c.SSM.validate(c)
+}
+
+func (s *ssmSource) validate(c config) error {
+	switch {
+	case s == nil:
+		return nil
+	case s.Region == "" || s.BotToken == "" || s.SocketURL == "":
+		return errors.New("[ssm] needs region, bot_token, and socket_url")
+	case c.Avatars.enabled() && (s.AvatarKeyID == "" || s.AvatarSecret == ""):
+		return errors.New("[ssm] needs avatar_key_id and avatar_secret when [avatars] is set")
+	case c.Pictures.enabled() && (s.PictureKeyID == "" || s.PictureSecret == ""):
+		return errors.New("[ssm] needs picture_key_id and picture_secret when [pictures] is set")
 	}
 	return nil
 }

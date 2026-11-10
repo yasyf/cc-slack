@@ -171,6 +171,7 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 			if postOnly {
 				params.socketURL = ""
 			}
+			cfg.Pictures.KeyID, cfg.Pictures.Secret = params.pictureKeyID, params.pictureSecret
 			return runOp(c, d, f, opLogin, map[string]any{
 				"token": params.token, "email": email, "socket_url": params.socketURL,
 				"avatar_key_id": params.avatarKeyID, "avatar_secret": params.avatarSecret,
@@ -279,10 +280,12 @@ func captHookPath() (string, error) {
 }
 
 type parameters struct {
-	token        string
-	socketURL    string
-	avatarKeyID  string
-	avatarSecret string
+	token         string
+	socketURL     string
+	avatarKeyID   string
+	avatarSecret  string
+	pictureKeyID  string
+	pictureSecret string
 }
 
 func readParameters(ctx context.Context, cfg config) (parameters, error) {
@@ -302,29 +305,36 @@ func readParameters(ctx context.Context, cfg config) (parameters, error) {
 		return parameters{}, fmt.Errorf("load AWS config: %w", err)
 	}
 	client := ssm.NewFromConfig(awsCfg)
-	names := []string{src.BotToken, src.SocketURL}
+	var p parameters
+	reads := map[string]*string{src.BotToken: &p.token, src.SocketURL: &p.socketURL}
 	if cfg.Avatars.enabled() {
-		names = append(names, src.AvatarKeyID, src.AvatarSecret)
+		reads[src.AvatarKeyID], reads[src.AvatarSecret] = &p.avatarKeyID, &p.avatarSecret
 	}
-	values := make([]string, 4)
-	for i, name := range names {
-		if values[i], err = readParameter(ctx, client, src.Profile, name); err != nil {
+	if cfg.Pictures.enabled() {
+		reads[src.PictureKeyID], reads[src.PictureSecret] = &p.pictureKeyID, &p.pictureSecret
+	}
+	for name, value := range reads {
+		if *value, err = readParameter(ctx, client, src.Profile, name); err != nil {
 			return parameters{}, err
 		}
 	}
-	return parameters{token: values[0], socketURL: values[1], avatarKeyID: values[2], avatarSecret: values[3]}, nil
+	return p, nil
 }
 
 func envParameters(cfg config) (parameters, error) {
 	p := parameters{
 		token: os.Getenv(botEnv), socketURL: os.Getenv(socketURLEnv),
 		avatarKeyID: os.Getenv(avatarKeyIDEnv), avatarSecret: os.Getenv(avatarSigningEnv),
+		pictureKeyID: os.Getenv(pictureKeyIDEnv), pictureSecret: os.Getenv(pictureSecretEnv),
 	}
 	if p.token == "" || p.socketURL == "" {
 		return parameters{}, fmt.Errorf("login needs %s and %s, or an [ssm] section in the cc-slack config", botEnv, socketURLEnv)
 	}
 	if cfg.Avatars.enabled() && (p.avatarKeyID == "" || p.avatarSecret == "") {
 		return parameters{}, fmt.Errorf("[avatars] needs %s and %s, or an [ssm] section in the cc-slack config", avatarKeyIDEnv, avatarSigningEnv)
+	}
+	if cfg.Pictures.enabled() && (p.pictureKeyID == "" || p.pictureSecret == "") {
+		return parameters{}, fmt.Errorf("[pictures] needs %s and %s, or an [ssm] section in the cc-slack config", pictureKeyIDEnv, pictureSecretEnv)
 	}
 	return p, nil
 }
