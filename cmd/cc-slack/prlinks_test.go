@@ -660,7 +660,7 @@ func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
 	if got := cmd.requests(t); len(got) != 2 || got[1] != want {
 		t.Fatalf("card command asked %v, want the Merge answer last", got)
 	}
-	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered on <http://studio:41330/|the dashboard>") {
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], `✓ *Merge* · answered on \u003chttp://studio:41330/|the dashboard\u003e`) {
 		t.Fatalf("card edits = %v, want the dashboard's answer in place of the buttons", edits)
 	}
 	if err := json.Unmarshal(l.do(opCardAnswer, answer).Body, &res); err != nil || res.Answered || res.Label != "Merge" {
