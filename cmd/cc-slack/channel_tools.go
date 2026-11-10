@@ -101,7 +101,7 @@ var (
 	blocksProp    = map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "description": "Block Kit blocks; text stays the fallback"}
 	cardProp      = map[string]any{
 		"type":        "object",
-		"description": "status card; fields in the slack skill's references/cards.md",
+		"description": "status card; fields in the slack skill's reference/cards.md",
 		"properties": map[string]any{
 			"status":      map[string]any{"type": "string", "enum": []string{"info", "progress", "needs_you", "incident", "done"}},
 			"title":       map[string]any{"type": "string"},
