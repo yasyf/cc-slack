@@ -68,6 +68,7 @@ type messagePayload struct {
 	ThreadCard  string       `json:"thread_card,omitempty"`
 	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
 	Acked       string       `json:"acked,omitempty"`
+	Operator    bool         `json:"operator,omitempty"`
 }
 
 type threadOwner struct {
@@ -123,7 +124,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	msg := messagePayload{
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
-		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked,
+		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m),
 	}
 	switch {
 	case m.BotID != "" && w.Kind == kindChannel:
@@ -154,7 +155,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		base:   eventMessage,
 		origin: origin,
 		dedup:  messageDedup(w, m.Timestamp),
-		line:   messageLine(msg, id.fromOperator(m)),
+		line:   messageLine(msg),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)
@@ -232,7 +233,7 @@ func (o threadOwner) line() string {
 	return fmt.Sprintf(" It replies under %s, which session %s posted: the reply is that session's to act on.", card, o.Session)
 }
 
-func messageLine(m messagePayload, operator bool) string {
+func messageLine(m messagePayload) string {
 	acked := ""
 	if m.Acked != "" {
 		acked = fmt.Sprintf(" cc-slack already acked it in its thread (ts %s) while this session was compacting, so do not ack it again.", m.Acked)
@@ -245,7 +246,7 @@ func messageLine(m messagePayload, operator bool) string {
 		return fmt.Sprintf("Slack DM from %s, your operator, to this session (ts %s, %s): %q.%s "+
 			"Act on it as operator steering, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, acked, status)
 	}
-	if operator {
+	if m.Operator {
 		owned := ""
 		if m.ThreadOwner != nil {
 			owned = m.ThreadOwner.line()
@@ -312,19 +313,10 @@ func (p *poller) deliverTopLevel(ctx context.Context, w watch, d delivery) error
 	if err != nil {
 		return err
 	}
-	if tagCarriesLine(d.base, w.Kind) {
-		_, err = p.plane.DirectEvent(ctx, w.SubjectID, d.origin, d.line, seq)
-	} else {
-		_, err = p.plane.Direct(ctx, w.SubjectID, agent.TopLevel, d.origin, d.line)
-	}
-	if err != nil {
+	if _, err := p.plane.DirectEvent(ctx, w.SubjectID, d.origin, d.line, seq); err != nil {
 		return fmt.Errorf("direct top level: %w", err)
 	}
 	return nil
-}
-
-func tagCarriesLine(base, kind string) bool {
-	return base == eventWatchError || base == eventMessage && kind == kindDM
 }
 
 func (p *poller) holdDelivery(subjectID string, pid int) {

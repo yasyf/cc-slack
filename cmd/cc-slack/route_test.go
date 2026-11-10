@@ -228,15 +228,15 @@ func (l *liveDaemon) channelTypes() []string {
 	return types
 }
 
-func TestTopLevelWatchGetsEventAndDirective(t *testing.T) {
+func TestTopLevelWatchWithNoChannelGetsTheDirectiveOnce(t *testing.T) {
 	l := startDaemon(t)
 	l.deliver(agent.TopLevel, "1800000000.000300", "ship it")
 
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, `"ship it"`) || !strings.Contains(got, "not an operator instruction") {
 		t.Fatalf("top-level inject = %q, want the message as quoted Slack content", got)
 	}
-	if types := l.channelTypes(); !slices.Contains(types, eventMessage) {
-		t.Fatalf("channel saw %v, want slack.message", types)
+	if types := l.channelTypes(); slices.Contains(types, eventMessage) {
+		t.Fatalf("channel saw %v, want no slack.message the hook already delivered", types)
 	}
 }
 
@@ -299,10 +299,10 @@ func TestAPreCompactMarksTheWindowCompactingUntilItStartsAgain(t *testing.T) {
 
 func TestADMDirectiveNamesTheThreadItsMessageIsIn(t *testing.T) {
 	const root = "1800000000.000100"
-	if got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: root, Text: "hi"}, true); strings.Contains(got, "thread_ts") {
+	if got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: root, Text: "hi", Operator: true}); strings.Contains(got, "thread_ts") {
 		t.Fatalf("root message directive = %q, want no thread", got)
 	}
-	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi"}, true)
+	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi", Operator: true})
 	if !strings.Contains(got, "slack_dm_status and thread_ts "+root) {
 		t.Fatalf("thread message directive = %q, want it to name thread %s", got, root)
 	}
@@ -348,7 +348,7 @@ func (l *liveDaemon) channelTexts() []string {
 	return texts
 }
 
-func TestAResumedChannelDeliversOnlyLiveWatchesAfterItsCursor(t *testing.T) {
+func TestAResumedChannelDeliversWhatNoPathDeliveredAfterItsCursor(t *testing.T) {
 	l := startDaemon(t)
 	live, ended := l.addWatch("1800000000.000400"), l.addWatch("1800000000.000500")
 	l.deliverOn(live, "1800000000.000401", "live, before the cursor")
@@ -362,8 +362,8 @@ func TestAResumedChannelDeliversOnlyLiveWatchesAfterItsCursor(t *testing.T) {
 	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE id = ?`, ended.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := l.channelTexts(); !slices.Equal(got, []string{"live, after the cursor"}) {
-		t.Fatalf("resumed read = %q, want only the live watch's message after the cursor", got)
+	if got := l.channelTexts(); !slices.Equal(got, []string{"live, after the cursor", "ended, after the cursor"}) {
+		t.Fatalf("resumed read = %q, want both messages after the cursor: no path delivered the ended watch's yet", got)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -185,6 +186,7 @@ func longTap(label string) map[string]any {
 		"type": eventAction, "watch_id": 719, "channel_id": "D0B6Z", "thread_ts": "1793816299.111929", "ts": "1793816299.111929", "action_ts": "1793819436.927939",
 		"label": label, "id": "card-faster-disk-runs", "waits": true, "question": question,
 		"options":   []string{"Keep gp3 and measure write waits first", "Raise gp3's limits", "Move journals to io2", "Move to local NVMe nodes"},
+		"capture":   "Yasyf answered " + strconv.Quote(question) + " with " + strconv.Quote(label) + " at 2026-11-05T05:10:36Z on Slack card https://acme.slack.com/archives/D0B6Z/p1793816299111929",
 		"permalink": "https://acme.slack.com/archives/D0B6Z/p1793816299111929",
 	}
 }
@@ -202,8 +204,8 @@ func TestATapKeepsItsCardAndAnswerWholeAndDropsItsRepeatedWordsFirst(t *testing.
 	if line.ID != "card-faster-disk-runs" || line.Label != "Keep gp3 and measure write waits first" || line.ActionTS != "1793819436.927939" || line.Cut {
 		t.Fatalf("line = %+v, want the card id and the answer whole", line)
 	}
-	if line.Options != nil {
-		t.Fatalf("line = %+v, want the options gone first", line)
+	if line.Options != nil || line.Capture != "" {
+		t.Fatalf("line = %+v, want the options and the capture gone first", line)
 	}
 	if !strings.HasPrefix(line.Question, "Would a faster disk") || line.Permalink == "" {
 		t.Fatalf("line = %+v, want the question and permalink kept when they fit", line)

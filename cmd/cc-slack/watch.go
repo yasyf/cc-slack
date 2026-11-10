@@ -233,6 +233,7 @@ func withoutLastWatches(line map[string]any, field string, watches []any) (strin
 }
 
 func withoutCardPicks(line map[string]any) {
+	delete(line, "capture")
 	delete(line, "options")
 }
 

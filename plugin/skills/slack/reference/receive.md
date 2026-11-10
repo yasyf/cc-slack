@@ -46,7 +46,7 @@ registration verbs are `follow --owner <agent_id>` and `unfollow`.
 
 A `<channel source="cc-slack" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
-from_claude, text, permalink}`. Monitor lines carry the same event data,
+from_claude, text, permalink}`, plus `operator: true` when the user wrote it. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops a
 card's `options`, then its `question` and the thread owner's title, then the
 `permalink`, and last cuts its own words and sets `cut`. A tap's `id` is never cut.
@@ -56,11 +56,9 @@ characters, and a mark in `text`. On a thread watch, a bot's thread reply that
 repeats its parent carries only its first line and a mark saying so. A
 person's message always arrives whole. Read the whole message at its
 `permalink`, or with `slack_thread`, when you need it.
-Top-level sessions also receive each thread or channel message, and each
-tap, as an injected steering directive at their next tool call. A DM
-message, a watch error, and a `slack.owner_stopped` event arrive once: as a
-channel tag when this window's channel is proven, else as a directive.
-Deduplicate all deliveries by
+A top-level session receives each event once: as a channel tag when this
+window's channel is proven, else as an injected directive at its next tool
+call. Until the Monitor exits, a message can arrive on both. Deduplicate all deliveries by
 `(channel_id, ts)` before acting, including deliveries across watches.
 
 `slack.message@<agent_id>` belongs only to that owner subagent and arrives
