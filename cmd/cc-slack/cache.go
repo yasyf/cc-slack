@@ -153,6 +153,41 @@ func (c *readCache) invalidate(ctx context.Context, channelID, threadTS string) 
 	return nil
 }
 
+func (c *readCache) edited(ctx context.Context, channelID, ts string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.st.DB().ExecContext(ctx, `UPDATE threads SET synced_at = 0, full_at = 0, gen = gen + 1
+		WHERE channel_id = ? AND thread_ts <= ? AND newest_ts >= ? AND instr(messages, ?) > 0`,
+		channelID, ts, ts, `"ts":"`+ts+`"`); err != nil {
+		c.log.Printf("message %s/%s changed, but the cached threads holding it stay: %v", channelID, ts, err)
+	}
+}
+
+type expiringAPI struct {
+	slackAPI
+	cache *readCache
+}
+
+func (c *readCache) expiring(newAPI func(token string) slackAPI) func(token string) slackAPI {
+	return func(token string) slackAPI { return expiringAPI{newAPI(token), c} }
+}
+
+func (e expiringAPI) UpdateMessageContext(ctx context.Context, channelID, timestamp string, options ...slack.MsgOption) (string, string, string, error) {
+	channel, ts, text, err := e.slackAPI.UpdateMessageContext(ctx, channelID, timestamp, options...)
+	if err == nil {
+		e.cache.edited(ctx, channelID, timestamp)
+	}
+	return channel, ts, text, err
+}
+
+func (e expiringAPI) DeleteMessageContext(ctx context.Context, channelID, timestamp string) (string, string, error) {
+	channel, ts, err := e.slackAPI.DeleteMessageContext(ctx, channelID, timestamp)
+	if err == nil {
+		e.cache.edited(ctx, channelID, timestamp)
+	}
+	return channel, ts, err
+}
+
 func (c *readCache) commit(ctx context.Context, channelID, threadTS string, e threadEntry) error {
 	current, _, err := c.load(ctx, channelID, threadTS)
 	if err != nil || current.gen != e.gen {

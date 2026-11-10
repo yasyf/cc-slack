@@ -208,7 +208,7 @@ func (t *liveThread) carded(keys map[string]bool) bool {
 
 func (t *liveThread) open(m *liveMessage) bool {
 	_, answered := t.Answers[m.Card.Waits]
-	return !answered && m.Tapped == ""
+	return !answered && m.Tapped == "" && m.ReplacedBy == ""
 }
 
 func (t *liveThread) retired(m *liveMessage) bool {
@@ -483,7 +483,7 @@ func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
 		}
 		for _, c := range t.Copies {
 			if c.TS == ts && !c.Link {
-				return l.cardAt(channel, c.Card)
+				return l.storedCard(channel, c.Card)
 			}
 		}
 	}
@@ -491,6 +491,12 @@ func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
 }
 
 func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.storedCard(channel, ts)
+}
+
+func (l *liveCards) storedCard(channel, ts string) (cardRef, bool) {
 	for _, t := range l.threads {
 		if t.Channel == channel && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {
 			return cardRef{channel, t.Thread, ts}, true
@@ -499,13 +505,19 @@ func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
 	return cardRef{}, false
 }
 
-func (l *liveCards) located(a cardActionPush) cardActionPush {
+func (l *liveCards) located(a cardActionPush) (cardActionPush, error) {
+	card, copied := a.onCard()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if card, found := l.cardAt(a.Channel, a.MessageTS); found {
-		a.ThreadTS = card.thread
+	stored, found := l.storedCard(a.Channel, card.MessageTS)
+	switch {
+	case found:
+		card.ThreadTS = stored.thread
+	case copied:
+		a.ActionID = card.ActionID
+		return a, fmt.Errorf("%w: copy %s answers card %s", errNoStoredCard, a.MessageTS, card.MessageTS)
 	}
-	return a
+	return card, nil
 }
 
 func (l *liveCards) retire(posts []string, by, line string) {
@@ -822,6 +834,19 @@ func (l *liveCards) forget(t *liveThread, ts string) {
 	}
 }
 
+func (l *liveCards) dropReplaced(into *liveThread, replaces string, placed *liveMessage) {
+	if placed.TS != replaces {
+		return
+	}
+	for _, t := range append(slices.Collect(maps.Values(l.threads)), into) {
+		for _, m := range t.messages() {
+			if t.Channel == into.Channel && m != nil && m != placed && m.TS == placed.TS {
+				t.drop(m)
+			}
+		}
+	}
+}
+
 func (l *liveCards) commit(t *liveThread) {
 	t.Drawn = l.now()
 	l.threads[threadKey(t.Channel, t.Thread)] = t
@@ -837,15 +862,15 @@ func (l *liveCards) wake() {
 	}
 }
 
-func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, askAnswer) {
+func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, askAnswer, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
-		return true, ans
+		return false, askAnswer{}, fmt.Errorf("%w: no card in thread %s/%s", errNoStoredCard, channel, thread)
 	}
 	if prior, done := t.Answers[askID]; done {
-		return false, prior
+		return false, prior, nil
 	}
 	if t.Answers == nil {
 		t.Answers = map[string]askAnswer{}
@@ -858,7 +883,7 @@ func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, a
 		default:
 		}
 	}
-	return true, ans
+	return true, ans, nil
 }
 
 type undoneAnswer struct {
@@ -1028,14 +1053,17 @@ func (l *liveCards) waitingAt(channel, thread, ts string) (string, liveMessage, 
 	return "", liveMessage{}, false
 }
 
-func (l *liveCards) asks(channel, thread, waits, question string) bool {
+func (l *liveCards) stillAsks(channel, thread, waits, question string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
-	if !ok || t.Waiting[waits] == nil {
-		return true
+	switch {
+	case !ok:
+		return fmt.Errorf("%w: no card in thread %s/%s", errNoStoredCard, channel, thread)
+	case t.Waiting[waits] != nil && t.Waiting[waits].Card.Title != question:
+		return errCardMoved
 	}
-	return t.Waiting[waits].Card.Title == question
+	return nil
 }
 
 func (l *liveCards) prCardAt(channel, thread, ts string) (string, liveMessage, bool) {

@@ -418,6 +418,61 @@ func copiedButtonsOf(t *testing.T, post fakePost) []*slack.ButtonBlockElement {
 	return buttons
 }
 
+func copyCard(t *testing.T, l *liveDaemon, link, thread string) (fakePost, *slack.ButtonBlockElement) {
+	t.Helper()
+	l.do(opCardCopy, map[string]any{"url": link, "thread_ts": thread})
+	post := lastPost(l)
+	buttons := copiedButtonsOf(t, post)
+	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {
+		return strings.HasPrefix(b.ActionID, cardCopyAction) && b.Text.Text == "Merge"
+	})
+	if post.threadTS != thread || at < 0 {
+		t.Fatalf("copy = %+v, want the card's Merge in thread %s", post, thread)
+	}
+	return post, buttons[at]
+}
+
+func tapCopy(l *liveDaemon, c postedCard, copied fakePost, merge *slack.ButtonBlockElement) {
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: copied.ts, ThreadTS: copied.threadTS,
+		ActionID: merge.ActionID, Value: merge.Value, ActionTS: "1800000100.000000", Seq: "001800000100000-abcd0125"})
+}
+
+func TestAThreadReadShowsEveryCopyAnsweredOnceItsCardIs(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	threads := []string{postThread(t, l, "About the merge."), postThread(t, l, "Another thread.")}
+	copies := make([]string, 0, len(threads))
+	for _, thread := range threads {
+		post, _ := copyCard(t, l, c.url(), thread)
+		copies = append(copies, post.ts)
+	}
+	buttonsOf := func(thread, ts string) []string {
+		var read threadResult
+		if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": c.id.DMChannelID, "thread_ts": thread}).Body, &read); err != nil {
+			t.Fatal(err)
+		}
+		at := slices.IndexFunc(read.Messages, func(m threadMessage) bool { return m.TS == ts })
+		if at < 0 {
+			t.Fatalf("thread %s reads %+v, want copy %s in it", thread, read.Messages, ts)
+		}
+		return read.Messages[at].Buttons
+	}
+	for i, thread := range threads {
+		if got := buttonsOf(thread, copies[i]); !slices.Contains(got, "Merge") {
+			t.Fatalf("copy %s reads buttons %v before the answer, want Merge", copies[i], got)
+		}
+	}
+
+	answerOnBoard(t, l, c, "Merge")
+
+	for i, thread := range threads {
+		if got := buttonsOf(thread, copies[i]); slices.Contains(got, "Merge") {
+			t.Fatalf("copy %s reads buttons %v after the answer, want Merge gone", copies[i], got)
+		}
+	}
+}
+
 func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
