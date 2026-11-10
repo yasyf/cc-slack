@@ -425,13 +425,18 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   message's directive names the event it carries, so the session gets it once:
   the hook skips it once the window's proven channel pushed the event, and the
   channel withholds the event once the hook delivered it.
-  A bot's thread reply of more than one line whose words, with whitespace
-  folded, all appear in its thread's parent as already delivered to the
-  session, such as a monitor's alert under its own summary, arrives as its
-  first line and a mark saying it repeats its parent, in both the event's
-  `text` and the directive; its `permalink` reaches the whole message. The
-  parent is one indexed read of the events table by the parent's dedup key.
-  A person's message always arrives whole.
+  On a channel watch, every message an app posted (one with a bot id, such as
+  Datadog, Sentry or Platy), root or thread reply, arrives as its first
+  non-empty line, cut to 160 characters, and a mark that the whole message is
+  at its `permalink`, in both the event's `text` and the directive. The line
+  comes from the same text the session would otherwise get, blocks and
+  attachments included; a one-line message of 160 characters or fewer arrives
+  as it is. On a thread or DM watch, a bot's thread reply of more than one
+  line whose words, with whitespace folded, all appear in its thread's parent
+  as already delivered to the session arrives as its first line and a mark
+  saying it repeats its parent; the parent is one indexed read of the events
+  table by the parent's dedup key. A person's message always arrives whole,
+  and `slack_thread` always returns every message whole.
   A message the daemon acked while the session was compacting carries `acked`,
   the ts of that ack, and its directive says not to ack it again.
   An operator reply in a DM thread that another session's card opened carries
