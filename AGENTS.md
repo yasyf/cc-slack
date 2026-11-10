@@ -333,7 +333,8 @@ Every top-level subscription reports `channel` from cc-interact's `Server.Channe
 `active` when this window's channel server is attached and the model has run `channel-ack`, `pending` when it is
 attached or polling but unproven, and `inactive` otherwise. A `pending` read also injects one non-persisted
 `channel.probe` frame into this window's channel stream, so the model proves delivery within seconds. On `pending`
-or `inactive` the session runs `watch --until-proven` under a Monitor, which polls `status` every 2 s and prints
+or `inactive` the MCP tool result appends the receive steps, which the server instructions leave out, and the
+session runs `watch --until-proven` under a Monitor, which polls `status` every 2 s and prints
 `{"type":"channel.proven"}` and exits once the window is proven. Proof lives in daemon memory, so a restarted
 daemon reports `pending` again and re-probes.
 
