@@ -115,48 +115,40 @@ var (
 	}
 	cardProp = map[string]any{
 		"type": "object",
-		"description": "A status card instead of text: the reply card carries your option buttons plus Ack and Pause, and the thread's root " +
-			"card is redrawn with the latest state. The root keeps the last progress, started_at, eta, facts, refs, links, and rollup any card set, lists " +
-			"every open ask in the thread, and shows a timeline of the last updates. Tagged with this session, repo, branch, and worktree. A tap arrives " +
-			"as a slack.action directive; nothing waits on it unless waits is set. Text sent beside a card becomes its body. status defaults to needs_you on a waiting card and info otherwise, " +
-			"title to the body's first line, and an option marked (Recommended) becomes the recommended answer",
+		"description": "A status card in place of text, with your options plus Ack and Pause; the thread's root card keeps the latest progress, " +
+			"times, facts, refs, links, rollup and open asks. A tap arrives as a slack.action; only waits makes the lane wait. Text beside a card is its body. " +
+			"status defaults to needs_you with waits, else info; title to the body's first line; an option marked (Recommended) is the recommended answer",
 		"properties": map[string]any{
 			"status": map[string]any{"type": "string", "enum": []string{"info", "progress", "needs_you", "incident", "done"}},
-			"title":  map[string]any{"type": "string", "description": "one line, shown as the card header and the phone notification"},
+			"title":  map[string]any{"type": "string", "description": "one line: the header and the phone notification"},
 			"body":   map[string]any{"type": "string", "description": "1-3 sentences of mrkdwn"},
-			"drive":  map[string]any{"type": "string", "description": "the long-running drive's name, when this session runs one; set it on every card a drive posts, so a waits card reads as the drive's question, whose home is Slack, and carries no board warning"},
+			"drive":  map[string]any{"type": "string", "description": "the drive's name; set on every card a drive posts, so a waits card reads as the drive's question with no board warning"},
 			"phase":  map[string]any{"type": "string", "description": "the drive's current phase"},
 			"links":  map[string]any{"type": "array", "maxItems": cardMaxLinks, "items": schemaLink("label", "url")},
 			"options": map[string]any{
 				"type": "array", "maxItems": cardMaxOptions, "items": map[string]any{"type": "string", "maxLength": cardMaxOptionLen},
-				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside the fixed Other and Explain more. " +
-					"The card draws the recommended option first and numbers the rest, so each option stands alone in full words: a card whose title, body, option, or hint points at an option by number or position, such as \"same as 1\" or \"the first option\", is refused",
+				"description": "buttons beside Ack and Pause; with waits, the answers beside Other and Explain more. Each stands alone in full words: " +
+					"a card whose title, body, option or hint points at an option by number or position, such as \"same as 1\", is refused",
 			},
 			"waits": map[string]any{
 				"type": "string", "pattern": askIDPattern.String(),
-				"description": "makes this an ask card the asking lane stops on: the title is the question, the options plus a fixed Other and Explain more are its buttons, " +
-					"the card says the lane waits on the answer, and the answer's slack.action carries this id, the question, the label, and a capture line. " +
-					"Other opens a Slack modal, and the text typed there answers the card with other: true. " +
-					"Explain more answers nothing; reply with text and about set to this id, which opens the reply with a link back to the card. " +
-					"With cc-present installed, ask on the board instead: cc-present update-block the card and it reaches Slack by itself; a waits card posted here still lands on the board, " +
-					"its reply carries a warning unless the card sets drive, and the first answer on either surface wins. A long-running drive asks here, with drive set. " +
-					"Needs options and recommended; takes no asks. Reusing an open waits id edits that card in place",
+				"description": "makes this an ask card the lane stops on: the title is the question, and the answer's slack.action carries this id, the question, the label and a capture line. " +
+					"Other opens a modal whose text answers with other: true; Explain more answers nothing, so reply with text and about set to this id. " +
+					"With cc-present installed, ask on the board (cc-present update-block reaches Slack itself); a long-running drive asks here with drive set. " +
+					"Needs options and recommended, takes no asks; reusing an open waits id edits that card",
 			},
 			"recommended": map[string]any{
 				"type": "string", "maxLength": cardMaxOptionLen,
-				"description": "the option you recommend; the card shows it first, marked (Recommended). An ask card needs it. A reply card without waits may carry it too, " +
-					"for a question the lane goes on past: the card keeps its Ack and Pause, its tap arrives as a slack.action with nothing waiting, and it says nothing about a stopped lane. " +
-					"An ask card draws its own Other, so never add one to options",
+				"description": "the option you recommend, drawn first and marked (Recommended); an ask card needs it. A card without waits may carry it for a question " +
+					"the lane goes on past, its tap arriving with nothing waiting. An ask card draws its own Other, so never add one to options",
 			},
 			"supersedes": map[string]any{
 				"type": "array", "maxItems": cardMaxSupersedes, "items": map[string]any{"type": "string"},
-				"description": "with waits, permalinks of the bot's earlier posts in this DM that asked the same question, such as a plain-text pick: " +
-					"each is edited at once to point to this card, and again with the outcome once this card is answered on any surface",
+				"description": "with waits, permalinks of the bot's earlier posts in this DM that asked the same question; each is edited to point here, then to the outcome",
 			},
 			"refs": map[string]any{
 				"type": "array", "maxItems": cardMaxRefs, "items": schemaLink("url"),
-				"description": "GitHub pull request and Buildkite build urls whose live state the card shows: queued, CI running, passed, or failed, " +
-					"and landed. The daemon polls them and redraws the card when the state changes",
+				"description": "GitHub PR and Buildkite build urls whose live state the card shows, redrawn as it changes",
 			},
 			"progress": map[string]any{
 				"type": "object", "required": []string{"step", "total"},
@@ -164,35 +156,33 @@ var (
 					"step": map[string]any{"type": "integer", "minimum": 0}, "total": map[string]any{"type": "integer", "minimum": 1, "maximum": cardMaxSteps},
 					"label": schemaString("what the steps count", cardMaxLabelLen),
 				},
-				"description": "a progress bar of step out of total",
 			},
-			"started_at": map[string]any{"type": "string", "format": "date-time", "description": "RFC 3339 time the work started; the card shows how long it has run"},
-			"eta":        map[string]any{"type": "string", "format": "date-time", "description": "RFC 3339 time the work should finish"},
+			"started_at": map[string]any{"type": "string", "format": "date-time"},
+			"eta":        map[string]any{"type": "string", "format": "date-time"},
 			"asks": map[string]any{
 				"type": "array", "maxItems": cardMaxAsks,
-				"description": "decisions for the operator, each a button with a stable id; a tap arrives as a slack.action carrying the id. " +
-					"Reusing an id updates the same ask, and an answered ask stays answered",
+				"description": "operator decisions, each a button whose stable id its slack.action carries; a reused id updates that ask, and an answered ask stays answered",
 				"items": map[string]any{
 					"type": "object", "required": []string{"id", "label"},
 					"properties": map[string]any{
 						"id":          map[string]any{"type": "string", "pattern": askIDPattern.String()},
-						"label":       schemaString("the button text", cardMaxLabelLen),
-						"description": schemaString("mrkdwn shown beside the button", cardMaxNoteLen),
+						"label":       schemaString("", cardMaxLabelLen),
+						"description": schemaString("mrkdwn beside the button", cardMaxNoteLen),
 						"style":       map[string]any{"type": "string", "enum": []string{"primary", "danger"}},
-						"confirm":     schemaString("when set, a confirm dialog with this text guards the tap", cardMaxNoteLen),
-						"expires_at":  map[string]any{"type": "string", "format": "date-time", "description": "RFC 3339 time after which a tap is dropped"},
+						"confirm":     schemaString("text of a confirm dialog guarding the tap", cardMaxNoteLen),
+						"expires_at":  map[string]any{"type": "string", "format": "date-time", "description": "a tap after it is dropped"},
 					},
 				},
 			},
 			"facts": map[string]any{
-				"type": "array", "maxItems": cardMaxFacts, "description": "a grid of short label and value pairs",
+				"type": "array", "maxItems": cardMaxFacts,
 				"items": map[string]any{
 					"type": "object", "required": []string{"label", "value"},
 					"properties": map[string]any{"label": schemaString("", cardMaxNameLen), "value": schemaString("mrkdwn", cardMaxDetailLen)},
 				},
 			},
 			"rollup": map[string]any{
-				"type": "object", "description": "a drive's lanes and PRs, shown on the root card; PR urls show live state as refs do",
+				"type": "object", "description": "a drive's lanes and PRs on the root card",
 				"properties": map[string]any{
 					"lanes": map[string]any{
 						"type": "array", "maxItems": cardMaxRollup,
