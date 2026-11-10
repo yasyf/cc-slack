@@ -48,6 +48,14 @@ type providedCard struct {
 	Repo   string     `json:"repo"`
 	Number int        `json:"number"`
 	Card   statusCard `json:"card"`
+
+	replaces cardRef
+	changed  string
+}
+
+type replacedCard struct {
+	old, fresh cardRef
+	changed    string
 }
 
 type skippedCard struct {
@@ -322,7 +330,7 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 	post := l.draft(channelID, postThread)
 	for _, pr := range prs {
 		keys := map[string]bool{pr.ref.key(): true}
-		if pr.state.terminal() || post.carded(keys) {
+		if pr.state.terminal() || post.shows(keys) {
 			continue
 		}
 		waiting = append(waiting, pr.ref)
@@ -366,8 +374,11 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 			a.poller.log.Printf("PR card for %s#%d not drawn: %s", s.Repo, s.Number, s.Reason)
 			undrawn[s.ref().key()] = s.Reason
 		}
-		cards, shown := a.placePRCards(ctx, db, sub, id, channelID, thread, provided)
+		cards, shown, replaced := a.placePRCards(ctx, db, sub, id, channelID, thread, provided)
 		a.tellShown(ctx, id, shown)
+		for _, r := range replaced {
+			a.markReplaced(ctx, id, r)
+		}
 		placed = append(placed, cards...)
 	}
 	if beside.thread == "" {
@@ -394,6 +405,11 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			rest = append(rest, p)
 			continue
 		}
+		if changed := a.cards.changedSinceAnswer(posted, p.Card); changed != "" {
+			p.replaces, p.changed = posted, changed
+			rest = append(rest, p)
+			continue
+		}
 		if err := a.pictureRedrawnPRCard(ctx, id, posted, &p.Card); err != nil {
 			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
 			a.tellRefused(ctx, id, p, err)
@@ -409,14 +425,15 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 	return rest, placed, shown
 }
 
-func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) ([]cardRef, []map[string]any) {
+func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) ([]cardRef, []map[string]any, []replacedCard) {
 	provided, placed, shown := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
+	var replaced []replacedCard
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	now := a.now()
 	for _, p := range provided {
-		if offered, found := cards.pickOffering(channelID, p.Card.offer()); p.Card.Waits != "" && found {
+		if offered, found := cards.pickOffering(channelID, p.Card.offer()); p.Card.Waits != "" && p.changed == "" && found {
 			placed, shown = append(placed, offered), append(shown, shownCard(p))
 			continue
 		}
@@ -431,12 +448,15 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			continue
 		}
 		t := cards.draft(channelID, thread)
+		if p.changed != "" {
+			delete(t.Answers, p.Card.Waits)
+		}
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.canvas())
 		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
-			return placed, shown
+			return placed, shown, replaced
 		}
 		m.TS = res.TS
 		t.Thread = cmp.Or(thread, res.TS)
@@ -445,7 +465,11 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		t.PRCards = append(t.PRCards, m)
 		t.Updated = now
 		cards.commit(t)
-		placed, shown = append(placed, cardRef{channelID, t.Thread, m.TS}), append(shown, shownCard(p))
+		fresh := cardRef{channelID, t.Thread, m.TS}
+		placed, shown = append(placed, fresh), append(shown, shownCard(p))
+		if p.changed != "" {
+			replaced = append(replaced, replacedCard{p.replaces, fresh, p.changed})
+		}
 		if thread != "" {
 			continue
 		}
@@ -453,7 +477,17 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			a.poller.log.Printf("PR card for %s#%d at %s: its thread goes unwatched: %v", p.Repo, p.Number, res.TS, err)
 		}
 	}
-	return placed, shown
+	return placed, shown, replaced
+}
+
+func (a *app) markReplaced(ctx context.Context, id identity, r replacedCard) {
+	answered := ""
+	a.cards.markReply(r.old.channel, r.old.thread, r.old.ts, func(m *liveMessage) { answered, m.ReplacedBy = m.Tapped, r.fresh.ts })
+	line := "↪ *Replaced:* " + mrkdwnEscapes.Replace(clipRunes(r.changed, cardMaxReasonLen)) + " · " +
+		slackLink(id.permalink(r.fresh.channel, r.fresh.ts, r.fresh.thread), "answer the new card") + "\nYour answer to this version: " + answered
+	if err := a.poller.markOption(ctx, id, r.old, line); err != nil {
+		a.poller.log.Printf("PR card %s, replaced by %s, still shows its answer as standing: %v", r.old.ts, r.fresh.ts, err)
+	}
 }
 
 func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside cardBeside, card cardRef) error {
@@ -463,6 +497,9 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 		}
 		_, err := a.cards.redraw(ctx, a.newAPI(id.Token), card.channel, beside.thread, beside.thread, a.now())
 		return err
+	}
+	if beside.thread == card.thread {
+		return nil
 	}
 	return a.copyCardInto(ctx, db, id, beside.thread, card)
 }
@@ -690,6 +727,9 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
 		return err
+	}
+	if changed := a.cards.changedSinceAnswer(card, provided[0].Card); changed != "" {
+		return fmt.Errorf("%s changed since he answered it (%s), so the next post naming it in tap_prs draws its new card", prURL(pr), changed)
 	}
 	if err := a.pictureRedrawnPRCard(ctx, id, card, &provided[0].Card); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)

@@ -84,6 +84,7 @@ const (
 	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
 	cardOpenLabel     = "Open"
+	cardChanged       = "Changed since your answer"
 	cardRefresher     = "Refresher"
 	cardSurprise      = "Biggest surprise"
 	cardDefaultLands  = "you approve"
@@ -163,6 +164,7 @@ type cardPR struct {
 	URL         string   `json:"url"`
 	Title       string   `json:"title,omitempty"`
 	Head        string   `json:"head,omitempty"`
+	Changed     string   `json:"changed,omitempty"`
 	Review      string   `json:"review,omitempty"`
 	Surprise    string   `json:"surprise,omitempty"`
 	HateMost    string   `json:"hate_most,omitempty"`
@@ -418,7 +420,7 @@ func (p cardPR) stands(v cardView) string {
 
 func (p cardPR) fields(v cardView) []cardFact {
 	return []cardFact{
-		{cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
+		{cardChanged, p.Changed}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
 		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
 	}
 }
@@ -728,6 +730,19 @@ func (c statusCard) allPRs() []*cardPR {
 	return prs
 }
 
+func (c statusCard) changedSince(answered statusCard) string {
+	was := map[string]string{}
+	for _, p := range answered.allPRs() {
+		was[p.URL] = p.Changed
+	}
+	for _, p := range c.allPRs() {
+		if p.Changed != "" && p.Changed != was[p.URL] {
+			return p.Changed
+		}
+	}
+	return ""
+}
+
 type cardOffer struct {
 	pr, head, answers string
 }
@@ -820,7 +835,7 @@ func (c statusCard) visible() statusCard {
 }
 
 func (p cardPR) visible() cardPR {
-	p.Title, p.Review, p.Surprise = withoutHidden(p.Title), withoutHidden(p.Review), withoutHidden(p.Surprise)
+	p.Title, p.Changed, p.Review, p.Surprise = withoutHidden(p.Title), withoutHidden(p.Changed), withoutHidden(p.Review), withoutHidden(p.Surprise)
 	p.Plan, p.Refresher, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.Refresher), withoutHidden(p.Blocks), withoutHidden(p.Lands)
 	p.ShowMe, p.HateMost, p.Port = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port)
 	return p
