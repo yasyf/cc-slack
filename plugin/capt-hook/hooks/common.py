@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import pwd
 import sqlite3
+import sys
 from contextlib import closing
+from functools import cache
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from types import ModuleType
 
 from captain_hook import BaseHookEvent
 
@@ -68,3 +73,12 @@ def call_bin(evt: BaseHookEvent, sub: str, *, timeout: int = 10) -> str | None:
         )
     except UnicodeDecodeError:
         return None
+
+
+@cache
+def check_post() -> ModuleType:
+    loader = SourceFileLoader("check_post", str(PLUGIN_ROOT / "skills" / "slack" / "scripts" / "check-post"))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module

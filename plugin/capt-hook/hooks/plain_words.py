@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from functools import cache
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 from captain_hook import Allow, Event, HookResult, Input, PreToolUseEvent, Warn, on
 
-from .common import PLUGIN_ROOT
+from .common import check_post
 from .writes import pending, permissions
 
 PLAIN_WORDS = {
@@ -42,15 +37,6 @@ CARD_BLOCKS = [
     {"type": "header", "text": {"type": "plain_text", "text": "Edge fix shipped"}},
     {"type": "section", "text": {"type": "mrkdwn", "text": "Errors are back to baseline."}},
 ]
-
-
-@cache
-def check_post() -> ModuleType:
-    loader = SourceFileLoader("check_post", str(PLUGIN_ROOT / "skills" / "slack" / "scripts" / "check-post"))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
-    sys.modules[loader.name] = module
-    loader.exec_module(module)
-    return module
 
 
 def block_text(node: object) -> list[str]:
