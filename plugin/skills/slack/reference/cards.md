@@ -15,14 +15,15 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
 | `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
-| `progress` | `{step, total, label}`, drawn as a progress bar |
+| `progress` | `{step, total, label}`, drawn as a progress bar; `label` names what the steps count |
 | `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
-| `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
+| `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button: `description` is mrkdwn beside it, `style` is `primary` or `danger`, and `confirm` is the text of the dialog that guards the tap |
 | `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
 | `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
 | `prs` | up to 10 `{url, title, head, changed, review, refresher, surprise, hate_most, plan, show_me, pictures, port, blocks, lands}` pull requests, each drawn with its title, link and live CI, then the lines it has as fields, `changed` first as Changed since your answer, and its Show me on a row of its own; a missing line is left out. Below the buttons, the first 3 also draw as GitHub Work Objects with Merge and CI tags and Open on GitHub. Its description, read from GitHub, posts in the thread on Explain more |
 | `artifacts` | up to 5 `{title, kind, url, image, language, size}` things the reader opens at `url`, such as a diagram on the dashboard, each drawn as a Work Object with its language and size and an Open button when `url` is https, or http on the `[links]` tailnet; any other `url` posts the card with no Work Object and a warning; `image`, an absolute path to a PNG, JPEG, GIF, or WebP, is drawn as a picture on the card, from the `[pictures]` bucket when the config sets one, whether or not its Work Object draws; keep the link in `body` too, for a client that draws no card |
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
+| `supersedes` | with `waits`, up to 5 permalinks of the bot's earlier posts in the user's DM that asked the same question; when the card posts, each is edited to say the question is asked again on this card and link it, and when the card is answered, each shows the question and the answer; refused without `waits`, for a post outside the DM, or for a link that is not a Slack message |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | the one option you recommend, on an ask card or a reply card; the card shows it first, marked (Recommended). An ask card needs one; on a reply card nothing waits on it |
