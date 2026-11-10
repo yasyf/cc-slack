@@ -270,6 +270,7 @@ type liveCards struct {
 	newAPI func(token string) slackAPI
 	recard func(ctx context.Context, id identity, card cardRef, pr refID)
 	wakeCh chan struct{}
+	dueCh  chan time.Time
 
 	pictures atomic.Pointer[pictureConfig]
 
@@ -834,7 +835,10 @@ func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, a
 	t.Answers[askID] = ans
 	l.save()
 	if !ans.UndoUntil.IsZero() {
-		l.wake()
+		select {
+		case l.dueCh <- ans.UndoUntil:
+		default:
+		}
 	}
 	return true, ans
 }
@@ -1387,15 +1391,25 @@ func (l *liveCards) fetch(ctx context.Context, name string, h *refHost, refs []r
 
 func (l *liveCards) run(ctx context.Context) {
 	for {
-		wait := l.tick(ctx)
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-l.wakeCh:
-			timer.Stop()
-		case <-timer.C:
+		due := l.now().Add(l.tick(ctx))
+		timer := time.NewTimer(due.Sub(l.now()))
+	waiting:
+		for {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-l.wakeCh:
+				timer.Stop()
+				break waiting
+			case at := <-l.dueCh:
+				if at.Before(due) {
+					due = at
+					timer.Reset(due.Sub(l.now()))
+				}
+			case <-timer.C:
+				break waiting
+			}
 		}
 	}
 }

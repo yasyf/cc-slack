@@ -70,6 +70,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		now:     time.Now,
 		newAPI:  newAPI,
 		wakeCh:  make(chan struct{}, 1),
+		dueCh:   make(chan time.Time, 1),
 		threads: map[string]*liveThread{},
 		refs:    map[string]refState{},
 		hosts:   map[string]*refHost{},
