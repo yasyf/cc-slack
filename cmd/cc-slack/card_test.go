@@ -425,6 +425,11 @@ func TestFillCompletesACardPostedWithTextAndAMarkedLabel(t *testing.T) {
 	if info.Status != "info" {
 		t.Fatalf("a card with no waits filled status %q, want info", info.Status)
 	}
+	twice := statusCard{Waits: "step-3:merge", Title: "Merge?", Body: "CI is green on dev.", Options: []string{"Merge"}}
+	twice.fill("CI is green on dev.\n")
+	if twice.Body != "CI is green on dev." {
+		t.Fatalf("body passed as both text and card body = %q, want it once", twice.Body)
+	}
 }
 
 func TestCheckNamesEveryProblemAtOnce(t *testing.T) {
