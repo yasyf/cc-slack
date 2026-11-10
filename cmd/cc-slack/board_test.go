@@ -142,7 +142,7 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	if got := l.inject(agent.TopLevel); got != "" {
 		t.Fatalf("a Slack tap after the board answered steered %q", got)
 	}
-	if res := answerOnBoard(t, l, c, "Merge"); res.Answered || res.Label != "Hold" {
+	if res := answerOnBoard(t, l, c, "Merge"); res.Answered || !res.Already || res.Label != "Hold" {
 		t.Fatalf("a second board answer = %+v, want a refusal naming the winner", res)
 	}
 	if got := l.inject(agent.TopLevel); got != "" {
@@ -370,8 +370,8 @@ func TestASettledCardShowsItsOutcomeAndTellsNoSession(t *testing.T) {
 		strings.Contains(edits[len(edits)-1], cardWaitAction) {
 		t.Fatalf("card edits %v, want the outcome linked in place of the buttons", edits)
 	}
-	if res := answerOnBoard(t, l, c, "Merge"); res.Answered {
-		t.Fatalf("an answer after the card settled = %+v, want it refused", res)
+	if res := answerOnBoard(t, l, c, "Merge"); res.Answered || !res.Already || res.Label != "Landed on dev as 5480445" {
+		t.Fatalf("an answer after the card settled = %+v, want it refused naming the settled outcome", res)
 	}
 }
 

@@ -167,6 +167,7 @@ func hostName() string {
 
 type cardAnswerResult struct {
 	Answered bool      `json:"answered"`
+	Already  bool      `json:"already_answered,omitempty"`
 	Label    string    `json:"label"`
 	Other    bool      `json:"other,omitempty"`
 	At       time.Time `json:"at"`
@@ -865,7 +866,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
-		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
+		return cardAnswerResult{Already: true, Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
 	if w.withdrawn {
 		reason := clipRunes(mrkdwnEscapes.Replace(w.tap.Label), cardMaxReasonLen) + " · " + clock(w.at, p.now())
@@ -1146,7 +1147,7 @@ func (p *poller) answerPRCardElsewhere(ctx context.Context, id identity, r cardR
 		return cardAnswerResult{}, fmt.Errorf("%q is not one of PR card %q's answers %q", label, waits, answers)
 	}
 	if prior, done := p.cards.answer(r.channel, r.thread, waits); done {
-		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
+		return cardAnswerResult{Already: true, Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return cardAnswerResult{}, fmt.Errorf("PR card %s cannot take an answer: [pr_links] card_command is not set", permalink)
