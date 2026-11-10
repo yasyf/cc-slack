@@ -66,6 +66,7 @@ type poller struct {
 	pending map[cursorKey]uint64
 	since   map[cursorKey]string
 	streams map[string]int
+	compact map[string]bool
 }
 
 type messageNudge struct {
@@ -556,11 +557,15 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 			return err
 		}
 	}
-	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates); err != nil {
+	acked := ""
+	if arrived {
+		acked = p.ackWhileCompacting(ctx, db, api, id, reaching, m)
+	}
+	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, acked); err != nil {
 		return err
 	}
 	if rooted {
-		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates); err != nil {
+		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates, acked); err != nil {
 			return err
 		}
 	}
@@ -594,12 +599,12 @@ func (g cursorGroup) held() bool {
 	return slices.ContainsFunc(g.watches, func(w watch) bool { return w.Kind == kindChannel })
 }
 
-func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates) error {
+func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates, acked string) error {
 	for _, w := range watches {
 		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		d, err := p.messageDelivery(ctx, api, id, w, m, mates)
+		d, err := p.messageDelivery(ctx, api, id, w, m, mates, acked)
 		if err != nil {
 			return err
 		}
@@ -622,7 +627,7 @@ func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) er
 	switch {
 	case id.fromOperator(m) && routedSubtypes[m.SubType]:
 		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
-	case id.fromClaude(m) && !bareFileShare(m):
+	case id.fromClaude(m) && !bareFileShare(m) && !compactionAckPost(m):
 		return p.owed.answered(ctx, thread, m.Timestamp)
 	}
 	return nil
@@ -639,7 +644,11 @@ func (p *poller) newToAny(ctx context.Context, db *sql.DB, watches []watch, m sl
 }
 
 func (p *poller) pickUp(ctx context.Context, api slackAPI, id identity, m slack.Message) {
-	if err := api.AddReactionContext(ctx, pickupReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: m.Timestamp}); err != nil && errorCode(err) != "already_reacted" {
+	switch err := api.AddReactionContext(ctx, pickupReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: m.Timestamp}); {
+	case err == nil:
+		sec, micro := splitTS(m.Timestamp)
+		p.log.Printf("pick up %s: eyes on %.1fs after it was sent", m.Timestamp, p.now().Sub(time.Unix(sec, micro*1000)).Seconds())
+	case errorCode(err) != "already_reacted":
 		p.log.Printf("pick up %s: eyes: %v", m.Timestamp, err)
 	}
 	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)

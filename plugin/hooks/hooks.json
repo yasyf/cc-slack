@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack\" pre-compact",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

@@ -311,6 +311,7 @@ func (a *app) register(s *daemon.Server) {
 		return s.ChannelState(hc, subjectID, channelConsumer)
 	}
 	s.Register(opSessionStart, a.handleSessionStart)
+	s.Register(opPreCompact, a.handlePreCompact)
 	s.Register(opLogin, a.handleLogin)
 	s.Register(opReload, a.handleReload)
 	s.Register(opWhoami, a.handleWhoami)
@@ -469,6 +470,9 @@ func (a *app) handleSessionStart(hc daemon.HandlerCtx) daemon.Reply {
 	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
+	}
+	if a.poller.endCompacting(sub.ID) {
+		a.poller.log.Printf("session %s started again after compacting", hc.Env.Session)
 	}
 	var res sessionStartResult
 	if resumed {

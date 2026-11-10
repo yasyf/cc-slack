@@ -70,6 +70,7 @@ func root() *cobra.Command {
 		cmd.AgentReportCmd(d),
 		cmd.SetupChannelsCmd(d, channelPlugin, "cc-slack is on the approved channel allowlist; restart Claude Code to load it with --channels "+channelPlugin.ChannelID()),
 		sessionStartCmd(d),
+		preCompactCmd(d),
 		loginCmd(d),
 		reloadCmd(d),
 		whoamiCmd(d),

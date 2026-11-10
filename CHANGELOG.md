@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- While a session that holds your DM is compacting, each message you send it gets "Got it, back in a minute." in its thread at once, next to the eyes, instead of nothing for the minutes the compaction takes. The plugin's new `PreCompact` hook marks the session and its next start clears the mark; the message reaches the session with `acked` set, so it posts no second ack. On Nov 9 four messages waited about 3.5 minutes unacked while the session holding the DM compacted. The daemon now logs how long after a message was sent its eyes went on.
 - A `[pictures]` section names a private S3-compatible bucket for the pictures on cards. With it, a card's pictures upload to the bucket and draw from links signed for 7 days, re-signed on every redraw, so the card is the only message in the DM: no picture-keeping thread and no share. `login` reads the bucket's key from `[ssm] picture_key_id` and `picture_secret`. Without the section, pictures still go to the DM's picture-keeping thread.
 
 ### Fixed

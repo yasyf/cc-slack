@@ -95,18 +95,9 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 		Short:  "SessionStart hook: create this window's cc-slack subject",
 		Args:   cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			var in struct {
-				SessionID string `json:"session_id"`
-				Cwd       string `json:"cwd"`
-			}
-			raw, err := io.ReadAll(c.InOrStdin())
+			in, err := readHookInput(c)
 			if err != nil {
 				return err
-			}
-			if len(raw) > 0 {
-				if err := json.Unmarshal(raw, &in); err != nil {
-					return fmt.Errorf("session-start hook input: %w", err)
-				}
 			}
 			reply, err := invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, nil)
 			if err != nil {
@@ -119,6 +110,23 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 			return writeWatchesBack(c.OutOrStdout(), res)
 		},
 	}
+}
+
+type hookInput struct {
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+}
+
+func readHookInput(c *cobra.Command) (hookInput, error) {
+	var in hookInput
+	raw, err := io.ReadAll(c.InOrStdin())
+	if err != nil || len(raw) == 0 {
+		return in, err
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return in, fmt.Errorf("%s hook input: %w", c.Name(), err)
+	}
+	return in, nil
 }
 
 func writeWatchesBack(w io.Writer, res sessionStartResult) error {
