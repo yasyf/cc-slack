@@ -50,9 +50,12 @@ from_claude, text, permalink}`. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops a
 card's `options`, then its `question` and the thread owner's title, then the
 `permalink`, and last cuts its own words and sets `cut`. A tap's `id` is never cut.
-A bot's thread reply that repeats its parent, such as an alert under its own
-summary, carries only its first line and a mark saying so in `text`; read the
-whole message at its `permalink` or with `slack_thread` when you need it.
+On a channel watch, a message an app posted, such as a Datadog alert, a Sentry
+error or a Platy release line, carries only its first line, up to 160
+characters, and a mark in `text`. On a thread watch, a bot's thread reply that
+repeats its parent carries only its first line and a mark saying so. A
+person's message always arrives whole. Read the whole message at its
+`permalink`, or with `slack_thread`, when you need it.
 Top-level sessions also receive each thread or channel message, and each
 tap, as an injected steering directive at their next tool call. A DM
 message, a watch error, and a `slack.owner_stopped` event arrive once: as a
