@@ -26,18 +26,18 @@ The tool names below have the full prefix
 | Replace the text of the bot's own post | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
 | Delete or rewrite a reviewed batch of the bot's own posts in the user's DM, archiving each first | CLI only: `cc-slack apply --plan <file> [--dry-run]`, below |
-| Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(url, label, via, waits?, other?, settled?)`; the permalink `url` finds the card, whichever session posted it |
+| Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(url, label, via, waits?, other?, settled?)`; the permalink `url` finds the card, whichever session posted it. `label` is one of its options, or with `other` the user's own words, and `via` is the permalink of where they answered, which the card links. The card collapses to its title and the answer, the asking session gets the answer's `slack.action` as from a tap, the board card resolves, and every post the card supersedes shows the outcome. When the asking session has ended, the card still shows the answer and no session is told. `settled` closes a question that what happened answered, such as the pull request landing, with no `slack.action`. Needs no ticket |
 | Read a thread, with each shared message's original author, channel, text, and files under `shares` and each image's local `path`; a rate-limited read returns the cached copy with `stale: true` and `retry_after` | `slack_thread(channel_id, thread_ts, limit?)` |
 | Read a channel's latest top-level messages, newest first, with reply counts and permalinks | `slack_history(channel_id, limit?)` |
-| Download a file attachment, such as a screenshot, to a local path you can Read (CLI `cc-slack file <permalink or id> [--out <path>]`) | `slack_file(file_id or url, out?)` |
+| Download a file attachment, such as a screenshot, to a local path you can Read (CLI `cc-slack file <permalink or id> [--out <path>]`) | `slack_file(file_id or url, out?)`; without `out` it writes to the daemon's files directory |
 | List unarchived public channels, and private ones the bot is in, by name prefix, with id, name, and created | `slack_channels(prefix?)` |
 | Find active users by handle, display name, real name, or email, ignoring case (CLI `cc-slack users <query>`) | `slack_users(query)` |
 | Watch a thread, or a channel's top-level messages and thread replies | `slack_watch(channel_id, thread_ts?, owner?)` |
 | End a watch | `slack_unwatch(watch_id)` |
 | Update the user's own status DM | `slack_dm_status(text, thread_ts?, files?, blocks?)` |
 | Show you picked up a message: eyes plus Slack's working line, together | `slack_pickup(channel_id, ts, thread_ts?)`; `done: true` takes both away (CLI `cc-slack pickup`) |
-| Once you decide to do actual work, show separate steps with a spinner and keep the working line | `slack_stream(channel_id, thread_ts, recipient?, plan?, tasks)` returns `ts`; then `slack_stream(channel_id, thread_ts, ts, tasks)` per step and `stop: true` to end (CLI `cc-slack stream`, `--task "id\|in_progress\|title"`) |
-| Create an approved public channel | `slack_channel_create(name)` |
+| Once you decide to do actual work, show separate steps with a spinner and keep the working line | `slack_stream(channel_id, thread_ts, recipient?, plan?, tasks)` returns `ts`; then `slack_stream(channel_id, thread_ts, ts, tasks)` with only the steps that changed, and `stop: true` to end the steps and clear the working line. Each task is `{id, status, title, details?}`: a stable id, `pending`, `in_progress`, `complete`, or `error`, what the step does, and a line under it (CLI `cc-slack stream`, `--task "id\|in_progress\|title"`) |
+| Create an approved public channel | `slack_channel_create(name)`; the name is lowercase letters, digits, hyphens, and underscores, at most 80 characters, with no leading `#` |
 | Archive an approved channel | `slack_channel_archive(channel_id)` |
 | Invite approved people to a channel | `slack_channel_invite(channel_id, users)` |
 | Set an approved channel topic | `slack_channel_topic(channel_id, topic)` |

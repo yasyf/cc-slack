@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The slack skill's `reference/cards.md` and `reference/tools.md` again explain the fields whose only description was in the tool schemas #248 shortened: a card's `supersedes`, an ask's `description`, `style` and `confirm`, `progress.label`, `slack_stream`'s task fields and `stop`, `slack_card_answer`'s effects and `settled`, `slack_file`'s default `out`, and `slack_channel_create`'s name rules.
 - A tap on a waiting card counts again as your answer to the permission hook, so a Slack write you approved with a tap goes out. Since v0.19.32 a tap carried no `question` or `options`, and capt-hook reads a tap as an answer only when both are there and the label is one of the options, so every tapped approval was refused. A test now holds the Go tap's keys to the fixture the permission hook's tests read.
 
 - A window whose channel works gets each DM message, watch error and stopped-owner notice once: as a channel tag, no longer followed by the same words as a directive in its next tool result. Each such directive now names the event it carries (cc-interact v0.41.0), so the hook skips it once the window's proven channel has pushed the event, and a channel withholds an event the hook already delivered. A window without a proven channel still gets each one as a directive. Messages on watched threads and channels, and card taps, still arrive both ways: only their directive says whether the operator wrote the message, or what the tapped ask was and the capture to record.
