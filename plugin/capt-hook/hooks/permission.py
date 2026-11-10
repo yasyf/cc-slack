@@ -25,7 +25,7 @@ from captain_hook.tickets.declare import UNCHECKED
 from captain_hook.types import And, Or
 from captain_hook.util import reqenv
 
-from .common import BIN
+from .common import BIN, check_post
 from .writes import Write, capture, cli_calls, pending, permalink, permissions
 
 CC_SLACK = str(BIN)
@@ -42,6 +42,9 @@ CHECK_FAILURES = (OSError, LookupError, ValueError, RuntimeError, TypeError, Att
 UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahead unchecked"
 GRANT_LABEL = "slack-grant:"
 EVERY_THREAD = "/threads"
+SOLVED = "/solved"
+SOLVED_LINE = "solved-line"
+ASKS = re.compile(r"\?|\b(?:please|pls|could you|can you|would you|let (?:me|us) know|try (?:it )?again|retry|confirm)\b", re.I)
 REVOKE_LABEL = "slack-revoke:"
 NO_STORE = "open git repository"
 SCOPE = "recorded-scope"
@@ -425,6 +428,21 @@ class NotRevoked(CustomTicketCondition):
         return None if found.answer is not None and not found.grants else []
 
 
+@dataclass(frozen=True, slots=True)
+class SolvedLine(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        channel, thread = ctx.place["channel"], ctx.place["thread"]
+        write = pending(live(ctx))[0]
+        grant = f"{GRANT_LABEL}{channel}{SOLVED}"
+        grants = [answer for answer in live_answers(ctx, channel) if grant in answer.get("tags", ())]
+        if not thread or not grants or write.verb != "post" or write.files or write.fields.get("blocks") or ASKS.search(write.text) or check_post().check(write.text):
+            return None
+        read = thread_of(ctx)
+        if not read.readable or read.stale or any(message.from_claude for message in read.messages):
+            return None
+        return [ruling_evidence(grants[-1])]
+
+
 def written_here(ctx: Context) -> list[Ticket]:
     return [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
 
@@ -577,6 +595,7 @@ SLACK = Tickets(
         Rule("user-linked", Unspent(UserSaid(Linked()))),
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
+        Rule(SOLVED_LINE, And(NotRevoked(), SolvedLine())),
         Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS, tool_results=True))),
     ),
     deny="Ask the user.",
@@ -822,6 +841,13 @@ EVERY_THREAD_GRANT = LABELED_GRANT | {
     "title": "May bug-thread replies go out with no approval per thread?",
     "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}{EVERY_THREAD}"],
 }
+SOLVED_GRANT = LABELED_GRANT | {
+    "id": "e4e4e4e4e4e4e4e4",
+    "title": "Does the one solved line in a bug's thread need his permission each time?",
+    "body": "No: every bug can have one solved post that is simple, with no asks and no jargon",
+    "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}{SOLVED}"],
+}
+SOLVED_TEXT = "This is fixed in version 0.162.3623. Your existing chats open again, with their drafts intact."
 KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 ROOM = "C0ROOM00001"
@@ -1154,6 +1180,15 @@ on(
             case(NEW_ASK, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, tool="mcp__slack__slack_send_message", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(DANA | {"text": "This is fixed now, and your chats open again."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED)) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, stale=True)) >> DENY,
+            case(DANA | {"text": f"{SOLVED_TEXT} Does it work for you now?"}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": f"{SOLVED_TEXT} Please retry and let me know."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT | {"tags": ["scope:durable", f"slack-grant:{PETS}{SOLVED}"]}) | thread_read(DANA_OPENED)) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT, THREAD_REVOKED) | thread_read(DANA_OPENED)) >> DENY,
+            case(TOP_LEVEL | {"text": SOLVED_TEXT}, tool="slack_send", **said("status?"), commands=ruled(SOLVED_GRANT)) >> DENY,
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,

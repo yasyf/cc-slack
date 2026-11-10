@@ -597,7 +597,7 @@ the top-level session as a `slack.action` whose payload carries the `id`,
 written-in answer, and a `capture` line. The top-level session hands the
 answer to the lane the id names, by `SendMessage`, and records the capture
 line in cc-notes as the user's answer, with the `slack-grant:` label the
-line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
+line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
 wait until that message arrives. Only the first answer counts; a later
 tap is dropped.
 
