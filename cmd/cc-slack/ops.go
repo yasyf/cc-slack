@@ -56,6 +56,7 @@ const (
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
 	opCardCopy      daemon.Op = "card-copy"
+	opDMRelay       daemon.Op = "dm-relay"
 	opRevoke        daemon.Op = "revoke"
 	opAgentSubject  daemon.Op = "agent-subject"
 
@@ -344,6 +345,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
 	s.Register(opCardCopy, a.handleCardCopy)
+	s.Register(opDMRelay, a.handleDMRelay)
 	s.Register(opWithdrawPRCard, a.handleWithdrawPRCard)
 	s.Register(opRevoke, a.handleRevoke)
 	s.Register(opAgentSubject, a.handleAgentSubject)
