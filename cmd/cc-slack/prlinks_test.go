@@ -642,6 +642,35 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	}
 }
 
+func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res cardAnswerResult
+	answer := map[string]any{"url": id.permalink(testDM, card.ts, card.threadTS), "label": "Merge", "via": "http://studio:41330/", "surface": "dashboard"}
+	if err := json.Unmarshal(l.do(opCardAnswer, answer).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("card-answer = %+v, %v; want the PR card answered", res, err)
+	}
+	want := `{"answer":{"action_ts":"","label":"Merge","number":41,"repo":"acme/app","source":"answered on http://studio:41330/","waits":"merge:41:e718a74"}}`
+	if got := cmd.requests(t); len(got) != 2 || got[1] != want {
+		t.Fatalf("card command asked %v, want the Merge answer last", got)
+	}
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered on <http://studio:41330/|the dashboard>") {
+		t.Fatalf("card edits = %v, want the dashboard's answer in place of the buttons", edits)
+	}
+	if err := json.Unmarshal(l.do(opCardAnswer, answer).Body, &res); err != nil || res.Answered || res.Label != "Merge" {
+		t.Fatalf("second card-answer = %+v, %v; want the first answer back and no second tap", res, err)
+	}
+	if got := cmd.requests(t); len(got) != 2 {
+		t.Fatalf("card command asked %v after a second answer, want no new request", got)
+	}
+}
+
 func refusingCardCommand(t *testing.T, reason string, cards ...providedCard) (cardCommand, string) {
 	t.Helper()
 	dir := t.TempDir()

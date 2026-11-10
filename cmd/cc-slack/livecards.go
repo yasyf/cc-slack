@@ -897,6 +897,21 @@ func (l *liveCards) asks(channel, thread, waits, question string) bool {
 	return t.Waiting[waits].Card.Title == question
 }
 
+func (l *liveCards) prCardAt(channel, thread, ts string) (string, liveMessage, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return "", liveMessage{}, false
+	}
+	for _, m := range t.PRCards {
+		if m.TS == ts && m.Card.Waits != "" && len(m.Card.refIDs()) > 0 {
+			return m.Card.Waits, *m, true
+		}
+	}
+	return "", liveMessage{}, false
+}
+
 func (l *liveCards) answer(channel, thread, askID string) (askAnswer, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

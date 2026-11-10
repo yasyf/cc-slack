@@ -28,17 +28,19 @@ const (
 var goneCanvasCodes = map[string]bool{"canvas_not_found": true, "canvas_deleted": true}
 
 type driveQuestion struct {
-	Question    string    `json:"question"`
-	Options     []string  `json:"options"`
-	Recommended string    `json:"recommended,omitempty"`
-	Asked       time.Time `json:"asked"`
-	URL         string    `json:"url"`
+	Question    string     `json:"question"`
+	Options     []string   `json:"options"`
+	Recommended string     `json:"recommended,omitempty"`
+	Asked       time.Time  `json:"asked"`
+	URL         string     `json:"url"`
+	Card        statusCard `json:"card"`
 }
 
 type drivePRCard struct {
-	PRs   []string  `json:"prs"`
-	Asked time.Time `json:"asked"`
-	URL   string    `json:"url"`
+	PRs   []string   `json:"prs"`
+	Asked time.Time  `json:"asked"`
+	URL   string     `json:"url"`
+	Card  statusCard `json:"card"`
 }
 
 type driveCardsResult struct {
@@ -65,14 +67,14 @@ func (l *liveCards) openDriveCards(drive string, link func(channel, ts, thread s
 		for _, pr := range listed {
 			prs = append(prs, pr.URL)
 		}
-		return drivePRCard{prs, m.At, link(t.Channel, m.TS, t.Thread)}
+		return drivePRCard{prs, m.At, link(t.Channel, m.TS, t.Thread), m.Card}
 	}
 	for _, t := range l.threads {
 		for _, m := range t.Waiting {
 			switch {
 			case !t.open(m):
 			case m.Card.Drive == drive:
-				res.Questions = append(res.Questions, driveQuestion{m.Card.Title, m.Card.Options, m.Card.Recommended, m.At, link(t.Channel, m.TS, t.Thread)})
+				res.Questions = append(res.Questions, driveQuestion{m.Card.Title, m.Card.Options, m.Card.Recommended, m.At, link(t.Channel, m.TS, t.Thread), m.Card})
 			case m.Card.Drive == "" && len(m.Card.allPRs()) > 0:
 				res.PRCards = append(res.PRCards, prCard(t, m))
 			}
