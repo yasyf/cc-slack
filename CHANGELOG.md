@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A session with a working channel now gets each linked Slack message and card tap once. The tool-use hook had been delivering it again almost every time, because capt-hook runs that hook outside the Claude window and the daemon could not find the window's channel. Channel proof also survives a daemon restart now, so a session that never calls a cc-slack tool after a release keeps single delivery (cc-interact 0.41.1).
+
 ### Removed
 
 - The picture-keeping thread in the DM is gone. A card's pictures go only to the `[pictures]` bucket, and a WebP picture is stored as a PNG, since Slack draws only PNG, JPEG and GIF from a link. A card drawn before the bucket keeps drawing the pictures it already shared.
