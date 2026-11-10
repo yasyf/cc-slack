@@ -245,6 +245,21 @@ func TestPlainWritesDrawNoHiddenComment(t *testing.T) {
 	}
 }
 
+func TestAMarkdownStatusLineReadsBackOnce(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.do(opDMStatus, map[string]any{"text": "**The relay fix landed.** It deletes nothing."})
+	post := l.slack.sent()[0]
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(post.blocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	read := messageText(slack.Message{Msg: slack.Msg{Text: post.text, Blocks: blocks}})
+	if want := "*The relay fix landed.* It deletes nothing."; post.text != want || read != want {
+		t.Fatalf("posted text %q reads back as %q, want %q once", post.text, read, want)
+	}
+}
+
 func TestTheLinesReadBackNamesEachLineSlackDoesNotHold(t *testing.T) {
 	card := statusCard{Status: "needs_you", Title: "Approve both?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-1", PRs: []cardPR{fullPR(1), fullPR(2)}}
 	held := card.replyBlocks(view())

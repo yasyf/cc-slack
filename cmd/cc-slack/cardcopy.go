@@ -38,11 +38,18 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	ref, err := parsePermalink(b.URL)
+	link := b.URL
+	ref, err := parsePermalink(link)
 	if err != nil {
 		return fail(err.Error())
 	}
-	copied, err := a.cardCopy(hc.Ctx, id, ref, b.URL)
+	if source, isCopy := a.cards.copySource(ref.channelID, ref.ts); isCopy {
+		link = id.permalink(source.channel, source.ts, source.thread)
+		if ref, err = parsePermalink(link); err != nil {
+			return fail(err.Error())
+		}
+	}
+	copied, err := a.cardCopy(hc.Ctx, id, ref, link)
 	if err != nil {
 		return fail(err.Error())
 	}
