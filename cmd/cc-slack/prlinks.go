@@ -49,13 +49,20 @@ type providedCard struct {
 	Number int        `json:"number"`
 	Card   statusCard `json:"card"`
 
-	replaces cardRef
+	replaces []replacedCard
 	changed  string
 }
 
 type replacedCard struct {
 	old, fresh cardRef
-	changed    string
+	why        string
+}
+
+func regrouped(card statusCard) string {
+	if n := len(card.prKeys()); n > 1 {
+		return fmt.Sprintf("now one card for its stack of %d PRs", n)
+	}
+	return "now a card of its own"
 }
 
 type skippedCard struct {
@@ -312,11 +319,10 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	default:
 		beside = cardBeside{thread: postTS, carry: true}
 	}
-	placed, undrawn := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
+	placed, why := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, asked, standing)
+	undrawn := map[string]string{}
 	for _, pr := range a.cards.uncarded(placed, waiting) {
-		if _, said := undrawn[pr.key()]; !said {
-			undrawn[pr.key()] = "its card was not posted; the daemon log says why"
-		}
+		undrawn[pr.key()] = cmp.Or(why[pr.key()], "its card was not posted; the daemon log says why")
 	}
 	if !beside.carry {
 		return "", undrawn
@@ -328,23 +334,26 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
+	var named []linkedPR
+	var stood []cardRef
 	for _, pr := range prs {
 		keys := map[string]bool{pr.ref.key(): true}
 		if pr.state.terminal() || post.shows(keys) {
 			continue
 		}
-		waiting = append(waiting, pr.ref)
-		open := func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) }
-		if card, found := l.rootPRCard(channelID, open); found {
-			if !slices.Contains(standing, card) {
-				standing = append(standing, card)
-			}
-			continue
+		card, _ := l.rootPRCard(channelID, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) })
+		named, waiting, stood = append(named, pr), append(waiting, pr.ref), append(stood, card)
+		if card != (cardRef{}) && !slices.Contains(standing, card) {
+			standing = append(standing, card)
 		}
-		asked = append(asked, pr.ref)
+	}
+	if len(standing) == 1 && !slices.Contains(stood, cardRef{}) {
+		return nil, standing, waiting
+	}
+	for _, pr := range named {
 		l.refs[pr.ref.key()] = pr.state
 	}
-	return asked, standing, waiting
+	return waiting, standing, waiting
 }
 
 type cardBeside struct {
@@ -353,7 +362,7 @@ type cardBeside struct {
 }
 
 func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, asked []refID, standing []cardRef) ([]cardRef, map[string]string) {
-	placed := standing
+	var drawn []cardRef
 	undrawn := map[string]string{}
 	if len(asked) > 0 {
 		provided, skipped, err := askPRCards(ctx, id, asked)
@@ -379,7 +388,13 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		for _, r := range replaced {
 			a.markReplaced(ctx, id, r)
 		}
-		placed = append(placed, cards...)
+		drawn = cards
+	}
+	placed := slices.DeleteFunc(slices.Clone(standing), a.cards.replaced)
+	for _, card := range drawn {
+		if !slices.Contains(placed, card) {
+			placed = append(placed, card)
+		}
 	}
 	if beside.thread == "" {
 		return placed, undrawn
@@ -392,7 +407,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 	return placed, undrawn
 }
 
-func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any) {
+func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any, replaced []replacedCard) {
 	now := a.now()
 	for _, p := range provided {
 		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil {
@@ -400,13 +415,16 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			a.tellRefused(ctx, id, p, err)
 			continue
 		}
-		posted, found := a.cards.posted(channelID, thread, p.Card)
+		posted, found, others := a.cards.posted(channelID, thread, p.Card)
+		for _, old := range others {
+			p.replaces = append(p.replaces, replacedCard{old: old, why: regrouped(p.Card)})
+		}
 		if !found {
 			rest = append(rest, p)
 			continue
 		}
 		if changed := a.cards.changedSinceAnswer(posted, p.Card); changed != "" {
-			p.replaces, p.changed = posted, changed
+			p.replaces, p.changed = append(p.replaces, replacedCard{old: posted, why: changed}), changed
 			rest = append(rest, p)
 			continue
 		}
@@ -420,24 +438,31 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			a.tellRefused(ctx, id, p, err)
 			continue
 		}
-		placed, shown = append(placed, posted), append(shown, shownCard(p))
+		placed, shown, replaced = append(placed, posted), append(shown, shownCard(p)), append(replaced, p.replacedBy(posted)...)
 	}
-	return rest, placed, shown
+	return rest, placed, shown, replaced
+}
+
+func (p providedCard) replacedBy(card cardRef) []replacedCard {
+	replaced := slices.Clone(p.replaces)
+	for i := range replaced {
+		replaced[i].fresh = card
+	}
+	return replaced
 }
 
 func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) ([]cardRef, []map[string]any, []replacedCard) {
-	provided, placed, shown := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
-	var replaced []replacedCard
+	provided, placed, shown, replaced := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	now := a.now()
 	for _, p := range provided {
-		if offered, found := cards.pickOffering(channelID, p.Card.offer()); p.Card.Waits != "" && p.changed == "" && found {
+		if offered, found := cards.pickOffering(channelID, p.Card.offer()); p.Card.Waits != "" && len(p.replaces) == 0 && found {
 			placed, shown = append(placed, offered), append(shown, shownCard(p))
 			continue
 		}
-		if asking, found := cards.pickAsking(channelID, p.Card.offer().pr); p.Card.Waits == "" && found {
+		if asking, found := cards.pickAsking(channelID, p.Card.offer().pr); p.Card.Waits == "" && len(p.replaces) == 0 && found {
 			placed, shown = append(placed, asking), append(shown, shownCard(p))
 			continue
 		}
@@ -466,10 +491,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		t.Updated = now
 		cards.commit(t)
 		fresh := cardRef{channelID, t.Thread, m.TS}
-		placed, shown = append(placed, fresh), append(shown, shownCard(p))
-		if p.changed != "" {
-			replaced = append(replaced, replacedCard{p.replaces, fresh, p.changed})
-		}
+		placed, shown, replaced = append(placed, fresh), append(shown, shownCard(p)), append(replaced, p.replacedBy(fresh)...)
 		if thread != "" {
 			continue
 		}
@@ -483,8 +505,11 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 func (a *app) markReplaced(ctx context.Context, id identity, r replacedCard) {
 	answered := ""
 	a.cards.markReply(r.old.channel, r.old.thread, r.old.ts, func(m *liveMessage) { answered, m.ReplacedBy = m.Tapped, r.fresh.ts })
-	line := "↪ *Replaced:* " + mrkdwnEscapes.Replace(clipRunes(r.changed, cardMaxReasonLen)) + " · " +
-		slackLink(id.permalink(r.fresh.channel, r.fresh.ts, r.fresh.thread), "answer the new card") + "\nYour answer to this version: " + answered
+	line := "↪ *Replaced:* " + mrkdwnEscapes.Replace(clipRunes(r.why, cardMaxReasonLen)) + " · " +
+		slackLink(id.permalink(r.fresh.channel, r.fresh.ts, r.fresh.thread), "answer the new card")
+	if answered != "" && answered != cardNoLongerWaits {
+		line += "\nYour answer to this version: " + answered
+	}
 	if err := a.poller.markOption(ctx, id, r.old, line); err != nil {
 		a.poller.log.Printf("PR card %s, replaced by %s, still shows its answer as standing: %v", r.old.ts, r.fresh.ts, err)
 	}

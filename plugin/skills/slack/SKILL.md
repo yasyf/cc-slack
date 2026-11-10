@@ -268,7 +268,9 @@ this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. Code spans and text already inside `<...>` are left
 alone. A link never draws a card or a button. With `card_command` set, a PR the
 user has to tap gets its card only when the call lists its URL in `tap_prs` (the
-CLI's repeatable `--tap-pr` on `dm-status`), once per PR and head. A tap on it,
+CLI's repeatable `--tap-pr` on `dm-status`), once per PR and head. List a
+stack's PRs in one call: they draw one card, and an older card of any of them
+is edited to say it was replaced. A tap on it,
 or on a pick card whose `prs` names that one PR at that head with the same
 answers, closes every other such card and counts once. A tap on a waiting card
 whose `prs` names a PR, with no PR card for it, also goes to the card command,
