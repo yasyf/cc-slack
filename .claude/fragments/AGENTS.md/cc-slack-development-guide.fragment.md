@@ -417,8 +417,12 @@ failed read retries after a backoff that doubles from 10 s to 60 s.
 A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, naming its agent id for `owner` and
 `await`. No other subagent gets one, so an agent that never touches Slack hears nothing from cc-slack.
 
-- `slack.message` is a new message on a watch the top-level session owns. It also
-  lands as a directive in the session's next tool result.
+- `slack.message` is a new message on a watch the top-level session owns. A
+  thread or channel message also lands as a directive in the session's next tool
+  result, since only the directive says whether the operator wrote it. A DM
+  message's directive names the event it carries, so the session gets it once:
+  the hook skips it once the window's proven channel pushed the event, and the
+  channel withholds the event once the hook delivered it.
   A message the daemon acked while the session was compacting carries `acked`,
   the ts of that ack, and its directive says not to ack it again.
   An operator reply in a DM thread that another session's card opened carries
@@ -445,8 +449,8 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
 - `slack.owner_stopped` tells the top-level session that a subagent stopped while
   it still owns active watches. The first message routed to the stopped owner
   emits it, once per stop, with the `agent_id` and each watch's `watch_id`,
-  `kind`, `channel_id`, and `thread_ts`. It also lands as a directive that names
-  both remedies: `SendMessage` resumes the agent with its queued messages, and
+  `kind`, `channel_id`, and `thread_ts`. Like a watch error, it is delivered once,
+  by channel tag or by a directive that names both remedies: `SendMessage` resumes the agent with its queued messages, and
   `slack_unwatch` plus a `slack_watch` under the agent that took over retires
   them. The message itself still queues in the owner's mailbox, and cc-interact
   still appends `agent.relay`.

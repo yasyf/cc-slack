@@ -365,3 +365,45 @@ func TestAResumedChannelDeliversOnlyLiveWatchesAfterItsCursor(t *testing.T) {
 		t.Fatalf("resumed read = %q, want only the live watch's message after the cursor", got)
 	}
 }
+
+func TestADMOnAnEndedWatchReachesTheSessionOnce(t *testing.T) {
+	l := startDaemon(t)
+	dmWatch := func(thread string) watch {
+		t.Helper()
+		tx, err := l.srv.DB().BeginTx(l.ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := addWatch(l.ctx, tx, l.subID, agent.TopLevel, kindDM, "D0OWNER", thread, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		return watch{ID: id, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindDM, ChannelID: "D0OWNER", ThreadTS: thread}
+	}
+	stop := func(w watch) {
+		t.Helper()
+		if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE id = ?`, w.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pushed := dmWatch("1800000000.000400")
+	l.deliverOn(pushed, "1800000000.000401", "undelivered when its watch ended")
+	stop(pushed)
+	if got := l.channelTexts(); !slices.Equal(got, []string{"undelivered when its watch ended"}) {
+		t.Fatalf("channel read = %q, want the message whose directive no path delivered yet", got)
+	}
+
+	hooked := dmWatch("1800000000.000500")
+	l.deliverOn(hooked, "1800000000.000501", "delivered by the hook")
+	stop(hooked)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "delivered by the hook") {
+		t.Fatalf("hook drain = %q, want the DM", got)
+	}
+	if got := l.channelTexts(); len(got) != 0 {
+		t.Fatalf("channel read = %q, want nothing the hook already delivered", got)
+	}
+}

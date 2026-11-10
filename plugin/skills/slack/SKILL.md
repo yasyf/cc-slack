@@ -402,8 +402,11 @@ from_claude, text, permalink}`. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops the
 thread owner's title, then the `permalink`, and last cuts its own words and
 sets `cut`. A tap's `id` is never cut.
-Top-level sessions also receive each message as an injected steering
-directive at their next tool call. Deduplicate all deliveries by
+Top-level sessions also receive each thread or channel message, and each
+tap, as an injected steering directive at their next tool call. A DM
+message, a watch error, and a `slack.owner_stopped` event arrive once: as a
+channel tag when this window's channel is proven, else as a directive.
+Deduplicate all deliveries by
 `(channel_id, ts)` before acting, including deliveries across watches.
 
 `slack.message@<agent_id>` belongs only to that owner subagent and arrives
@@ -450,8 +453,9 @@ permission to send; every resulting write needs a ticket like any other.
 ## Take steering in the user's DM
 
 Call `slack_dm_status(card)` to post an update in the user's DM with the
-app. A card or update lands as its own message at the DM root, unless a
-directive names the thread the user wrote in: pass that as `thread_ts`. It returns `{channel_id, thread_ts, ts}`,
+app. A card or update lands as its own message at the DM root, unless the
+user wrote in a thread: pass the `thread_ts` their directive or channel tag
+names when it differs from the message's `ts`. It returns `{channel_id, thread_ts, ts}`,
 and `thread_ts` is that message's own timestamp. Receive the user's replies
 in that message's thread, and taps on it, as directives through the same
 receive protocol, deduplicate them, and post status back with

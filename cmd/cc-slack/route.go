@@ -37,7 +37,9 @@ func (a *app) endedWatchFrame(subjectID string, e event.Event) bool {
 	}
 	var live bool
 	err := a.poller.plane.DB().QueryRowContext(context.Background(),
-		`SELECT EXISTS(SELECT 1 FROM watches WHERE id = ? AND subject_id = ? AND status = 'active')`, frame.WatchID, subjectID).Scan(&live)
+		`SELECT EXISTS(SELECT 1 FROM watches WHERE id = ? AND subject_id = ? AND status = 'active')
+		 OR EXISTS(SELECT 1 FROM directives WHERE subject_id = ? AND event_seq = ? AND delivered_at IS NULL)`,
+		frame.WatchID, subjectID, subjectID, e.Seq).Scan(&live)
 	if err != nil {
 		a.poller.log.Printf("deliver %s on watch %d without checking it is live: %v", e.Type, frame.WatchID, err)
 		return false
@@ -230,16 +232,7 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 		return err
 	}
 	if w.Owner == agent.TopLevel {
-		if d.base == eventMessage && p.streamed(w.SubjectID) {
-			return p.appendEvent(ctx, w.SubjectID, d.origin, eventStreamed, d.payload(eventStreamed), d.dedup)
-		}
-		if err := p.appendEvent(ctx, w.SubjectID, d.origin, d.base, d.payload(d.base), d.dedup); err != nil {
-			return err
-		}
-		if _, err := p.plane.Direct(ctx, w.SubjectID, agent.TopLevel, d.origin, d.line); err != nil {
-			return fmt.Errorf("direct top level: %w", err)
-		}
-		return nil
+		return p.deliverTopLevel(ctx, w, d)
 	}
 	typ := ownedType(d.base, w.Owner)
 	payload := d.payload(typ)
@@ -247,7 +240,7 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 	if err != nil {
 		return err
 	}
-	if err := p.appendEvent(ctx, w.SubjectID, d.origin, typ, payload, d.dedup); err != nil {
+	if _, err := p.appendEvent(ctx, w.SubjectID, d.origin, typ, payload, d.dedup); err != nil {
 		return err
 	}
 	if !done {
@@ -257,6 +250,30 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 		return fmt.Errorf("direct finished owner %s: %w", w.Owner, err)
 	}
 	return p.ownerStopped(ctx, db, w.SubjectID, w.Owner, endedAt)
+}
+
+func (p *poller) deliverTopLevel(ctx context.Context, w watch, d delivery) error {
+	if d.base == eventMessage && p.streamed(w.SubjectID) {
+		_, err := p.appendEvent(ctx, w.SubjectID, d.origin, eventStreamed, d.payload(eventStreamed), d.dedup)
+		return err
+	}
+	seq, err := p.appendEvent(ctx, w.SubjectID, d.origin, d.base, d.payload(d.base), d.dedup)
+	if err != nil {
+		return err
+	}
+	if tagCarriesLine(d.base, w.Kind) {
+		_, err = p.plane.DirectEvent(ctx, w.SubjectID, d.origin, d.line, seq)
+	} else {
+		_, err = p.plane.Direct(ctx, w.SubjectID, agent.TopLevel, d.origin, d.line)
+	}
+	if err != nil {
+		return fmt.Errorf("direct top level: %w", err)
+	}
+	return nil
+}
+
+func tagCarriesLine(base, kind string) bool {
+	return base == eventWatchError || base == eventMessage && kind == kindDM
 }
 
 func (p *poller) holdDelivery(subjectID string, pid int) {
@@ -283,10 +300,11 @@ func (p *poller) ownerStopped(ctx context.Context, db *sql.DB, subjectID, agentI
 		return err
 	}
 	payload := mustJSON(ownerStoppedPayload{Type: eventOwnerStopped, AgentID: agentID, Watches: watches})
-	if err := p.appendEvent(ctx, subjectID, event.OriginSystem, eventOwnerStopped, payload, dedup); err != nil {
+	seq, err := p.appendEvent(ctx, subjectID, event.OriginSystem, eventOwnerStopped, payload, dedup)
+	if err != nil {
 		return err
 	}
-	if _, err := p.plane.Direct(ctx, subjectID, agent.TopLevel, event.OriginSystem, ownerStoppedLine(agentID, watches)); err != nil {
+	if _, err := p.plane.DirectEvent(ctx, subjectID, event.OriginSystem, ownerStoppedLine(agentID, watches), seq); err != nil {
 		return fmt.Errorf("direct top level: %w", err)
 	}
 	return nil
@@ -324,13 +342,14 @@ func ownedWatches(ctx context.Context, db *sql.DB, subjectID, agentID string) ([
 	return out, nil
 }
 
-func (p *poller) appendEvent(ctx context.Context, subjectID, origin, typ string, payload []byte, dedup string) error {
-	if _, err := p.plane.Append(ctx, &event.Event{
+func (p *poller) appendEvent(ctx context.Context, subjectID, origin, typ string, payload []byte, dedup string) (int64, error) {
+	seq, err := p.plane.Append(ctx, &event.Event{
 		SubjectID: subjectID, Origin: origin, Type: typ, Payload: payload, DedupKey: dedup,
-	}); err != nil {
-		return fmt.Errorf("append %s: %w", typ, err)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("append %s: %w", typ, err)
 	}
-	return nil
+	return seq, nil
 }
 
 func delivered(ctx context.Context, db *sql.DB, subjectID, dedup string) (bool, error) {
