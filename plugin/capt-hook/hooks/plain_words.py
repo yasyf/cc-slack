@@ -23,6 +23,7 @@ PLAIN_WORDS = {
     "ulid": "ULIDs",
     "bare-number": "unlinked numbers",
     "bare-url": "bare URLs",
+    "option-reference": "options named by number",
 }
 PLAIN_WORDS_WARNING = "Slack readers outside this session cannot decode {found}; write the next post from the facts."
 LINK_KINDS = frozenset({"bare-number", "bare-url"})

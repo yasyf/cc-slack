@@ -114,6 +114,10 @@ var (
 		{regexp.MustCompile(`\b[0-9a-f]{8,}\b`), true, "a hash; say what it stands for"},
 		{regexp.MustCompile(`\b[a-z]+(?:-[a-z0-9]+)+-\d+\b`), false, "a lane name; say what that agent is doing for the user"},
 	}
+	optionByPosition = regexp.MustCompile(`(?i)\b(?:options?|choices?)\s+(?:#?[1-9]|one|two|three|four)\b(?:\s*(?:,|and|or|&)\s*(?:#?[1-9]|one|two|three|four)\b)*|` +
+		`\b(?:first|second|third|fourth|last|previous|next|above|top|bottom|1st|2nd|3rd|4th)\s+(?:options?|choices?)\b|\b(?:options?|choices?)\s+(?:above|below)\b`)
+	optionByNumber   = regexp.MustCompile(`(?i)\b(?:same\s+as|as\s+in|as|like|unlike|than|pick|choose|prefer)\s+[#(]?[1-9]\)?`)
+	optionNumberEnds = regexp.MustCompile(`(?i)^(?:[ \t]*(?:\n|$)|\s*[^\w\s%.,]|[.,](?:\D|$)|\s+(?:and|but|or|nor|plus|with|without|except|only|then|so|yet|in|on|at|to|for|from|by|is|are|was|does|did|has|adds|keeps|would|will|above|below|which|that|though|instead|minus|too|also)\b)`)
 )
 
 type statusCard struct {
@@ -295,7 +299,37 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkReplaces(),
 		c.checkSupersedes(),
 		c.checkPermissionWords(),
+		c.checkOptionRefs(),
 	)
+}
+
+func (c statusCard) checkOptionRefs() error {
+	if len(c.Options) == 0 {
+		return nil
+	}
+	shown := []struct{ where, text string }{{"title", c.Title}, {"body", c.Body}}
+	for _, o := range c.Options {
+		shown = append(shown, struct{ where, text string }{fmt.Sprintf("option %q", o), o}, struct{ where, text string }{fmt.Sprintf("hint for option %q", o), c.Hints[o]})
+	}
+	var errs []error
+	for _, s := range shown {
+		if ref := optionReference(slackToken.ReplaceAllString(s.text, " ")); ref != "" {
+			errs = append(errs, fmt.Errorf("card %s points at an option by number or position with %q: the card draws the recommended option first and renumbers the rest, so name the option in its own words", s.where, ref))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func optionReference(text string) string {
+	if ref := optionByPosition.FindString(text); ref != "" {
+		return ref
+	}
+	for _, at := range optionByNumber.FindAllStringIndex(text, -1) {
+		if optionNumberEnds.MatchString(text[at[1]:]) {
+			return text[at[0]:at[1]]
+		}
+	}
+	return ""
 }
 
 func (c statusCard) checkPermissionWords() error {
