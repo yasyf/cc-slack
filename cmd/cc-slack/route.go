@@ -14,7 +14,11 @@ import (
 	"github.com/yasyf/cc-interact/event"
 )
 
-const repeatsParentMark = "[repeats its thread's parent message; the rest is at the permalink]"
+const (
+	repeatsParentMark = "[repeats its thread's parent message; the rest is at the permalink]"
+	botLineMark       = "[a bot's first line; the whole message is at the permalink]"
+	botLineLimit      = 160
+)
 
 const (
 	eventMessage      = "slack.message"
@@ -121,7 +125,10 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
 		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked,
 	}
-	if m.BotID != "" && thread != m.Timestamp {
+	switch {
+	case m.BotID != "" && w.Kind == kindChannel:
+		msg.Text = botLine(msg.Text)
+	case m.BotID != "" && thread != m.Timestamp:
 		repeats, err := p.repeatsParent(ctx, w, thread, msg.Text)
 		if err != nil {
 			return delivery{}, err
@@ -153,6 +160,16 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 			return mustJSON(msg)
 		},
 	}, nil
+}
+
+func botLine(text string) string {
+	whole := strings.TrimSpace(text)
+	first, _, _ := strings.Cut(whole, "\n")
+	first = strings.TrimSpace(first)
+	if first == whole && runes(first) <= botLineLimit {
+		return text
+	}
+	return clipRunes(first, botLineLimit) + " " + botLineMark
 }
 
 func (p *poller) repeatsParent(ctx context.Context, w watch, thread, text string) (bool, error) {

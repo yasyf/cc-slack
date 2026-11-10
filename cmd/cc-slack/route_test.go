@@ -409,10 +409,10 @@ func TestADMOnAnEndedWatchReachesTheSessionOnce(t *testing.T) {
 	}
 }
 
-func TestABotReplyThatRepeatsItsParentArrivesAsItsFirstLine(t *testing.T) {
+func TestABotReplyThatRepeatsItsParentOnAThreadWatchArrivesAsItsFirstLine(t *testing.T) {
 	l := startDaemon(t)
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
-	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindChannel, ChannelID: testChannel}
+	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindThread, ChannelID: testChannel, ThreadTS: testThread}
 	body := "Triggered: Team runs failing far above their baseline\nTeam had 125 failed runs\n\nin the last 30 minutes"
 	deliver := func(ts, thread, bot, text string) messagePayload {
 		t.Helper()
@@ -448,5 +448,51 @@ func TestABotReplyThatRepeatsItsParentArrivesAsItsFirstLine(t *testing.T) {
 	}
 	if got := deliver("1800000001.000200", "1800000001.000100", "BDATADOG", body); got.Text != body {
 		t.Fatalf("bot reply whose parent never reached the session = %q, want it whole", got.Text)
+	}
+}
+
+func TestEveryBotMessageOnAChannelWatchArrivesAsOneLine(t *testing.T) {
+	l := startDaemon(t)
+	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
+	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindChannel, ChannelID: testChannel}
+	deliver := func(m slack.Message) messagePayload {
+		t.Helper()
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got messagePayload
+		if err := json.Unmarshal(d.payload(eventMessage), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(d.line, strconv.Quote(got.Text)) {
+			t.Fatalf("directive %q, want the payload's text %q", d.line, got.Text)
+		}
+		return got
+	}
+	bot := func(ts, thread, text string, blocks ...slack.Block) slack.Message {
+		return slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: "UDATADOG", BotID: "BDATADOG", Text: text, Blocks: slack.Blocks{BlockSet: blocks}}}
+	}
+	alert := "\n\n*Monitor alert summary:* Team runs failing — team_1\n*Latest status:* Triggered\nTeam had 125 failed runs"
+	long := strings.Repeat("x", 200)
+
+	tests := []struct {
+		name string
+		m    slack.Message
+		want string
+	}{
+		{"a root's first non-empty line", bot(testThread, "", alert), "*Monitor alert summary:* Team runs failing — team_1 " + botLineMark},
+		{"a thread reply's first line", bot("1800000000.000200", testThread, "Recovered: Team runs failing — team_1\nTeam is back under its baseline"), "Recovered: Team runs failing — team_1 " + botLineMark},
+		{"a long line cut to 160 characters", bot("1800000000.000300", "", long), strings.Repeat("x", botLineLimit-1) + "… " + botLineMark},
+		{"a short one-line message whole", bot("1800000000.000400", "", "Deploy finished"), "Deploy finished"},
+		{"a message drawn only in blocks", bot("1800000000.000500", "", "", slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "[api] Error: boom\nat main.go:12", false, false), nil, nil)), "[api] Error: boom " + botLineMark},
+		{"a person's message whole", slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000600", User: testUser, Text: alert}}, alert},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deliver(tt.m); got.Text != tt.want || got.Permalink == "" {
+				t.Fatalf("payload = %+v, want text %q and a permalink", got, tt.want)
+			}
+		})
 	}
 }
