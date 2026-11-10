@@ -50,24 +50,9 @@ func TestDriveCardsListTheDrivesOpenQuestionsUntilHeAnswers(t *testing.T) {
 func TestATapThatNamesItsCardAsTheThreadSettlesTheCardInTheThreadThatHoldsIt(t *testing.T) {
 	command, _ := cardOwnerCommand(t, `echo '{"heard":true}'`)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
-	var root map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "Cloud agents"}).Body, &root); err != nil {
-		t.Fatal(err)
-	}
 	asked := mergeCard()
 	asked.Drive = "brook"
-	var res map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": asked, "thread_ts": root["ts"]}).Body, &res); err != nil {
-		t.Fatal(err)
-	}
-	id, err := loadIdentity(l.ctx, l.srv.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := postedCard{id: id, thread: res["thread_ts"], ts: res["ts"]}
-	if c.thread != root["ts"] || c.ts == c.thread {
-		t.Fatalf("card at %s in thread %s, want a reply in thread %s", c.ts, c.thread, root["ts"])
-	}
+	c := postWaitingInTextThread(t, l, asked)
 	endWatches(t, l, c.thread)
 
 	tap := mergeTap(c, 2)
@@ -171,5 +156,39 @@ func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
 	answerOnBoard(t, l, c, "Hold")
 	if listed := driveCards(t, l, "pier").PRCards; len(listed) != 0 {
 		t.Fatalf("PR cards after his answer = %+v, want none", listed)
+	}
+}
+
+func TestDriveCardsDropACardAnsweredOnACopyLinkedWithoutItsThreadThatNoSessionHolds(t *testing.T) {
+	command, _ := cardOwnerCommand(t, `echo '{"heard":true}'`)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+	asked := mergeCard()
+	asked.Drive = "brook"
+	c := postWaitingInTextThread(t, l, asked)
+	copied, merge := copyCard(t, l, c.bareLink(), postThread(t, l, "Elsewhere."))
+	endWatches(t, l, c.thread)
+
+	tapCopy(l, c, copied, merge)
+
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != "Merge" {
+		t.Fatalf("answer = %+v, %v, want Merge on record for the card in thread %s", ans, done, c.thread)
+	}
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 0 {
+		t.Fatalf("questions after his tap = %+v, want none", listed)
+	}
+}
+
+func TestDriveCardsListOneCardWhereACardLinkedWithoutItsThreadIsReplacedInPlace(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	asked := mergeCard()
+	asked.Drive = "brook"
+	c := postWaitingInTextThread(t, l, asked)
+	again := mergeCard()
+	again.Drive, again.Waits, again.Title, again.Replaces = "brook", "step-4:merge", "Merge #41 and #42 now?", c.bareLink()
+	l.do(opDMStatus, map[string]any{"card": again})
+
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || listed[0].URL != c.url() || listed[0].Question != again.Title {
+		t.Fatalf("questions = %+v, want the one card at %s, now asking %q", listed, c.url(), again.Title)
 	}
 }

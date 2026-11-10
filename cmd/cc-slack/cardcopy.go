@@ -212,7 +212,7 @@ func answers(actionID string) bool {
 
 func copiedAnswer(b *slack.ButtonBlockElement, ref permalinkRef) *slack.ButtonBlockElement {
 	answer := *b
-	answer.ActionID = cardCopyAction + ref.ts + ":" + ref.threadTS + ":" + b.ActionID
+	answer.ActionID = cardCopyAction + ref.ts + ":" + b.ActionID
 	return &answer
 }
 
@@ -249,15 +249,15 @@ func messageAt(ctx context.Context, api slackAPI, channelID, threadTS, ts string
 	return messages[at], nil
 }
 
-func (a cardActionPush) onCard() cardActionPush {
+func (a cardActionPush) onCard() (cardActionPush, bool) {
 	rest, copied := strings.CutPrefix(a.ActionID, cardCopyAction)
 	if !copied {
-		return a
+		return a, false
 	}
 	ts, rest, _ := strings.Cut(rest, ":")
-	thread, action, _ := strings.Cut(rest, ":")
-	a.MessageTS, a.ThreadTS, a.ActionID = ts, thread, action
-	return a
+	_, action, _ := strings.Cut(rest, cardActionPrefix)
+	a.MessageTS, a.ActionID = ts, cardActionPrefix+action
+	return a, true
 }
 
 func (l *liveCards) markCopies(ctx context.Context, id identity, card cardRef, line string) {
@@ -302,7 +302,7 @@ func (l *liveCards) redrawCopies(ctx context.Context, id identity, card cardRef)
 func markCopy(ctx context.Context, api slackAPI, id identity, card, copied cardRef, post slack.Message, line, undo string) error {
 	blocks := []slack.Block{post.Blocks.BlockSet[0], mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))}
 	if undo != "" {
-		blocks = append(blocks, slack.NewActionBlock(cardCopyBlock+"-undo", button(cardCopyAction+card.ts+":"+card.thread+":"+cardUndoAction+undo, cardUndoLabel)))
+		blocks = append(blocks, slack.NewActionBlock(cardCopyBlock+"-undo", button(cardCopyAction+card.ts+":"+cardUndoAction+undo, cardUndoLabel)))
 	}
 	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...))
 	return err

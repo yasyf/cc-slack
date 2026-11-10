@@ -349,7 +349,9 @@ func TestATapReplayedAfterItsAnswerWasRecordedButNotDeliveredIsDeliveredThen(t *
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
 	tap := mergeTap(c, 2)
-	l.app.cards.claim(c.id.DMChannelID, c.thread, "step-3:merge", askAnswer{At: slackTime(tap.ActionTS), Label: "Merge", Undelivered: tapKey(tap)})
+	if _, _, err := l.app.cards.claim(c.id.DMChannelID, c.thread, "step-3:merge", askAnswer{At: slackTime(tap.ActionTS), Label: "Merge", Undelivered: tapKey(tap)}); err != nil {
+		t.Fatal(err)
+	}
 
 	l.tap(c.id, tap)
 

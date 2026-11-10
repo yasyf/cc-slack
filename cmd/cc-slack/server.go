@@ -48,6 +48,7 @@ type app struct {
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
 func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, threads *dmThreads, replay *replayCursor) *app {
+	newAPI = cache.expiring(newAPI)
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
 		newAPI:        newAPI,

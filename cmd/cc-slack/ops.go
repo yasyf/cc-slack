@@ -2215,7 +2215,8 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	if err != nil {
 		return "", "", err
 	}
-	thread := cmp.Or(ref.threadTS, ref.ts)
+	stored, _ := a.cards.cardAt(id.DMChannelID, ref.ts)
+	thread := cmp.Or(stored.thread, ref.threadTS, ref.ts)
 	card.Replaces = ""
 	api := a.newAPI(id.Token)
 	now := a.now()
@@ -2436,7 +2437,8 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		if err != nil {
 			return "", "", false, false, err
 		}
-		under, replaces, card.Replaces = cmp.Or(ref.threadTS, ref.ts), ref.ts, ""
+		stored, _ := cards.storedCard(id.DMChannelID, ref.ts)
+		under, replaces, card.Replaces = cmp.Or(stored.thread, ref.threadTS, ref.ts), ref.ts, ""
 	}
 	place, err := cards.placeFor(id.DMChannelID, under, replaces, threads, card)
 	if err != nil {
@@ -2465,6 +2467,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 	if asked == nil {
 		cards.retire(card.Supersedes, placed.TS, askedAgainLine)
 	}
+	cards.dropReplaced(t, replaces, placed)
 	cards.commit(t)
 	if superseded != nil {
 		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {

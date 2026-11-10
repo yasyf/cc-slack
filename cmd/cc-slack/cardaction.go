@@ -157,6 +157,7 @@ var (
 	errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
 	errCardMoved       = errors.New("the card was redrawn with another question after this answer was drawn")
 	errUndoClosed      = errors.New("the ten minutes to undo this answer had passed")
+	errNoStoredCard    = errors.New("no stored card")
 )
 
 func hostName() string {
@@ -327,8 +328,8 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 	if pr, ok := p.cards.prCard(a.Channel, a.ThreadTS, k.ID); ok && !k.Other && len(id.Config.PRLinks.CardCommand) > 0 {
 		return p.tapPRCard(ctx, id, a, k, pr, at)
 	}
-	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
-		return errCardMoved
+	if err := p.cards.stillAsks(a.Channel, a.ThreadTS, k.ID, k.Question); err != nil {
+		return err
 	}
 	undo := ""
 	if p.undoable(id, a.ref(), k) {
@@ -362,7 +363,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
 	}
-	card := p.cards.located(a.onCard())
+	card, err := p.cards.located(a)
 	at := slackTime(a.ActionTS)
 	k, ok := card.tap()
 	if !ok {
@@ -370,7 +371,9 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.noteTap(ctx, id, a.ref(), card.ref(), at, "⚠️ *That button no longer does anything.* Reply in this thread to say what you wanted.")
 		return nil
 	}
-	err := p.takeTap(ctx, id, card, k)
+	if err == nil {
+		err = p.takeTap(ctx, id, card, k)
+	}
 	if errors.Is(err, errNoStatusSession) && !k.Explain && !k.Undo {
 		err = p.handOn(ctx, id, card, k, at)
 	}
@@ -397,7 +400,11 @@ func tapKey(a cardActionPush) string {
 func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) error {
 	label := mrkdwnEscapes.Replace(k.Label)
 	if k.ID != "" {
-		if won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other, Undelivered: tapKey(a)}); !won {
+		won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other, Undelivered: tapKey(a)})
+		if err != nil {
+			return err
+		}
+		if !won {
 			p.log.Printf("ask %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
 			return nil
 		}
@@ -517,6 +524,8 @@ func droppedBecause(err error) (string, bool) {
 		return "this card now asks something else.", true
 	case errors.Is(err, errUndoClosed):
 		return "the ten minutes to undo this answer had passed, so it stands.", true
+	case errors.Is(err, errNoStoredCard):
+		return "cc-slack no longer holds the card this answers, so the answer was not kept.", true
 	}
 	return "", false
 }
@@ -706,8 +715,12 @@ func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k
 }
 
 func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool, press cardPress) bool {
-	won, prior := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, askAnswer{At: at, Label: label})
-	if !won {
+	won, prior, err := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, askAnswer{At: at, Label: label})
+	switch {
+	case err != nil:
+		p.log.Printf("PR card %s: %q dropped: %v", c.waits, label, err)
+		return applied
+	case !won:
 		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
 		return applied
 	}
@@ -774,7 +787,9 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 	if len(watches) == 0 {
 		return errNoStatusSession
 	}
-	p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	if _, _, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label}); err != nil {
+		return err
+	}
 	if err := p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)); err != nil {
 		p.log.Printf("row %s on %s: %q taken, but the card still shows its buttons: %v", k.ID, a.MessageTS, k.Label, err)
 	}
@@ -791,7 +806,10 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 }
 
 func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
-	won, prior := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	if err != nil {
+		return err
+	}
 	if !won {
 		p.log.Printf("PR row %s: %q dropped: already answered with %q", k.ID, k.Label, prior.Label)
 		return nil
@@ -841,7 +859,10 @@ func (w waitsAnswer) recorded(now time.Time) askAnswer {
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, w.recorded(p.now()))
+	won, prior, err := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, w.recorded(p.now()))
+	if err != nil {
+		return cardAnswerResult{}, err
+	}
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
@@ -1033,13 +1054,17 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActi
 }
 
 func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via, from string) (cardAnswerResult, error) {
-	ref, err := parsePermalink(card)
+	link, err := parsePermalink(card)
 	if err != nil {
 		return cardAnswerResult{}, err
 	}
-	thread := ref.threadTS
+	ref, ok := p.cards.cardAt(link.channelID, link.ts)
+	if !ok || ref.channel != id.DMChannelID {
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
+	}
+	thread := ref.thread
 	kind, surface, name := answeredFrom(from, via)
-	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok && ref.channelID == id.DMChannelID {
+	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok {
 		switch {
 		case withdrawn && m.Tapped != "":
 			return cardAnswerResult{}, fmt.Errorf("PR card %s no longer waits on a tap: it shows %q", card, m.Tapped)
@@ -1050,7 +1075,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		}
 	}
 	waits, m, ok := p.cards.waitingAt(id.DMChannelID, thread, ref.ts)
-	if ref.channelID != id.DMChannelID || !ok {
+	if !ok {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
 	}
 	answers := m.Card.answers()
@@ -1240,7 +1265,9 @@ func (p *poller) tapDrawn(r cardRef, tapped time.Time, err error) error {
 func (p *poller) markAsk(ctx context.Context, id identity, a cardActionPush, k askTap) error {
 	at := slackTime(a.ActionTS)
 	if !k.expired(at) {
-		p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Undelivered: tapKey(a)})
+		if _, _, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Undelivered: tapKey(a)}); err != nil {
+			return err
+		}
 	}
 	line := "✓ *" + mrkdwnEscapes.Replace(k.Label) + "* · answered " + clock(at, p.now())
 	if k.expired(at) {

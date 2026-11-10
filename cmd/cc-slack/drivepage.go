@@ -59,7 +59,7 @@ type canvasResult struct {
 	Replaced string `json:"replaced,omitempty"`
 }
 
-// openDriveCards lists the waiting cards that name drive and are still unanswered, and every PR card still waiting
+// openDriveCards lists the waiting cards that name drive and are still unanswered and unreplaced, and every PR card still waiting
 // on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink.
 func (l *liveCards) openDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
 	l.mu.Lock()

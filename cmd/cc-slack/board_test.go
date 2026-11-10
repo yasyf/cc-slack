@@ -65,6 +65,34 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 
 func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
 
+func postThread(t *testing.T, l *liveDaemon, text string) string {
+	t.Helper()
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": text}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	return res["thread_ts"]
+}
+
+func postWaitingInTextThread(t *testing.T, l *liveDaemon, card statusCard) postedCard {
+	t.Helper()
+	thread := postThread(t, l, "About the merge.")
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": thread}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["thread_ts"] != thread || res["ts"] == thread {
+		t.Fatalf("dm-status result %v, want the card posted under text thread %s", res, thread)
+	}
+	return postedCard{id: id, thread: thread, ts: res["ts"]}
+}
+
+func (c postedCard) bareLink() string { return c.id.permalink(c.id.DMChannelID, c.ts, "") }
+
 func answerOnBoard(t *testing.T, l *liveDaemon, c postedCard, label string) cardAnswerResult {
 	t.Helper()
 	var res cardAnswerResult
