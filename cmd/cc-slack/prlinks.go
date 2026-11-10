@@ -464,7 +464,11 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 		_, err := a.cards.redraw(ctx, a.newAPI(id.Token), card.channel, beside.thread, beside.thread, a.now())
 		return err
 	}
-	if a.cards.hasCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts}) {
+	return a.copyCardInto(ctx, db, id, beside.thread, card)
+}
+
+func (a *app) copyCardInto(ctx context.Context, db *sql.DB, id identity, thread string, card cardRef) error {
+	if a.cards.hasCopy(card.channel, thread, liveCardCopy{Card: card.ts}) {
 		return nil
 	}
 	link := id.permalink(card.channel, card.ts, card.thread)
@@ -476,11 +480,11 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 	if err != nil {
 		return err
 	}
-	res, err := a.post(ctx, db, id, card.channel, beside.thread, copyLead(blocks, answers), blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
+	res, err := a.post(ctx, db, id, card.channel, thread, copyLead(blocks, answers), blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
 	if err != nil {
 		return err
 	}
-	a.cards.rememberCopy(card.channel, beside.thread, liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
+	a.cards.rememberCopy(card.channel, thread, liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
 	return nil
 }
 

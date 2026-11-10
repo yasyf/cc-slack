@@ -776,11 +776,15 @@ write every post so a person can answer it, and answer each reply as it lands.
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
 - A message telling its reader something waits on them carries the card with
-  its buttons, in that message or its thread, and only such a message may say
-  it: a summary, a catch-up or a link line that names an open card is followed
-  by `cc-slack card-copy` of it in the same thread. A link alone is never
-  enough. When a card was removed or went stale, say so in the same breath and
-  name its replacement.
+  its buttons in its thread. In your DM with the app, link the open card by its
+  permalink from `cc-slack drive-cards`: `send`, `reply` and `dm-status` text
+  that links an open card draws that card, buttons and all, under the line in
+  the same thread, and a tap on either answers both. Slack itself shows a link
+  to a DM message with no buttons, so the link is how you name the card, never
+  the embed. A PR's tap card comes from `tap_prs`. A DM line that says
+  something waits on you, with no open card linked, no `tap_prs`, no PR link
+  and no open card in its thread, is refused before it posts. When a card was
+  removed or went stale, say so in the same breath and name its replacement.
 - Keep answering as the thread continues. Once the user has told you to
   answer someone there, each new question gets its reply without asking again.
 
@@ -815,7 +819,9 @@ order.
    labels such as `PT` or `17:35Z`, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
-   identifier, and a paragraph past three sentences. It ignores anything
+   identifier, a paragraph past three sentences, and a sentence that says
+   something waits on the reader in a post that links no card in your DM with
+   the app and no PR. It ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier
    or sentence inside backticks or a code fence. Then check what the script
    cannot detect:

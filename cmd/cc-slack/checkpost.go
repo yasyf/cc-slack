@@ -4,11 +4,13 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yasyf/cc-interact/version"
@@ -29,25 +31,52 @@ func checkPostCmd() *cobra.Command {
 		Use:   "check-post <file|->",
 		Short: "Check a Slack post's text with the plugin's check-post before sending it",
 		Long: `Run the plugin's bundled check-post on a post's text, read from a file or
-from stdin with -. It prints each finding with its fix and exits 1 when there is
-one, 0 when the text is clean, and 2 on a usage error, as the script does. It
-runs the check-post of the newest installed plugin, which a session's PATH may
-not hold.`,
+from stdin with -, then check that a line saying something waits on the reader
+links the open card it means. It prints each finding with its fix and exits 1
+when there is one, 0 when the text is clean, and 2 on a usage error, as the
+script does. It runs the check-post of the newest installed plugin, which a
+session's PATH may not hold.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			root, err := pluginRoot()
 			if err != nil {
 				return fmt.Errorf("check-post: %w", err)
 			}
-			check := exec.CommandContext(c.Context(), filepath.Join(root, checkPostScript), args...) //nolint:gosec // G204: the plugin's own check-post script, never a shell
-			check.Stdin, check.Stdout, check.Stderr = c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr()
-			err = check.Run()
-			if exited, ok := errors.AsType[*exec.ExitError](err); ok {
-				return exitStatus(exited.ExitCode())
+			text, err := postText(c, args)
+			if err != nil {
+				return fmt.Errorf("check-post: %w", err)
 			}
-			return err
+			check := exec.CommandContext(c.Context(), filepath.Join(root, checkPostScript), "-") //nolint:gosec // G204: the plugin's own check-post script, never a shell
+			check.Stdin, check.Stdout, check.Stderr = strings.NewReader(text), c.OutOrStdout(), c.ErrOrStderr()
+			status := 0
+			if err := check.Run(); err != nil {
+				exited, ok := errors.AsType[*exec.ExitError](err)
+				if !ok {
+					return err
+				}
+				status = exited.ExitCode()
+			}
+			if said, found := waitsWithoutCard(text, dmCard); found && len(linkedPRRefs(text)) == 0 {
+				if _, err := fmt.Fprintln(c.OutOrStdout(), said); err != nil {
+					return err
+				}
+				status = max(status, 1)
+			}
+			if status != 0 {
+				return exitStatus(status)
+			}
+			return nil
 		},
 	}
+}
+
+func postText(c *cobra.Command, args []string) (string, error) {
+	if len(args) == 0 || args[0] == "-" {
+		text, err := io.ReadAll(c.InOrStdin())
+		return string(text), err
+	}
+	text, err := os.ReadFile(args[0])
+	return string(text), err
 }
 
 func pluginRoot() (string, error) {
