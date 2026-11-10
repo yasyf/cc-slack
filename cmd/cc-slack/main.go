@@ -29,6 +29,7 @@ func deps() cmd.Deps {
 		WindowAlive:            procs.LiveClaude,
 		TerminalEvent:          func(string) bool { return false },
 		ChannelEvent:           channelEvent,
+		ChannelResumesLive:     true,
 		Serve:                  serve,
 	}
 	d.ChannelTools = func(_ context.Context, session, scope string) ([]channel.Tool, string, string, error) {

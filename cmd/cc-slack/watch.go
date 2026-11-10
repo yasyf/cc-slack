@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -24,7 +21,6 @@ import (
 
 const (
 	watchConsumer = "watch"
-	caughtUpEvent = "event: caught-up"
 	provenEvent   = `{"type":"channel.proven"}`
 	provenPoll    = 2 * time.Second
 	monitorEvent  = 500
@@ -84,7 +80,7 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 			})(ctx); err != nil {
 				return err
 			}
-			head, err := streamHead(ctx, port, subjectID)
+			head, err := consume.StreamHead(ctx, port, subjectID, event.OriginAgent)
 			if err != nil {
 				return err
 			}
@@ -258,44 +254,4 @@ func eventType(data string) string {
 	}
 	_ = json.Unmarshal([]byte(data), &e)
 	return e.Type
-}
-
-func streamHead(ctx context.Context, port int, subjectID string) (int64, error) {
-	u := fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&exclude_origin=%s",
-		port, url.QueryEscape(subjectID), url.QueryEscape(event.OriginAgent))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("read the event log head of %s: %w", subjectID, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("read the event log head of %s: events endpoint returned %d", subjectID, resp.StatusCode)
-	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	caughtUp := false
-	for sc.Scan() {
-		line := sc.Text()
-		if line == caughtUpEvent {
-			caughtUp = true
-			continue
-		}
-		if data, ok := strings.CutPrefix(line, "data: "); ok && caughtUp {
-			var marker struct {
-				Seq int64 `json:"seq"`
-			}
-			if err := json.Unmarshal([]byte(data), &marker); err != nil {
-				return 0, fmt.Errorf("parse the caught-up marker of %s: %w", subjectID, err)
-			}
-			return marker.Seq, nil
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return 0, fmt.Errorf("event stream of %s closed before it caught up: %w", subjectID, err)
-	}
-	return 0, fmt.Errorf("event stream of %s closed before it caught up", subjectID)
 }
