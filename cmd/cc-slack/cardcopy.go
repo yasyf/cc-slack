@@ -55,7 +55,7 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) askAgain(ctx context.Context, db *sql.DB, id identity, card cardRef) error {
-	if err := a.redrawCopies(ctx, id, card); err != nil {
+	if err := a.cards.redrawCopies(ctx, id, card); err != nil {
 		return err
 	}
 	link := id.permalink(card.channel, card.ts, card.thread)
@@ -85,7 +85,7 @@ func sameCard(was, now statusCard) bool {
 }
 
 func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, error) {
-	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
+	blocks, answers, err := copyBlocks(ctx, a.newAPI(id.Token), id, ref, link)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +95,11 @@ func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link 
 	return blocks, nil
 }
 
-func (a *app) copyBlocks(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, int, error) {
+func copyBlocks(ctx context.Context, api slackAPI, id identity, ref permalinkRef, link string) ([]slack.Block, int, error) {
 	if ref.channelID != id.DMChannelID || ref.ts == "" {
 		return nil, 0, fmt.Errorf("%s is not a message in your DM with the app", link)
 	}
-	card, err := messageAt(ctx, a.newAPI(id.Token), ref.channelID, ref.threadTS, ref.ts)
+	card, err := messageAt(ctx, api, ref.channelID, ref.threadTS, ref.ts)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -253,22 +253,50 @@ func (a cardActionPush) onCard() cardActionPush {
 	return a
 }
 
-func (p *poller) markCopies(ctx context.Context, id identity, card cardRef, line string) {
-	api := p.newAPI(id.Token)
-	for _, copied := range p.cards.copiesOf(card.channel, card.ts) {
+func (l *liveCards) markCopies(ctx context.Context, id identity, card cardRef, line string) {
+	api := l.newAPI(id.Token)
+	undo := l.undoing(card)
+	for _, copied := range l.copiesOf(card.channel, card.ts) {
 		post, err := messageAt(ctx, api, copied.channel, copied.thread, copied.ts)
 		if err != nil {
-			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
+			l.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 			continue
 		}
-		if err := markCopy(ctx, api, id, card, copied, post, line); err != nil {
-			p.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
+		if err := markCopy(ctx, api, id, card, copied, post, line, undo); err != nil {
+			l.log.Printf("card copy %s stays as drawn: %v", copied.ts, err)
 		}
 	}
 }
 
-func markCopy(ctx context.Context, api slackAPI, id identity, card, copied cardRef, post slack.Message, line string) error {
-	answered := mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))
-	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(post.Blocks.BlockSet[0], answered), slack.MsgOptionAttachments([]slack.Attachment{}...))
+func (l *liveCards) redrawCopies(ctx context.Context, id identity, card cardRef) error {
+	copies := l.copiesOf(card.channel, card.ts)
+	if len(copies) == 0 {
+		return nil
+	}
+	link := id.permalink(card.channel, card.ts, card.thread)
+	ref, err := parsePermalink(link)
+	if err != nil {
+		return err
+	}
+	api := l.newAPI(id.Token)
+	blocks, answers, err := copyBlocks(ctx, api, id, ref, link)
+	if err != nil {
+		return err
+	}
+	entities := l.workObjectsOf(card.channel, card.ts, l.now())
+	for _, copied := range copies {
+		if err := updateMessage(ctx, api, copied.channel, copied.ts, copyLead(blocks, answers), blocks, entities...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func markCopy(ctx context.Context, api slackAPI, id identity, card, copied cardRef, post slack.Message, line, undo string) error {
+	blocks := []slack.Block{post.Blocks.BlockSet[0], mrkdwn(cardCopyBlock+"-answered", line+" · "+slackLink(id.permalink(card.channel, card.ts, card.thread), "see the card"))}
+	if undo != "" {
+		blocks = append(blocks, slack.NewActionBlock(cardCopyBlock+"-undo", button(cardCopyAction+card.ts+":"+card.thread+":"+cardUndoAction+undo, cardUndoLabel)))
+	}
+	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...))
 	return err
 }

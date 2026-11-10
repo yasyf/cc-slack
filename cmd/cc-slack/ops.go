@@ -1455,7 +1455,7 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		}
 		for _, card := range listing {
 			a.poller.redrawWithFreshPRLines(ctx, id, card)
-			if err := a.redrawCopies(ctx, id, card); err != nil {
+			if err := a.cards.redrawCopies(ctx, id, card); err != nil {
 				a.poller.log.Printf("card %s: its copies keep the lines they were drawn with: %v", card.ts, err)
 			}
 		}
@@ -2468,8 +2468,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		}
 	}
 	if asked == nil {
-		a.poller.noteSuperseded(ctx, id, card.Supersedes, "↪ *"+mrkdwnEscapes.Replace(card.Title)+"* is asked again as a card with buttons: "+
-			slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer it there"))
+		a.poller.noteSuperseded(ctx, id, card.Supersedes, askedAgain(card.Title, id.permalink(id.DMChannelID, placed.TS, t.Thread)))
 	}
 	if prior != nil && asked != nil {
 		return t.Thread, placed.TS, true, again, nil

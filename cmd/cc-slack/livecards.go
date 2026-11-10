@@ -242,7 +242,16 @@ func (t *liveThread) nextExpiry(now time.Time) time.Time {
 			next = earliest(next, *k.ExpiresAt)
 		}
 	}
+	for _, ans := range t.Answers {
+		if !ans.UndoUntil.IsZero() {
+			next = earliest(next, ans.UndoUntil)
+		}
+	}
 	return next
+}
+
+func (t *liveThread) answered(waits string) []*liveMessage {
+	return slices.DeleteFunc(t.messages(), func(m *liveMessage) bool { return m == nil || m.Card.Waits != waits })
 }
 
 type refHost struct {
@@ -799,7 +808,85 @@ func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, a
 	}
 	t.Answers[askID] = ans
 	l.save()
+	if !ans.UndoUntil.IsZero() {
+		l.wake()
+	}
 	return true, ans
+}
+
+type undoneAnswer struct {
+	card       cardRef
+	waits      string
+	answer     askAnswer
+	question   string
+	supersedes []string
+}
+
+func (l *liveCards) undo(channel, tap string) []undoneAnswer {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var undone []undoneAnswer
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for waits, ans := range t.Answers {
+			if ans.Tap != tap {
+				continue
+			}
+			delete(t.Answers, waits)
+			for _, m := range t.answered(waits) {
+				m.Tapped = ""
+				if !slices.ContainsFunc(undone, func(u undoneAnswer) bool { return u.card == cardRef{t.Channel, t.Thread, m.TS} }) {
+					undone = append(undone, undoneAnswer{cardRef{t.Channel, t.Thread, m.TS}, waits, ans, m.Card.Title, m.Card.Supersedes})
+				}
+			}
+		}
+	}
+	l.save()
+	return undone
+}
+
+type closedUndo struct {
+	card cardRef
+	line string
+}
+
+func (l *liveCards) closeUndos(now time.Time) []closedUndo {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var closed []closedUndo
+	for _, t := range l.threads {
+		for waits, ans := range t.Answers {
+			if ans.UndoUntil.IsZero() || now.Before(ans.UndoUntil) {
+				continue
+			}
+			ans.Tap, ans.UndoUntil = "", time.Time{}
+			t.Answers[waits] = ans
+			for _, m := range t.answered(waits) {
+				closed = append(closed, closedUndo{cardRef{t.Channel, t.Thread, m.TS}, m.Tapped})
+			}
+		}
+	}
+	if len(closed) > 0 {
+		l.save()
+	}
+	return slices.CompactFunc(closed, func(a, b closedUndo) bool { return a.card == b.card })
+}
+
+func (l *liveCards) undoing(card cardRef) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(card.channel, card.thread)]
+	if !ok {
+		return ""
+	}
+	for waits, ans := range t.Answers {
+		if l.now().Before(ans.UndoUntil) && slices.ContainsFunc(t.answered(waits), func(m *liveMessage) bool { return m.TS == card.ts }) {
+			return waits
+		}
+	}
+	return ""
 }
 
 func (l *liveCards) release(channel, thread, askID string) {
@@ -1294,6 +1381,7 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		return refMaxBackoff
 	}
 	now := l.now()
+	l.redrawClosedUndos(ctx, id, l.closeUndos(now), now)
 	byHost, unknown, next := l.pending(now)
 	next = earliest(next, now.Add(refMaxBackoff))
 	changed, moved := map[string]bool{}, map[string]bool{}
@@ -1334,6 +1422,16 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 	}
 	l.recardMoved(ctx, id, moved)
 	return max(next.Sub(now), time.Second)
+}
+
+func (l *liveCards) redrawClosedUndos(ctx context.Context, id identity, closed []closedUndo, now time.Time) {
+	api := l.newAPI(id.Token)
+	for _, c := range closed {
+		if _, err := l.redraw(ctx, api, c.card.channel, c.card.thread, c.card.ts, now); err != nil {
+			l.log.Printf("card %s: its ten minutes to undo closed, but it still shows Undo: %v", c.card.ts, err)
+		}
+		l.markCopies(ctx, id, c.card, c.line)
+	}
 }
 
 func (l *liveCards) redrawChanged(ctx context.Context, api slackAPI, changed map[string]bool, now time.Time) time.Time {

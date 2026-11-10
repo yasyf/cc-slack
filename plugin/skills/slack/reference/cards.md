@@ -130,6 +130,17 @@ when the payload has one; `slack-grant:<channel>/threads` grants replies in ever
 wait until that message arrives. Only the first answer counts; a later
 tap is dropped.
 
+For 10 minutes a tapped answer shows an Undo button on the card and its
+copies, except on a permission card or a card that carries a PR. Undo
+takes the answer back: the card shows its options again with no answer
+on record, and the session gets one `slack.action` with `undo: true`, the
+`id`, the `question` and the undone `label`, and no `options`, so nothing
+reads it as an answer. Treat that answer as never given: tell the
+lane to stop or redirect what it started on it, supersede anything you
+recorded from it, such as its cc-notes answer, and wait for the next
+answer, which arrives as an ordinary tap. An Undo tapped after the 10
+minutes is refused on the card and the answer stands.
+
 An Explain more tap arrives as a `slack.action` with the label `Explain
 more` and the question id. It answers nothing, and the lane stays
 stopped. For a card on a cc-present board, reply with

@@ -155,8 +155,9 @@ func TestATapOnACopyThisDaemonDidNotPostRedrawsThatCopyAnswered(t *testing.T) {
 		ActionID: buttons[at].ActionID, Value: buttons[at].Value, ActionTS: "1800000100.000000", Seq: "001800000100000-abcd0124"})
 
 	edits := editsOf(l.slack.edited(), post.ts)
-	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge*") || strings.Contains(edits[len(edits)-1], cardCopyAction) {
-		t.Fatalf("copy edits = %v, want it answered with its buttons gone", edits)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge*") || strings.Contains(edits[len(edits)-1], cardWaitAction) ||
+		!strings.Contains(edits[len(edits)-1], cardUndoAction) {
+		t.Fatalf("copy edits = %v, want it answered with its Pick buttons gone and its Undo shown", edits)
 	}
 	if got := l.slack.sent()[sent:]; slices.ContainsFunc(got, func(p fakePost) bool { return strings.Contains(p.text, "did not change this message") }) {
 		t.Fatalf("posted %+v, want no warning under a copy that now shows the answer", got)
