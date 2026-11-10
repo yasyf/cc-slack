@@ -211,12 +211,16 @@ func (t *liveThread) open(m *liveMessage) bool {
 	return !answered && m.Tapped == "" && m.ReplacedBy == ""
 }
 
+func (t *liveThread) asks(m *liveMessage) bool {
+	return m.Card.Waits != "" && t.open(m)
+}
+
 func (t *liveThread) retired(m *liveMessage) bool {
 	return m.ReplacedBy != "" || t.Answers[m.Card.Waits].Withdrawn
 }
 
 func (t *liveThread) shows(keys map[string]bool) bool {
-	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.open(m) })
+	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
 }
 
 func (t *liveThread) changedSinceAnswer(m *liveMessage, drawn statusCard) string {
@@ -426,21 +430,21 @@ func (l *liveCards) awaitsTap(channel, ts string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, m := l.liveMessage(channel, ts)
-	return m == nil || m.Card.Waits != "" && t.open(m)
+	return m == nil || t.asks(m)
 }
 
 func (l *liveCards) openCard(channel, ts string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, m := l.liveMessage(channel, ts)
-	return m != nil && m.Card.Waits != "" && t.open(m)
+	return m != nil && t.asks(m)
 }
 
 func (l *liveCards) holdsOpenCard(channel, thread string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
-	return ok && slices.ContainsFunc(t.messages(), func(m *liveMessage) bool { return m != nil && m.Card.Waits != "" && t.open(m) })
+	return ok && slices.ContainsFunc(t.messages(), func(m *liveMessage) bool { return m != nil && t.asks(m) })
 }
 
 func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) {
@@ -1629,7 +1633,7 @@ func (l *liveCards) openPRCards(pr refID) []offeredCard {
 	var open []offeredCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			if m.Card.Waits != "" && t.open(m) && m.cites(map[string]bool{pr.key(): true}) {
+			if t.asks(m) && m.cites(map[string]bool{pr.key(): true}) {
 				open = append(open, offeredCard{ref: cardRef{t.Channel, t.Thread, m.TS}, waits: m.Card.Waits, question: m.Card.Title})
 			}
 		}
@@ -1693,7 +1697,7 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 	switch {
 	case drawn.Waits == "":
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended
-		if m.Card.Waits != "" && t.open(m) {
+		if t.asks(m) {
 			m.Tapped = cardNoLongerWaits
 		}
 	case m.Tapped == cardNoLongerWaits || drawn.Waits != m.Card.Waits:

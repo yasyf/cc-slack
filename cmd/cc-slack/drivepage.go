@@ -84,7 +84,7 @@ func (l *liveCards) openDriveCards(drive string, link func(channel, ts, thread s
 			}
 		}
 		for _, m := range t.PRCards {
-			if m.Card.Waits != "" && t.open(m) {
+			if t.asks(m) {
 				res.PRCards = append(res.PRCards, prCard(t, m))
 			}
 		}

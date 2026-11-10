@@ -357,7 +357,7 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 	var stood []cardRef
 	for _, pr := range named {
 		keys := map[string]bool{pr.ref.key(): true}
-		card, _ := l.rootPRCard(channelID, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) })
+		card, _ := l.rootPRCard(channelID, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
 		waiting, stood = append(waiting, pr.ref), append(stood, card)
 		if card != (cardRef{}) && !slices.Contains(standing, card) {
 			standing = append(standing, card)
@@ -455,6 +455,9 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
 			a.tellRefused(ctx, id, p, err)
 			continue
+		}
+		if err := a.cards.redrawCopies(ctx, id, posted); err != nil {
+			a.poller.log.Printf("PR card %s is redrawn, but its copies still show it as it was: %v", posted.ts, err)
 		}
 		placed, shown, replaced = append(placed, posted), append(shown, shownCard(p)), append(replaced, p.replacedBy(posted)...)
 	}
