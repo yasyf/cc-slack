@@ -477,6 +477,40 @@ func TestPermissionCardSpeaksInWords(t *testing.T) {
 	}
 }
 
+func TestACardNamesEachOptionInWordsNeverByNumberOrPosition(t *testing.T) {
+	plain := statusCard{
+		Status: "needs_you", Title: "How should scripts run?", Waits: "scripts:limits",
+		Body:    "This is step 1 of the migration on 0.162.3619; it merged 1 PR in 2 days, like <https://github.com/acme/app/pull/4031|#4031>.",
+		Options: []string{"Own process", "Own process plus a memory cap per script, stopping a script over the cap"}, Recommended: "Own process plus a memory cap per script, stopping a script over the cap",
+	}
+	if err := plain.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("a card whose options stand alone: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		title, body, option string
+		quoted              string
+	}{
+		"as a number in an option": {plain.Title, plain.Body, "Own process plus a memory cap per script: as 1, and a script over the cap stops", `"as 1"`},
+		"same as in an option":     {plain.Title, plain.Body, "Same as 2 but with a cap", `"Same as 2"`},
+		"options in the body":      {plain.Title, "Option 2 is the only one; options 1 and 2 add a process.", plain.Options[1], `"Option 2"`},
+		"position in the title":    {"Take the first option?", plain.Body, plain.Options[1], `"first option"`},
+		"like a hash number":       {plain.Title, "Like #2, it waits.", plain.Options[1], `"Like #2"`},
+	} {
+		card := plain
+		card.Title, card.Body, card.Options = tc.title, tc.body, []string{plain.Options[0], tc.option}
+		card.Recommended = tc.option
+		for _, check := range []func(time.Time, bool, string) error{card.check, card.checkMirrored} {
+			if err := check(time.Now(), false, ""); err == nil || !strings.Contains(err.Error(), tc.quoted) || !strings.Contains(err.Error(), "by number or position") {
+				t.Errorf("%s: want a refusal quoting %s, got %v", name, tc.quoted, err)
+			}
+		}
+	}
+	info := statusCard{Status: "info", Title: "Option 2 landed"}
+	if err := info.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("a card with no options draws no numbers: %v", err)
+	}
+}
+
 func TestACardListsLongOptionsOnceEachBesideItsOwnButton(t *testing.T) {
 	long := []string{"Cap the run search at 200 sessions and drop the rest", "Run the whole search tonight on the pass box", "Skip the search and ship the fix as is"}
 	card := statusCard{Status: "needs_you", Title: "How should the run search pay for itself?", Options: long, Recommended: long[1], Waits: "cost-pick"}

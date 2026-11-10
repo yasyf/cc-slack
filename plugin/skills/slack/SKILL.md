@@ -576,6 +576,13 @@ Every ask card has a recommendation and an Other. A card without
 `recommended` is refused. Never write (Recommended) into a label or add
 an Other option: the card draws both.
 
+The card draws the recommended option first and numbers the rest after
+it, so the numbers you had in mind are not the ones the user sees. Write
+each option in full words that stand alone. A card with options is
+refused when its title, body, an option, or a hint points at an option by
+number or position, such as "same as 1", "options 1 and 2", "like #2", or
+"the first option", and the refusal quotes the words.
+
 Other is the user's own answer. A tap on Other opens a Slack modal with the
 question and a text box, and what they type there answers the card.
 
@@ -799,7 +806,8 @@ order.
    issue, or Datadog monitor, incident, or event link, which stay bare so
    Slack unfurls them, one-letter codenames such as "D",
    multi-agent terms such as lane, desk, walker, parity, and fence, zone
-   labels such as `PT` or `17:35Z`, a greeting to a plain first name such as
+   labels such as `PT` or `17:35Z`, an option named by number or position
+   such as "same as 1" or "the first option", a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
    identifier, and a paragraph past three sentences. It ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier

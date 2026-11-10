@@ -81,6 +81,17 @@ RULES = (
         "address the person as a <@U…> mention, which Slack renders as their @handle; look the id up with slack_users",
     ),
     Rule(
+        "option-reference",
+        re.compile(
+            r"(?i)\b(?:options?|choices?)\s+(?:#?[1-9]|one|two|three|four)\b(?:\s*(?:,|and|or|&)\s*(?:#?[1-9]|one|two|three|four)\b)*"
+            r"|\b(?:first|second|third|fourth|last|previous|next|above|top|bottom|1st|2nd|3rd|4th)\s+(?:options?|choices?)\b|\b(?:options?|choices?)\s+(?:above|below)\b"
+            r"|\b(?:same\s+as|as\s+in|as|like|unlike|than|pick|choose|prefer)\s+[#(]?[1-9]\)?"
+            r"(?=[ \t]*$|\s*[^\w\s%.,]|[.,](?:\D|$)|\s+(?:and|but|or|nor|plus|with|without|except|only|then|so|yet|in|on|at|to|for|from|by|is|are|was|does|did|has|adds|keeps|would|will|above|below|which|that|though|instead|minus|too|also)\b)"
+        ),
+        "a card draws its recommended option first and renumbers the rest; name the option in its own words, never by number or position",
+        reads_code=False,
+    ),
+    Rule(
         "bare-identifier",
         re.compile(r"(?<![\w`])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?![\w`])"),
         "wrap identifiers such as env, secret, and setting names in backticks",
@@ -141,7 +152,7 @@ def walls(text: str) -> list[Finding]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, plain-name greetings, unformatted identifiers, and walls of text in a Slack post."
+        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, and walls of text in a Slack post."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     args = parser.parse_args()

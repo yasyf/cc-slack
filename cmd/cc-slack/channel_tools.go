@@ -129,7 +129,8 @@ var (
 			"links":  map[string]any{"type": "array", "maxItems": cardMaxLinks, "items": schemaLink("label", "url")},
 			"options": map[string]any{
 				"type": "array", "maxItems": cardMaxOptions, "items": map[string]any{"type": "string", "maxLength": cardMaxOptionLen},
-				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside the fixed Other and Explain more",
+				"description": "quick replies offered as buttons, beside the fixed Ack and Pause; with waits, the question's answers, beside the fixed Other and Explain more. " +
+					"The card draws the recommended option first and numbers the rest, so each option stands alone in full words: a card whose title, body, option, or hint points at an option by number or position, such as \"same as 1\" or \"the first option\", is refused",
 			},
 			"waits": map[string]any{
 				"type": "string", "pattern": askIDPattern.String(),

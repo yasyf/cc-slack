@@ -140,6 +140,31 @@ class CheckPostTest(unittest.TestCase):
         text = "Run `export AWS_PROFILE=dev. Then retry. Then wait. Then go.` once.\n```\none. two. three. four. five.\n```"
         self.assertEqual(kinds(text), [])
 
+    def test_flags_an_option_named_by_number_or_position(self) -> None:
+        text = (
+            "Own process plus a memory cap: as 1, and a script over the cap stops.\n\n"
+            "Option 2 is the only one; options 1 and 2 add a process.\n\n"
+            "Same as 2 but slower, unlike (1). Pick the first option."
+        )
+        self.assertEqual(
+            kinds(text),
+            [
+                ("option-reference", "as 1"),
+                ("option-reference", "Option 2"),
+                ("option-reference", "options 1 and 2"),
+                ("option-reference", "Same as 2"),
+                ("option-reference", "unlike (1)"),
+                ("option-reference", "first option"),
+            ],
+        )
+
+    def test_ignores_counts_steps_versions_and_linked_numbers(self) -> None:
+        text = (
+            "Merged 1 PR in 2 days, counted as 1 PR, like 2 days. This is step 1 of the migration on 0.162.3619, "
+            "as 1.5 times or as 1% of runs, like <https://github.com/acme/app/pull/4031|#4031>."
+        )
+        self.assertEqual(kinds(text), [])
+
     def test_reports_line_and_column(self) -> None:
         [finding] = check_post.check("ok\nsee G158")
         self.assertEqual((finding.line, finding.column), (2, 5))
