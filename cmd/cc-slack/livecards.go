@@ -45,6 +45,8 @@ type liveMessage struct {
 	Tapped string     `json:"tapped,omitempty"`
 	Hint   string     `json:"hint,omitempty"`
 
+	ReplacedBy string `json:"replaced_by,omitempty"`
+
 	Final    bool `json:"final,omitempty"`
 	Unfolded bool `json:"unfolded,omitempty"`
 	Edited   bool `json:"edited,omitempty"`
@@ -207,6 +209,17 @@ func (t *liveThread) carded(keys map[string]bool) bool {
 func (t *liveThread) open(m *liveMessage) bool {
 	_, answered := t.Answers[m.Card.Waits]
 	return !answered && m.Tapped == ""
+}
+
+func (t *liveThread) shows(keys map[string]bool) bool {
+	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.open(m) })
+}
+
+func (t *liveThread) changedSinceAnswer(m *liveMessage, drawn statusCard) string {
+	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || m.Tapped == cardNoLongerWaits {
+		return ""
+	}
+	return drawn.changedSince(m.Card)
 }
 
 func (t *liveThread) expiredSinceDrawn(now time.Time) bool {
@@ -646,15 +659,16 @@ func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMe
 }
 
 func (l *liveCards) postedPRCard(channel, thread string, keys map[string]bool) (cardRef, bool) {
+	current := func(m *liveMessage) bool { return m.cites(keys) && m.ReplacedBy == "" }
 	if thread == "" {
-		return l.rootPRCard(channel, func(_ *liveThread, m *liveMessage) bool { return m.cites(keys) })
+		return l.rootPRCard(channel, func(_ *liveThread, m *liveMessage) bool { return current(m) })
 	}
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
 		return cardRef{}, false
 	}
 	for _, m := range t.PRCards {
-		if m.cites(keys) {
+		if current(m) {
 			return cardRef{channel, thread, m.TS}, true
 		}
 	}
@@ -669,6 +683,16 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (cardRef, bo
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.postedPRCard(channel, thread, keys)
+}
+
+func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(card.channel, card.ts)
+	if m == nil {
+		return ""
+	}
+	return t.changedSinceAnswer(m, drawn)
 }
 
 func (l *liveCards) hasCopy(channel, thread string, copied liveCardCopy) bool {
@@ -1433,15 +1457,13 @@ func (p postedPRCard) carries(pr refID) bool {
 	return slices.ContainsFunc(p.prs, func(r refID) bool { return r.key() == pr.key() })
 }
 
-// postedPRCards lists every PR card, answered ones too, since each follows the
-// rows of the PRs it carries for as long as it stays in the thread.
 func (l *liveCards) postedPRCards() []postedPRCard {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var posted []postedPRCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			if ids := m.Card.refIDs(); len(ids) > 0 {
+			if ids := m.Card.refIDs(); len(ids) > 0 && m.ReplacedBy == "" {
 				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids})
 			}
 		}
