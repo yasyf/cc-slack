@@ -14,26 +14,83 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-interact/channel"
+	"github.com/yasyf/cc-interact/cmd"
 )
 
-func TestInstructionsArmTheWatchOnlyAfterASubscription(t *testing.T) {
+const (
+	toolListCeiling     = 14500
+	instructionsCeiling = 1550
+)
+
+func TestInstructionsLeaveTheReceiveStepsToAPendingResult(t *testing.T) {
 	got := channelInstructions(testSession)
-	if strings.Contains(got, "Immediately, before doing anything else") {
-		t.Fatalf("instructions arm the watch at session start:\n%s", got)
+	for _, absent := range []string{"watch --until-proven", "Deduplicate", "deduplicate"} {
+		if strings.Contains(got, absent) {
+			t.Fatalf("instructions carry %q, which belongs in a pending result:\n%s", absent, got)
+		}
 	}
-	for _, want := range []string{
-		"Arm no Monitor at session start",
-		"goes from no subscriptions to one, through a successful slack_watch without an owner, a slack_send or slack_reply without no_watch, or a slack_dm_status",
-		"read the result's channel field. On active, channel tags carry the session: arm no Monitor",
-		"cc-slack watch --until-proven --session " + testSession,
-		"cc-slack channel-ack --session " + testSession,
-		"On every channel.probe tag",
-		"slack_unwatch reports remaining 0",
-		"Shortcut hand-offs never arrive here",
-	} {
+	for _, want := range []string{"cc-slack channel-ack --session " + testSession, "pending or inactive"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("instructions lack %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestAResultTeachesTheReceiveStepsOnlyWhenTheChannelIsNotActive(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		steps bool
+	}{
+		{`{"watch_id":3,"channel":"active"}`, false},
+		{`{"watch_id":3}`, false},
+		{`{"channels":[]}`, false},
+		{`[1]`, false},
+		{`{"watch_id":3,"channel":"pending"}`, true},
+		{`{"channel_id":"D1","thread_ts":"1.2","channel":"inactive"}`, true},
+	} {
+		got := withReceiveSteps(json.RawMessage(tc.body), testSession)
+		if !strings.HasPrefix(got, tc.body) {
+			t.Fatalf("result for %s = %q, want the body unchanged first", tc.body, got)
+		}
+		if !tc.steps {
+			if got != tc.body {
+				t.Fatalf("result for %s = %q, want the body alone", tc.body, got)
+			}
+			continue
+		}
+		for _, want := range []string{
+			"cc-slack watch --until-proven --session " + testSession,
+			"cc-slack channel-ack --session " + testSession,
+			"On every channel.probe tag",
+			"deduplicate by (channel_id, ts)",
+			"slack_unwatch reports remaining 0",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("result for %s lacks %q:\n%s", tc.body, want, got)
+			}
+		}
+	}
+}
+
+func TestStandingContextStaysUnderItsCeiling(t *testing.T) {
+	tools, _, instructions, err := channelTools(cmd.Deps{}, testSession, "/scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		listed = append(listed, map[string]any{"name": tool.Name, "description": tool.Description, "inputSchema": tool.InputSchema})
+	}
+	list, err := json.Marshal(listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("tool list %d bytes, instructions %d bytes", len(list), len(instructions))
+	if len(list) > toolListCeiling {
+		t.Errorf("tool list is %d bytes, over its %d-byte ceiling; move guidance to the slack skill", len(list), toolListCeiling)
+	}
+	if len(instructions) > instructionsCeiling {
+		t.Errorf("instructions are %d bytes, over their %d-byte ceiling; move guidance to a tool result or the slack skill", len(instructions), instructionsCeiling)
 	}
 }
 
