@@ -1,0 +1,155 @@
+# Status cards and ask cards
+
+## Send status as a card
+
+Send each status update as `slack_dm_status(card)`. Use plain `text` only for
+a short conversational answer to the user's DM reply. The CLI takes
+`dm-status --card '<json>'` or `--card @<absolute path>`. A card holds:
+
+| Field | Rule |
+|---|---|
+| `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji; defaults to `needs_you` on a waiting card and `info` otherwise |
+| `title` | one line; the card header and the phone notification; defaults to the body's first line |
+| `body` | 1-3 sentences of mrkdwn, under the post rules in [voice.md](voice.md) |
+| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts with no board warning |
+| `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
+| `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
+| `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
+| `progress` | `{step, total, label}`, drawn as a progress bar |
+| `started_at`, `eta` | RFC 3339 times; the card shows how long the work has run and when it should finish |
+| `asks` | up to 5 `{id, label, description, style, confirm, expires_at}` decisions, each a button |
+| `facts` | up to 10 `{label, value}` pairs, drawn as a grid |
+| `hints` | on a card with options, an option's words to read, keyed by the option; each option then lists once beside its own button |
+| `prs` | up to 10 `{url, title, head, changed, review, refresher, surprise, hate_most, plan, show_me, pictures, port, blocks, lands}` pull requests, each drawn with its title, link and live CI, then the lines it has as fields, `changed` first as Changed since your answer, and its Show me on a row of its own; a missing line is left out. Below the buttons, the first 3 also draw as GitHub Work Objects with Merge and CI tags and Open on GitHub. Its description, read from GitHub, posts in the thread on Explain more |
+| `artifacts` | up to 5 `{title, kind, url, image, language, size}` things the reader opens at `url`, such as a diagram on the dashboard, each drawn as a Work Object with its language and size and an Open button when `url` is https, or http on the `[links]` tailnet; any other `url` posts the card with no Work Object and a warning; `image`, an absolute path to a PNG, JPEG, GIF, or WebP, is drawn as a picture on the card, from the `[pictures]` bucket when the config sets one, whether or not its Work Object draws; keep the link in `body` too, for a client that draws no card |
+| `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
+| `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
+| `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
+| `recommended` | the one option you recommend, on an ask card or a reply card; the card shows it first, marked (Recommended). An ask card needs one; on a reply card nothing waits on it |
+| `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, or 8 carrying a `pr` shaped as in `prs`, each with up to 4 buttons |
+| `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
+
+A card's `body` takes markdown or Slack mrkdwn up to 40,000 characters and renders in Block Kit: bold, links, lists, one table block per message, sections split under Slack's 3,000 limit. A status card shows its first 400 characters and a waiting card its first 1,500, ending on a whole sentence. The rest stays behind Explain more, which posts it in the card's thread; nothing is cut.
+
+A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. `root_only`
+(`dm-status --root-only`) keeps one live root card per session, for a script
+that keeps a drive's rollup current: the first call posts it, and each later
+call redraws it, keeping the last progress, times, facts, refs, links, and
+rollup any call set, every open ask, and a timeline of the last updates. The
+daemon tags each card with the session's short id, repo, branch, and
+worktree.
+
+An ask's `id` is stable: reusing it updates the same ask, and an answered
+ask stays answered, so a script can resend its asks every pass. `confirm`
+guards the tap with a dialog, and a tap after `expires_at` is dropped. The
+tap arrives as a `slack.action` whose payload carries the ask's `id`.
+
+A card with a `group` id is one group of rows on a cc-present board.
+cc-present posts it; you never write one by hand. Posting the same `group`
+again edits its card in place, unless the card gains a row its earlier card
+did not carry: then it posts as a new message at the bottom of the thread,
+so the user is notified, and the earlier card is deleted. A group with no
+rows is posted only to edit an earlier card. A tap on a row's button goes to the board as that
+row's verdict through `cc-present slack-sync decided`, not to the session,
+and the row shows its answer. When the board refuses the tap, the row says
+why, and the next push asks it again.
+
+Each reply card carries the `options` plus fixed Ack and Pause buttons. The
+card lists every option in full, numbered, above its buttons. When any option
+runs past two words, each button shows only its number. A bare number the user
+replies in the card's thread counts as a tap on that button. A
+tap arrives as a `slack.action` event and a directive, steering this
+session the way a DM reply does. Nothing waits on these taps. A tap on
+an older card may be stale, since the directive names when that card was
+posted. Ack means the user saw the card and needs nothing. Pause means start
+no new lanes, applies, deploys, or PRs. Let in-flight work settle, then post
+a `needs_you` card naming what is paused and what resuming would start.
+
+A question you keep working past, such as a design choice you go ahead on
+with your recommended answer, is a reply card with `options` and
+`recommended` and no `waits`. The card shows the recommended option first,
+marked (Recommended), keeps its Ack and Pause, and says nothing about a
+stopped lane. A tap on another option arrives as a `slack.action` like any
+reply card's, so change course when it comes.
+
+## Ask the user with an ask card
+
+An ask card is how a lane asks the user a question during execution. With
+cc-present installed, every question starts on the cc-present board: put
+each question card there with `cc-present update-block` or `push`, and
+cc-present posts it here as an ask card by itself, with the card's images.
+`cc-present ask <card>` does the same for a single card. A `waits` card posted with
+`slack_dm_status` or `dm-status` is still posted, but its reply carries a
+`warning` saying so. A long-running drive asks in Slack by design: a `waits`
+card that sets `drive` is a drive's question, posts with no warning, and
+still lands on the board. The rest of this section describes the Slack card those
+calls post, and how to post one directly when cc-present is not installed. Set
+`waits` to a question id that leads with the asking lane's name, such as
+`step-3:merge`. Write the question verbatim as the `title`, the context
+in `body`, the answers as `options`, and the answer you recommend as
+`recommended`. The card shows the recommended answer first, marked
+(Recommended), then the other answers, numbered in that order, then fixed Other and Explain more
+buttons, with no Ack or Pause. It tells the user the lane is stopped until
+they answer, except a card carrying `prs`, which says only what its buttons
+do, and it takes no `asks`.
+
+Every ask card has a recommendation and an Other. A card without
+`recommended` is refused. Never write (Recommended) into a label or add
+an Other option: the card draws both.
+
+The card draws the recommended option first and numbers the rest after
+it, so the numbers you had in mind are not the ones the user sees. Write
+each option in full words that stand alone. A card with options is
+refused when its title, body, an option, or a hint points at an option by
+number or position, such as "same as 1", "options 1 and 2", "like #2", or
+"the first option", and the refusal quotes the words.
+
+Other is the user's own answer. A tap on Other opens a Slack modal with the
+question and a text box, and what they type there answers the card.
+
+A card that reuses the `waits` id of a card still waiting and changes its
+words edits that card and its copies in place and posts one fresh copy where
+the card sits, so the user sees the new version and no old copy reads
+differently. The same words post nothing. `text` that repeats the card's
+`body` is dropped, so the body reads once.
+Reusing the id of a card the user answered is refused; ask again under a new id. A card cc-present mirrors (`--mirrored`) that changes only the words of a card the user answered, such as its title, body, refs, hints or PR text, redraws that card in place: the user's answer stays and no button comes back. A mirrored card whose `replaces` names a post cc-slack no longer remembers is refused when that post is a card with no answer left to tap. A withdrawn card, such as one whose PR closed, asked again under its id comes back in place: the same card and thread, its buttons back and the withdrawn line gone. A mirrored resend of a withdrawn card that changes only its words keeps it withdrawn, with the new words and no buttons.
+
+The lane that asks stops on the card. It starts no dependent work, takes
+no default, and never proceeds on a provisional pick. The answer reaches
+the top-level session as a `slack.action` whose payload carries the `id`,
+`waits: true`, the `question`, the card's `options`, the chosen `label`, and
+`other: true` for a written-in answer, and whose directive carries a
+`capture` line. The top-level session
+hands the answer to the lane the id names, by `SendMessage`, and records the
+capture line in cc-notes as the user's answer, with the `slack-grant:` label the
+line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on the user's own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of the user's answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
+wait until that message arrives. Only the first answer counts; a later
+tap is dropped.
+
+An Explain more tap arrives as a `slack.action` with the label `Explain
+more` and the question id. It answers nothing, and the lane stays
+stopped. For a card on a cc-present board, reply with
+`cc-present reply --block <question id> --body <answer>`, which answers on
+the board and under the card. Otherwise reply with `slack_dm_status` text
+and `about` set to the question id. Either way the reply lands in the card's
+own thread, so it stays beside the question. Pass `about` on any other reply
+about a waiting card too. Give the question in plain words and
+what each answer does, and keep waiting for the answer.
+
+A card about a pull request lists it in `refs`. The card links each one as
+`<url|repo PR N>` with its live state.
+
+### On a cc-present board too
+
+With `cc-present` on PATH, each board write posts its simple question cards
+here: one single-select choice of up to 4 answers, an approval, or an input,
+images included. A card already posted in the thread is edited in place when
+it changes. `cc-present send` posts any the board still holds unsent. An ask
+card posted here directly also lands on this session's
+cc-present board as a card with the same question, answers, and
+recommendation.
+The user answers on whichever surface is in front of them. Whichever
+answer lands first wins. The other surface shows it, and the session gets
+one `slack.action` capture either way. A board answer's capture names the
+board, and its `via` carries the board's URL. `cc-slack card-answer` is
+the verb cc-present runs for a board answer; a session never needs it.

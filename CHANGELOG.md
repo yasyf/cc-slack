@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `slack` skill is now an 8 KB core plus nine files under `plugin/skills/slack/references/` that a session reads when it needs them: permission and refusals, tools, receiving, the DM, cards, the shortcut, reactions and conversation, voice, and setup. The core keeps the permission rule, posting, DM steering, which events arrive once and which twice, reactions, post rules, and an index with a trigger for each reference. Before, the skill was one 60 KB file, so a session that reloaded it after a compaction got only its first 19.5 KB.
 - A `slack.action` tap no longer carries the card's `capture`. The capture line still arrives in the tap's directive. A tap's payload had averaged 699 bytes, 256 of them the capture.
 
 ### Fixed
