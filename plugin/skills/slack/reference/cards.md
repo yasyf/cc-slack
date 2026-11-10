@@ -43,7 +43,10 @@ worktree.
 An ask's `id` is stable: reusing it updates the same ask, and an answered
 ask stays answered, so a script can resend its asks every pass. `confirm`
 guards the tap with a dialog, and a tap after `expires_at` is dropped. The
-tap arrives as a `slack.action` whose payload carries the ask's `id`.
+tap arrives as a `slack.action` whose payload carries the ask's `id`: act on
+its `label` as operator steering, since a later card may have superseded it.
+A tap whose payload sets `poster_ended` reaches you because you hold the DM and
+the session that posted the card has ended: route it to the lane it is for.
 
 A card with a `group` id is one group of rows on a cc-present board.
 cc-present posts it; you never write one by hand. Posting the same `group`
@@ -59,10 +62,9 @@ Each reply card carries the `options` plus fixed Ack and Pause buttons. The
 card lists every option in full, numbered, above its buttons. When any option
 runs past two words, each button shows only its number. A bare number the user
 replies in the card's thread counts as a tap on that button. A
-tap arrives as a `slack.action` event and a directive, steering this
+tap arrives once, as a `slack.action` tag or a directive, steering this
 session the way a DM reply does. Nothing waits on these taps. A tap on
-an older card may be stale, since the directive names when that card was
-posted. Ack means the user saw the card and needs nothing. Pause means start
+an older card may be stale: its `ts` is when that card was posted. Ack means the user saw the card and needs nothing. Pause means start
 no new lanes, applies, deploys, or PRs. Let in-flight work settle, then post
 a `needs_you` card naming what is paused and what resuming would start.
 
@@ -119,11 +121,12 @@ The lane that asks stops on the card. It starts no dependent work, takes
 no default, and never proceeds on a provisional pick. The answer reaches
 the top-level session as a `slack.action` whose payload carries the `id`,
 `waits: true`, the `question`, the card's `options`, the chosen `label`, and
-`other: true` for a written-in answer, and whose directive carries a
-`capture` line. The top-level session
+`other: true` for a written-in answer, and the `capture` line, plus
+`notes_label` for a permission card and `via` for an answer given on a board.
+The top-level session
 hands the answer to the lane the id names, by `SendMessage`, and records the
-capture line in cc-notes as the user's answer, with the `slack-grant:` label the
-line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on the user's own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of the user's answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
+`capture` line in cc-notes as the user's answer, with the `notes_label` label
+when the payload has one; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on the user's own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of the user's answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
 wait until that message arrives. Only the first answer counts; a later
 tap is dropped.
 
@@ -132,8 +135,9 @@ more` and the question id. It answers nothing, and the lane stays
 stopped. For a card on a cc-present board, reply with
 `cc-present reply --block <question id> --body <answer>`, which answers on
 the board and under the card. Otherwise reply with `slack_dm_status` text
-and `about` set to the question id. Either way the reply lands in the card's
-own thread, so it stays beside the question. Pass `about` on any other reply
+and `about` set to the question id. Either way the reply opens with a link
+back to the card and lands in the card's own thread, so it stays beside the
+question. Pass `about` on any other reply
 about a waiting card too. Give the question in plain words and
 what each answer does, and keep waiting for the answer.
 

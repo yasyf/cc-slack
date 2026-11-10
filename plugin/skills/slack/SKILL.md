@@ -35,7 +35,7 @@ A DM message or button tap needing no response gets a `+1` reaction and no reply
 
 A session hears only its own subscriptions: top-level `slack_watch` calls, its sends and replies, and its `slack_dm_status` thread. When moving from zero subscriptions to one, check the result's `channel` field: if `active`, arm no Monitor; if `pending` or `inactive`, arm the persistent Monitor and run `channel-ack` as reference/receive.md says.
 
-Each thread or channel message and card tap arrives twice to a top-level session: once as a channel tag (or Monitor line) and again as an injected directive at the next tool call. A DM message, `slack.watch_error`, and `slack.owner_stopped` each arrive once: as a channel tag when this window's channel is proven, otherwise as a directive. Deduplicate every delivery by `(channel_id, ts)` before acting.
+Each Slack event reaches a top-level session once: as a channel tag when this window's channel is proven, otherwise as an injected directive at the next tool call. A message from the user carries `operator: true`, and a card tap's tag carries what to act on, as `reference/cards.md` describes. While a watch Monitor runs, a message can also arrive as a Monitor line: deduplicate every delivery by `(channel_id, ts)` before acting.
 
 On `agent.relay`, `SendMessage` the named agent a wake only, with no directive content. To block on a reply, dispatch `cc-slack:slack-waiter` in the background; never call `await` from the top-level session.
 

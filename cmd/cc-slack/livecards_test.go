@@ -464,11 +464,11 @@ func TestCardAskTapSteersWithItsIDAndRedrawsTheThread(t *testing.T) {
 	push := cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: asked, ThreadTS: asked, ActionID: cardAskAction + "merge-41",
 		Value: ask.value(), ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0124"}
 	l.tap(id, push)
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered your ask "merge-41" with "Merge #41"`) {
-		t.Fatalf("directive = %q, want the ask's id and label", got)
-	}
 	if payloads := strings.Join(l.channelPayloads(), "\n"); !strings.Contains(payloads, `"id":"merge-41"`) || !strings.Contains(payloads, eventAction) {
 		t.Fatalf("channel payloads %s, want a slack.action carrying the ask id", payloads)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered your ask "merge-41" with "Merge #41"`) {
+		t.Fatalf("directive = %q, want the ask's id and label", got)
 	}
 	if edits := editsOf(l.slack.edited(), asked); len(edits) != 1 || !strings.Contains(edits[0], "✓ *Merge #41* · answered") {
 		t.Fatalf("card edits %v: want the ask answered on its card", edits)
@@ -520,10 +520,6 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	push.ActionID, push.Value = cardWaitAction+"0:step-3:merge", string(mustJSON(askTap{ID: card.Waits, Label: "Merge", Question: card.Title, Options: card.Options}))
 	push.ActionTS, push.Seq = fmt.Sprintf("%d.000100", time.Now().Unix()), "001800000100000-abcd0126"
 	l.tap(id, push)
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") ||
-		!strings.Contains(got, `answered "Merge #41 now?" with "Merge" at `) {
-		t.Fatalf("directive = %q, want the waiting ask's id, answer, the hand-off, and the capture", got)
-	}
 	var tap map[string]any
 	for _, raw := range l.channelPayloads() {
 		var got map[string]any
@@ -552,6 +548,10 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	options, _ := tap["options"].([]any)
 	if question != "Merge #41 now?" || !slices.Equal(options, []any{"Merge", "Hold"}) || !slices.Contains(options, tap["label"]) {
 		t.Fatalf("tap payload = %v, want the question, every option as a string, and the label among them: capt-hook's card_answer reads a tap as his answer only then", tap)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Merge"`) || !strings.Contains(got, "hand it to that lane") ||
+		!strings.Contains(got, `answered "Merge #41 now?" with "Merge" at `) {
+		t.Fatalf("directive = %q, want the waiting ask's id, answer, the hand-off, and the capture", got)
 	}
 	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 2 || !strings.Contains(edits[1], "✓ *Merge* · answered") ||
 		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "You asked for more") {

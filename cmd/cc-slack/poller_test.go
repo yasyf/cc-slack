@@ -113,8 +113,8 @@ func TestPollerDeliversEachReplyOnceAndAdvancesCursor(t *testing.T) {
 	if len(f.plane.directives) != 1 || f.plane.directives[0].agentID != agent.TopLevel || !strings.Contains(f.plane.directives[0].text, "looks good") {
 		t.Fatalf("directives = %+v, want one top-level directive", f.plane.directives)
 	}
-	if f.plane.directives[0].eventSeq != 0 {
-		t.Fatalf("a thread message's directive links event %d, want none: only the directive says whether the operator wrote it", f.plane.directives[0].eventSeq)
+	if f.plane.directives[0].eventSeq != f.plane.events[0].Seq {
+		t.Fatalf("directive links event %d, want the slack.message at %d", f.plane.directives[0].eventSeq, f.plane.events[0].Seq)
 	}
 	if c := f.cursor(); c.oldest != "1800000000.000300" {
 		t.Fatalf("cursor = %q, want the delivered ts", c.oldest)

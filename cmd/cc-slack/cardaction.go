@@ -57,20 +57,23 @@ func (a cardActionPush) press() cardPress {
 }
 
 type actionPayload struct {
-	Type      string   `json:"type"`
-	WatchID   int64    `json:"watch_id"`
-	ChannelID string   `json:"channel_id"`
-	ThreadTS  string   `json:"thread_ts"`
-	TS        string   `json:"ts"`
-	ActionTS  string   `json:"action_ts"`
-	Label     string   `json:"label"`
-	ID        string   `json:"id,omitempty"`
-	Waits     bool     `json:"waits,omitempty"`
-	Other     bool     `json:"other,omitempty"`
-	Question  string   `json:"question,omitempty"`
-	Options   []string `json:"options,omitempty"`
-	Via       string   `json:"via,omitempty"`
-	Permalink string   `json:"permalink"`
+	Type        string   `json:"type"`
+	WatchID     int64    `json:"watch_id"`
+	ChannelID   string   `json:"channel_id"`
+	ThreadTS    string   `json:"thread_ts"`
+	TS          string   `json:"ts"`
+	ActionTS    string   `json:"action_ts"`
+	Label       string   `json:"label"`
+	ID          string   `json:"id,omitempty"`
+	Waits       bool     `json:"waits,omitempty"`
+	Other       bool     `json:"other,omitempty"`
+	Question    string   `json:"question,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Via         string   `json:"via,omitempty"`
+	Capture     string   `json:"capture,omitempty"`
+	NotesLabel  string   `json:"notes_label,omitempty"`
+	PosterEnded bool     `json:"poster_ended,omitempty"`
+	Permalink   string   `json:"permalink"`
 }
 
 type askTap struct {
@@ -451,11 +454,15 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 		return false, err
 	}
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
-	line := tapLine(who, permalink, k, captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)) +
+	capture := captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)
+	line := tapLine(who, permalink, k, capture) +
 		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
-		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, Permalink: permalink,
+		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, PosterEnded: true, Permalink: permalink,
+	}
+	if k.Waits && !k.Explain {
+		msg.Capture, msg.NotesLabel = capture, slackLabel(k)
 	}
 	if err := p.deliver(ctx, db, w, delivery{
 		base:   eventAction,
@@ -866,7 +873,8 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	for _, watch := range watches {
 		msg := actionPayload{
 			WatchID: watch.ID, ChannelID: w.card.channel, ThreadTS: w.card.thread, TS: w.card.ts, ActionTS: w.actionTS, Label: w.tap.Label, ID: w.tap.ID,
-			Waits: true, Other: w.other, Question: w.tap.Question, Options: w.tap.Options, Via: w.via, Permalink: permalink,
+			Waits: true, Other: w.other, Question: w.tap.Question, Options: w.tap.Options, Via: w.via,
+			Capture: capture, NotesLabel: slackLabel(w.tap), Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, watch, delivery{
 			base:   eventAction,

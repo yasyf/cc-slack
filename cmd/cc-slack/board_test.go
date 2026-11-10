@@ -89,19 +89,19 @@ func TestBoardAnswerFiresTheOneCaptureAndLaterAnswersLose(t *testing.T) {
 	if res := answerOnBoard(t, l, c, "Hold"); !res.Answered || res.Label != "Hold" {
 		t.Fatalf("first board answer = %+v, want it to win", res)
 	}
+	payloads := strings.Join(l.channelPayloads(), "\n")
+	for _, part := range []string{`"waits":true`, `"label":"Hold"`, `"via":"http://127.0.0.1:7000/p/asks--ab12"`, `which answers Slack card `} {
+		if !strings.Contains(payloads, part) {
+			t.Fatalf("channel payloads %s lack %s", payloads, part)
+		}
+	}
 	got := l.inject(agent.TopLevel)
 	if !strings.Contains(got, "Board answer from") || !strings.Contains(got, `answered the waiting ask "step-3:merge" with "Hold"`) ||
 		!strings.Contains(got, "on the cc-present board http://127.0.0.1:7000/p/asks--ab12, which answers Slack card ") {
 		t.Fatalf("directive = %q, want the board answer and its capture", got)
 	}
-	payloads := strings.Join(l.channelPayloads(), "\n")
-	for _, part := range []string{`"waits":true`, `"label":"Hold"`, `"via":"http://127.0.0.1:7000/p/asks--ab12"`} {
-		if !strings.Contains(payloads, part) {
-			t.Fatalf("channel payloads %s lack %s", payloads, part)
-		}
-	}
-	if strings.Contains(payloads, `"capture":`) {
-		t.Fatalf("channel payloads %s carry the capture, which the directive already holds", payloads)
+	if !strings.Contains(payloads, `"capture":"yasyf answered \"Merge #41 now?\" with \"Hold\" at `) {
+		t.Fatalf("channel payloads %s lack the capture, which a proven channel's tag alone carries", payloads)
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Hold* · answered on ") ||
 		!strings.Contains(edits[len(edits)-1], "http://127.0.0.1:7000/p/asks--ab12|the board") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
@@ -367,12 +367,12 @@ func TestWrittenInAnswerFromTheOtherModalAnswersTheCardOnce(t *testing.T) {
 	}
 	written := askTap{ID: "step-3:merge", Label: "Merge after the 5pm freeze", Question: "Merge #41 now?", Options: []string{"Hold", "Merge"}}
 	l.tap(c.id, push(cardWroteAction+"step-3:merge", written, "001800000100000-abcd0303"))
+	if !strings.Contains(strings.Join(l.channelPayloads(), "\n"), `"other":true`) {
+		t.Fatal("the written answer's slack.action does not say it is an Other")
+	}
 	got := l.inject(agent.TopLevel)
 	if !strings.Contains(got, "Slack answer written in from") || !strings.Contains(got, `with "Merge after the 5pm freeze"`) || !strings.Contains(got, "record the capture") {
 		t.Fatalf("directive = %q, want the written answer handed to the lane with its capture", got)
-	}
-	if !strings.Contains(strings.Join(l.channelPayloads(), "\n"), `"other":true`) {
-		t.Fatal("the written answer's slack.action does not say it is an Other")
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Other:* Merge after the 5pm freeze") {
 		t.Fatalf("card edits %v, want the written answer on the card", edits)

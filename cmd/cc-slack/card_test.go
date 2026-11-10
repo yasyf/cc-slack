@@ -372,8 +372,8 @@ func TestCardTapSteersTheSessionOnceAndMarksTheCard(t *testing.T) {
 	if !strings.Contains(got, `they chose "merge it"`) || !strings.Contains(got, "nothing waits on this tap") {
 		t.Fatalf("directive = %q, want the chosen option as operator steering", got)
 	}
-	if types := l.channelTypes(); !slices.Contains(types, eventAction) {
-		t.Fatalf("channel saw %v, want %s", types, eventAction)
+	if types := l.channelTypes(); slices.Contains(types, eventAction) {
+		t.Fatalf("channel saw %v, want no %s the hook already delivered", types, eventAction)
 	}
 	edits := editsOf(l.slack.edited(), reply)
 	if len(edits) != 1 || !strings.Contains(edits[0], "✓ *merge it*") || strings.Contains(edits[0], cardAckAction) {
