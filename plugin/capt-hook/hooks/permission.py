@@ -297,7 +297,7 @@ class Judged(CustomTicketCondition):
     judge: Decide
 
     def evidence(self, ctx: Context) -> list[Evidence] | None:
-        if solved_grants(ctx) and not plain(pending(live(ctx))[0].text):
+        if bug_thread_barred(ctx):
             return None
         try:
             found = self.judge.evidence(ctx)
@@ -438,6 +438,16 @@ def solved_grants(ctx: Context) -> list[dict[str, Any]]:
 
 def plain(text: str) -> bool:
     return not ASKS.search(text) and not check_post().check(text)
+
+
+def bug_thread_barred(ctx: Context) -> bool:
+    if not solved_grants(ctx):
+        return False
+    if not plain(pending(live(ctx))[0].text):
+        return True
+    stamps = conversation_of(ctx).stamps
+    named = any(holds_name(" ".join((answer["title"], answer["body"], *answer.get("tags", ()))), stamp) for answer in live_answers(ctx, ctx.place["channel"]) for stamp in stamps)
+    return not named and any(message.from_claude for message in thread_of(ctx).messages)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1203,6 +1213,7 @@ on(
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> DENY,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(transcript=card_tapped(DANA_CARD, "Yes"), commands=ruled(SOLVED_GRANT)) >> ALLOW,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(KEPT_IN_CHANNEL, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=jev(ruling_evidence(KEPT_IN_CHANNEL).id)) >> DENY,
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
