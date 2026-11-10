@@ -658,31 +658,37 @@ func (l *liveCards) rootPRCard(channel string, matches func(*liveThread, *liveMe
 	return found, newest != nil
 }
 
-func (l *liveCards) postedPRCard(channel, thread string, keys map[string]bool) (cardRef, bool) {
-	current := func(m *liveMessage) bool { return m.cites(keys) && m.ReplacedBy == "" }
-	if thread == "" {
-		return l.rootPRCard(channel, func(_ *liveThread, m *liveMessage) bool { return current(m) })
-	}
-	t, ok := l.threads[threadKey(channel, thread)]
-	if !ok {
-		return cardRef{}, false
-	}
-	for _, m := range t.PRCards {
-		if current(m) {
-			return cardRef{channel, thread, m.TS}, true
-		}
-	}
-	return cardRef{}, false
-}
-
-func (l *liveCards) posted(channel, thread string, card statusCard) (cardRef, bool) {
-	keys := map[string]bool{}
-	for _, ref := range card.refIDs() {
-		keys[ref.key()] = true
-	}
+func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
+	keys := card.prKeys()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.postedPRCard(channel, thread, keys)
+	for _, t := range l.threads {
+		if t.Channel != channel || thread != "" && t.Thread != thread {
+			continue
+		}
+		for _, m := range t.PRCards {
+			if !m.cites(keys) || m.ReplacedBy != "" || thread == "" && m.TS != t.Thread {
+				continue
+			}
+			ref := cardRef{t.Channel, t.Thread, m.TS}
+			if maps.Equal(m.Card.prKeys(), keys) && (!found || ref.ts > same.ts) {
+				if found {
+					others = append(others, same)
+				}
+				same, found = ref, true
+				continue
+			}
+			others = append(others, ref)
+		}
+	}
+	return same, found, others
+}
+
+func (l *liveCards) replaced(card cardRef) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, m := l.liveMessage(card.channel, card.ts)
+	return m != nil && m.ReplacedBy != ""
 }
 
 func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
@@ -1520,6 +1526,10 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
+	if m.ReplacedBy != "" {
+		l.mu.Unlock()
+		return nil
+	}
 	switch {
 	case drawn.Waits == "":
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended

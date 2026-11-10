@@ -632,6 +632,108 @@ func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *
 	}
 }
 
+func stackMemberCard() providedCard {
+	return providedCard{Repo: "acme/app", Number: 42, Card: statusCard{
+		Status: "needs_you", Title: "Fix: approve drop the old key?",
+		PRs:     []cardPR{{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Refresher: "The old key goes", HateMost: "Old builds lose their cache once"}},
+		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge:acme:app:42",
+	}}
+}
+
+func fourPRStackCard() providedCard {
+	card := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
+		Status: "needs_you", Title: "Fix: approve 4 PRs: one cache key?",
+		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge:acme:app:41-44",
+	}}
+	for n := 41; n <= 44; n++ {
+		card.Card.PRs = append(card.Card.PRs, cardPR{URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: fmt.Sprintf("cache key step %d", n), Head: "e718a74", Refresher: "One key for every chat", HateMost: "Old builds lose their cache once"})
+	}
+	return card
+}
+
+func prAsks(asks []string) []string {
+	return slices.DeleteFunc(asks, func(ask string) bool { return !strings.HasPrefix(ask, `{"prs"`) })
+}
+
+func TestOnePostNamingAStackDrawsOneCardAndMarksAMembersOlderCardReplaced(t *testing.T) {
+	const hisThread, laterThread = "1793804574.412309", "1793804999.100200"
+	for _, held := range []bool{false, true} {
+		t.Run(map[bool]string{false: "open", true: "held"}[held], func(t *testing.T) {
+			member, stack := stackMemberCard(), fourPRStackCard()
+			urls := make([]string, 0, len(stack.Card.PRs))
+			for _, pr := range stack.Card.PRs {
+				urls = append(urls, pr.URL)
+			}
+			drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
+			cmd := fakeCardCommand(t, drivePRs, member)
+			l, _ := cardingDaemon(t, cmd.argv, drivePRs...)
+			drawn := func() []fakePost {
+				return slices.DeleteFunc(rootCards(l.slack.sentTo(testDM)), func(p fakePost) bool {
+					return !strings.Contains(p.blocks, member.Card.Waits) && !strings.Contains(p.blocks, stack.Card.Waits)
+				})
+			}
+			l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#42 is green", "tap_prs": urls[1:2]})
+			eventually(t, "#42's own card", func() bool { return len(drawn()) == 1 })
+			old := drawn()[0]
+			oldNow := func() string {
+				edits := editsOf(l.slack.edited(), old.ts)
+				if len(edits) == 0 {
+					return ""
+				}
+				return edits[len(edits)-1]
+			}
+			if held {
+				tapAsked(t, l, old, member.Card.Waits, member.Card.Title, member.Card.Options, 1)
+				eventually(t, "his Hold on #42's card", func() bool { return strings.Contains(oldNow(), "✓ *Hold* · answered") })
+			}
+
+			if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{stack}}), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "the stack is green", "tap_prs": urls})
+			eventually(t, "the stack's card at the DM root", func() bool { return len(drawn()) == 2 })
+			fresh := drawn()[1]
+			asks := prAsks(cmd.requests(t))
+			if want := `{"prs":[{"number":41,"repo":"acme/app"},{"number":42,"repo":"acme/app"},{"number":43,"repo":"acme/app"},{"number":44,"repo":"acme/app"}]}`; asks[len(asks)-1] != want {
+				t.Fatalf("card command asked %v, want the whole stack, #42 with it, in its last ask", asks)
+			}
+			for _, want := range []string{"app PR 41", "app PR 42", "app PR 43", "app PR 44", "Approve (Recommended)"} {
+				if !strings.Contains(shown(t, fresh)+fresh.blocks, want) {
+					t.Fatalf("stack card = %s, want %q in it", fresh.blocks, want)
+				}
+			}
+			eventually(t, "#42's card marked replaced", func() bool { return strings.Contains(oldNow(), "*Replaced:* now one card for its stack of 4 PRs") })
+			if !strings.Contains(oldNow(), strings.ReplaceAll(fresh.ts, ".", "")) || strings.Contains(oldNow(), cardWaitAction) {
+				t.Fatalf("#42's card = %s, want a link to the stack's card and no buttons", oldNow())
+			}
+			if kept := strings.Contains(oldNow(), "Your answer to this version: ✓ *Hold* · answered"); kept != held {
+				t.Fatalf("#42's card = %s, want his Hold kept as its answer exactly when he held it", oldNow())
+			}
+			var listed driveCardsResult
+			if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+				t.Fatal(err)
+			}
+			if len(listed.PRCards) != 1 || len(listed.PRCards[0].PRs) != 4 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
+				t.Fatalf("drive-cards = %+v, want the stack's card alone, with its four PRs", listed.PRCards)
+			}
+
+			asked := len(prAsks(cmd.requests(t)))
+			l.do(opDMStatus, map[string]any{"thread_ts": laterThread, "text": "the stack still waits on you", "tap_prs": urls})
+			eventually(t, "the stack's card under the later post", func() bool {
+				return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
+					return p.threadTS == laterThread && strings.Contains(p.blocks, stack.Card.Waits)
+				})
+			})
+			replaced, redrawn := oldNow(), len(editsOf(l.slack.edited(), fresh.ts))
+			l.do(opRedrawPRCards, map[string]any{})
+			eventually(t, "the stack's card redrawn in place", func() bool { return len(editsOf(l.slack.edited(), fresh.ts)) > redrawn })
+			if len(drawn()) != 2 || len(prAsks(cmd.requests(t))) != asked+1 || oldNow() != replaced {
+				t.Fatalf("PR cards %+v; want no third card, the redraw's one ask alone, and #42's card left as replaced", drawn())
+			}
+		})
+	}
+}
+
 func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	l := startDaemon(t)
@@ -761,13 +863,17 @@ func tapMerge(t *testing.T, l *liveDaemon, card fakePost) identity {
 
 func tapOption(t *testing.T, l *liveDaemon, card fakePost, option int) identity {
 	t.Helper()
+	return tapAsked(t, l, card, testWaits, "Merge #41 at e718a74?", []string{"Merge", "Hold"}, option)
+}
+
+func tapAsked(t *testing.T, l *liveDaemon, card fakePost, waits, question string, options []string, option int) identity {
+	t.Helper()
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := []string{"Merge", "Hold"}
 	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
-		ActionID: fmt.Sprintf("%s%d:%s", cardWaitAction, option, testWaits), Value: string(mustJSON(askTap{ID: testWaits, Label: options[option], Question: "Merge #41 at e718a74?", Options: options})),
+		ActionID: fmt.Sprintf("%s%d:%s", cardWaitAction, option, waits), Value: string(mustJSON(askTap{ID: waits, Label: options[option], Question: question, Options: options})),
 		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0301"})
 	return id
 }

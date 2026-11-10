@@ -134,9 +134,17 @@ so `login` on a machine without it leaves cards off and links still work. A link
 in a post, text or card, never draws one. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 (`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
-`{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`
-that no open card in the post's thread cites and no open card at the DM root
-cites. A merged or closed PR gets no card. A card the program draws for a PR and
+`{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`,
+those with an open card in the post's thread or at the DM root included, so the
+program sees the whole stack it groups. It runs not at all when an open card in
+the post's thread cites every one of them, or when one open card at the DM root
+carries every one of them. A card
+the program draws for exactly the PRs of a posted card redraws that card in
+place. One whose PRs differ from a posted card that carries some of them, such
+as a stack card over one member's own card, posts fresh, and each such older
+card is edited in place to say it was replaced, with a link to the new card and
+the answer it got, and is never redrawn again. An older open card the program
+declines to redraw still shows with the post. A merged or closed PR gets no card. A card the program draws for a PR and
 head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}], "skipped": [{"repo", "number", "reason"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
 one that passes the card checks. The `repo` it is asked about is lowercase, so

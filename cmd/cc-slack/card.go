@@ -717,6 +717,16 @@ func (c statusCard) refIDs() []refID {
 	return ids
 }
 
+func (c statusCard) prKeys() map[string]bool {
+	keys := map[string]bool{}
+	for _, id := range c.refIDs() {
+		if id.Kind == refPR {
+			keys[id.key()] = true
+		}
+	}
+	return keys
+}
+
 func (c statusCard) allPRs() []*cardPR {
 	prs := make([]*cardPR, 0, len(c.PRs)+len(c.Rows))
 	for i := range c.PRs {
