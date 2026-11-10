@@ -136,7 +136,7 @@ in a post, text or card, never draws one. After a post in the bot's DM with the 
 channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 (`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`
-that no card in the post's thread cites and no open card at the DM root
+that no open card in the post's thread cites and no open card at the DM root
 cites. A merged or closed PR gets no card. A card the program draws for a PR and
 head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}], "skipped": [{"repo", "number", "reason"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
@@ -170,7 +170,18 @@ per thread in a channel, and the ref poller redraws a card when any PR it
 carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
 the daemon logs why. A redraw the program skips leaves the card as drawn and logs
-the reason; a redraw with no card and no skip means the PR no longer waits. Every other channel, a thread we posted in it included,
+the reason; a redraw with no card and no skip means the PR no longer waits.
+A PR row's `changed` says what changed since the engineer last answered its
+card, and the card shows it first, as Changed since your answer. When a post's
+`tap_prs` names a PR whose answered card the program now draws waiting on the
+same `waits` with a `changed` line that card did not carry, the daemon posts a
+fresh card with its buttons, opened as a first card is, and edits the answered
+one in place to say it was replaced, with that line, a link to the fresh card,
+and the answer it got. The replaced card is never redrawn again. A redraw the
+ref poller or `redraw-pr-cards` asks for leaves such an answered card as drawn
+and logs that the next post naming the PR draws its new card. A post in a
+thread holding a PR's answered card asks the program again, so it can draw
+the fresh card; a card is never copied into its own thread. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
 "waits", "label"}}` instead of to a session. When the program exits 0, the
