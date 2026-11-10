@@ -171,6 +171,7 @@ func (a *app) buildServer() (*daemon.Server, error) {
 		AgentGreeting: agentGreeting,
 		Subscribe:     subscribe,
 		MuteConsumer:  channelConsumer,
+		WithholdFrame: a.endedWatchFrame,
 		StoreSchema:   storeSchema,
 	})
 	if err != nil {
