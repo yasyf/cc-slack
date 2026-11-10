@@ -28,6 +28,8 @@ const (
 
 var goneCanvasCodes = map[string]bool{"canvas_not_found": true, "canvas_deleted": true}
 
+const fullCanvasCode = "canvas_too_large"
+
 type driveQuestion struct {
 	Question    string     `json:"question"`
 	Options     []string   `json:"options"`
@@ -54,6 +56,7 @@ type canvasResult struct {
 	CanvasID string `json:"canvas_id"`
 	URL      string `json:"url"`
 	Created  bool   `json:"created"`
+	Replaced string `json:"replaced,omitempty"`
 }
 
 // openDriveCards lists the waiting cards that name drive and are still unanswered, and every PR card still waiting
@@ -146,13 +149,21 @@ func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	api := a.newAPI(id.Token)
 	page := slack.DocumentContent{Type: "markdown", Markdown: b.Text}
+	replaced := ""
 	if b.FileID != "" {
 		err := api.EditCanvasContext(hc.Ctx, slack.EditCanvasParams{CanvasID: b.FileID, Changes: []slack.CanvasChange{{Operation: "replace", DocumentContent: page}}})
 		var refused slack.SlackErrorResponse
 		switch {
 		case err == nil:
 			return ok(canvasResult{CanvasID: b.FileID, URL: canvasURL(id, b.FileID)})
-		case !errors.As(err, &refused) || !goneCanvasCodes[refused.Err] || b.Name == "":
+		case !errors.As(err, &refused) || b.Name == "":
+			return fail(fallback(actionWrite, err))
+		case refused.Err == fullCanvasCode:
+			if err := deleteFullCanvas(hc.Ctx, api, id, b.FileID, b.Name); err != nil {
+				return fail(err.Error())
+			}
+			replaced = b.FileID
+		case !goneCanvasCodes[refused.Err]:
 			return fail(fallback(actionWrite, err))
 		}
 	}
@@ -160,7 +171,21 @@ func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	return ok(canvasResult{CanvasID: canvasID, URL: canvasURL(id, canvasID), Created: true})
+	return ok(canvasResult{CanvasID: canvasID, URL: canvasURL(id, canvasID), Created: true, Replaced: replaced})
+}
+
+func deleteFullCanvas(ctx context.Context, api slackAPI, id identity, canvasID, title string) error {
+	file, _, _, err := api.GetFileInfoContext(ctx, canvasID, 0, 0)
+	if err != nil {
+		return fmt.Errorf("canvas %s is full, and reading it to replace it failed: %w", canvasID, err)
+	}
+	if file.Title != title || file.User != id.BotUserID {
+		return fmt.Errorf("canvas %s is full, but it is titled %q and made by %s, not this app's own %q tab, so it stays", canvasID, file.Title, file.User, title)
+	}
+	if err := api.DeleteCanvasContext(ctx, canvasID); err != nil {
+		return fmt.Errorf("canvas %s is full, and deleting it failed: %w", canvasID, err)
+	}
+	return nil
 }
 
 func canvasURL(id identity, canvasID string) string {
@@ -236,6 +261,6 @@ func canvasCmd(d cmd.Deps) *cobra.Command {
 	}
 	f.bind(c)
 	c.Flags().StringVar(&title, "title", "", "the title a new canvas gets, and the tab it shows as")
-	c.Flags().StringVar(&canvas, "canvas", "", "the canvas to redraw; one Slack no longer has is created again when --title is set")
+	c.Flags().StringVar(&canvas, "canvas", "", "the canvas to redraw; with --title, one Slack no longer has is created again, and this app's own tab of that title that Slack calls full is deleted and created again")
 	return c
 }

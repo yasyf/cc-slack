@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -63,6 +64,28 @@ func TestCanvasTabsAPageInHisDMRedrawsItAndRecreatesOneHeDeleted(t *testing.T) {
 	again := drawCanvas(t, l, map[string]any{"name": "brook", "file_id": made.CanvasID, "text": "# Again"})
 	if !again.Created || again.CanvasID == made.CanvasID || l.slack.canvasPages()[again.CanvasID].page != "# Again" {
 		t.Fatalf("after he deleted it: %+v, want a new canvas in his DM", again)
+	}
+}
+
+func TestCanvasSlackCallsFullIsDeletedAndDrawnOnAFreshTabOnlyWhenItIsThisAppsTabOfThatTitle(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	made := drawCanvas(t, l, map[string]any{"name": "brook", "text": "# Your queue"})
+	other := drawCanvas(t, l, map[string]any{"name": "pier", "text": "# Pier"})
+
+	l.slack.fail("canvases.edit", slack.SlackErrorResponse{Err: "canvas_too_large"})
+	l.refused(opCanvas, map[string]any{"name": "brook", "file_id": other.CanvasID, "text": "# Status"}, `titled "pier"`)
+	if deleted, pages := l.slack.deletedCanvases(), l.slack.canvasPages(); len(deleted) != 0 || len(pages) != 2 {
+		t.Fatalf("deleted %v pages %v, want both canvases kept", deleted, pages)
+	}
+
+	l.slack.fail("canvases.edit", slack.SlackErrorResponse{Err: "canvas_too_large"})
+	fresh := drawCanvas(t, l, map[string]any{"name": "brook", "file_id": made.CanvasID, "text": "# Status"})
+	if !fresh.Created || fresh.Replaced != made.CanvasID || l.slack.canvasPages()[fresh.CanvasID] != (fakeCanvas{"D" + testUser, "brook", "# Status"}) {
+		t.Fatalf("fresh %+v, want a new brook tab in his DM drawing the page", fresh)
+	}
+	if deleted := l.slack.deletedCanvases(); !slices.Equal(deleted, []string{made.CanvasID}) {
+		t.Fatalf("deleted %v, want only the full brook canvas", deleted)
 	}
 }
 

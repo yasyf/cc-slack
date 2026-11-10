@@ -84,6 +84,7 @@ type fakeSlack struct {
 	asked     []string
 	clock     int64
 	canvases  map[string]fakeCanvas
+	gone      []string
 }
 
 type fakeCanvas struct {
@@ -650,6 +651,9 @@ func (f *fakeSlack) GetFileInfoContext(_ context.Context, fileID string, _, _ in
 		ID: fileID, Name: known.Name, Mimetype: known.Mimetype, Permalink: known.Permalink, Shares: f.shared[fileID],
 		URLPrivateDownload: known.URLPrivateDownload, Size: known.Size,
 	}
+	if canvas, found := f.canvases[fileID]; found {
+		file.Title, file.User = canvas.title, f.auth.UserID
+	}
 	if f.pending > 0 {
 		f.pending--
 		return file, nil, nil, nil
@@ -748,6 +752,23 @@ func (f *fakeSlack) EditCanvasContext(_ context.Context, params slack.EditCanvas
 	canvas.page = params.Changes[0].DocumentContent.Markdown
 	f.canvases[params.CanvasID] = canvas
 	return nil
+}
+
+func (f *fakeSlack) DeleteCanvasContext(_ context.Context, canvasID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("canvases.delete"); err != nil {
+		return err
+	}
+	delete(f.canvases, canvasID)
+	f.gone = append(f.gone, canvasID)
+	return nil
+}
+
+func (f *fakeSlack) deletedCanvases() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.gone)
 }
 
 func (f *fakeSlack) canvasPages() map[string]fakeCanvas {
