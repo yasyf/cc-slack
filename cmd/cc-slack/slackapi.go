@@ -53,6 +53,7 @@ type slackAPI interface {
 	SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error)
 	TabCanvasContext(ctx context.Context, channelID, title string, page slack.DocumentContent) (string, error)
 	EditCanvasContext(ctx context.Context, params slack.EditCanvasParams) error
+	DeleteCanvasContext(ctx context.Context, canvasID string) error
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
 	RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error)
