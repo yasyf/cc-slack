@@ -1526,6 +1526,10 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
+	if m.ReplacedBy != "" {
+		l.mu.Unlock()
+		return nil
+	}
 	switch {
 	case drawn.Waits == "":
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended

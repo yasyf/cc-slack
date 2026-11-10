@@ -50,7 +50,6 @@ type providedCard struct {
 	Card   statusCard `json:"card"`
 
 	replaces []replacedCard
-	changed  string
 }
 
 type replacedCard struct {
@@ -334,15 +333,15 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
-	var named []linkedPR
+	named := slices.DeleteFunc(slices.Clone(prs), func(pr linkedPR) bool { return pr.state.terminal() })
+	if !slices.ContainsFunc(named, func(pr linkedPR) bool { return !post.shows(map[string]bool{pr.ref.key(): true}) }) {
+		return nil, nil, nil
+	}
 	var stood []cardRef
-	for _, pr := range prs {
+	for _, pr := range named {
 		keys := map[string]bool{pr.ref.key(): true}
-		if pr.state.terminal() || post.shows(keys) {
-			continue
-		}
 		card, _ := l.rootPRCard(channelID, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.open(m) })
-		named, waiting, stood = append(named, pr), append(waiting, pr.ref), append(stood, card)
+		waiting, stood = append(waiting, pr.ref), append(stood, card)
 		if card != (cardRef{}) && !slices.Contains(standing, card) {
 			standing = append(standing, card)
 		}
@@ -350,8 +349,10 @@ func (l *liveCards) toCard(channelID, postThread string, prs []linkedPR) (asked 
 	if len(standing) == 1 && !slices.Contains(stood, cardRef{}) {
 		return nil, standing, waiting
 	}
-	for _, pr := range named {
-		l.refs[pr.ref.key()] = pr.state
+	for i, pr := range named {
+		if stood[i] == (cardRef{}) {
+			l.refs[pr.ref.key()] = pr.state
+		}
 	}
 	return waiting, standing, waiting
 }
@@ -424,7 +425,7 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			continue
 		}
 		if changed := a.cards.changedSinceAnswer(posted, p.Card); changed != "" {
-			p.replaces, p.changed = append(p.replaces, replacedCard{old: posted, why: changed}), changed
+			p.replaces = append(p.replaces, replacedCard{old: posted, why: changed})
 			rest = append(rest, p)
 			continue
 		}
@@ -473,7 +474,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			continue
 		}
 		t := cards.draft(channelID, thread)
-		if p.changed != "" {
+		if len(p.replaces) > 0 {
 			delete(t.Answers, p.Card.Waits)
 		}
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
@@ -503,8 +504,15 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 }
 
 func (a *app) markReplaced(ctx context.Context, id identity, r replacedCard) {
-	answered := ""
-	a.cards.markReply(r.old.channel, r.old.thread, r.old.ts, func(m *liveMessage) { answered, m.ReplacedBy = m.Tapped, r.fresh.ts })
+	answered, retired := "", false
+	a.cards.markReply(r.old.channel, r.old.thread, r.old.ts, func(m *liveMessage) {
+		if m.ReplacedBy == "" {
+			answered, m.ReplacedBy, retired = m.Tapped, r.fresh.ts, true
+		}
+	})
+	if !retired {
+		return
+	}
 	line := "↪ *Replaced:* " + mrkdwnEscapes.Replace(clipRunes(r.why, cardMaxReasonLen)) + " · " +
 		slackLink(id.permalink(r.fresh.channel, r.fresh.ts, r.fresh.thread), "answer the new card")
 	if answered != "" && answered != cardNoLongerWaits {
