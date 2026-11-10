@@ -78,11 +78,12 @@ class WritesSlack:
         Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text '{PLAIN['text']}'"): Allow(),
         Input(env=ENABLED, command=f"slack-post send --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms;"),
         Input(env=ENABLED, tool=P + "slack_dm_status", tool_input={"text": "D is queued behind the walker"}): Allow(),
+        Input(env=ENABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Hi Andrew, the fix is live."}): Allow(),
         Input(env=DISABLED, tool=P + "slack_reply", tool_input=JARGON): Allow(),
     },
 )
 def slack_posts_use_plain_words(evt: PreToolUseEvent) -> HookResult | None:
-    findings = [finding.kind for write in pending(evt) if write.verb in ("post", "edit") for finding in check_post().check(posted_text(write.fields))]
+    findings = [finding.kind for write in pending(evt) if write.verb in ("post", "edit") for finding in check_post().check(posted_text(write.fields)) if finding.kind in PLAIN_WORDS]
     if found := dict.fromkeys(PLAIN_WORDS[kind] for kind in findings if kind not in LINK_KINDS):
         return evt.warn(PLAIN_WORDS_WARNING.format(found=", ".join(found)))
     if unlinked := dict.fromkeys(PLAIN_WORDS[kind] for kind in findings):

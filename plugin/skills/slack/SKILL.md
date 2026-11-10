@@ -813,7 +813,8 @@ order.
    or `cc-slack check-post -` for stdin. It runs the newest installed
    plugin's checker, which a bare `check-post` on an older session's PATH may
    not reach. Fix every line it prints; it exits 1 on a finding. It flags raw commit
-   shas, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
+   shas, but not a hex run joined to a longer id such as a UUID or a
+   `term_` handle, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
    and build or PR numbers, bare URLs other than a Slack message, Sentry
    issue, or Datadog monitor, incident, or event link, which stay bare so
    Slack unfurls them, one-letter codenames such as "D",
@@ -821,9 +822,13 @@ order.
    labels such as `PT` or `17:35Z`, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
-   identifier, a paragraph past three sentences, and a sentence that says
-   something waits on the reader in a post that links no card in your DM with
-   the app and no PR. It ignores anything
+   identifier, a paragraph past three sentences, a line outside a `>` quote
+   that leads with what is not proven yet under any label, such as "Not
+   proven yet", "Not seen working yet", "Unverified" or "Untested", and a
+   sentence that says something waits on the reader in a post that links no
+   card in your DM with the app and no PR. Delete a not-proven paragraph and
+   put a job on the unknown: the reader gets its result, or nothing. It reads
+   through `*bold*`, `_italic_` and `~strike~` markers, ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier
    or sentence inside backticks or a code fence. Then check what the script
    cannot detect:

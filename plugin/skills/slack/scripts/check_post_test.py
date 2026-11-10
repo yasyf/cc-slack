@@ -108,6 +108,19 @@ class CheckPostTest(unittest.TestCase):
             [("commit-sha", "cd0e2017"), ("commit-sha", "cd0e2018")],
         )
 
+    def test_ignores_hex_runs_joined_to_a_longer_identifier(self) -> None:
+        text = (
+            "Reach it with `orca terminal switch --terminal term_afce9df1-5316-4b5f-8636-26f9a5ea8391`.\n"
+            "Session 3f2b8c1e-9a4d-4e6f-b7a2-0c5d8e9f1a2b is open."
+        )
+        self.assertEqual(kinds(text), [])
+
+    def test_flags_a_bare_full_or_short_sha_in_prose_or_code(self) -> None:
+        self.assertEqual(
+            kinds("Fixed at 06ca99cdcd301593953f4d89bfddeadbdb469c81, see `git show 06ca99c`."),
+            [("commit-sha", "06ca99cdcd301593953f4d89bfddeadbdb469c81"), ("commit-sha", "06ca99c")],
+        )
+
     def test_flags_a_dense_ask_greeting_a_plain_name_with_a_bare_secret_name(self) -> None:
         text = (
             "Hi Anubhav, Yasyf asked me to ask you for one thing on our litestream fork. Could you create a "
@@ -164,6 +177,35 @@ class CheckPostTest(unittest.TestCase):
             "as 1.5 times or as 1% of runs, like <https://github.com/acme/app/pull/4031|#4031>."
         )
         self.assertEqual(kinds(text), [])
+
+    def test_flags_a_paragraph_that_lists_what_is_not_proven_under_any_label(self) -> None:
+        cases = {
+            "*Not proven yet*": "Not proven",
+            "*Not seen working yet*": "Not seen working",
+            "Not proven: that it ships only those three parts": "Not proven",
+            "Not proven yet, and said so.": "Not proven",
+            "_Not yet proven_ that the build launches": "Not yet proven",
+            "• Unproven: the recording over ssh": "Unproven",
+            "1. *Unverified:* the unsigned build": "Unverified",
+            "- `Not verified` on a test Mac": "Not verified",
+            "NOT CONFIRMED: the release": "NOT CONFIRMED",
+            "~Untested~ on Linux": "Untested",
+        }
+        for line, token in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [("unproven", token)])
+
+    def test_accepts_a_reported_result_and_a_quoted_reply(self) -> None:
+        for line in (
+            "Proven on a real Mac at 7:27 PM.",
+            "Ruled out: a stale build on the test Mac.",
+            "> Not proven? Then fix it and tell me when it works.",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [])
+
+    def test_reads_through_emphasis_markers(self) -> None:
+        self.assertEqual(kinds("Thanks *Andrew*, it is live."), [("plain-name", "Thanks *Andrew")])
 
     def test_reports_line_and_column(self) -> None:
         [finding] = check_post.check("ok\nsee G158")

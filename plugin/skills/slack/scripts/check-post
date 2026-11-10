@@ -9,6 +9,7 @@ from pathlib import Path
 
 SLACK_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
 CODE_SPAN = re.compile(r"`[^`\n]+`")
+EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
 FENCE = re.compile(r"^\s*```")
@@ -32,7 +33,7 @@ class Rule:
 RULES = (
     Rule(
         "commit-sha",
-        re.compile(r"(?<![\w.])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b(?!\.\w)"),
+        re.compile(r"(?<![\w.])(?<!\w-)(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b(?!\.\w|-\w)"),
         "link the commit as <https://github.com/<org>/<repo>/commit/<sha>|<7-char sha>>, or name the release or PR instead",
     ),
     Rule(
@@ -97,6 +98,14 @@ RULES = (
         "wrap identifiers such as env, secret, and setting names in backticks",
         reads_code=False,
     ),
+    Rule(
+        "unproven",
+        re.compile(
+            r"(?i)^[ \t]*(?:(?:[-*•◦]|\d+[.)])[ \t]+)?`?(?P<token>(?:still[ \t]+)?"
+            r"(?:not[ \t]+(?:yet[ \t]+)?(?:proven|proved|verified|confirmed|tested|seen[ \t]+(?:it[ \t]+)?working)|un(?:proven|verified|confirmed|tested))\b)"
+        ),
+        "a post never lists what is not proven yet, under any label; delete the paragraph and put a job on the unknown, so the reader gets its result or nothing",
+    ),
 )
 
 
@@ -120,14 +129,25 @@ def mask_code(line: str) -> str:
     return CODE_SPAN.sub(lambda match: " " * len(match.group()), line)
 
 
+def mask_emphasis(line: str) -> str:
+    while (unmarked := EMPHASIS.sub(lambda match: f"{' ' * len(match[1])}{match[2]}{' ' * len(match[1])}", line)) != line:
+        line = unmarked
+    return line
+
+
+def plain(line: str) -> str:
+    return mask_emphasis(mask_slack_tokens(line))
+
+
 def check(text: str) -> list[Finding]:
     findings = walls(text)
     for number, line in enumerate(text.splitlines(), start=1):
-        masked = mask_slack_tokens(line)
+        masked = plain(line)
         prose = mask_code(masked)
         for rule in RULES:
+            span = "token" if "token" in rule.pattern.groupindex else 0
             findings.extend(
-                Finding(number, match.start() + 1, rule.kind, match.group(), rule.fix)
+                Finding(number, match.start(span) + 1, rule.kind, line[match.start(span) : match.end(span)], rule.fix)
                 for match in rule.pattern.finditer(masked if rule.reads_code else prose)
             )
     return sorted(findings, key=lambda finding: (finding.line, finding.column))
@@ -146,13 +166,13 @@ def walls(text: str) -> list[Finding]:
             start, sentences = 0, 0
             continue
         start = start or number
-        sentences += len(SENTENCE_END.findall(mask_code(mask_slack_tokens(line))))
+        sentences += len(SENTENCE_END.findall(mask_code(plain(line))))
     return findings
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, and walls of text in a Slack post."
+        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, and walls of text in a Slack post."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     args = parser.parse_args()
