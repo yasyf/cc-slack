@@ -619,6 +619,9 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
+		if err := a.refuseWaitsWithoutCard(id, channelID, b); err != nil {
+			return fail(err.Error())
+		}
 		w := write{action: approvePost, named: b.ChannelID, channelID: channelID, threadTS: b.ThreadTS, text: b.Text}
 		ticket, replay, err := a.authorize(hc, api, id, b.ticketSpend, w)
 		if err != nil {
@@ -666,6 +669,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			}
 		}
 		undrawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, b, asked)
+		a.embedCards(hc.Ctx, hc.DB, id, res.ChannelID, res.ThreadTS, b)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
 			return okUnlessUndrawn(res, undrawn)
@@ -2007,7 +2011,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	if err := checkDMStatus(b, a.now(), id); err != nil {
+	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
 	blocks, err := checkMessage(b)
@@ -2052,6 +2056,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
+	a.embedCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, b)
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	undrawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, b, asked)
 	a.showCardPictures(hc.Ctx, hc.DB, id, b.Card, pictures, thread, ts)

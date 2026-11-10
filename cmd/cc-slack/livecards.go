@@ -403,6 +403,20 @@ func (l *liveCards) awaitsTap(channel, ts string) bool {
 	return m == nil || m.Card.Waits != "" && t.open(m)
 }
 
+func (l *liveCards) openCard(channel, ts string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(channel, ts)
+	return m != nil && m.Card.Waits != "" && t.open(m)
+}
+
+func (l *liveCards) holdsOpenCard(channel, thread string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	return ok && slices.ContainsFunc(t.messages(), func(m *liveMessage) bool { return m != nil && m.Card.Waits != "" && t.open(m) })
+}
+
 func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) {
 	for _, t := range l.threads {
 		if t.Channel != channel {
