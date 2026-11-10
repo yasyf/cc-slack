@@ -753,6 +753,41 @@ func TestFollowJoinsPublicChannelsAndDedupes(t *testing.T) {
 	}
 }
 
+func TestUnfollowStopsAThreadByURLOrByChannelAndThread(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: testThread, Text: "parent"}})
+	l.do(opFollow, map[string]string{"channel_id": testChannel, "thread_ts": testThread})
+	var first, second map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]string{"text": "starting"}).Body, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]string{"text": "halfway"}).Body, &second); err != nil {
+		t.Fatal(err)
+	}
+	unfollow := func(body map[string]string) unfollowResult {
+		t.Helper()
+		var res unfollowResult
+		if err := json.Unmarshal(l.do(opUnfollow, body).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	if got := unfollow(map[string]string{"channel_id": testChannel, "thread_ts": testThread}); !got.Stopped || got.Remaining != 1 {
+		t.Fatalf("unfollow by channel and thread = %+v, want the thread watch stopped and the DM subscription left", got)
+	}
+	if got := unfollow(map[string]string{"url": first["permalink"]}); !got.Stopped || got.Remaining != 1 {
+		t.Fatalf("unfollow by url = %+v, want the DM thread let go and the subscription left", got)
+	}
+	if active := activeDMThreads(t, l); !slices.Equal(active, []string{second["ts"]}) {
+		t.Fatalf("active DM threads = %v, want only the message still held", active)
+	}
+	if got := unfollow(map[string]string{"url": first["permalink"]}); got.Stopped {
+		t.Fatalf("second unfollow by url = %+v, want nothing left to stop", got)
+	}
+}
+
 func TestFollowsListsOnlyTheSessionsActiveWatches(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1186,28 +1221,45 @@ func TestDMStatusPostsEachUpdateAtTheRootWithItsOwnThread(t *testing.T) {
 		t.Fatalf("dm-status posts = %+v, results %v then %v, want each at the DM root", sent, first, second)
 	}
 	if active := activeDMThreads(t, l); !slices.Equal(active, []string{sent[0].ts, sent[1].ts}) {
-		t.Fatalf("active DM watches = %v, want one per message", active)
+		t.Fatalf("active DM threads = %v, want one per message", active)
 	}
+	if n := dmSubscriptionCount(t, l); n != 1 {
+		t.Fatalf("DM watch rows = %d, want the one subscription", n)
+	}
+}
+
+func dmSubscriptionCount(t *testing.T, l *liveDaemon) int {
+	t.Helper()
+	var n int
+	if err := l.srv.DB().QueryRowContext(l.ctx, `SELECT COUNT(*) FROM watches WHERE kind = 'dm'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func activeDMThreads(t *testing.T, l *liveDaemon) []string {
 	t.Helper()
-	rows, err := l.srv.DB().QueryContext(l.ctx, `SELECT thread_ts FROM watches WHERE kind = 'dm' AND status = 'active' ORDER BY id`)
+	rows, err := l.srv.DB().QueryContext(l.ctx, `SELECT subject_id FROM watches WHERE kind = 'dm' AND status = 'active' ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = rows.Close() }()
-	var active []string
+	var subscribed []string
 	for rows.Next() {
-		var ts string
-		if err := rows.Scan(&ts); err != nil {
+		var subjectID string
+		if err := rows.Scan(&subjectID); err != nil {
 			t.Fatal(err)
 		}
-		active = append(active, ts)
+		subscribed = append(subscribed, subjectID)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	active, err := l.app.poller.threads.sessionThreads(l.ctx, "D"+testUser, subscribed...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(active)
 	return active
 }
 

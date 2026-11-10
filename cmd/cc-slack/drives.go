@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -26,16 +26,15 @@ func (l *liveCards) threadDrives(channel string) map[string][]string {
 	return drives
 }
 
-func loadDriveMates(ctx context.Context, db *sql.DB, cards *liveCards, dmChannelID string) (driveMates, error) {
+func loadDriveMates(ctx context.Context, threads *dmThreads, cards *liveCards, dmChannelID string) (driveMates, error) {
 	drives := cards.threadDrives(dmChannelID)
 	if len(drives) == 0 {
 		return nil, nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT subject_id, thread_ts FROM watches WHERE channel_id = ? AND kind = 'dm'`, dmChannelID)
+	bound, err := threads.bound(ctx, dmChannelID, slices.Collect(maps.Keys(drives)))
 	if err != nil {
 		return nil, fmt.Errorf("load the DM's posting sessions: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	parent := map[string]string{}
 	find := func(x string) string {
 		root := x
@@ -48,20 +47,15 @@ func loadDriveMates(ctx context.Context, db *sql.DB, cards *liveCards, dmChannel
 		return root
 	}
 	var subjects []string
-	for rows.Next() {
-		var subjectID, thread string
-		if err := rows.Scan(&subjectID, &thread); err != nil {
-			return nil, fmt.Errorf("scan a posting session: %w", err)
-		}
-		for _, drive := range drives[thread] {
-			if a, b := find(subjectID), find("drive:"+drive); a != b {
-				parent[a] = b
+	for _, thread := range slices.Sorted(maps.Keys(bound)) {
+		for _, subjectID := range bound[thread] {
+			for _, drive := range drives[thread] {
+				if a, b := find(subjectID), find("drive:"+drive); a != b {
+					parent[a] = b
+				}
+				subjects = append(subjects, subjectID)
 			}
-			subjects = append(subjects, subjectID)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate posting sessions: %w", err)
 	}
 	mates := driveMates{}
 	for _, subjectID := range subjects {

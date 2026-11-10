@@ -18,7 +18,7 @@ import (
 
 func endWatches(t *testing.T, l *liveDaemon, thread string) {
 	t.Helper()
-	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE thread_ts = ?`, thread); err != nil {
+	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE thread_ts = ? OR kind = 'dm'`, thread); err != nil {
 		t.Fatal(err)
 	}
 }

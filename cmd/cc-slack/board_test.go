@@ -176,7 +176,7 @@ func TestARelayedAnswerSettlesACardWhoseSessionHasEnded(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
-	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE kind = 'dm' AND thread_ts = ?`, c.thread); err != nil {
+	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE kind = 'dm'`); err != nil {
 		t.Fatal(err)
 	}
 	reply := c.id.permalink(c.id.DMChannelID, "1800000009.000100", "")
@@ -826,9 +826,7 @@ func TestAResendOfABoardCardCCSlackNoLongerHoldsRefusesAClosedPost(t *testing.T)
 			l.app.cards.mu.Unlock()
 		},
 		"its session let go of its thread": func(l *liveDaemon, c postedCard) {
-			if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE kind = 'dm' AND thread_ts = ?`, c.thread); err != nil {
-				l.t.Fatal(err)
-			}
+			l.do(opUnfollow, map[string]string{"channel_id": c.id.DMChannelID, "thread_ts": c.thread})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

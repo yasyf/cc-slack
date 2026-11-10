@@ -287,29 +287,24 @@ func slackLabel(k askTap) string {
 	return prefix + place[1] + "/" + place[2]
 }
 
-func dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
-	return threadWatches(ctx, db, channelID, threadTS, false)
+func (p *poller) dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
+	bound, err := p.threads.bound(ctx, channelID, []string{threadTS})
+	if err != nil {
+		return nil, err
+	}
+	return dmSubscriptions(ctx, db, channelID, bound[threadTS])
 }
 
-func threadWatches(ctx context.Context, db *sql.DB, channelID, threadTS string, ended bool) ([]watch, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, subject_id, owner_agent_id, kind, channel_id, thread_ts FROM watches
-		WHERE kind = 'dm' AND (? OR status = 'active') AND channel_id = ? AND thread_ts = ? ORDER BY id`, ended, channelID, threadTS)
+func (p *poller) threadPosters(ctx context.Context, channelID, threadTS string) ([]watch, error) {
+	bound, err := p.threads.bound(ctx, channelID, []string{threadTS})
 	if err != nil {
-		return nil, fmt.Errorf("find DM message watches %s/%s: %w", channelID, threadTS, err)
+		return nil, err
 	}
-	var watches []watch
-	for rows.Next() {
-		var w watch
-		if err := rows.Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan DM message watch: %w", err)
-		}
-		watches = append(watches, w)
+	posters := make([]watch, 0, len(bound[threadTS]))
+	for _, subjectID := range bound[threadTS] {
+		posters = append(posters, watch{SubjectID: subjectID, Kind: kindDM, ChannelID: channelID, ThreadTS: threadTS})
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close DM message watches: %w", err)
-	}
-	return watches, rows.Err()
+	return posters, nil
 }
 
 func tapHow(k askTap) string {
@@ -407,7 +402,7 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
 	if k.ID != "" {
 		db := p.plane.DB()
-		ended, err := threadWatches(ctx, db, a.Channel, a.ThreadTS, true)
+		ended, err := p.threadPosters(ctx, a.Channel, a.ThreadTS)
 		if err != nil {
 			p.log.Printf("waiting ask %s: the board was not told: %v", k.ID, err)
 		}
@@ -627,7 +622,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 		return p.tapRow(ctx, id, a, k, tappedAt, permalink)
 	}
 	db := p.plane.DB()
-	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
+	watches, err := p.dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
 		return err
 	}
@@ -750,7 +745,7 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 		return p.tapPRRow(ctx, id, a, k, pr, at)
 	}
 	db := p.plane.DB()
-	watches, err := dmWatches(ctx, db, a.Channel, a.ThreadTS)
+	watches, err := p.dmWatches(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
 		return err
 	}
@@ -846,7 +841,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
 	}
 	db := p.plane.DB()
-	watches, err := dmWatches(ctx, db, w.card.channel, w.card.thread)
+	watches, err := p.dmWatches(ctx, db, w.card.channel, w.card.thread)
 	if err == nil && len(watches) == 0 {
 		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
 	}

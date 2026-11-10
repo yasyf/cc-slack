@@ -886,7 +886,7 @@ func newFixture(t *testing.T) *fixture {
 	f.slack.users["UOTHER"] = &slack.User{ID: "UOTHER", Profile: slack.UserProfile{DisplayName: "teammate"}}
 	f.cache = openTestCache(t)
 	f.cache.now = func() time.Time { return f.now }
-	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestReplay(t))
+	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestDMThreads(t), openTestReplay(t))
 	f.app.now = func() time.Time { return f.now }
 	f.app.avatar = agentAvatar
 	f.poller = f.app.poller
@@ -930,6 +930,16 @@ func openTestOwed(t *testing.T) *owedReplies {
 	}
 	t.Cleanup(func() { _ = o.Close() })
 	return o
+}
+
+func openTestDMThreads(t *testing.T) *dmThreads {
+	t.Helper()
+	d, err := openDMThreads(context.Background(), filepath.Join(t.TempDir(), "dm-threads.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
 }
 
 func openTestReplay(t *testing.T) *replayCursor {

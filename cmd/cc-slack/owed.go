@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 
@@ -133,28 +132,39 @@ func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, 
 	return w, true, nil
 }
 
-func othersCardThreads(ctx context.Context, db *sql.DB, dmChannelID string, hold dmHold, mates driveMates) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT w.thread_ts, w.subject_id, s.claude_pid FROM watches w JOIN subjects s ON s.id = w.subject_id
-		WHERE w.channel_id = ? AND w.kind = 'dm' AND w.status = 'active'`, dmChannelID)
+func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold, mates driveMates) (map[string]bool, error) {
+	owed := make([]string, 0, len(replies))
+	for _, r := range replies {
+		owed = append(owed, r.ThreadTS)
+	}
+	bound, err := threads.bound(ctx, dmChannelID, owed)
 	if err != nil {
-		return nil, fmt.Errorf("find other sessions' card threads: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	others, held := map[string]bool{}, map[string]bool{}
-	for rows.Next() {
-		var (
-			thread, subjectID string
-			pid               int
-		)
-		if err := rows.Scan(&thread, &subjectID, &pid); err != nil {
-			return nil, fmt.Errorf("scan card thread: %w", err)
+	var subjects []string
+	for _, posters := range bound {
+		subjects = append(subjects, posters...)
+	}
+	subscribed, err := dmSubscriptions(ctx, db, dmChannelID, subjects)
+	if err != nil {
+		return nil, err
+	}
+	pids := map[string]int{}
+	for _, w := range subscribed {
+		pids[w.SubjectID] = w.PID
+	}
+	others := map[string]bool{}
+	for thread, posters := range bound {
+		other, held := false, false
+		for _, subjectID := range posters {
+			pid, live := pids[subjectID]
+			if !live {
+				continue
+			}
+			other = true
+			held = held || subjectID == hold.subject || pid == hold.pid || mates.same(subjectID, hold.subject)
 		}
-		others[thread] = true
-		held[thread] = held[thread] || subjectID == hold.subject || pid == hold.pid || mates.same(subjectID, hold.subject)
+		others[thread] = other && !held
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate card threads: %w", err)
-	}
-	maps.DeleteFunc(others, func(thread string, _ bool) bool { return held[thread] })
 	return others, nil
 }

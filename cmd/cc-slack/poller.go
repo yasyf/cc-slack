@@ -53,6 +53,7 @@ type poller struct {
 	now       func() time.Time
 	cache     *readCache
 	owed      *owedReplies
+	threads   *dmThreads
 	replay    *replayCursor
 	shortcuts *shortcutHandler
 	cards     *liveCards
@@ -201,17 +202,31 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 	p.mu.Unlock()
 }
 
-func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, groups []cursorGroup) error {
+func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, watches []watch) error {
+	p.mark(cursorKey{dmChannelID, ""})
 	threads := map[string]bool{}
-	oldest := ""
-	for _, g := range groups {
-		if g.key.channelID != dmChannelID || g.key.threadTS == "" || len(g.watches) == 0 {
-			p.mark(g.key)
-			continue
+	var subscribers []string
+	for _, w := range watches {
+		switch {
+		case w.Kind == kindDM:
+			subscribers = append(subscribers, w.SubjectID)
+		case w.ChannelID == dmChannelID && w.ThreadTS != "":
+			threads[w.ThreadTS] = true
+		default:
+			p.mark(cursorKey{w.ChannelID, w.ThreadTS})
 		}
-		threads[g.key.threadTS] = true
-		if oldest == "" || tsLess(g.key.threadTS, oldest) {
-			oldest = g.key.threadTS
+	}
+	bound, err := p.threads.sessionThreads(ctx, dmChannelID, subscribers...)
+	if err != nil {
+		return err
+	}
+	oldest := ""
+	for _, thread := range bound {
+		threads[thread] = true
+	}
+	for thread := range threads {
+		if oldest == "" || tsLess(thread, oldest) {
+			oldest = thread
 		}
 	}
 	if oldest == "" {
@@ -278,24 +293,28 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	seen, since := p.pendingMarks()
 	watches, err := p.liveWatches(ctx, db)
 	if err != nil {
 		return time.Time{}, err
 	}
-	mates, err := loadDriveMates(ctx, db, p.cards, id.DMChannelID)
+	mates, err := loadDriveMates(ctx, p.threads, p.cards, id.DMChannelID)
 	if err != nil {
 		return time.Time{}, err
 	}
-	groups := groupWatches(watches, id.DMChannelID, since, mates)
-	p.keepWatched(groups, seen)
 	api := p.newAPI(id.Token)
 	if p.reconcile.Swap(false) {
-		if err := p.markReconciled(ctx, db, api, id.DMChannelID, groups); err != nil {
+		if err := p.markReconciled(ctx, db, api, id.DMChannelID, watches); err != nil {
 			p.reconcile.Store(true)
 			return time.Time{}, err
 		}
 	}
+	seen, since := p.pendingMarks()
+	bound, err := p.threads.bound(ctx, id.DMChannelID, dmThreadKeys(id.DMChannelID, seen))
+	if err != nil {
+		return time.Time{}, err
+	}
+	groups := groupWatches(watches, id.DMChannelID, since, bound, mates)
+	p.keepWatched(groups, seen)
 	now := p.now()
 	var next time.Time
 	for _, g := range groups {
@@ -388,7 +407,17 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
 	return live, nil
 }
 
-func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, mates driveMates) []cursorGroup {
+func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
+	var threads []string
+	for key := range pending {
+		if key.channelID == dmChannelID && key.threadTS != "" {
+			threads = append(threads, key.threadTS)
+		}
+	}
+	return threads
+}
+
+func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
@@ -401,11 +430,26 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		return &groups[i]
 	}
 	channels := map[string][]watch{}
+	sessions, subscriptions := dmSubscribers(watches)
 	for _, w := range watches {
+		if w.Kind == kindDM {
+			continue
+		}
 		g := group(cursorKey{w.ChannelID, w.ThreadTS})
 		g.watches = append(g.watches, w)
 		if w.Kind == kindChannel {
 			channels[w.ChannelID] = append(channels[w.ChannelID], w)
+		}
+	}
+	for _, thread := range slices.Sorted(maps.Keys(bound)) {
+		for _, subjectID := range bound[thread] {
+			w, live := subscriptions[subjectID]
+			if !live {
+				continue
+			}
+			w.ThreadTS = thread
+			g := group(cursorKey{dmChannelID, thread})
+			g.watches = append(g.watches, w)
 		}
 	}
 	for i := range groups {
@@ -430,15 +474,20 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	root := group(cursorKey{dmChannelID, ""})
 	root.root = true
-	newest := map[string]bool{}
-	for _, w := range slices.Backward(watches) {
-		if w.Kind == kindDM && !newest[w.SubjectID] {
-			newest[w.SubjectID] = true
-			root.sessions = append(root.sessions, w)
+	root.sessions = sessions
+	return groups
+}
+
+func dmSubscribers(watches []watch) ([]watch, map[string]watch) {
+	var sessions []watch
+	subscriptions := map[string]watch{}
+	for _, w := range watches {
+		if _, dup := subscriptions[w.SubjectID]; w.Kind == kindDM && !dup {
+			subscriptions[w.SubjectID] = w
+			sessions = append(sessions, w)
 		}
 	}
-	slices.Reverse(root.sessions)
-	return groups
+	return sessions, subscriptions
 }
 
 func compareKeys(a, b cursorKey) int {
@@ -705,7 +754,10 @@ func (p *poller) pollFailed(ctx context.Context, db *sql.DB, g cursorGroup, c cu
 func (p *poller) failWatches(ctx context.Context, db *sql.DB, g cursorGroup, cause error) error {
 	text := fallback(actionWatch, cause)
 	for _, w := range append(g.watches, g.sessions...) {
-		if _, err := db.ExecContext(ctx, `UPDATE watches SET status = 'error', error = ? WHERE id = ?`, text, w.ID); err != nil {
+		if w.Kind == kindDM && !g.root {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE watches SET status = 'error', error = ? WHERE id = ? AND kind <> 'dm'`, text, w.ID); err != nil {
 			return fmt.Errorf("fail watch %d: %w", w.ID, err)
 		}
 		if err := p.deliver(ctx, db, w, watchErrorDelivery(w, text)); err != nil {

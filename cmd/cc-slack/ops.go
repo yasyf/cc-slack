@@ -71,8 +71,6 @@ const (
 	kindChannel = "channel"
 	kindDM      = "dm"
 
-	sessionMessageWatches = 500
-
 	defaultThreadLimit  = 50
 	defaultHistoryLimit = 20
 	historyBudget       = 25 * time.Second
@@ -509,10 +507,10 @@ func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID strin
 		SELECT MAX(o.id) FROM watches o
 		WHERE o.subject_id = ? AND o.owner_agent_id = ? AND o.status = 'orphaned'
 			AND NOT EXISTS (SELECT 1 FROM watches a WHERE a.subject_id = o.subject_id AND a.owner_agent_id = o.owner_agent_id
-				AND a.channel_id = o.channel_id AND a.thread_ts = o.thread_ts AND a.status = 'active')
+				AND a.kind = o.kind AND a.channel_id = o.channel_id AND a.thread_ts = o.thread_ts AND a.status = 'active')
 			AND NOT (o.kind = 'channel' AND o.channel_id = ? AND EXISTS (SELECT 1 FROM watches h
 				WHERE h.channel_id = o.channel_id AND h.thread_ts = '' AND h.kind = 'channel' AND h.status = 'active'))
-		GROUP BY o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, dmChannelID)
+		GROUP BY o.kind, o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, dmChannelID)
 	if err != nil {
 		return 0, fmt.Errorf("bring back watches: %w", err)
 	}
@@ -1492,11 +1490,11 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	mates, err := loadDriveMates(hc.Ctx, hc.DB, a.cards, id.DMChannelID)
+	mates, err := loadDriveMates(hc.Ctx, a.poller.threads, a.cards, id.DMChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
-	others, err := othersCardThreads(hc.Ctx, hc.DB, id.DMChannelID, holder, mates)
+	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder, mates)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -1898,7 +1896,7 @@ func activeWatch(ctx context.Context, db *sql.DB, subjectID, owner, channelID, t
 	)
 	err := db.QueryRowContext(ctx, `SELECT w.id, c.oldest_ts FROM watches w
 		JOIN cursors c ON c.channel_id = w.channel_id AND c.thread_ts = w.thread_ts
-		WHERE w.subject_id = ? AND w.owner_agent_id = ? AND w.channel_id = ? AND w.thread_ts = ? AND w.status = 'active'`,
+		WHERE w.subject_id = ? AND w.owner_agent_id = ? AND w.channel_id = ? AND w.thread_ts = ? AND w.kind <> 'dm' AND w.status = 'active'`,
 		subjectID, owner, channelID, threadTS).Scan(&id, &oldest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", false, nil
@@ -1915,7 +1913,8 @@ func insertWatch(ctx context.Context, db *sql.DB, subjectID, owner, kind, channe
 		return 0, "", fmt.Errorf("begin watch tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	inUse, err := countActive(ctx, tx, `SELECT COUNT(*) FROM watches WHERE channel_id = ? AND thread_ts = ? AND status = 'active'`, channelID, threadTS)
+	inUse, err := countActive(ctx, tx, `SELECT COUNT(*) FROM watches WHERE status = 'active' AND channel_id = ?
+		AND (thread_ts = ? AND kind <> 'dm' OR ? <> '' AND kind = 'dm')`, channelID, threadTS, threadTS)
 	if err != nil {
 		return 0, "", err
 	}
@@ -1974,6 +1973,9 @@ func (a *app) handleUnfollow(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if (b.WatchID == 0) == (b.ChannelID == "") {
+		return fail("unfollow needs exactly one of watch_id and channel_id (with thread_ts, or a Slack url)")
+	}
 	sub, found, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
 	if err != nil {
 		return fail(err.Error())
@@ -1981,22 +1983,54 @@ func (a *app) handleUnfollow(hc daemon.HandlerCtx) daemon.Reply {
 	if !found {
 		return fail("no cc-slack session for this Claude window, so it holds no watch to stop")
 	}
-	res, err := hc.DB.ExecContext(hc.Ctx, `UPDATE watches SET status = 'stopped' WHERE id = ? AND status = 'active' AND subject_id IN
-		(SELECT id FROM subjects WHERE scope = ? AND (id = ? OR (claude_pid <> 0 AND claude_pid = ?)))`,
-		b.WatchID, hc.Scope, sub.ID, hc.Window.ClaudePID)
+	stopped, err := a.stopWatches(hc, sub.ID, b)
 	if err != nil {
-		return fail(fmt.Sprintf("stop watch: %v", err))
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fail(fmt.Sprintf("stop watch: %v", err))
+		return fail(err.Error())
 	}
 	var remaining int
 	if err := hc.DB.QueryRowContext(hc.Ctx, `SELECT COUNT(*) FROM watches WHERE subject_id = ? AND owner_agent_id = ? AND status = 'active'`,
 		sub.ID, agent.TopLevel).Scan(&remaining); err != nil {
 		return fail(fmt.Sprintf("count watches: %v", err))
 	}
-	return ok(unfollowResult{Stopped: n > 0, Remaining: remaining})
+	return ok(unfollowResult{Stopped: stopped, Remaining: remaining})
+}
+
+func (a *app) stopWatches(hc daemon.HandlerCtx, subjectID string, b opBody) (bool, error) {
+	mine := `status = 'active' AND subject_id IN (SELECT id FROM subjects WHERE scope = ? AND (id = ? OR (claude_pid <> 0 AND claude_pid = ?)))`
+	if b.WatchID != 0 {
+		res, err := hc.DB.ExecContext(hc.Ctx, `UPDATE watches SET status = 'stopped' WHERE id = ? AND `+mine,
+			b.WatchID, hc.Scope, subjectID, hc.Window.ClaudePID)
+		return stoppedAny(res, err)
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return false, err
+	}
+	channelID, err := conversationID(hc.Ctx, a.newAPI(id.Token), id, b.ChannelID)
+	if err != nil {
+		return false, err
+	}
+	unbound := false
+	if channelID == id.DMChannelID && b.ThreadTS != "" {
+		if unbound, err = a.poller.threads.unbind(hc.Ctx, channelID, b.ThreadTS, subjectID); err != nil {
+			return false, err
+		}
+	}
+	res, err := hc.DB.ExecContext(hc.Ctx, `UPDATE watches SET status = 'stopped' WHERE channel_id = ? AND thread_ts = ? AND `+mine,
+		channelID, b.ThreadTS, hc.Scope, subjectID, hc.Window.ClaudePID)
+	stopped, err := stoppedAny(res, err)
+	return stopped || unbound, err
+}
+
+func stoppedAny(res sql.Result, err error) (bool, error) {
+	if err != nil {
+		return false, fmt.Errorf("stop watch: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("stop watch: %w", err)
+	}
+	return n > 0, nil
 }
 
 func (a *app) handleFollows(hc daemon.HandlerCtx) daemon.Reply {
@@ -2110,7 +2144,7 @@ func (a *app) rewordAnswered(hc daemon.HandlerCtx, sub subject.Subject, id ident
 	if b.Card == nil || !b.Mirrored || b.Card.Waits == "" {
 		return daemon.Reply{}, false
 	}
-	threads, err := sessionThreads(hc.Ctx, hc.DB, sub.ID, id.DMChannelID)
+	threads, err := a.poller.threads.sessionThreads(hc.Ctx, id.DMChannelID, sub.ID)
 	if err != nil {
 		return fail(err.Error()), true
 	}
@@ -2149,7 +2183,7 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	if b.Card != nil || b.Text == "" {
 		return "", errors.New("about puts a text reply in a waiting card's thread; send text, not a card")
 	}
-	return a.cardThread(hc.Ctx, hc.DB, sub.ID, id, b.About)
+	return a.cardThread(hc.Ctx, sub.ID, id, b.About)
 }
 
 func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
@@ -2440,7 +2474,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
-	threads, err := sessionThreads(ctx, db, sub.ID, id.DMChannelID)
+	threads, err := a.poller.threads.sessionThreads(ctx, id.DMChannelID, sub.ID)
 	if err != nil {
 		return "", "", false, false, err
 	}
@@ -2623,8 +2657,8 @@ func (a *app) bindSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 	return nil
 }
 
-func (a *app) cardThread(ctx context.Context, db *sql.DB, subjectID string, id identity, waits string) (string, error) {
-	threads, err := sessionThreads(ctx, db, subjectID, id.DMChannelID)
+func (a *app) cardThread(ctx context.Context, subjectID string, id identity, waits string) (string, error) {
+	threads, err := a.poller.threads.sessionThreads(ctx, id.DMChannelID, subjectID)
 	if err != nil {
 		return "", err
 	}
@@ -2635,27 +2669,6 @@ func (a *app) cardThread(ctx context.Context, db *sql.DB, subjectID string, id i
 	return thread, nil
 }
 
-func sessionThreads(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT thread_ts FROM watches WHERE subject_id = ? AND kind = 'dm' AND channel_id = ? AND status = 'active'
-		ORDER BY id DESC`, subjectID, dmChannelID)
-	if err != nil {
-		return nil, fmt.Errorf("find session threads: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var threads []string
-	for rows.Next() {
-		var thread string
-		if err := rows.Scan(&thread); err != nil {
-			return nil, fmt.Errorf("scan session thread: %w", err)
-		}
-		threads = append(threads, thread)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate session threads: %w", err)
-	}
-	return threads, nil
-}
-
 func (a *app) openSessionThread(ctx context.Context, db *sql.DB, sub subject.Subject, dmChannelID, threadTS string) error {
 	now := a.now()
 	tx, err := db.BeginTx(ctx, nil)
@@ -2663,11 +2676,6 @@ func (a *app) openSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 		return fmt.Errorf("begin session thread tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	open, err := countActive(ctx, tx, `SELECT COUNT(*) FROM watches WHERE subject_id = ? AND kind = 'dm' AND channel_id = ? AND thread_ts = ? AND status = 'active'`,
-		sub.ID, dmChannelID, threadTS)
-	if err != nil || open {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, '', ?, ?)
 		ON CONFLICT(channel_id, thread_ts) DO UPDATE SET next_poll_at = MIN(next_poll_at, excluded.next_poll_at)`,
 		dmChannelID, threadTS, now.UnixMilli()); err != nil {
@@ -2676,16 +2684,11 @@ func (a *app) openSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 	if err := claimCursor(ctx, tx, dmChannelID, threadTS, threadTS, now, true); err != nil {
 		return err
 	}
-	if _, err := addWatch(ctx, tx, sub.ID, agent.TopLevel, kindDM, dmChannelID, threadTS, now); err != nil {
+	if err := subscribeDM(ctx, tx, sub.ID, dmChannelID, now); err != nil {
 		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE watches SET status = 'stopped' WHERE subject_id = ? AND kind = 'dm' AND status = 'active' AND id NOT IN
-		(SELECT id FROM watches WHERE subject_id = ? AND kind = 'dm' AND status = 'active' ORDER BY id DESC LIMIT ?)`,
-		sub.ID, sub.ID, sessionMessageWatches); err != nil {
-		return fmt.Errorf("release oldest session thread: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit session thread: %w", err)
 	}
-	return nil
+	return a.poller.threads.bind(ctx, dmChannelID, threadTS, sub.ID)
 }
