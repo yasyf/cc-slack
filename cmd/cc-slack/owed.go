@@ -65,9 +65,9 @@ func (o *owedReplies) answered(ctx context.Context, threadTS, ts string) error {
 
 var answeringReactions = map[string]bool{"+1": true, "thumbsup": true}
 
-func (o *owedReplies) reacted(ctx context.Context, ts string) error {
+func (o *owedReplies) answer(ctx context.Context, ts string) error {
 	if _, err := o.st.DB().ExecContext(ctx, `DELETE FROM owed_replies WHERE ts = ?`, ts); err != nil {
-		return fmt.Errorf("answer reply %s by reaction: %w", ts, err)
+		return fmt.Errorf("answer reply %s: %w", ts, err)
 	}
 	return nil
 }

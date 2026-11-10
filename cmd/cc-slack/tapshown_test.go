@@ -297,7 +297,7 @@ func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) 
 	}
 }
 
-func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAsAnOwedReply(t *testing.T) {
+func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAndOwesNothingTheCardRecorded(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -315,8 +315,8 @@ func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAsAnOwedReply(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(owed) != 1 || owed[0].ThreadTS != c.thread || owed[0].Permalink != c.url() {
-		t.Fatalf("owed %+v, want one reply owed on the card's thread", owed)
+	if len(owed) != 0 {
+		t.Fatalf("owed %+v, want nothing owed for a tap the card recorded as its answer", owed)
 	}
 	edits := editsOf(l.slack.edited(), c.ts)
 	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "sent to the session holding this DM") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
