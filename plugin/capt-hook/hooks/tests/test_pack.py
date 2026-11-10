@@ -252,7 +252,8 @@ class PackTest(unittest.TestCase):
         evt = mock_tool_event(TOOLS + "slack_reply", tool_input=THREAD | {"text": "On it."}, session_dir=Path(self.tmp.name) / "session")
         result = self.read_guard.replies_read_their_thread_first(evt)
         self.assertEqual(result.action, Action.block)
-        self.assertIn(f"`slack_thread` with `channel_id` {THREAD['channel_id']}, `thread_ts` {THREAD['thread_ts']}", result.message)
+        self.assertIn(f"`slack_thread` with `channel_id` {THREAD['channel_id']}, `thread_ts` {THREAD['thread_ts']} and `since_ts`", result.message)
+        self.assertNotIn("1000", result.message)
 
     def test_a_reply_after_a_full_read_is_allowed(self) -> None:
         session = Path(self.tmp.name) / "session"
@@ -275,6 +276,15 @@ class PackTest(unittest.TestCase):
                 self.read(session, **result)
                 self.assertTrue(self.refused(session))
 
+    def test_a_read_of_only_what_is_new_counts_unless_it_is_cut(self) -> None:
+        since = THREAD | {"since_ts": "1790210300.000001"}
+        whole = Path(self.tmp.name) / "whole"
+        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": []}), session_dir=whole))
+        self.assertFalse(self.refused(whole))
+        cut = Path(self.tmp.name) / "cut"
+        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": [], "truncated": True}), session_dir=cut))
+        self.assertTrue(self.refused(cut))
+
     def test_a_read_clears_only_the_agent_that_read(self) -> None:
         session = Path(self.tmp.name) / "session"
         self.read(session, agent_id="a1")
@@ -283,7 +293,7 @@ class PackTest(unittest.TestCase):
 
     def test_the_cli_and_the_user_fallback_reads_count(self) -> None:
         cli = Path(self.tmp.name) / "cli"
-        command = f"cc-slack thread --channel {THREAD['channel_id']} --thread {THREAD['thread_ts']} --limit 1000"
+        command = f"cc-slack thread --channel {THREAD['channel_id']} --thread {THREAD['thread_ts']} --since-ts 1790210300.000001"
         self.read_guard.full_thread_reads_are_recorded(mock_tool_event(event=Event.PostToolUse, command=command, output=json.dumps({"messages": []}), session_dir=cli))
         self.assertFalse(self.refused(cli))
         fallback = Path(self.tmp.name) / "fallback"

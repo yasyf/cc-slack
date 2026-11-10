@@ -277,3 +277,34 @@ func TestThreadOpMarksStaleReadsAndSeesTheBotsOwnReply(t *testing.T) {
 		t.Fatalf("uncached rate-limited read: %v, want the error to name %s", err, mcpThread)
 	}
 }
+
+func TestThreadOpSinceTSReadsOnlyWhatIsNewer(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, rootMessage(testThread, "root"))
+	l.slack.add(testChannel, reply(firstReply, "first"))
+	l.slack.add(testChannel, reply(secondReply, "second"))
+	readSince := func(since string, limit int) threadResult {
+		t.Helper()
+		var res threadResult
+		if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "since_ts": since, "limit": limit}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	if res := readSince(firstReply, 0); len(res.Messages) != 1 || res.Messages[0].TS != secondReply || res.Truncated {
+		t.Fatalf("read since the first reply = %+v, want only the second reply, whole", res)
+	}
+	if res := readSince(secondReply, 0); res.Messages == nil || len(res.Messages) != 0 || res.Truncated {
+		t.Fatalf("read since the newest reply = %+v, want an empty, whole read", res)
+	}
+	if res := readSince(testThread, 1); len(res.Messages) != 1 || res.Messages[0].TS != secondReply || !res.Truncated {
+		t.Fatalf("read since the root with limit 1 = %+v, want the newest reply, marked truncated", res)
+	}
+
+	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": testThread, "since_ts": "yesterday"})
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw); err == nil || !strings.Contains(err.Error(), `since_ts "yesterday"`) {
+		t.Fatalf("read since a bad ts: %v, want it refused", err)
+	}
+}
