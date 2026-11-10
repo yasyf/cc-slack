@@ -625,6 +625,8 @@ func (p *poller) dmMessage(ctx context.Context, id identity, m slack.Message) (b
 func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) error {
 	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
 	switch {
+	case id.fromOperator(m) && routedSubtypes[m.SubType] && id.repliedUnder(m):
+		return p.owed.answer(ctx, m.Timestamp)
 	case id.fromOperator(m) && routedSubtypes[m.SubType]:
 		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
 	case id.fromClaude(m) && !bareFileShare(m) && !compactionAckPost(m):

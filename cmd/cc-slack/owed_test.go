@@ -253,6 +253,21 @@ func TestAReplyWithNoLiveSessionIsStillOwed(t *testing.T) {
 	}
 }
 
+func TestADMMessageReadAgainAfterTheBotRepliedUnderItIsNotOwed(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	holdDM(t, f)
+	f.tick()
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.500000", User: testUser, Text: "answered", ReplyCount: 1, ReplyUsers: []string{f.id.BotID}}})
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.600000", User: testUser, Text: "still waiting"}})
+	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000001.600000"})
+	f.tick()
+
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.600000"}) {
+		t.Fatalf("owed %v, want only the message with no reply under it", got)
+	}
+}
+
 func TestAPostInTheThreadAnswersOnlyEarlierRepliesThere(t *testing.T) {
 	f := newFixture(t)
 	first, second := postDMThread(t, f), postDMThread(t, f)

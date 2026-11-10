@@ -472,6 +472,9 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 	}); err != nil {
 		return false, err
 	}
+	if k.ID != "" {
+		return true, nil
+	}
 	return true, p.owed.owe(ctx, owedReply{ThreadTS: a.ThreadTS, TS: a.ActionTS, Text: "Tapped " + k.Label + " on " + cmp.Or(k.Question, "a card"), Permalink: permalink})
 }
 

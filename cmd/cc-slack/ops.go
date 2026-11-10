@@ -1117,7 +1117,7 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 			return fail(fallback(act, err))
 		}
 		if act == actionReact && answeringReactions[name] && channelID == id.DMChannelID {
-			if err := a.owed.reacted(hc.Ctx, b.TS); err != nil {
+			if err := a.owed.answer(hc.Ctx, b.TS); err != nil {
 				return fail(err.Error())
 			}
 		}
@@ -1498,7 +1498,24 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if replies, err = a.unansweredByCards(hc.Ctx, id.DMChannelID, replies); err != nil {
+		return fail(err.Error())
+	}
 	return ok(dmOwedResult{Replies: slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] }), HolderSession: holder.session})
+}
+
+func (a *app) unansweredByCards(ctx context.Context, dm string, replies []owedReply) ([]owedReply, error) {
+	var owed []owedReply
+	for _, r := range replies {
+		if slackTime(r.TS).After(a.cards.lastAnswer(dm, r.ThreadTS)) {
+			owed = append(owed, r)
+			continue
+		}
+		if err := a.owed.answer(ctx, r.TS); err != nil {
+			return nil, err
+		}
+	}
+	return owed, nil
 }
 
 func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {
@@ -1565,6 +1582,10 @@ func (id identity) fromClaude(m slack.Message) bool {
 
 func (id identity) botPosted(m slack.Message) bool {
 	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID)
+}
+
+func (id identity) repliedUnder(m slack.Message) bool {
+	return slices.ContainsFunc(m.ReplyUsers, func(user string) bool { return user == id.BotID || user == id.BotUserID })
 }
 
 func (id identity) fromOperator(m slack.Message) bool {

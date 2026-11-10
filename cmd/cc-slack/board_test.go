@@ -193,6 +193,41 @@ func TestARelayedAnswerSettlesACardWhoseSessionHasEnded(t *testing.T) {
 	}
 }
 
+func TestAReplyACardRecordedAsItsAnswerIsNotOwed(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	if _, _, err := insertWatch(l.ctx, l.srv.DB(), l.subID, agent.TopLevel, kindChannel, c.id.DMChannelID, "", "1900000000.000000", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before, after := formatTS(time.Now().Add(-time.Minute)), formatTS(time.Now().Add(time.Hour))
+	for _, ts := range []string{before, after} {
+		if err := l.app.owed.owe(l.ctx, owedReply{ThreadTS: c.thread, TS: ts, Text: "1+2"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var res cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"url": c.url(), "label": "1+2: merge it", "other": true, "via": c.id.permalink(c.id.DMChannelID, before, c.thread)}).Body, &res); err != nil || !res.Answered {
+		t.Fatalf("answer = %+v, %v; want the card answered", res, err)
+	}
+
+	var owed dmOwedResult
+	if err := json.Unmarshal(l.do(opDMOwed, nil).Body, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if len(owed.Replies) != 1 || owed.Replies[0].TS != after {
+		t.Fatalf("owed %+v, want only the reply after the card's answer", owed.Replies)
+	}
+	stored, err := l.app.owed.list(l.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored owed %+v, want the answered reply gone for good", stored)
+	}
+}
+
 func TestCardAnswerFindsTheCardAtItsPermalinkWhateverIDTheCallerKnowsItBy(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

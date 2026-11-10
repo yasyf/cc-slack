@@ -937,6 +937,20 @@ func (l *liveCards) answer(channel, thread, askID string) (askAnswer, bool) {
 	return ans, done
 }
 
+func (l *liveCards) lastAnswer(channel, thread string) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var last time.Time
+	if t, ok := l.threads[threadKey(channel, thread)]; ok {
+		for _, ans := range t.Answers {
+			if !ans.Withdrawn && ans.At.After(last) {
+				last = ans.At
+			}
+		}
+	}
+	return last
+}
+
 func (l *liveCards) numberedPick(channel, thread, text string) (string, cardPick, bool) {
 	n, err := strconv.Atoi(text)
 	if err != nil || strconv.Itoa(n) != text {
