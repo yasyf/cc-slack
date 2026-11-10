@@ -50,6 +50,9 @@ from_claude, text, permalink}`. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops a
 card's `options`, then its `question` and the thread owner's title, then the
 `permalink`, and last cuts its own words and sets `cut`. A tap's `id` is never cut.
+A bot's thread reply that repeats its parent, such as an alert under its own
+summary, carries only its first line and a mark saying so in `text`; read the
+whole message at its `permalink` or with `slack_thread` when you need it.
 Top-level sessions also receive each thread or channel message, and each
 tap, as an injected steering directive at their next tool call. A DM
 message, a watch error, and a `slack.owner_stopped` event arrive once: as a

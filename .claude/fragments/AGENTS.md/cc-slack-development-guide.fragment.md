@@ -424,6 +424,13 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   message's directive names the event it carries, so the session gets it once:
   the hook skips it once the window's proven channel pushed the event, and the
   channel withholds the event once the hook delivered it.
+  A bot's thread reply of more than one line whose words, with whitespace
+  folded, all appear in its thread's parent as already delivered to the
+  session, such as a monitor's alert under its own summary, arrives as its
+  first line and a mark saying it repeats its parent, in both the event's
+  `text` and the directive; its `permalink` reaches the whole message. The
+  parent is one indexed read of the events table by the parent's dedup key.
+  A person's message always arrives whole.
   A message the daemon acked while the session was compacting carries `acked`,
   the ts of that ack, and its directive says not to ack it again.
   An operator reply in a DM thread that another session's card opened carries

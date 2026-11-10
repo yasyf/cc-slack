@@ -14,6 +14,8 @@ import (
 	"github.com/yasyf/cc-interact/event"
 )
 
+const repeatsParentMark = "[repeats its thread's parent message; the rest is at the permalink]"
+
 const (
 	eventMessage      = "slack.message"
 	eventStreamed     = "slack.message.streamed"
@@ -119,6 +121,16 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
 		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked,
 	}
+	if m.BotID != "" && thread != m.Timestamp {
+		repeats, err := p.repeatsParent(ctx, w, thread, msg.Text)
+		if err != nil {
+			return delivery{}, err
+		}
+		if repeats {
+			first, _, _ := strings.Cut(msg.Text, "\n")
+			msg.Text = first + " " + repeatsParentMark
+		}
+	}
 	if w.ChannelID == id.DMChannelID && thread != m.Timestamp {
 		owner, err := p.threadOwner(ctx, w, thread, mates)
 		if err != nil {
@@ -141,6 +153,22 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 			return mustJSON(msg)
 		},
 	}, nil
+}
+
+func (p *poller) repeatsParent(ctx context.Context, w watch, thread, text string) (bool, error) {
+	if !strings.Contains(text, "\n") {
+		return false, nil
+	}
+	var parent string
+	err := p.plane.DB().QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload, '$.text'), '') FROM events WHERE subject_id = ? AND dedup_key = ?`,
+		w.SubjectID, messageDedup(w, thread)).Scan(&parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the parent of a bot reply in %s/%s: %w", w.ChannelID, thread, err)
+	}
+	return strings.Contains(strings.Join(strings.Fields(parent), " "), strings.Join(strings.Fields(text), " ")), nil
 }
 
 func messageDedup(w watch, ts string) string {
