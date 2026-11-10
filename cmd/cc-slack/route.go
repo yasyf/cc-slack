@@ -23,6 +23,28 @@ const (
 
 func ownedType(base, agentID string) string { return base + "@" + agentID }
 
+var watchFrames = map[string]bool{eventMessage: true, eventStreamed: true, eventAction: true}
+
+func (a *app) endedWatchFrame(subjectID string, e event.Event) bool {
+	if !watchFrames[e.Type] {
+		return false
+	}
+	var frame struct {
+		WatchID int64 `json:"watch_id"`
+	}
+	if err := json.Unmarshal(e.Payload, &frame); err != nil || frame.WatchID == 0 {
+		return false
+	}
+	var live bool
+	err := a.poller.plane.DB().QueryRowContext(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM watches WHERE id = ? AND subject_id = ? AND status = 'active')`, frame.WatchID, subjectID).Scan(&live)
+	if err != nil {
+		a.poller.log.Printf("deliver %s on watch %d without checking it is live: %v", e.Type, frame.WatchID, err)
+		return false
+	}
+	return !live
+}
+
 type messagePayload struct {
 	Type        string       `json:"type"`
 	WatchID     int64        `json:"watch_id"`

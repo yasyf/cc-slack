@@ -163,9 +163,33 @@ func (l *liveDaemon) startAgent(agentID string) {
 
 func (l *liveDaemon) deliver(owner, ts, text string) {
 	l.t.Helper()
+	if _, err := l.srv.DB().ExecContext(l.ctx, `INSERT OR IGNORE INTO watches(id, subject_id, owner_agent_id, kind, channel_id, thread_ts, status, created_at)
+		VALUES (7, ?, ?, ?, ?, ?, 'active', 0)`, l.subID, owner, kindThread, testChannel, testThread); err != nil {
+		l.t.Fatal(err)
+	}
+	l.deliverOn(watch{ID: 7, SubjectID: l.subID, Owner: owner, Kind: kindThread, ChannelID: testChannel, ThreadTS: testThread}, ts, text)
+}
+
+func (l *liveDaemon) addWatch(thread string) watch {
+	l.t.Helper()
+	tx, err := l.srv.DB().BeginTx(l.ctx, nil)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	id, err := addWatch(l.ctx, tx, l.subID, agent.TopLevel, kindThread, testChannel, thread, time.Now())
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		l.t.Fatal(err)
+	}
+	return watch{ID: id, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindThread, ChannelID: testChannel, ThreadTS: thread}
+}
+
+func (l *liveDaemon) deliverOn(w watch, ts, text string) {
+	l.t.Helper()
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
-	w := watch{ID: 7, SubjectID: l.subID, Owner: owner, Kind: kindThread, ChannelID: testChannel, ThreadTS: testThread}
-	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: testThread, User: "UOTHER", Username: "teammate", Text: text}}
+	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: w.ThreadTS, User: "UOTHER", Username: "teammate", Text: text}}
 	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
 	if err != nil {
 		l.t.Fatal(err)
@@ -292,5 +316,39 @@ func TestThreadSeenSaysWhetherTheThreadsNewestMessageReachedTheAgent(t *testing.
 	}
 	if got := seen("1800000000.000400", agent.TopLevel); got.Delivered || got.Newest != "1800000000.000400" {
 		t.Fatalf("thread-seen = %+v, want a newer message the session never got unseen", got)
+	}
+}
+
+func (l *liveDaemon) channelTexts() []string {
+	l.t.Helper()
+	var texts []string
+	for _, data := range l.channelPayloads() {
+		var m messagePayload
+		if err := json.Unmarshal([]byte(data), &m); err != nil {
+			l.t.Fatal(err)
+		}
+		if m.Type == eventMessage {
+			texts = append(texts, m.Text)
+		}
+	}
+	return texts
+}
+
+func TestAResumedChannelDeliversOnlyLiveWatchesAfterItsCursor(t *testing.T) {
+	l := startDaemon(t)
+	live, ended := l.addWatch("1800000000.000400"), l.addWatch("1800000000.000500")
+	l.deliverOn(live, "1800000000.000401", "live, before the cursor")
+	l.deliverOn(ended, "1800000000.000501", "ended, before the cursor")
+	if got := l.channelTexts(); !slices.Equal(got, []string{"live, before the cursor", "ended, before the cursor"}) {
+		t.Fatalf("first read = %q, want both watches' messages", got)
+	}
+
+	l.deliverOn(live, "1800000000.000402", "live, after the cursor")
+	l.deliverOn(ended, "1800000000.000502", "ended, after the cursor")
+	if _, err := l.srv.DB().ExecContext(l.ctx, `UPDATE watches SET status = 'stopped' WHERE id = ?`, ended.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.channelTexts(); !slices.Equal(got, []string{"live, after the cursor"}) {
+		t.Fatalf("resumed read = %q, want only the live watch's message after the cursor", got)
 	}
 }
