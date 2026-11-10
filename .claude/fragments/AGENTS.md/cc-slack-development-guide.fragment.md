@@ -62,11 +62,17 @@ bot_token = "/slack/bot-token"
 socket_url = "/slack/socket-url"
 avatar_key_id = "/slack/avatar-key-id"
 avatar_secret = "/slack/avatar-secret"
+picture_key_id = "/slack/picture-key-id"
+picture_secret = "/slack/picture-secret"
 
 [avatars]
 endpoint = "https://<account>.r2.cloudflarestorage.com"
 bucket = "public-assets"
 public_base = "https://assets.example.com/"
+
+[pictures]
+endpoint = "https://<account>.r2.cloudflarestorage.com"
+bucket = "card-pictures"
 
 [doc_cards]
 link = "https://docs.example.com/"
@@ -84,6 +90,14 @@ preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--jso
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
 ```
+
+`[pictures]` names a private S3-compatible bucket for the pictures on cards.
+The daemon uploads each picture under `cc-slack/pictures/<team>/<sha256>` with
+the key `login` reads from `[ssm] picture_key_id` and `picture_secret`, or from
+`CC_SLACK_PICTURE_KEY_ID` and `CC_SLACK_PICTURE_SECRET`. A card draws each
+picture from a link signed for 7 days, and every redraw signs a fresh one, so a
+card shows its pictures with no other message. Without `[pictures]`, a card's
+pictures are shared into one picture-keeping thread in the DM.
 
 `[github]` and `[buildkite]` each take exactly one of `token_env` and
 `token_command`, and let status cards show the live state of the pull requests

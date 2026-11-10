@@ -301,6 +301,7 @@ type whoami struct {
 
 func newWhoami(id identity, socket string) whoami {
 	id.Config.GitHub, id.Config.Buildkite = id.Config.GitHub.redacted(), id.Config.Buildkite.redacted()
+	id.Config.Pictures.Secret = ""
 	return whoami{identity: id, Username: id.username(), Socket: socket}
 }
 
@@ -524,6 +525,9 @@ func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Config.Avatars.enabled() && (b.AvatarKey == "" || b.AvatarSec == "") {
 		return fail("login needs an avatar_key_id and an avatar_secret when the config sets [avatars]")
 	}
+	if b.Config.Pictures.enabled() && (b.Config.Pictures.KeyID == "" || b.Config.Pictures.Secret == "") {
+		return fail("login needs the picture bucket's key when the config sets [pictures]")
+	}
 	id, err := resolveIdentity(hc.Ctx, a.newAPI(b.Token), b.Token, b.Email, a.now())
 	if err != nil {
 		return fail(fmt.Sprintf("login: %s", errorCode(err)))
@@ -536,6 +540,7 @@ func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {
 	if err := saveIdentity(hc.Ctx, hc.DB, id); err != nil {
 		return fail(err.Error())
 	}
+	a.cards.usePictures(id.Config.Pictures)
 	a.poller.reconcileAll()
 	a.socket.restart()
 	return ok(newWhoami(id, a.socket.status()))
@@ -556,6 +561,10 @@ func (a *app) handleReload(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Config.Avatars.enabled() && (id.AvatarKeyID == "" || id.AvatarSecret == "") {
 		return fail("reload: the config sets [avatars], and the last login read no avatar key: run `cc-slack login`")
 	}
+	b.Config.Pictures.KeyID, b.Config.Pictures.Secret = id.Config.Pictures.KeyID, id.Config.Pictures.Secret
+	if b.Config.Pictures.enabled() && b.Config.Pictures.KeyID == "" {
+		return fail("reload: the config sets [pictures], and the last login read no picture key: run `cc-slack login`")
+	}
 	avatarsChanged := b.Config.Avatars != id.Config.Avatars
 	id.Config = b.Config
 	if avatarsChanged {
@@ -566,6 +575,7 @@ func (a *app) handleReload(hc daemon.HandlerCtx) daemon.Reply {
 	if err := saveIdentity(hc.Ctx, hc.DB, id); err != nil {
 		return fail(err.Error())
 	}
+	a.cards.usePictures(id.Config.Pictures)
 	a.poller.reconcileAll()
 	a.socket.restart()
 	return ok(newWhoami(id, a.socket.status()))
@@ -2151,7 +2161,7 @@ func (a *app) replaceCard(ctx context.Context, id identity, card statusCard, tag
 	}) {
 		_, err = a.cards.redraw(ctx, api, id.DMChannelID, thread, ref.ts, now)
 	} else {
-		v := cardView{tag: tag, at: now, now: now, final: true}
+		v := cardView{tag: tag, at: now, now: now, final: true, pictures: id.Config.Pictures}
 		err = updateMessage(ctx, api, id.DMChannelID, ref.ts, card.text(), card.replyBlocks(v), card.entities(card.prEntities(v)...)...)
 	}
 	if err != nil {
@@ -2194,6 +2204,10 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) ([]
 		b.Card.Images = shown
 		return nil, nil
 	}
+	if bucket := id.Config.Pictures; bucket.enabled() {
+		b.Card.Images, err = bucket.upload(ctx, id.TeamID, pictures)
+		return nil, err
+	}
 	return uploadFiles(ctx, a.newAPI(id.Token), pictures)
 }
 
@@ -2222,7 +2236,7 @@ func (a *app) shareCardPictures(ctx context.Context, db *sql.DB, id identity, ca
 		notePostWarning(ctx, "the card posted without its pictures: "+err.Error())
 		return card, false
 	}
-	card.Images = files
+	card.Images = sharedImages(files)
 	return card, true
 }
 
@@ -2485,8 +2499,8 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 
 func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, asked *liveMessage) (*liveMessage, error) {
 	placed := t.Reply
-	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.refs)
-	prs := placed.Card.prEntities(t.view(placed, a.now(), a.cards.refs))
+	text, blocks := t.replyMessage(t.Reply, a.now(), a.cards.canvas())
+	prs := placed.Card.prEntities(t.view(placed, a.now(), a.cards.canvas()))
 	carrier := asked != nil && asked.TS == t.Thread
 	var more [][]slack.Block
 	if carrier {
@@ -2537,7 +2551,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if prior == nil {
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
-		text, blocks := t.rootMessage(now, cards.refs)
+		text, blocks := t.rootMessage(now, cards.canvas())
 		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil, msg.card.entities()...)
 		if err != nil {
 			return "", false, err
@@ -2551,7 +2565,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	}
 	t := cards.draft(prior.Channel, prior.Thread)
 	t.apply(*msg.card, msg.tag, now, true)
-	text, blocks := t.rootMessage(now, cards.refs)
+	text, blocks := t.rootMessage(now, cards.canvas())
 	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, t.Thread, text, blocks, msg.card.entities()...); err != nil {
 		return "", false, fmt.Errorf("redraw status card root %s/%s: %w", id.DMChannelID, t.Thread, err)
 	}

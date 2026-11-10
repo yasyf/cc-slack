@@ -88,12 +88,18 @@ bot_token = "/slack/bot-token"
 socket_url = "/slack/socket-url"
 avatar_key_id = "/slack/avatar-key-id"
 avatar_secret = "/slack/avatar-secret"
+picture_key_id = "/slack/picture-key-id"
+picture_secret = "/slack/picture-secret"
 
 # Badge your avatar and host it in an S3-compatible bucket.
 [avatars]
 endpoint = "https://<account>.r2.cloudflarestorage.com"
 bucket = "public-assets"
 public_base = "https://assets.example.com/"
+
+[pictures]
+endpoint = "https://<account>.r2.cloudflarestorage.com"
+bucket = "card-pictures"
 
 # Attach Work Object cards to links Slack cannot preview.
 [doc_cards]

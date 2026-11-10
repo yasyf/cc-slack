@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -164,25 +165,30 @@ func openAsks(asks []cardAsk, answers map[string]askAnswer, now time.Time) []car
 	return open
 }
 
-func (t *liveThread) view(m *liveMessage, now time.Time, refs map[string]refState) cardView {
-	v := cardView{tag: m.Tag, at: m.At, now: now, refs: refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint, final: m.Final, unfolded: m.Unfolded}
+type canvas struct {
+	refs     map[string]refState
+	pictures pictureConfig
+}
+
+func (t *liveThread) view(m *liveMessage, now time.Time, d canvas) cardView {
+	v := cardView{tag: m.Tag, at: m.At, now: now, refs: d.refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint, final: m.Final, unfolded: m.Unfolded, pictures: d.pictures}
 	if m == t.Root {
 		v.asks, v.timeline = t.openAsks(now), t.Timeline
 	}
 	return v
 }
 
-func (t *liveThread) rootMessage(now time.Time, refs map[string]refState) (string, []slack.Block) {
+func (t *liveThread) rootMessage(now time.Time, d canvas) (string, []slack.Block) {
 	c := t.Root.Card
 	text := c.text()
 	if c.Title == "" {
 		text = cmp.Or(c.Drive, "Status")
 	}
-	return text, c.rootBlocks(t.view(t.Root, now, refs))
+	return text, c.rootBlocks(t.view(t.Root, now, d))
 }
 
-func (t *liveThread) replyMessage(m *liveMessage, now time.Time, refs map[string]refState) (string, []slack.Block) {
-	v := t.view(m, now, refs)
+func (t *liveThread) replyMessage(m *liveMessage, now time.Time, d canvas) (string, []slack.Block) {
+	v := t.view(m, now, d)
 	return m.Card.replyText(v), m.Card.replyBlocks(v)
 }
 
@@ -239,6 +245,8 @@ type liveCards struct {
 	recard func(ctx context.Context, id identity, card cardRef, pr refID)
 	wakeCh chan struct{}
 
+	pictures atomic.Pointer[pictureConfig]
+
 	mu      sync.Mutex
 	shelfMu sync.Mutex
 	threads map[string]*liveThread
@@ -247,6 +255,16 @@ type liveCards struct {
 	drawing map[string]*sync.Mutex
 	undrawn map[string]map[string]bool
 }
+
+func (l *liveCards) canvas() canvas {
+	d := canvas{refs: l.refs}
+	if p := l.pictures.Load(); p != nil {
+		d.pictures = *p
+	}
+	return d
+}
+
+func (l *liveCards) usePictures(p pictureConfig) { l.pictures.Store(&p) }
 
 func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at time.Time) {
 	l.mu.Lock()
@@ -310,10 +328,10 @@ func (l *liveCards) carried(t *liveThread, now time.Time) ([]slack.Block, []slac
 		if m == nil {
 			continue
 		}
-		_, card := ct.replyMessage(m, now, l.refs)
+		_, card := ct.replyMessage(m, now, l.canvas())
 		if row := carriedCard(card, permalinkRef{channelID: t.Channel, ts: m.TS, threadTS: ct.Thread}); row != nil {
 			rows = append(rows, row)
-			prs = append(prs, m.Card.prEntities(ct.view(m, now, l.refs))...)
+			prs = append(prs, m.Card.prEntities(ct.view(m, now, l.canvas()))...)
 		}
 	}
 	return rows, prs
@@ -326,7 +344,7 @@ func (l *liveCards) workObjectsOf(channel, ts string, now time.Time) []slack.Msg
 	if m == nil || m.Tapped != "" {
 		return nil
 	}
-	return m.Card.entities(m.Card.prEntities(t.view(m, now, l.refs))...)
+	return m.Card.entities(m.Card.prEntities(t.view(m, now, l.canvas()))...)
 }
 
 func (l *liveCards) withCarried(t *liveThread, blocks []slack.Block, now time.Time) ([]slack.Block, [][]slack.Block, []slack.WorkObjectEntity) {
@@ -786,7 +804,7 @@ func (l *liveCards) showPictures(channel, thread, ts string, shown statusCard) b
 	return found
 }
 
-func (l *liveCards) shownImages(channel string, card statusCard) []slack.FileSummary {
+func (l *liveCards) shownImages(channel string, card statusCard) []cardImage {
 	if card.ImagesHash == "" || card.Waits == "" {
 		return nil
 	}
@@ -800,7 +818,7 @@ func (l *liveCards) shownImages(channel string, card statusCard) []slack.FileSum
 	return nil
 }
 
-func (l *liveCards) prCardImages(card cardRef, hash string) []slack.FileSummary {
+func (l *liveCards) prCardImages(card cardRef, hash string) []cardImage {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(card.channel, card.thread)]
@@ -960,7 +978,7 @@ func (l *liveCards) fold(channel, thread, ts string, now time.Time) [][]slack.Bl
 	}
 	for _, m := range t.messages() {
 		if m != nil && m.TS == ts && !m.Unfolded {
-			_, pages := m.Card.layout(t.view(m, now, l.refs))
+			_, pages := m.Card.layout(t.view(m, now, l.canvas()))
 			return pages
 		}
 	}
@@ -1005,10 +1023,10 @@ type cardWrite struct {
 }
 
 func (l *liveCards) write(t *liveThread, m *liveMessage, now time.Time, root bool) cardWrite {
-	text, blocks := t.replyMessage(m, now, l.refs)
-	prs := m.Card.prEntities(t.view(m, now, l.refs))
+	text, blocks := t.replyMessage(m, now, l.canvas())
+	prs := m.Card.prEntities(t.view(m, now, l.canvas()))
 	if root {
-		text, blocks = t.rootMessage(now, l.refs)
+		text, blocks = t.rootMessage(now, l.canvas())
 		prs = nil
 	}
 	w := cardWrite{m: m, ts: m.TS, text: text, blocks: blocks}

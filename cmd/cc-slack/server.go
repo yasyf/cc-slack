@@ -160,6 +160,9 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			if err := a.cards.load(); err != nil {
 				return err
 			}
+			if id, err := loadIdentity(ctx, s.DB()); err == nil {
+				a.cards.usePictures(id.Config.Pictures)
+			}
 			a.shortcuts.plane = s
 			a.shortcuts.spawn = s.Background
 			a.socket.plane = s

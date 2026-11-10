@@ -146,9 +146,9 @@ type statusCard struct {
 	Hints       map[string]string `json:"hints,omitempty"`
 	Replaces    string            `json:"replaces,omitempty"`
 
-	Pictures   []string            `json:"pictures,omitempty"`
-	Images     []slack.FileSummary `json:"images,omitempty"`
-	ImagesHash string              `json:"images_hash,omitempty"`
+	Pictures   []string    `json:"pictures,omitempty"`
+	Images     []cardImage `json:"images,omitempty"`
+	ImagesHash string      `json:"images_hash,omitempty"`
 }
 
 type cardRow struct {
@@ -420,16 +420,16 @@ func (p cardPR) fields(v cardView) []cardFact {
 	}
 }
 
-func (p cardPR) pictured(image slack.FileSummary) bool {
+func (p cardPR) pictured(image cardImage) bool {
 	return slices.ContainsFunc(p.Pictures, func(path string) bool { return filepath.Base(path) == image.Title })
 }
 
-func (p cardPR) images(all []slack.FileSummary) []slack.FileSummary {
-	return slices.DeleteFunc(slices.Clone(all), func(image slack.FileSummary) bool { return !p.pictured(image) })
+func (p cardPR) images(all []cardImage) []cardImage {
+	return slices.DeleteFunc(slices.Clone(all), func(image cardImage) bool { return !p.pictured(image) })
 }
 
-func (c statusCard) unplacedImages() []slack.FileSummary {
-	return slices.DeleteFunc(slices.Clone(c.Images), func(image slack.FileSummary) bool {
+func (c statusCard) unplacedImages() []cardImage {
+	return slices.DeleteFunc(slices.Clone(c.Images), func(image cardImage) bool {
 		return slices.ContainsFunc(c.PRs, func(p cardPR) bool { return p.pictured(image) })
 	})
 }
@@ -866,6 +866,7 @@ type cardView struct {
 	hint     string
 	final    bool
 	unfolded bool
+	pictures pictureConfig
 }
 
 type timelineEntry struct {
@@ -1272,10 +1273,10 @@ func (p cardPR) settledLine(v cardView) string {
 	return refLine(p.URL, "", id, v.refs[id.key()], p.Title)
 }
 
-func (p cardPR) section(v cardView, at, of int, images []slack.FileSummary) []slack.Block {
+func (p cardPR) section(v cardView, at, of int, images []cardImage) []slack.Block {
 	blocks := append([]slack.Block{p.head(at, of)}, sections(p.body(v))...)
 	for _, image := range p.images(images) {
-		blocks = append(blocks, imageBlock(image))
+		blocks = append(blocks, image.block(v.pictures))
 	}
 	return blocks
 }
@@ -1469,7 +1470,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 func (c statusCard) tail(v cardView) []slack.Block {
 	blocks := make([]slack.Block, 0, len(c.Images)+len(c.Options)+len(c.Rows)+cardMaxFacts)
 	for _, image := range c.unplacedImages() {
-		blocks = append(blocks, imageBlock(image))
+		blocks = append(blocks, image.block(v.pictures))
 	}
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)

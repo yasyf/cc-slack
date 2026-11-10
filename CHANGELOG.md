@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `[pictures]` section names a private S3-compatible bucket for the pictures on cards. With it, a card's pictures upload to the bucket and draw from links signed for 7 days, re-signed on every redraw, so the card is the only message in the DM: no picture-keeping thread and no share. `login` reads the bucket's key from `[ssm] picture_key_id` and `picture_secret`. Without the section, pictures still go to the DM's picture-keeping thread.
+
 ### Fixed
 
 - A window whose channel comes back after a while no longer gets old Slack messages and card taps from watches that have since ended. The channel resumes from its saved position, and the daemon now holds back any message or tap whose watch is no longer active for that session, so only the watches `cc-slack follows` lists deliver. On Nov 9 a retired window's channel reconnected from a Nov 6 position and replayed about 300 messages and taps from stopped watches into that terminal.
