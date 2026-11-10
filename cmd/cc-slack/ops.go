@@ -2385,49 +2385,64 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 }
 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
-	thread, ts, posted, again, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
-	if err == nil && again {
-		if err := a.askAgain(ctx, db, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
-			a.poller.log.Printf("card %s redrawn in place, but not posted again beside it: %v", ts, err)
+	thread, ts, posted, redraw, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
+	card := cardRef{id.DMChannelID, thread, ts}
+	switch {
+	case err != nil:
+	case redraw == cardAskedAgain:
+		if err := a.askAgain(ctx, db, id, card); err != nil {
+			a.poller.log.Printf("card %s revived in place, but not posted again beside it: %v", ts, err)
+		}
+	case redraw == cardReworded:
+		if err := a.redrawCopies(ctx, id, card); err != nil {
+			a.poller.log.Printf("card %s redrawn in place, but its copies keep their old words: %v", ts, err)
 		}
 	}
 	return thread, ts, posted, err
 }
 
-func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, bool, error) {
+type cardRedraw int
+
+const (
+	cardUnchanged cardRedraw = iota
+	cardReworded
+	cardAskedAgain
+)
+
+func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, cardRedraw, error) {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	threads, err := sessionThreads(ctx, db, sub.ID, id.DMChannelID)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, cardUnchanged, err
 	}
 	if msg.rootOnly {
 		thread, posted, err := a.rootCard(ctx, db, sub, id, threads, msg)
-		return thread, "", posted, false, err
+		return thread, "", posted, cardUnchanged, err
 	}
 	card := *msg.card
 	replaces := ""
 	if card.Replaces != "" {
 		ref, err := parsePermalink(card.Replaces)
 		if err != nil {
-			return "", "", false, false, err
+			return "", "", false, cardUnchanged, err
 		}
 		under, replaces, card.Replaces = cmp.Or(ref.threadTS, ref.ts), ref.ts, ""
 	}
 	place, err := cards.placeFor(id.DMChannelID, under, replaces, threads, card)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, cardUnchanged, err
 	}
 	if place.nothing {
-		return "", "", false, false, nil
+		return "", "", false, cardUnchanged, nil
 	}
 	t, prior, asked, superseded := place.thread, place.prior, place.asked, place.superseded
 	again := place.redraws(card)
 	t.apply(card, msg.tag, a.now(), false)
 	placed, err := a.placeCard(ctx, db, id, t, asked)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, cardUnchanged, err
 	}
 	if place.revived && asked != nil {
 		if err := a.newAPI(id.Token).RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: asked.TS}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
@@ -2452,7 +2467,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		return t.Thread, placed.TS, true, again, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, t.Thread); err != nil {
-		return "", placed.TS, true, false, err
+		return "", placed.TS, true, cardUnchanged, err
 	}
 	return t.Thread, placed.TS, true, again, nil
 }
@@ -2464,8 +2479,16 @@ type cardPlace struct {
 	nothing, revived  bool
 }
 
-func (p cardPlace) redraws(card statusCard) bool {
-	return p.asked != nil && card.Waits != "" && (p.revived || p.asked.Card.Waits != "" && !sameCard(p.asked.Card, card))
+func (p cardPlace) redraws(card statusCard) cardRedraw {
+	switch {
+	case p.asked == nil || card.Waits == "":
+		return cardUnchanged
+	case p.revived:
+		return cardAskedAgain
+	case p.asked.Card.Waits != "" && !sameCard(p.asked.Card, card):
+		return cardReworded
+	}
+	return cardUnchanged
 }
 
 func (l *liveCards) placeFor(channel, under, replaces string, threads []string, card statusCard) (cardPlace, error) {

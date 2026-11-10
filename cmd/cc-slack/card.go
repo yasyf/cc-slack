@@ -245,6 +245,9 @@ func checkURL(raw, tailnet string) bool {
 }
 
 func (c *statusCard) fill(text string) {
+	if strings.Contains(c.Body, strings.TrimSpace(text)) {
+		text = ""
+	}
 	c.Body = strings.Join(slices.DeleteFunc([]string{text, c.Body}, func(s string) bool { return s == "" }), "\n")
 	if c.Status == "" && c.Waits != "" {
 		c.Status = "needs_you"
