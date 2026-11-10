@@ -42,6 +42,7 @@ type plane interface {
 	DB() *sql.DB
 	Append(ctx context.Context, e *event.Event) (int64, error)
 	Direct(ctx context.Context, subjectID, agentID, origin, text string) (agent.Directive, error)
+	DirectEvent(ctx context.Context, subjectID, origin, text string, eventSeq int64) (agent.Directive, error)
 }
 
 type poller struct {

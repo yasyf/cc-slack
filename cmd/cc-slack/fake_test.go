@@ -773,6 +773,7 @@ type directed struct {
 	agentID   string
 	origin    string
 	text      string
+	eventSeq  int64
 }
 
 type fakePlane struct {
@@ -798,14 +799,22 @@ func (f *fakePlane) Append(ctx context.Context, e *event.Event) (int64, error) {
 }
 
 func (f *fakePlane) Direct(ctx context.Context, subjectID, agentID, origin, text string) (agent.Directive, error) {
+	return f.direct(ctx, subjectID, agentID, origin, text, sql.NullInt64{})
+}
+
+func (f *fakePlane) DirectEvent(ctx context.Context, subjectID, origin, text string, eventSeq int64) (agent.Directive, error) {
+	return f.direct(ctx, subjectID, agent.TopLevel, origin, text, sql.NullInt64{Int64: eventSeq, Valid: true})
+}
+
+func (f *fakePlane) direct(ctx context.Context, subjectID, agentID, origin, text string, eventSeq sql.NullInt64) (agent.Directive, error) {
 	if f.directErr != nil {
 		return agent.Directive{}, f.directErr
 	}
-	d, _, err := f.st.EnqueueDirective(ctx, subjectID, agentID, origin, text, time.Now())
+	d, _, err := f.st.EnqueueDirective(ctx, subjectID, agentID, origin, text, eventSeq, time.Now())
 	if err != nil {
 		return agent.Directive{}, err
 	}
-	f.directives = append(f.directives, directed{subjectID: subjectID, agentID: agentID, origin: origin, text: text})
+	f.directives = append(f.directives, directed{subjectID: subjectID, agentID: agentID, origin: origin, text: text, eventSeq: eventSeq.Int64})
 	return d, nil
 }
 
