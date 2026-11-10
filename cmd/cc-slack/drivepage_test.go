@@ -47,6 +47,71 @@ func TestDriveCardsListTheDrivesOpenQuestionsUntilHeAnswers(t *testing.T) {
 	}
 }
 
+func TestATapThatNamesItsCardAsTheThreadSettlesTheCardInTheThreadThatHoldsIt(t *testing.T) {
+	command, _ := cardOwnerCommand(t, `echo '{"heard":true}'`)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+	var root map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "Cloud agents"}).Body, &root); err != nil {
+		t.Fatal(err)
+	}
+	asked := mergeCard()
+	asked.Drive = "brook"
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": asked, "thread_ts": root["ts"]}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := postedCard{id: id, thread: res["thread_ts"], ts: res["ts"]}
+	if c.thread != root["ts"] || c.ts == c.thread {
+		t.Fatalf("card at %s in thread %s, want a reply in thread %s", c.ts, c.thread, root["ts"])
+	}
+	endWatches(t, l, c.thread)
+
+	tap := mergeTap(c, 2)
+	tap.ThreadTS = c.ts
+	l.tap(c.id, tap)
+
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != "Merge" {
+		t.Fatalf("answer = %+v, %v, want his pick on record in the card's own thread", ans, done)
+	}
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 0 {
+		t.Fatalf("questions after his tap = %+v, want none", listed)
+	}
+}
+
+func TestACardAskedAgainUnderANewIDTakesTheOneItSupersedesOffTheOpenList(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	first := mergeCard()
+	first.Drive = "brook"
+	c := postWaiting(t, l, first)
+	again := mergeCard()
+	again.Drive, again.Waits, again.Title, again.Supersedes = "brook", "step-3:merge-again", "Merge #41 before the freeze?", []string{c.url()}
+	fresh := postWaiting(t, l, again)
+
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || listed[0].URL != fresh.url() {
+		t.Fatalf("questions = %+v, want only the card that asks again", listed)
+	}
+}
+
+func TestAFollowUpAskedUnderTheOpenCardsIDLeavesOneCardOpen(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	first := mergeCard()
+	first.Drive = "brook"
+	c := postWaiting(t, l, first)
+	followUp := mergeCard()
+	followUp.Drive, followUp.Title = "brook", "Merge #41 before the freeze, or after it?"
+	postWaiting(t, l, followUp)
+
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || listed[0].URL != c.url() || listed[0].Question != followUp.Title {
+		t.Fatalf("questions = %+v, want the one card, now asking the follow-up", listed)
+	}
+}
+
 func TestCanvasTabsAPageInHisDMRedrawsItAndRecreatesOneHeDeleted(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
