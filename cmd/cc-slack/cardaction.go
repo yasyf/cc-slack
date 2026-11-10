@@ -928,8 +928,15 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	}
 	thread := ref.threadTS
 	kind, surface, name := answeredFrom(from, via)
-	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok && ref.channelID == id.DMChannelID && !other && !settled && !withdrawn {
-		return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
+	if waits, m, ok := p.cards.prCardAt(id.DMChannelID, thread, ref.ts); ok && ref.channelID == id.DMChannelID {
+		switch {
+		case withdrawn && m.Tapped != "":
+			return cardAnswerResult{}, fmt.Errorf("PR card %s no longer waits on a tap: it shows %q", card, m.Tapped)
+		case withdrawn:
+			return p.withdrawPRCard(ctx, id, offeredCard{ref: cardRef{id.DMChannelID, thread, m.TS}, waits: waits, question: m.Card.Title}, label, via)
+		case !other && !settled:
+			return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
+		}
 	}
 	waits, m, ok := p.cards.waitingAt(id.DMChannelID, thread, ref.ts)
 	if ref.channelID != id.DMChannelID || !ok {
@@ -966,6 +973,25 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		}
 	}
 	return res, err
+}
+
+func (p *poller) withdrawPRCards(ctx context.Context, id identity, pr refID, reason string) ([]string, error) {
+	withdrawn := []string{}
+	for _, c := range p.cards.openPRCards(pr) {
+		permalink := id.permalink(c.ref.channel, c.ref.ts, c.ref.thread)
+		res, err := p.withdrawPRCard(ctx, id, c, reason, "")
+		if err != nil {
+			return nil, fmt.Errorf("PR card %s still waits on a tap: %w", permalink, err)
+		}
+		if res.Answered {
+			withdrawn = append(withdrawn, permalink)
+		}
+	}
+	return withdrawn, nil
+}
+
+func (p *poller) withdrawPRCard(ctx context.Context, id identity, c offeredCard, reason, via string) (cardAnswerResult, error) {
+	return p.answerWaits(ctx, id, waitsAnswer{card: c.ref, tap: askTap{ID: c.waits, Label: reason, Question: c.question, Waits: true}, at: p.now(), via: via, withdrawn: true})
 }
 
 func answeredFrom(from, via string) (kind, surface, name string) {

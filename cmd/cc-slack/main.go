@@ -93,6 +93,7 @@ func root() *cobra.Command {
 		driveCardsCmd(d),
 		canvasCmd(d),
 		redrawPRCardsCmd(d),
+		withdrawPRCardCmd(d),
 		channelsCmd(d),
 		usersCmd(d),
 		followCmd(d),

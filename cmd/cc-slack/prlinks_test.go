@@ -632,6 +632,67 @@ func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *
 	}
 }
 
+func TestAWithdrawnPRCardSaysWhyAboveItsPRAndALateTapRecordsNothing(t *testing.T) {
+	const why = "not this drive's order, returned to the lane that asked"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	withdraw := func() []string {
+		var res struct{ Withdrawn []string }
+		if err := json.Unmarshal(l.do(opWithdrawPRCard, map[string]any{"pr": tapPR41[0], "reason": why}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.Withdrawn
+	}
+	if got := withdraw(); len(got) != 1 || !strings.Contains(got[0], strings.ReplaceAll(card.ts, ".", "")) {
+		t.Fatalf("withdrawn = %v, want the card's permalink", got)
+	}
+	edits := editsOf(l.slack.edited(), card.ts)
+	last := edits[len(edits)-1]
+	line, pr := strings.Index(last, "*Withdrawn:* "+why), strings.Index(last, "app PR 41")
+	if line < 0 || pr < line || strings.Contains(last, cardWaitAction) {
+		t.Fatalf("card = %s, want Withdrawn and the reason above its PR line and no buttons", last)
+	}
+
+	asks := len(cmd.requests(t))
+	tapAsked(t, l, card, testWaits, "Merge #41?", []string{"Merge", "Hold"}, 0)
+	if got := cmd.requests(t); len(got) != asks {
+		t.Fatalf("card command asked %v after a late tap, want no answer recorded", got[asks:])
+	}
+	if got := editsOf(l.slack.edited(), card.ts); got[len(got)-1] != last {
+		t.Fatalf("card = %s after a late tap, want it still withdrawn", got[len(got)-1])
+	}
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 0 {
+		t.Fatalf("drive-cards = %+v, want no PR card waiting", listed.PRCards)
+	}
+	var redrawn map[string]int
+	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{}).Body, &redrawn); err != nil || redrawn["redrawing"] != 0 {
+		t.Fatalf("redraw-pr-cards = %v, %v; want the withdrawn card left as drawn", redrawn, err)
+	}
+	if got := withdraw(); len(got) != 0 {
+		t.Fatalf("second withdrawal = %v, want nothing left to withdraw", got)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.refused(opCardAnswer, map[string]any{"url": id.permalink(testDM, card.ts, card.threadTS), "label": "another reason", "withdrawn": true, "via": "http://studio:41330/"}, "no longer waits on a tap")
+	if got := editsOf(l.slack.edited(), card.ts); got[len(got)-1] != last {
+		t.Fatalf("card = %s after a second withdrawal, want it left as drawn", got[len(got)-1])
+	}
+
+	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap again", "tap_prs": tapPR41})
+	eventually(t, "a fresh card at the DM root", func() bool { return len(rootCards(prCards(l, testDM))) == 2 })
+	if fresh := rootCards(prCards(l, testDM))[1]; !strings.Contains(fresh.blocks, cardWaitAction) {
+		t.Fatalf("fresh card = %s, want its buttons", fresh.blocks)
+	}
+}
+
 func stackMemberCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 42, Card: statusCard{
 		Status: "needs_you", Title: "Fix: approve drop the old key?",

@@ -211,6 +211,10 @@ func (t *liveThread) open(m *liveMessage) bool {
 	return !answered && m.Tapped == ""
 }
 
+func (t *liveThread) retired(m *liveMessage) bool {
+	return m.ReplacedBy != "" || t.Answers[m.Card.Waits].Withdrawn
+}
+
 func (t *liveThread) shows(keys map[string]bool) bool {
 	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.open(m) })
 }
@@ -667,7 +671,7 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRe
 			continue
 		}
 		for _, m := range t.PRCards {
-			if !m.cites(keys) || m.ReplacedBy != "" || thread == "" && m.TS != t.Thread {
+			if !m.cites(keys) || t.retired(m) || thread == "" && m.TS != t.Thread {
 				continue
 			}
 			ref := cardRef{t.Channel, t.Thread, m.TS}
@@ -684,11 +688,11 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRe
 	return same, found, others
 }
 
-func (l *liveCards) replaced(card cardRef) bool {
+func (l *liveCards) retired(card cardRef) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, m := l.liveMessage(card.channel, card.ts)
-	return m != nil && m.ReplacedBy != ""
+	t, m := l.liveMessage(card.channel, card.ts)
+	return m != nil && t.retired(m)
 }
 
 func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
@@ -1469,12 +1473,26 @@ func (l *liveCards) postedPRCards() []postedPRCard {
 	var posted []postedPRCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			if ids := m.Card.refIDs(); len(ids) > 0 && m.ReplacedBy == "" {
+			if ids := m.Card.refIDs(); len(ids) > 0 && !t.retired(m) {
 				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids})
 			}
 		}
 	}
 	return posted
+}
+
+func (l *liveCards) openPRCards(pr refID) []offeredCard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var open []offeredCard
+	for _, t := range l.threads {
+		for _, m := range t.PRCards {
+			if m.Card.Waits != "" && t.open(m) && m.cites(map[string]bool{pr.key(): true}) {
+				open = append(open, offeredCard{ref: cardRef{t.Channel, t.Thread, m.TS}, waits: m.Card.Waits, question: m.Card.Title})
+			}
+		}
+	}
+	return open
 }
 
 // uncarded lists the PRs in waiting that none of the cards carries.
@@ -1526,7 +1544,7 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
-	if m.ReplacedBy != "" {
+	if t.retired(m) {
 		l.mu.Unlock()
 		return nil
 	}

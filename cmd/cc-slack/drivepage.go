@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	opDriveCards daemon.Op = "drive-cards"
-	opCanvas     daemon.Op = "canvas"
+	opDriveCards     daemon.Op = "drive-cards"
+	opCanvas         daemon.Op = "canvas"
+	opWithdrawPRCard daemon.Op = "withdraw-pr-card"
 )
 
 var goneCanvasCodes = map[string]bool{"canvas_not_found": true, "canvas_deleted": true}
@@ -105,6 +106,30 @@ func (a *app) handleDriveCards(hc daemon.HandlerCtx) daemon.Reply {
 	listed := a.cards.openDriveCards(b.Name, id.permalink)
 	listed.TeamURL = id.TeamURL
 	return ok(listed)
+}
+
+func (a *app) handleWithdrawPRCard(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	pr, found := parseRef(b.PR)
+	reason := strings.TrimSpace(withoutHidden(b.Reason))
+	switch {
+	case !found || pr.Kind != refPR:
+		return fail(fmt.Sprintf("withdraw-pr-card needs pr, a pull request URL, not %q", b.PR))
+	case reason == "":
+		return fail("withdraw-pr-card needs reason, the line the card shows in place of its buttons")
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	withdrawn, err := a.poller.withdrawPRCards(hc.Ctx, id, pr, reason)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(map[string][]string{"withdrawn": withdrawn})
 }
 
 func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
