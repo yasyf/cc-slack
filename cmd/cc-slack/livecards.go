@@ -835,12 +835,12 @@ func (l *liveCards) forget(t *liveThread, ts string) {
 }
 
 func (l *liveCards) dropReplaced(into *liveThread, replaces string, placed *liveMessage) {
-	if replaces == "" {
+	if placed.TS != replaces {
 		return
 	}
 	for _, t := range append(slices.Collect(maps.Values(l.threads)), into) {
 		for _, m := range t.messages() {
-			if t.Channel == into.Channel && m != nil && m != placed && m.TS == replaces {
+			if t.Channel == into.Channel && m != nil && m != placed && m.TS == placed.TS {
 				t.drop(m)
 			}
 		}
