@@ -829,16 +829,19 @@ func (p *poller) repeatTap(ctx context.Context, id identity, a cardActionPush, k
 	return err
 }
 
-func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	undelivered := w.dedup
+func (w waitsAnswer) recorded(now time.Time) askAnswer {
+	ans := askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: w.dedup, Withdrawn: w.withdrawn, Tap: w.undo}
 	if w.withdrawn || w.settled {
-		undelivered = ""
+		ans.Undelivered = ""
 	}
-	ans := askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: undelivered, Withdrawn: w.withdrawn, Tap: w.undo}
-	if until := w.at.Add(cardUndoWindow); w.undo != "" && p.now().Before(until) {
+	if until := w.at.Add(cardUndoWindow); w.undo != "" && now.Before(until) {
 		ans.UndoUntil = until
 	}
-	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, ans)
+	return ans
+}
+
+func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
+	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, w.recorded(p.now()))
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
