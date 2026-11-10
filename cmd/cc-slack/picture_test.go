@@ -49,8 +49,8 @@ func TestACardWithAPictureMakesNoPostButTheCard(t *testing.T) {
 	l := startDaemon(t)
 	bucket, srv := serveBucket(t)
 	loggedInWithPictures(t, l, srv.URL)
-	picture := writeFile(t, "board.png", pngBytes)
-	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Pick a layout", Body: "Two layouts."}, "files": []string{picture}})
+	board := cardArtifact{Title: "The board", Kind: "image", URL: testDiagramURL, Image: writeFile(t, "board.png", pngBytes)}
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Two layouts", Body: "Two layouts.", Artifacts: []cardArtifact{board}}})
 
 	sent := l.slack.sent()
 	if len(sent) != 1 {
