@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -842,11 +843,12 @@ func (f *fakePlane) direct(ctx context.Context, subjectID, agentID, origin, text
 const (
 	testSubject = "0123456789abcdef0123456789abcdef"
 	testSession = "sess-1"
-	testPID     = 4242
 	testUser    = "U0OWNER01"
 	testChannel = "C1"
 	testThread  = "1800000000.000100"
 )
+
+var testPID = os.Getpid()
 
 type fixture struct {
 	t         *testing.T

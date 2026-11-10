@@ -475,7 +475,7 @@ func TestPollerRoutesDMsFromTheOperatorOnly(t *testing.T) {
 func TestAHeldStreamAloneCarriesTheMessageWhileItRuns(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
-	const stream = testPID + 1
+	stream := testPID + 1
 	f.alive[stream] = true
 	f.poller.holdDelivery(testSubject, stream)
 

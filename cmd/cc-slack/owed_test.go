@@ -17,9 +17,10 @@ import (
 
 const (
 	beforeEveryPost = "1700000000.000000"
-	stoodDownPID    = testPID + 1
 	stoodDownID     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
+
+var stoodDownPID = testPID + 1
 
 func holdDM(t *testing.T, f *fixture) {
 	t.Helper()
@@ -109,7 +110,7 @@ func TestAReplyInAStoodDownLanesDMThreadReachesTheHolder(t *testing.T) {
 
 func cardSessionElsewhere(t *testing.T, f *fixture) subject.Subject {
 	t.Helper()
-	const id, pid = "abcdef0123456789abcdef0123456789", testPID + 2
+	id, pid := "abcdef0123456789abcdef0123456789", testPID+2
 	f.alive[pid] = true
 	if _, err := storeSubjects(f).Create(f.ctx, id, "", "sess-card", scopeName, pid, statusOpen); err != nil {
 		t.Fatal(err)
@@ -180,7 +181,7 @@ func TestTheDMHolderTakesOverRepliesUnderItsDrivesOtherSessions(t *testing.T) {
 	earlier := cardSessionElsewhere(t, f)
 	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents-rebuild")
 	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents")
-	const laneID, lanePID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", testPID + 3
+	laneID, lanePID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", testPID+3
 	f.alive[lanePID] = true
 	if _, err := storeSubjects(f).Create(f.ctx, laneID, "", "sess-lane", scopeName, lanePID, statusOpen); err != nil {
 		t.Fatal(err)
