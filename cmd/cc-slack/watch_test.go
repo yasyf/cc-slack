@@ -180,9 +180,12 @@ func fitLine(t *testing.T, event, target any) {
 }
 
 func longTap(label string) map[string]any {
+	question := "Would a faster disk shorten production runs, and which of these should the next change measure first?"
 	return map[string]any{
 		"type": eventAction, "watch_id": 719, "channel_id": "D0B6Z", "thread_ts": "1793816299.111929", "ts": "1793816299.111929", "action_ts": "1793819436.927939",
-		"label": label, "id": "card-faster-disk-runs", "waits": true, "permalink": "https://acme.slack.com/archives/D0B6Z/p1793816299111929",
+		"label": label, "id": "card-faster-disk-runs", "waits": true, "question": question,
+		"options":   []string{"Keep gp3 and measure write waits first", "Raise gp3's limits", "Move journals to io2", "Move to local NVMe nodes"},
+		"permalink": "https://acme.slack.com/archives/D0B6Z/p1793816299111929",
 	}
 }
 
@@ -191,13 +194,31 @@ type fittedTap struct {
 	Cut bool `json:"cut"`
 }
 
-func TestATapKeepsItsCardAnswerAndPermalinkWhole(t *testing.T) {
+func TestATapKeepsItsCardAndAnswerWholeAndDropsItsRepeatedWordsFirst(t *testing.T) {
 	var line fittedTap
 
 	fitLine(t, longTap("Keep gp3 and measure write waits first"), &line)
 
-	if line.ID != "card-faster-disk-runs" || line.Label != "Keep gp3 and measure write waits first" || line.ActionTS != "1793819436.927939" || line.Permalink == "" || line.Cut {
-		t.Fatalf("line = %+v, want the card id, the answer, and the permalink whole", line)
+	if line.ID != "card-faster-disk-runs" || line.Label != "Keep gp3 and measure write waits first" || line.ActionTS != "1793819436.927939" || line.Cut {
+		t.Fatalf("line = %+v, want the card id and the answer whole", line)
+	}
+	if line.Options != nil {
+		t.Fatalf("line = %+v, want the options gone first", line)
+	}
+	if !strings.HasPrefix(line.Question, "Would a faster disk") || line.Permalink == "" {
+		t.Fatalf("line = %+v, want the question and permalink kept when they fit", line)
+	}
+}
+
+func TestATapWithALongQuestionStillFitsAndNamesItsCard(t *testing.T) {
+	tap := longTap("Yes")
+	tap["question"] = strings.Repeat("why ", 200)
+	var line fittedTap
+
+	fitLine(t, tap, &line)
+
+	if line.ID != "card-faster-disk-runs" || line.Label != "Yes" || line.Question != "" || line.Cut {
+		t.Fatalf("line = %+v, want the question gone and the answer whole", line)
 	}
 }
 
@@ -273,7 +294,7 @@ func TestAStoppedOwnerWithManyWatchesFitsAndSaysSomeAreGone(t *testing.T) {
 }
 
 func TestALineThatFitsPrintsAsTheDaemonSentIt(t *testing.T) {
-	event := map[string]any{"type": eventAction, "id": "card-x", "label": strings.Repeat("y", monitorEvent-48)}
+	event := map[string]any{"type": eventAction, "label": "Yes", "id": "card-x", "question": strings.Repeat("q", monitorEvent-65)}
 	raw, _ := json.Marshal(event)
 	if len(raw) != monitorEvent {
 		t.Fatalf("fixture is %d bytes, want %d", len(raw), monitorEvent)

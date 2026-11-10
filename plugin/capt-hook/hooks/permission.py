@@ -907,8 +907,8 @@ def owner_answered(question: str, options: list[str] | dict[str, str], label: st
 
 
 def card_tapped(question: str, label: str, options: tuple[str, ...] = ("Yes", "No"), action_ts: str = "1791950000.000900") -> list[dict[str, Any]]:
-    payload = {"type": "slack.action", "watch_id": 7, "ts": "1791950000.000800", "action_ts": action_ts, "label": label, "id": "slack-0a1b2c3d4e5f", "waits": True, "question": question, "options": list(options)}
-    tap = f'<channel source="plugin:cc-slack:cc-slack" subject_id="s1" type="slack.action">\n{json.dumps(payload)}\n</channel>'
+    payload = json.loads((FIXTURES / "slack_action.json").read_text()) | {"action_ts": action_ts, "label": label, "question": question, "options": list(options)}
+    tap = f'<channel source="plugin:cc-slack:cc-slack" subject_id="s1" type="slack.action">\n{json.dumps(payload, separators=(",", ":"))}\n</channel>'
     return [T.assistant("asked on the card"), T.user(tap, isMeta=True, origin={"kind": "channel", "server": "plugin:cc-slack:cc-slack"})]
 
 

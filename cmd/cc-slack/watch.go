@@ -57,9 +57,9 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 			"window has run channel-ack, so channel tags carry the session from then on. With\n" +
 			"--only-delivery this stream alone carries the session's Slack messages while it runs:\n" +
 			"no channel tag and no directive for them, until the process exits.\n\n" +
-			"A Monitor event holds 500 characters, so a longer line drops the thread owner's title,\n" +
-			"then the permalink, and last cuts the line's own words and sets cut. A tap's id is never\n" +
-			"cut. --whole prints every line as the\n" +
+			"A Monitor event holds 500 characters, so a longer line drops a card's options,\n" +
+			"then its question and the thread owner's title, then the permalink, and last cuts the\n" +
+			"line's own words and sets cut. A tap's id is never cut. --whole prints every line as the\n" +
 			"daemon sent it, for a program reading the stream rather than a Monitor.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -195,7 +195,7 @@ func fitted(data string) (string, error) {
 		return "", fmt.Errorf("fit watch line %q: %w", data, err)
 	}
 	var encoded []byte
-	for _, drop := range []func(map[string]any){withoutOwnerTitle, withoutPermalink} {
+	for _, drop := range []func(map[string]any){withoutCardPicks, withoutCardWords, withoutPermalink} {
 		drop(line)
 		var err error
 		if encoded, err = json.Marshal(line); err != nil || len(encoded) <= monitorEvent {
@@ -232,7 +232,12 @@ func withoutLastWatches(line map[string]any, field string, watches []any) (strin
 	}
 }
 
-func withoutOwnerTitle(line map[string]any) {
+func withoutCardPicks(line map[string]any) {
+	delete(line, "options")
+}
+
+func withoutCardWords(line map[string]any) {
+	delete(line, "question")
 	if owner, ok := line["thread_owner"].(map[string]any); ok {
 		delete(owner, "title")
 	}

@@ -399,9 +399,9 @@ registration verbs are `follow --owner <agent_id>` and `unfollow`.
 A `<channel source="cc-slack" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
 from_claude, text, permalink}`. Monitor lines carry the same event data,
-each within the 500 characters a Monitor event holds: a longer line drops the
-thread owner's title, then the `permalink`, and last cuts its own words and
-sets `cut`. A tap's `id` is never cut.
+each within the 500 characters a Monitor event holds: a longer line drops a
+card's `options`, then its `question` and the thread owner's title, then the
+`permalink`, and last cuts its own words and sets `cut`. A tap's `id` is never cut.
 Top-level sessions also receive each thread or channel message, and each
 tap, as an injected steering directive at their next tool call. A DM
 message, a watch error, and a `slack.owner_stopped` event arrive once: as a
@@ -607,8 +607,9 @@ Reusing the id of a card he answered is refused; ask again under a new id. A car
 The lane that asks stops on the card. It starts no dependent work, takes
 no default, and never proceeds on a provisional pick. The answer reaches
 the top-level session as a `slack.action` whose payload carries the `id`,
-`waits: true`, the chosen `label`, and `other: true` for a written-in
-answer, and whose directive carries a `capture` line. The top-level session
+`waits: true`, the `question`, the card's `options`, the chosen `label`, and
+`other: true` for a written-in answer, and whose directive carries a
+`capture` line. The top-level session
 hands the answer to the lane the id names, by `SendMessage`, and records the
 capture line in cc-notes as the user's answer, with the `slack-grant:` label the
 line names for a permission card; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on his own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of his answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
