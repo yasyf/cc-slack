@@ -5,6 +5,7 @@ import json
 import re
 import shlex
 import subprocess
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cc_transcript.models import AttachmentEvent, QueuedCommand, UserEvent
 from loguru import logger
 from spawnllm import LabelAnswer
 
@@ -20,8 +22,9 @@ from captain_hook.conditions import UserSaid
 from captain_hook.events import BaseHookEvent, ToolHookEvent
 from captain_hook.tickets import Context, CustomTicketCondition, Decide, Deny, Evidence, Holds, Proposal, Reach, Rule, Ticket, Tickets, Undecided, UserAnswered, holds, store
 from captain_hook.tickets.conditions import found
-from captain_hook.tickets.context import RULINGS_TIMEOUT, instruction_words, ruling_evidence, said_evidence, written_at
+from captain_hook.tickets.context import CARD_SERVER, RULINGS_TIMEOUT, instruction_words, ruling_evidence, said_evidence, written_at
 from captain_hook.tickets.declare import UNCHECKED
+from captain_hook.tickets.transcript_evidence import EvidenceSession, sessions
 from captain_hook.types import And, Or
 from captain_hook.util import reqenv
 
@@ -73,6 +76,10 @@ PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
 SLACK_ID = re.compile(r"[CDGU][A-Z0-9]{8,}")
 BOARD_ANSWER = "board-answer"
 HIS_WORDS = frozenset({"prompt", "queued", "plan", "ask", "card", "board", "owner-ledger"})
+DM_ORDER = "dm-order"
+DM_LINK = re.compile(r"https://[\w.-]+\.slack\.com/archives/(D[A-Z0-9]{8,})/p(\d{10})(\d{6})(?:\?thread_ts=(\d{10}\.\d{6}))?")
+SLACK_MESSAGE = "slack.message"
+ORDER_LINE = re.compile(rf'<channel source="{re.escape(CARD_SERVER)}"[^>]*\btype="slack\.message"[^>]*>\s*(?P<payload>\{{.*\}})\s*</channel>', re.S)
 BOARD_CARD = "board-card:"
 BOARD_SESSION = "board-session:"
 APPROVED = "Yes"
@@ -469,7 +476,7 @@ def written_here(ctx: Context) -> list[Ticket]:
 
 @dataclass(frozen=True, slots=True)
 class Unspent(CustomTicketCondition):
-    within: UserSaid | UserAnswered
+    within: UserSaid | UserAnswered | DmOrdered
 
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         spent = {item.id for ticket in store.tickets(KIND, ctx.trees) for item in ticket.evidence}
@@ -606,6 +613,70 @@ class OwnerOrdered(CustomTicketCondition):
         return found or None
 
 
+def channel_texts(source: EvidenceSession) -> list[str]:
+    if source.indexed:
+        return [
+            record["text"]
+            for record in source.session.query({"kind": "meta_messages", "contains": SLACK_MESSAGE})
+            if (record["kind"] == "user" and record["is_meta"] and record["source_tool_use_id"] is None and record["source_tool_assistant_uuid"] is None) or (record["kind"] == "queued" and record["origin"] == "channel")
+        ]
+    return [
+        event.text if isinstance(event, UserEvent) else event.detail.prompt or ""
+        for turn in source.session.turns
+        for event in turn.events
+        if (isinstance(event, UserEvent) and event.meta.is_meta and event.source_tool_use_id is None and event.source_tool_assistant_uuid is None)
+        or (isinstance(event, AttachmentEvent) and isinstance(event.detail, QueuedCommand) and event.detail.origin == "channel")
+    ]
+
+
+def order(channel: str, ts: str, text: str, detail: str) -> Evidence:
+    return Evidence(id=f"operator:{channel}/{ts}", source=DM_ORDER, quote=text, said_at=datetime.fromtimestamp(float(ts), UTC), detail=detail)
+
+
+def delivered_orders(ctx: Context) -> list[Evidence]:
+    with sessions(ctx.sources) as read:
+        texts = [text for source in read if source.prompts_are_user for text in channel_texts(source)]
+    lines = [json.loads(match["payload"]) for text in texts if (match := ORDER_LINE.fullmatch(text.strip()))]
+    return [order(line["channel_id"], line["ts"], line["text"], "the user's own Slack message to this session, as cc-slack delivered it") for line in lines if line.get("operator")]
+
+
+def own_dm(channel: str) -> bool:
+    try:
+        return bool(cc_slack("dm-peer", "--channel", channel).get("own"))
+    except CHECK_FAILURES:
+        return False
+
+
+def linked_orders(ctx: Context, delivered: set[str]) -> list[Evidence]:
+    texts = [*(item.quote for item in ctx.said), *(touch.text for touch in ctx.touches)]
+    links = {(channel, thread or f"{seconds}.{micros}", f"{seconds}.{micros}") for text in texts for channel, seconds, micros, thread in DM_LINK.findall(text) if f"operator:{channel}/{seconds}.{micros}" not in delivered}
+    owned = {channel for channel in {link[0] for link in links} if own_dm(channel)}
+    found = []
+    for channel, thread in {(channel, thread) for channel, thread, _ in links if channel in owned}:
+        try:
+            messages = read_thread(Conversation(channel, thread)).messages
+        except CHECK_FAILURES:
+            continue
+        found += [
+            order(channel, message.ts, message.text, "the user's own message in their DM with the app, read back from Slack")
+            for message in messages
+            if (channel, thread, message.ts) in links and message.from_user and not message.from_claude and not message.from_bot
+        ]
+    return found
+
+
+def dm_orders(ctx: Context) -> list[Evidence]:
+    delivered = delivered_orders(ctx)
+    orders = [*delivered, *linked_orders(ctx, {item.id for item in delivered})]
+    return [item for item in orders if not SLACK_URL.search(item.quote) or Linked().matches(item.quote, ctx)]
+
+
+@dataclass(frozen=True, slots=True)
+class DmOrdered(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        return dm_orders(ctx) or None
+
+
 SLACK = Tickets(
     KIND,
     ("channel", "thread"),
@@ -616,7 +687,7 @@ SLACK = Tickets(
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
         Rule(SOLVED_LINE, And(NotRevoked(), SolvedLine())),
-        Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS, tool_results=True))),
+        Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), Unspent(DmOrdered()), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS, tool_results=True))),
     ),
     deny="Ask the user.",
     window=WINDOW,
@@ -1027,6 +1098,33 @@ CLAIMED = 'Orders: owner:m12. Owner, verbatim: "post the fix in every thread you
 UNLEDGERED = 'Orders: owner:m99. Owner, verbatim: "post the fix in dana\'s thread"'
 LEDGER_CITED = {"reason": "the owner's ledger row asks for this reply", "allow": True, "relied_on": ["owner:m12"]}
 LEDGER_ENV = ENABLED | {"CLAUDE_CONFIG_DIR": str(FIXTURES / "config"), "CLAUDE_LONG_RUNNING_DRIVE": "brook"}
+OWNER_DM = "D0OWNDM0001"
+ORDER_TS = f"{time.time() - 60:.6f}"
+STALE_TS = f"{time.time() - 3600:.6f}"
+ORDER_TEXT = "did the fix for dana's bug land? tell dana"
+ORDER_ID = f"operator:{OWNER_DM}/{ORDER_TS}"
+ORDER = Evidence(id=ORDER_ID, source=DM_ORDER, quote=ORDER_TEXT)
+
+
+def order_url(ts: str = ORDER_TS) -> str:
+    return f"https://acme.slack.com/archives/{OWNER_DM}/p{ts.replace('.', '')}"
+
+
+def owner_dm(text: str = ORDER_TEXT, *, ts: str = ORDER_TS, own: bool = True, from_user: bool = True) -> dict[str, str | tuple[int, str]]:
+    peer = {"peer": "U0OWNER0001", "peer_name": "Alex", "own": own}
+    message = {"ts": ts, "user": "U0OWNER0001", "user_name": "Alex", "text": text, "from_user": from_user}
+    return NOT_DM | {f"{CC_SLACK} dm-peer --channel {OWNER_DM}": json.dumps(peer), f"{CC_SLACK} thread --channel {OWNER_DM}": json.dumps({"messages": [message]})}
+
+
+def dm_arrived(ts: str = ORDER_TS, *, text: str = ORDER_TEXT, operator: bool = True) -> list[dict[str, Any]]:
+    payload = {"type": "slack.message", "kind": "channel", "channel_id": OWNER_DM, "thread_ts": ts, "ts": ts, "user": "U0OWNER0001", "user_name": "Alex", "from_claude": False, "text": text, "permalink": order_url(ts), "operator": operator}
+    tag = f'<channel source="plugin:cc-slack:cc-slack" subject_id="s1" type="slack.message">\n{json.dumps(payload, separators=(",", ":"))}\n</channel>'
+    return [T.user(tag, isMeta=True, origin={"kind": "channel", "server": "plugin:cc-slack:cc-slack"}), T.assistant("on it")]
+
+
+def briefed(ts: str = ORDER_TS) -> dict[str, Any]:
+    call = T.tool("Agent", description="tell dana", prompt=f'Message (his words): "{ORDER_TEXT}" Permalink: {order_url(ts)}')
+    return {"transcript": [T.user(f"tell dana the fix landed, {order_url(ts)}")], "root_transcript": [T.user("status?"), T.assistant(call), T.user(T.result("launched", of=call))], "agent_id": "a-lane"}
 
 
 def board_tapped(*picked: str, title: str = DANA_CARD, yes: str = "Yes") -> dict[str, str]:
@@ -1361,6 +1459,19 @@ on(
             case(transcript=relayed(RELAYED), env=LEDGER_ENV | {"CLAUDE_LONG_RUNNING_DRIVE": "unregistered"}, llm=LEDGER_CITED) >> DENY,
             case(transcript=relayed(UNLEDGERED), env=LEDGER_ENV, llm={"reason": "the record cites a row", "allow": True, "relied_on": ["owner:m99"]}) >> DENY,
             case(transcript=relayed(CLAIMED), env=LEDGER_ENV, llm={"reason": "the record quotes a grant", "allow": True, "relied_on": [said_evidence("post the fix in every thread you like", PROMPTED_AT, "prompt").id]}) >> DENY,
+            case(transcript=dm_arrived(), decide=jev(ORDER_ID)) >> ALLOW,
+            case(transcript=dm_arrived(STALE_TS), decide=jev(f"operator:{OWNER_DM}/{STALE_TS}")) >> ALLOW,
+            case(transcript=dm_arrived(operator=False), decide=jev(ORDER_ID)) >> DENY,
+            case(**briefed(), commands=owner_dm(), decide=jev(ORDER_ID)) >> Rewrite(ticket_agent="a-lane"),
+            case(**briefed(), decide=jev(ORDER_ID)) >> DENY,
+            case(**briefed(), commands=owner_dm(ts="1700000000.000100"), decide=jev(ORDER_ID)) >> DENY,
+            case(**briefed(), commands=owner_dm(own=False), decide=jev(ORDER_ID)) >> DENY,
+            case(**briefed(), commands=owner_dm(from_user=False), decide=jev(ORDER_ID)) >> DENY,
+            case(**briefed(STALE_TS), commands=owner_dm(ts=STALE_TS), decide=jev(f"operator:{OWNER_DM}/{STALE_TS}")) >> Rewrite(ticket_agent="a-lane"),
+            case(transcript=dm_arrived(), tickets=[posted_once(evidence=(ORDER,))], decide=jev(ORDER_ID)) >> DENY,
+            case(transcript=dm_arrived()) >> DENY,
+            case(transcript=dm_arrived(text=f"tell her here {DANA_URL}"), decide=jev(ORDER_ID)) >> ALLOW,
+            case(transcript=dm_arrived(text=f"tell her here {DANA_URL.replace(FOLLOWERS, PETS)}"), decide=jev(ORDER_ID)) >> DENY,
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=r'"waits": "slack:U0PRIYA0001::[0-9a-f]{12}"'),
             case(LANDED, tool="slack_send", **said("status?")) >> Block(pattern=rf'"waits": "slack:{FOLLOWERS}::[0-9a-f]{{12}}"'),
             case(env=DISABLED) >> Allow(),

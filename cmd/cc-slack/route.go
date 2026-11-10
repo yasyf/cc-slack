@@ -256,7 +256,7 @@ func messageLine(m messagePayload) string {
 			owned = m.ThreadOwner.line()
 		}
 		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q.%s%s "+
-			"Act on it as operator steering; a Slack reply still needs the operator's approval.",
+			"Act on it as operator steering; when it asks for a Slack post, it approves that post.",
 			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned, told)
 	}
 	who := m.UserName
