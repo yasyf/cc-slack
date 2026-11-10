@@ -41,6 +41,8 @@ var (
 	negates    = wordSet("not", "no", "never", "nothing", "none", "nobody", "without", "neither", "nor")
 	decides    = wordSet("call", "move", "turn")
 	itIs       = wordSet("it's", "its", "is", "that's")
+	whatWaits  = wordSet("what", "what's", "whatever")
+	whatFill   = wordSet("still", "else", "is", "are", "now")
 )
 
 func wordSet(words ...string) map[string]bool {
@@ -144,7 +146,7 @@ func asksFor(words []string, at int) bool {
 		return decides[next] && (at == 0 || itIs[words[at-1]]) ||
 			readerAct[next] && slices.ContainsFunc(words[min(len(words), at+2):min(len(words), at+5)], func(w string) bool { return asked[w] })
 	}
-	return (at == 0 || words[at-1] != "if") &&
+	return (at == 0 || words[at-1] != "if" && !whatWaits[words[at-1]]) &&
 		(slices.Contains(ahead, "must") || slices.ContainsFunc(ahead, func(w string) bool { return readerMust[w] }) && slices.Contains(ahead, "to"))
 }
 
@@ -166,7 +168,19 @@ func dependsBefore(words []string, at int) bool {
 			return false
 		}
 		if dependsOn[w] || dependsOnTo[w] && words[back+1] == "to" || dependsOnFor[w] && words[back+1] == "for" {
+			return !namesNothing(words, back)
+		}
+	}
+	return false
+}
+
+func namesNothing(words []string, verb int) bool {
+	for back := verb - 1; back >= 0; back-- {
+		if whatWaits[words[back]] {
 			return true
+		}
+		if !whatFill[words[back]] {
+			return false
 		}
 	}
 	return false

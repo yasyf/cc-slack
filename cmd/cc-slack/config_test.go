@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,37 +22,122 @@ func writeConfig(t *testing.T, dir, body string) string {
 	return path
 }
 
-func TestConfigPathPrefersTheFlagThenTheEnvThenTheCheckoutThenHome(t *testing.T) {
+func TestConfigFilesPreferTheFlagThenTheEnvThenTheCheckoutOverHomeThenHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
 	t.Setenv(configEnv, "")
+	user := configFile{filepath.Join(home, ".config", "cc-slack", "config.toml"), false}
 
-	if path, required, err := configPath("", repo); err != nil || required || path != filepath.Join(home, ".config", "cc-slack", "config.toml") {
-		t.Fatalf("configPath with nothing set = %q, %v, %v; want the optional home config", path, required, err)
+	if files, err := configFiles("", repo); err != nil || !slices.Equal(files, []configFile{user}) {
+		t.Fatalf("configFiles with nothing set = %+v, %v; want the optional home config", files, err)
 	}
 	checkout := writeConfig(t, filepath.Join(repo, ".claude"), "")
 	if err := os.Rename(checkout, filepath.Join(repo, repoConfig)); err != nil {
 		t.Fatal(err)
 	}
-	if path, required, _ := configPath("", repo); !required || path != filepath.Join(repo, repoConfig) {
-		t.Fatalf("configPath with a checkout config = %q, %v; want the checkout's %s", path, required, repoConfig)
+	if files, _ := configFiles("", repo); !slices.Equal(files, []configFile{{filepath.Join(repo, repoConfig), true}, user}) {
+		t.Fatalf("configFiles with a checkout config = %+v; want the checkout's %s over the home config", files, repoConfig)
 	}
 	t.Setenv(configEnv, "/env/cc-slack.toml")
-	if path, required, _ := configPath("", repo); !required || path != "/env/cc-slack.toml" {
-		t.Fatalf("configPath with $%s = %q, %v; want the env path", configEnv, path, required)
+	if files, _ := configFiles("", repo); !slices.Equal(files, []configFile{{"/env/cc-slack.toml", true}}) {
+		t.Fatalf("configFiles with $%s = %+v; want the env path alone", configEnv, files)
 	}
-	if path, required, _ := configPath("/flag.toml", repo); !required || path != "/flag.toml" {
-		t.Fatalf("configPath with --config = %q, %v; want the flag", path, required)
+	if files, _ := configFiles("/flag.toml", repo); !slices.Equal(files, []configFile{{"/flag.toml", true}}) {
+		t.Fatalf("configFiles with --config = %+v; want the flag alone", files)
+	}
+}
+
+func TestALoginFromACheckoutKeepsEveryHomeSettingTheCheckoutLeavesOut(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(configEnv, "")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "draw-card"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	writeConfig(t, filepath.Join(home, ".config", "cc-slack"), `[ssm]
+profile = "mine"
+region = "us-east-1"
+bot_token = "/mine/bot-token"
+socket_url = "/mine/socket-url"
+picture_key_id = "/mine/picture-key"
+picture_secret = "/mine/picture-secret"
+
+[pictures]
+endpoint = "https://storage.example.com"
+bucket = "pictures"
+
+[links]
+tailnet = "example.ts.net"
+
+[pr_links]
+repos = ["me/mine"]
+card_command = ["draw-card"]
+
+[[permissions.clis]]
+program = "my-post"
+verbs = { send = "post" }
+flags = ["loud"]
+`)
+	repo := t.TempDir()
+	checkout := writeConfig(t, filepath.Join(repo, ".claude"), `[ssm]
+region = "us-west-2"
+bot_token = "/team/bot-token"
+socket_url = "/team/socket-url"
+
+[pr_links]
+repos = ["acme/app", "acme/lib"]
+
+[[permissions.clis]]
+program = "team-post"
+verbs = { edit = "edit" }
+`)
+	if err := os.Rename(checkout, filepath.Join(repo, repoConfig)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, c, err := readConfig(context.Background(), sessionFlags{}, repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSSM := ssmSource{Profile: "mine", Region: "us-west-2", BotToken: "/team/bot-token", SocketURL: "/team/socket-url", PictureKeyID: "/mine/picture-key", PictureSecret: "/mine/picture-secret"}
+	if c.SSM == nil || *c.SSM != wantSSM {
+		t.Fatalf("[ssm] = %+v, want the checkout's keys over the home file's %+v", c.SSM, wantSSM)
+	}
+	if !slices.Equal(c.PRLinks.CardCommand, []string{filepath.Join(bin, "draw-card")}) || !slices.Equal(c.PRLinks.Repos, []string{"acme/app", "acme/lib"}) {
+		t.Fatalf("[pr_links] = %+v, want the home card_command beside the checkout's repos", c.PRLinks)
+	}
+	if c.Pictures.Bucket != "pictures" || c.Links.Tailnet != "example.ts.net" {
+		t.Fatalf("pictures %+v, links %+v; want the home file's sections the checkout leaves out", c.Pictures, c.Links)
+	}
+	if len(c.Permissions.CLIs) != 1 || c.Permissions.CLIs[0].Program != "team-post" || len(c.Permissions.CLIs[0].Verbs) != 1 || c.Permissions.CLIs[0].Flags != nil {
+		t.Fatalf("[[permissions.clis]] = %+v, want the checkout's array whole", c.Permissions.CLIs)
+	}
+
+	_, c, err = readConfig(context.Background(), sessionFlags{}, repo, filepath.Join(repo, repoConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.PRLinks.CardCommand) != 0 || c.Pictures.enabled() || c.SSM.Profile != "" {
+		t.Fatalf("config named by --config = %+v, want that file alone", c)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, ".config", "cc-slack", "config.toml"), []byte("[pictures]\nendpoint = \"https://s\"\nbucket = \"p\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readConfig(context.Background(), sessionFlags{}, repo, ""); err == nil || !strings.Contains(err.Error(), filepath.Join(repo, repoConfig)+" over ") || !strings.Contains(err.Error(), "picture_key_id") {
+		t.Fatalf("an invalid layered config = %v, want it refused naming both files and the missing keys", err)
 	}
 }
 
 func TestLoadConfigTreatsAMissingDefaultAsEmptyAndAMissingNamedFileAsAnError(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent.toml")
-	if c, err := loadConfig(missing, false); err != nil || c.SSM != nil || c.Avatars.enabled() || c.DocCards.enabled() {
+	if c, err := loadConfig(configFile{missing, false}); err != nil || c.SSM != nil || c.Avatars.enabled() || c.DocCards.enabled() {
 		t.Fatalf("loadConfig of a missing default = %+v, %v; want the empty config", c, err)
 	}
-	if _, err := loadConfig(missing, true); err == nil {
+	if _, err := loadConfig(configFile{missing, true}); err == nil {
 		t.Fatal("loadConfig of a missing named file succeeded, want an error")
 	}
 }
@@ -85,7 +171,7 @@ verbs = { send = "post" }
 options = ["channel", "text"]
 flags = ["broadcast"]
 `)
-	c, err := loadConfig(path, true)
+	c, err := loadConfig(configFile{path, true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +184,7 @@ flags = ["broadcast"]
 
 func TestLoadConfigAcceptsProofChannels(t *testing.T) {
 	path := writeConfig(t, t.TempDir(), "[permissions]\nenabled = true\nproof_channels = [\"acc-*\", \"outage*\"]\n")
-	if _, err := loadConfig(path, true); err != nil {
+	if _, err := loadConfig(configFile{path, true}); err != nil {
 		t.Fatalf("loadConfig with proof_channels: %v", err)
 	}
 }
@@ -118,7 +204,7 @@ func TestLoadConfigRefusesUnknownKeysAndPartialSections(t *testing.T) {
 		"two token sources": {"[github]\ntoken_env = \"GH_TOKEN\"\ntoken_command = [\"gh\", \"auth\", \"token\"]\n", "exactly one of token_env and token_command"},
 		"no token source":   {"[buildkite]\n", "[buildkite] needs exactly one"},
 	} {
-		_, err := loadConfig(writeConfig(t, t.TempDir(), tc.body), true)
+		_, err := loadConfig(configFile{writeConfig(t, t.TempDir(), tc.body), true})
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: loadConfig = %v, want an error naming %q", name, err, tc.want)
 		}
@@ -165,7 +251,7 @@ func TestATokenCommandPinnedAtLoginStillRunsAfterItsToolMoves(t *testing.T) {
 func TestTokenSourcesResolveAtLogin(t *testing.T) {
 	t.Setenv("CC_SLACK_TEST_GH", "ghp-test")
 	t.Setenv("CC_SLACK_TEST_EMPTY", "")
-	c, err := loadConfig(writeConfig(t, t.TempDir(), "[github]\ntoken_env = \"CC_SLACK_TEST_GH\"\n[buildkite]\ntoken_command = [\"sh\", \"-c\", \"echo bk\"]\n"), true)
+	c, err := loadConfig(configFile{writeConfig(t, t.TempDir(), "[github]\ntoken_env = \"CC_SLACK_TEST_GH\"\n[buildkite]\ntoken_command = [\"sh\", \"-c\", \"echo bk\"]\n"), true})
 	if err != nil {
 		t.Fatal(err)
 	}

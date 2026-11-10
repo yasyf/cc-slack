@@ -74,9 +74,11 @@ workspace on your laptop with Claude already reading the thread.
 
 ## Configure it
 
-`cc-slack login` reads one TOML file, the first of `--config`,
-`$CC_SLACK_CONFIG`, the checkout's `.claude/cc-slack.toml`, and
-`~/.config/cc-slack/config.toml`. Every section is optional.
+`cc-slack login` reads the first of `--config`, `$CC_SLACK_CONFIG`, the
+checkout's `.claude/cc-slack.toml`, and `~/.config/cc-slack/config.toml`.
+Every section is optional. Each key the checkout's file leaves out comes from
+`~/.config/cc-slack/config.toml`, so settings for your machine alone, such as
+a card command, live there and survive a `login` from any checkout.
 
 ```toml
 # Read credentials from AWS Systems Manager instead of the environment,

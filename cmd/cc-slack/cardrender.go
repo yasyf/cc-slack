@@ -74,11 +74,11 @@ func renderCard(ctx context.Context, raw []byte, session, dir string, mirrored b
 		return renderedCard{}, fmt.Errorf("--card takes a JSON status card: %w", err)
 	}
 	card.fill("")
-	path, required, err := configPath("", dir)
+	files, err := configFiles("", dir)
 	if err != nil {
 		return renderedCard{}, err
 	}
-	cfg, err := loadConfig(path, required)
+	cfg, err := loadConfig(files...)
 	if err != nil {
 		return renderedCard{}, err
 	}
