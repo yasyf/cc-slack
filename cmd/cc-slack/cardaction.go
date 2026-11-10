@@ -362,7 +362,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
 	}
-	card := a.onCard()
+	card := p.cards.located(a.onCard())
 	at := slackTime(a.ActionTS)
 	k, ok := card.tap()
 	if !ok {

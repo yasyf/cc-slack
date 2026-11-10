@@ -499,6 +499,24 @@ func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
 	return cardRef{}, false
 }
 
+func (l *liveCards) located(a cardActionPush) cardActionPush {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if card, found := l.cardAt(a.Channel, a.MessageTS); found {
+		a.ThreadTS = card.thread
+	}
+	return a
+}
+
+func (l *liveCards) retire(posts []string, by, line string) {
+	for _, post := range posts {
+		ref, _ := parsePermalink(post)
+		if _, m := l.liveMessage(ref.channelID, ref.ts); m != nil && m.ReplacedBy == "" {
+			m.ReplacedBy, m.Tapped = by, cmp.Or(m.Tapped, line)
+		}
+	}
+}
+
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
 
 func (l *liveCards) load() error {

@@ -2461,6 +2461,10 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 	if superseded != nil {
 		cards.forget(prior, superseded.TS)
 	}
+	askedAgainLine := askedAgain(card.Title, id.permalink(id.DMChannelID, placed.TS, t.Thread))
+	if asked == nil {
+		cards.retire(card.Supersedes, placed.TS, askedAgainLine)
+	}
 	cards.commit(t)
 	if superseded != nil {
 		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {
@@ -2468,7 +2472,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		}
 	}
 	if asked == nil {
-		a.poller.noteSuperseded(ctx, id, card.Supersedes, askedAgain(card.Title, id.permalink(id.DMChannelID, placed.TS, t.Thread)))
+		a.poller.noteSuperseded(ctx, id, card.Supersedes, askedAgainLine)
 	}
 	if prior != nil && asked != nil {
 		return t.Thread, placed.TS, true, again, nil
