@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -213,47 +214,78 @@ func resolveCommand(name string, command []string) ([]string, error) {
 	return command, nil
 }
 
-func configPath(flag, repo string) (path string, required bool, err error) {
+type configFile struct {
+	path     string
+	required bool
+}
+
+func configFiles(flag, repo string) ([]configFile, error) {
 	if flag != "" {
-		return flag, true, nil
+		return []configFile{{flag, true}}, nil
 	}
 	if env := os.Getenv(configEnv); env != "" {
-		return env, true, nil
-	}
-	checkout := filepath.Join(repo, repoConfig)
-	switch _, err := os.Stat(checkout); {
-	case err == nil:
-		return checkout, true, nil
-	case !errors.Is(err, fs.ErrNotExist):
-		return "", false, fmt.Errorf("read the checkout's cc-slack config: %w", err)
+		return []configFile{{env, true}}, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", false, fmt.Errorf("resolve the home directory for the cc-slack config: %w", err)
+		return nil, fmt.Errorf("resolve the home directory for the cc-slack config: %w", err)
 	}
-	return filepath.Join(home, ".config", "cc-slack", "config.toml"), false, nil
+	user := configFile{filepath.Join(home, ".config", "cc-slack", "config.toml"), false}
+	checkout := filepath.Join(repo, repoConfig)
+	switch _, err := os.Stat(checkout); {
+	case err == nil:
+		return []configFile{{checkout, true}, user}, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("read the checkout's cc-slack config: %w", err)
+	}
+	return []configFile{user}, nil
 }
 
-func loadConfig(path string, required bool) (config, error) {
+func loadConfig(files ...configFile) (config, error) {
 	var c config
-	meta, err := toml.DecodeFile(path, &c)
-	if errors.Is(err, fs.ErrNotExist) && !required {
-		return config{}, nil
-	}
-	if err != nil {
-		return config{}, fmt.Errorf("read the cc-slack config %s: %w", path, err)
-	}
-	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, len(undecoded))
-		for i, k := range undecoded {
-			keys[i] = k.String()
+	var read []string
+	for _, f := range slices.Backward(files) {
+		var layer config
+		meta, err := toml.DecodeFile(f.path, &layer)
+		if errors.Is(err, fs.ErrNotExist) && !f.required {
+			continue
 		}
-		return config{}, fmt.Errorf("the cc-slack config %s has unknown keys: %s", path, strings.Join(keys, ", "))
+		if err != nil {
+			return config{}, fmt.Errorf("read the cc-slack config %s: %w", f.path, err)
+		}
+		if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+			keys := make([]string, len(undecoded))
+			for i, k := range undecoded {
+				keys[i] = k.String()
+			}
+			return config{}, fmt.Errorf("the cc-slack config %s has unknown keys: %s", f.path, strings.Join(keys, ", "))
+		}
+		fillUnset(reflect.ValueOf(&layer).Elem(), reflect.ValueOf(c), meta, nil)
+		c, read = layer, append([]string{f.path}, read...)
 	}
 	if err := c.validate(); err != nil {
-		return config{}, fmt.Errorf("the cc-slack config %s: %w", path, err)
+		return config{}, fmt.Errorf("the cc-slack config %s: %w", strings.Join(read, " over "), err)
 	}
 	return c, nil
+}
+
+func fillUnset(dst, src reflect.Value, set toml.MetaData, key toml.Key) {
+	for i := range dst.NumField() {
+		name, _, _ := strings.Cut(dst.Type().Field(i).Tag.Get("toml"), ",")
+		if name == "-" {
+			continue
+		}
+		field := append(slices.Clip(key), name)
+		d, s := dst.Field(i), src.Field(i)
+		switch {
+		case !set.IsDefined(field...):
+			d.Set(s)
+		case d.Kind() == reflect.Struct:
+			fillUnset(d, s, set, field)
+		case d.Kind() == reflect.Pointer && !s.IsNil():
+			fillUnset(d.Elem(), s.Elem(), set, field)
+		}
+	}
 }
 
 func (c config) validate() error {

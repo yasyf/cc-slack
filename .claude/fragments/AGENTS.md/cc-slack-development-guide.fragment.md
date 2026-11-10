@@ -41,9 +41,15 @@ a fake Slack client in place of the network.
 
 ## Config
 
-`cc-slack login` reads one TOML file, the first of `--config`, `$CC_SLACK_CONFIG`,
-the checkout's `.claude/cc-slack.toml`, and `~/.config/cc-slack/config.toml`. Only
+`cc-slack login` reads the first of `--config`, `$CC_SLACK_CONFIG`, the
+checkout's `.claude/cc-slack.toml`, and `~/.config/cc-slack/config.toml`. Only
 a named file must exist. Every section is optional, and an unknown key is an error.
+The checkout's file sits over `~/.config/cc-slack/config.toml`: each key the
+checkout's file leaves out, such as `[pr_links] card_command` or a whole
+`[pictures]` section, comes from the home file, so a `login` from any checkout
+keeps settings that belong to one engineer's machine. A key both files set takes
+the checkout's value whole, an array included. `--config` and `$CC_SLACK_CONFIG`
+name the only file read.
 
 ```toml
 [permissions]

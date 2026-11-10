@@ -125,7 +125,7 @@ func (a *app) mintsTickets(ctx context.Context, pid int) bool {
 	if err != nil {
 		return true
 	}
-	c, err := loadConfig(filepath.Join(dir, repoConfig), false)
+	c, err := loadConfig(configFile{filepath.Join(dir, repoConfig), false})
 	return err != nil || c.Permissions.Enabled
 }
 

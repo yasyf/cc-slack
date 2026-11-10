@@ -191,7 +191,7 @@ func loginCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().StringVar(&email, "email", "", "your Slack email (defaults to git config user.email)")
 	c.Flags().StringVar(&repo, "repo", "", "checkout the message shortcut opens orca workspaces in (defaults to the main checkout of the current directory's repo)")
 	c.Flags().BoolVar(&postOnly, "post-only", runtime.GOOS != "darwin", "never open the Slack socket, so this host posts and reads but takes no button taps (defaults on everywhere but macOS)")
-	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+", then ~/.config/cc-slack/config.toml)")
+	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+" over ~/.config/cc-slack/config.toml, then that file alone)")
 	return c
 }
 
@@ -215,7 +215,7 @@ func reloadCmd(d cmd.Deps) *cobra.Command {
 	}
 	f.bind(c)
 	c.Flags().StringVar(&repo, "repo", "", "checkout whose "+repoConfig+" to read (defaults to the main checkout of the current directory's repo)")
-	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+", then ~/.config/cc-slack/config.toml)")
+	c.Flags().StringVar(&configFlag, "config", "", "cc-slack config file (defaults to $"+configEnv+", then the checkout's "+repoConfig+" over ~/.config/cc-slack/config.toml, then that file alone)")
 	return c
 }
 
@@ -224,11 +224,11 @@ func readConfig(ctx context.Context, f sessionFlags, repo, configFlag string) (s
 	if err != nil {
 		return "", config{}, err
 	}
-	path, required, err := configPath(configFlag, root)
+	files, err := configFiles(configFlag, root)
 	if err != nil {
 		return "", config{}, err
 	}
-	cfg, err := loadConfig(path, required)
+	cfg, err := loadConfig(files...)
 	if err != nil {
 		return "", config{}, err
 	}
