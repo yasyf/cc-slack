@@ -458,6 +458,18 @@ var (
 			required: []string{"url", "label", "via"},
 		},
 		{
+			name: "slack_withdraw_pr_card",
+			description: "Withdraw every open tap card that carries a pull request, one PR's card or a stack's, when it no longer waits on the user's tap. " +
+				"Each card is edited in place: Withdrawn and the reason above its PR lines, and no buttons. A late tap on it records nothing, no session hears a tap, and drive-cards no longer lists it. " +
+				"Returns the permalinks of the cards it withdrew. Needs no ticket.",
+			op: opWithdrawPRCard, failure: actionWrite,
+			properties: map[string]any{
+				"pr":     map[string]any{"type": "string", "description": "the pull request URL; every open card carrying it is withdrawn"},
+				"reason": map[string]any{"type": "string", "description": "why the card no longer stands, shown after Withdrawn"},
+			},
+			required: []string{"pr", "reason"},
+		},
+		{
 			name: "slack_dm_status",
 			description: "Post a status update to your own DM with the Claude app, as a top-level message with its own thread; send updates as a card, plain text only for short conversational replies. " +
 				"The user's replies in that message's thread, and taps on it, arrive as directives to this session. thread_ts posts it, card or text, under a DM message: the thread a directive names, or a shortcut brief's dm_ts.",

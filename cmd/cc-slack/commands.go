@@ -844,6 +844,25 @@ func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	var pr, reason string
+	c := &cobra.Command{
+		Use:   "withdraw-pr-card",
+		Short: "Withdraw every open tap card that carries a pull request, a stack's included, in place: Withdrawn and the reason replace its buttons, and a late tap records nothing",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opWithdrawPRCard, map[string]any{"pr": pr, "reason": reason})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&pr, "pr", "", "pull request URL: every open card carrying it is withdrawn")
+	c.Flags().StringVar(&reason, "reason", "", "why the card no longer stands, shown on it after Withdrawn")
+	_ = c.MarkFlagRequired("pr")
+	_ = c.MarkFlagRequired("reason")
+	return c
+}
+
 func dmOwedCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{

@@ -1459,16 +1459,20 @@ func (c statusCard) outcome(v cardView) string {
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
 	if v.tapped != "" {
-		settled := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
+		title := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
+		var prs []slack.Block
 		if len(c.PRs) > 0 {
 			lines := make([]string, 0, len(c.PRs))
 			for _, p := range c.PRs {
 				lines = append(lines, p.settledLine(v))
 			}
-			settled = append(settled, section("card-prs", strings.Join(lines, "\n")))
+			prs = []slack.Block{section("card-prs", strings.Join(lines, "\n"))}
 		}
-		settled = append(settled, askBlocks(openAsks(c.Asks, v.answers, v.now), v)...)
-		return append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))), nil
+		asks := askBlocks(openAsks(c.Asks, v.answers, v.now), v)
+		if v.answers[c.Waits].Withdrawn && len(prs) > 0 {
+			return slices.Concat(title, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped)}, prs, asks), nil
+		}
+		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))}), nil
 	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block

@@ -120,6 +120,7 @@ type opBody struct {
 	Other     bool     `json:"other"`
 	Settled   bool     `json:"settled"`
 	Withdrawn bool     `json:"withdrawn"`
+	Reason    string   `json:"reason"`
 	Via       string   `json:"via"`
 	Surface   string   `json:"surface"`
 	About     string   `json:"about"`
@@ -345,6 +346,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
 	s.Register(opCardCopy, a.handleCardCopy)
+	s.Register(opWithdrawPRCard, a.handleWithdrawPRCard)
 	s.Register(opRevoke, a.handleRevoke)
 	s.Register(opAgentSubject, a.handleAgentSubject)
 	s.Register(opChannelCreate, a.handleChannel(approveCreate, createChannel))

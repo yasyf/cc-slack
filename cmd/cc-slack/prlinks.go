@@ -391,7 +391,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, 
 		}
 		drawn = cards
 	}
-	placed := slices.DeleteFunc(slices.Clone(standing), a.cards.replaced)
+	placed := slices.DeleteFunc(slices.Clone(standing), a.cards.retired)
 	for _, card := range drawn {
 		if !slices.Contains(placed, card) {
 			placed = append(placed, card)
@@ -755,6 +755,9 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		return fmt.Errorf("the card command drew no card for %s: %s", prURL(pr), skipped[0].Reason)
 	}
 	if len(provided) == 0 {
+		if a.cards.retired(card) {
+			return nil
+		}
 		return a.poller.markOption(ctx, id, card, cardNoLongerWaits)
 	}
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
