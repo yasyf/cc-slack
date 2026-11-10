@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -405,5 +406,47 @@ func TestADMOnAnEndedWatchReachesTheSessionOnce(t *testing.T) {
 	}
 	if got := l.channelTexts(); len(got) != 0 {
 		t.Fatalf("channel read = %q, want nothing the hook already delivered", got)
+	}
+}
+
+func TestABotReplyThatRepeatsItsParentArrivesAsItsFirstLine(t *testing.T) {
+	l := startDaemon(t)
+	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
+	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindChannel, ChannelID: testChannel}
+	body := "Triggered: Team runs failing far above their baseline\nTeam had 125 failed runs\n\nin the last 30 minutes"
+	deliver := func(ts, thread, bot, text string) messagePayload {
+		t.Helper()
+		m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: "UDATADOG", BotID: bot, Username: "Datadog", Text: text}}
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := l.app.poller.deliver(l.ctx, l.srv.DB(), w, d); err != nil {
+			t.Fatal(err)
+		}
+		var got messagePayload
+		if err := json.Unmarshal(d.payload(eventMessage), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(d.line, strconv.Quote(got.Text)) {
+			t.Fatalf("directive %q, want the payload's text %q", d.line, got.Text)
+		}
+		return got
+	}
+
+	deliver(testThread, testThread, "BDATADOG", "*Monitor alert summary:* Team runs failing\n*Latest status:*\n"+strings.ReplaceAll(body, "\n\n", "\n"))
+
+	if got := deliver("1800000000.000200", testThread, "BDATADOG", body); got.Text != "Triggered: Team runs failing far above their baseline "+repeatsParentMark || got.Permalink == "" {
+		t.Fatalf("bot reply repeating its parent = %+v, want its first line and the mark, with its permalink", got)
+	}
+	if got := deliver("1800000000.000300", testThread, "", body); got.Text != body {
+		t.Fatalf("human reply repeating the parent = %q, want it whole", got.Text)
+	}
+	recovered := "Recovered: Team runs failing far above their baseline\nTeam is back under its baseline"
+	if got := deliver("1800000000.000400", testThread, "BDATADOG", recovered); got.Text != recovered {
+		t.Fatalf("bot reply with words its parent lacks = %q, want it whole", got.Text)
+	}
+	if got := deliver("1800000001.000200", "1800000001.000100", "BDATADOG", body); got.Text != body {
+		t.Fatalf("bot reply whose parent never reached the session = %q, want it whole", got.Text)
 	}
 }
