@@ -487,6 +487,29 @@ func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	}
 }
 
+func TestACopyOfACopyCopiesTheCardItCopies(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := postWaiting(t, l, mergeCard())
+	var thread, elsewhere map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "About the merge."}).Body, &thread); err != nil {
+		t.Fatal(err)
+	}
+	var first postResult
+	if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": card.url(), "thread_ts": thread["thread_ts"]}).Body, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "Another thread."}).Body, &elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opCardCopy, map[string]any{"url": card.id.permalink(card.id.DMChannelID, first.TS, thread["thread_ts"]), "thread_ts": elsewhere["thread_ts"]})
+	second := lastPost(l)
+	buttons := copiedButtonsOf(t, second)
+	if second.threadTS != elsewhere["thread_ts"] || len(buttons) != 2 || !strings.HasPrefix(buttons[0].ActionID, cardCopyAction+card.ts+":") {
+		t.Fatalf("copy of the copy = %+v, want the card's two answers in thread %s, each tapping the card itself", second, elsewhere["thread_ts"])
+	}
+}
+
 func TestACopyOfACardWhoseHeaderReadsBackPastSlacksLimitIsCutOnAWord(t *testing.T) {
 	l, id, _, thread := copyDaemon(t, cardBody("Merge the stack?", "merge it"))
 	long := ":raising_hand: " + strings.Repeat("ship it ", 17) + "soon"

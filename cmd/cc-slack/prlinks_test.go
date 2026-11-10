@@ -834,11 +834,13 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	var sent postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
-		t.Fatal(err)
+	unlisted := "drew no card for tap_prs " + tapPR41[0] + ": PR cards draw only in a DM or a [pr_links] card_channels channel, and " + testChannel + " is neither"
+	l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green", "tap_prs": tapPR41}), unlisted)
+	sent := l.slack.sentTo(testChannel)
+	if len(sent) != 1 {
+		t.Fatalf("unlisted channel got %+v, want the post to go out before the refusal", sent)
 	}
-	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": sent.TS, "text": "#41 is green", "tap_prs": tapPR41})
+	l.refused(opReply, l.hooked(opReply, map[string]any{"channel_id": testChannel, "thread_ts": sent[0].ts, "text": "#41 is green", "tap_prs": tapPR41}), unlisted)
 	if got := l.slack.sentTo(testChannel); len(got) != 2 || len(cmd.requests(t)) != 0 {
 		t.Fatalf("unlisted channel got %+v after %d asks, want two linked posts, no card and no ask, even in a thread we posted", got, len(cmd.requests(t)))
 	}
@@ -1651,6 +1653,19 @@ func TestATapPostWhoseCardNeverDrawsFailsNamingThePostAndThePR(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("dm-status error = %v, want it to say %q", err, want)
 		}
+	}
+}
+
+func TestATapPostUnderALoginWithNoCardCommandFailsSayingSo(t *testing.T) {
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}}, "acme/app#41")
+	_, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"text": "#41 is green", "tap_prs": tapPR41}))
+	for _, want := range []string{"posted https://acme.slack.com/archives/" + testDM + "/p", "drew no card for tap_prs " + tapPR41[0] + ": this machine's cc-slack login has no [pr_links] card_command"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("dm-status error = %v, want it to say %q", err, want)
+		}
+	}
+	if posts := l.slack.sentTo(testDM); len(posts) != 1 {
+		t.Fatalf("DM posts = %+v, want the one post and no card", posts)
 	}
 }
 

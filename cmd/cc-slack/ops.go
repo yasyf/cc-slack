@@ -2191,7 +2191,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 			return msg, nil
 		}
 		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true)
-		msg.text, msg.blocks = clipRunes(msg.text, cardMaxSectionLen), pages[0]
+		msg.text, msg.blocks = clipRunes(mrkdwnText(msg.text), cardMaxSectionLen), pages[0]
 		return msg, pages[1:]
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)

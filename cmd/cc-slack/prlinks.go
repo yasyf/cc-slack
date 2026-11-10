@@ -258,6 +258,16 @@ func cardsAt(id identity, channelID string) bool {
 	return strings.HasPrefix(channelID, "D") || slices.Contains(id.Config.PRLinks.CardChannels, channelID)
 }
 
+func tapCardsRefused(id identity, channelID string) string {
+	switch {
+	case len(id.Config.PRLinks.CardCommand) == 0:
+		return "this machine's cc-slack login has no [pr_links] card_command, so it draws no PR card: the config it last read sets none, or its program is not on the daemon's PATH; run `cc-slack reload --config <the config that sets it>`"
+	case !cardsAt(id, channelID):
+		return fmt.Sprintf("PR cards draw only in a DM or a [pr_links] card_channels channel, and %s is neither", channelID)
+	}
+	return ""
+}
+
 func prCardThread(id identity, channelID, postThread string) string {
 	if channelID == id.DMChannelID {
 		return ""
@@ -271,14 +281,21 @@ func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) [
 }
 
 func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, b opBody, asked []string) error {
-	if len(b.TapPRs) == 0 || len(id.Config.PRLinks.CardCommand) == 0 || !cardsAt(id, channelID) {
+	if len(b.TapPRs) == 0 {
 		return nil
+	}
+	link := id.permalink(channelID, postTS, postThread)
+	if why := tapCardsRefused(id, channelID); why != "" {
+		if len(asked) == 0 {
+			return nil
+		}
+		a.poller.log.Printf("tap PRs %s drew no card beside %s: %s", strings.Join(asked, ", "), link, why)
+		return fmt.Errorf("posted %s, so do not post it again, but drew no card for tap_prs %s: %s", link, strings.Join(asked, ", "), why)
 	}
 	ctx := context.WithoutCancel(hc.Ctx)
 	prs := a.tapPRs(ctx, id, hc.Env.Scope, b)
 	warning, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, prs)
 	notePostWarning(hc.Ctx, warning)
-	link := id.permalink(channelID, postTS, postThread)
 	var said []string
 	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
 		pr, _ := parseRef(raw)

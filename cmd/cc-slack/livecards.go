@@ -473,6 +473,31 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	return copies
 }
 
+func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for _, c := range t.Copies {
+			if c.TS == ts && !c.Link {
+				return l.cardAt(channel, c.Card)
+			}
+		}
+	}
+	return cardRef{}, false
+}
+
+func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
+	for _, t := range l.threads {
+		if t.Channel == channel && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {
+			return cardRef{channel, t.Thread, ts}, true
+		}
+	}
+	return cardRef{}, false
+}
+
 func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
 
 func (l *liveCards) load() error {

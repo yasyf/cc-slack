@@ -103,6 +103,14 @@ func bodyPieces(body string) []bodyPiece {
 	return pieces
 }
 
+func mrkdwnText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = mrkdwnLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func mrkdwnLine(line string) string {
 	line = mdLink.ReplaceAllString(line, "<$2|$1>")
 	line = mdBold.ReplaceAllString(line, "*$1*")
