@@ -566,6 +566,137 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	}
 }
 
+func TestUndoReopensAStrayPickForTenMinutes(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := statusCard{Status: "needs_you", Title: "What should the runner keep for each statement?", Waits: "durable-agents:j242-657927-runner",
+		Options: []string{"One tally table, a typed row per statement and step", "Statement rows in the key-value table, step totals summed from them",
+			"Keep nothing extra and count calls each time"}, Recommended: "One tally table, a typed row per statement and step"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	explained := time.Now()
+	picked := explained.Add(54 * time.Second)
+	pick := func(n int, at time.Time, seq string) {
+		l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+			ActionID: fmt.Sprintf("%s%d:%s", cardWaitAction, n, card.Waits),
+			Value:    string(mustJSON(askTap{ID: card.Waits, Label: card.Options[n], Question: card.Title, Options: card.Options})),
+			ActionTS: fmt.Sprintf("%d.%06d", at.Unix(), n), Seq: seq})
+	}
+	undo := func(at time.Time, seq string) {
+		l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+			ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", at.Unix()), Seq: seq})
+	}
+	lastEdit := func() string {
+		edits := editsOf(l.slack.edited(), reply.ts)
+		if len(edits) == 0 {
+			t.Fatal("the card was never redrawn")
+		}
+		return edits[len(edits)-1]
+	}
+
+	undoneEvents := func() []map[string]any {
+		var undone []map[string]any
+		for _, raw := range l.channelPayloads() {
+			var got map[string]any
+			if err := json.Unmarshal([]byte(raw), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["type"] == eventAction && got["undo"] == true {
+				undone = append(undone, got)
+			}
+		}
+		return undone
+	}
+
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardExplainAction + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: cardExplainLabel, Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000050", explained.Unix()), Seq: "001800000100000-abcd0200"})
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "stays stopped") {
+		t.Fatalf("directive = %q, want Explain more to keep the lane stopped", got)
+	}
+	if drawn := lastEdit(); strings.Contains(drawn, cardUndoAction) {
+		t.Fatalf("card %s, want no Undo before any answer", drawn)
+	}
+
+	pick(2, picked, "001800000100000-abcd0201")
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `with "Keep nothing extra and count calls each time"`) {
+		t.Fatalf("directive = %q, want the stray pick handed over", got)
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, "✓ *Keep nothing extra and count calls each time* · answered") || !strings.Contains(drawn, cardUndoAction+card.Waits) {
+		t.Fatalf("card %s, want the pick marked with an Undo button beside it", drawn)
+	}
+
+	undo(picked.Add(time.Minute), "001800000100000-abcd0202")
+	events := undoneEvents()
+	if len(events) != 1 {
+		t.Fatalf("undo events %v, want exactly one", events)
+	}
+	undone := events[0]
+	if undone["id"] != card.Waits || undone["label"] != card.Options[2] || undone["question"] != card.Title {
+		t.Fatalf("undo payload = %v, want the waiting ask, the undone answer and the question", undone)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "capt-hook", "hooks", "fixtures", "slack_action.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	delete(fixture, "capture")
+	delete(fixture, "options")
+	fixture["undo"] = true
+	if keys, want := slices.Sorted(maps.Keys(undone)), slices.Sorted(maps.Keys(fixture)); !slices.Equal(keys, want) {
+		t.Fatalf("undo payload %v has keys %v, want %v: a tap's keys with no options or capture, so capt-hook's card_answer never reads it as an answer", undone, keys, want)
+	}
+	long := maps.Clone(undone)
+	long["question"] = strings.Repeat("q", monitorEvent)
+	line, err := fitted(string(mustJSON(long)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(line), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if shown["undo"] != true || shown["id"] != card.Waits {
+		t.Fatalf("Monitor line %s, want undo and the waiting ask kept", line)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `undid their answer "Keep nothing extra and count calls each time"`) || !strings.Contains(got, "treat it as never given") {
+		t.Fatalf("directive = %q, want the undo handed over as an answer never given", got)
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, fmt.Sprintf("%s0:%s", cardWaitAction, card.Waits)) || strings.Contains(drawn, "✓ *") || strings.Contains(drawn, cardUndoAction) {
+		t.Fatalf("card %s, want its Pick buttons back with no answer and no Undo", drawn)
+	}
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
+		t.Fatal("the undone answer is still on record")
+	}
+
+	repicked := picked.Add(2 * time.Minute)
+	pick(0, repicked, "001800000100000-abcd0203")
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `with "One tally table, a typed row per statement and step"`) {
+		t.Fatalf("directive = %q, want the new pick taken", got)
+	}
+
+	undo(repicked.Add(11*time.Minute), "001800000100000-abcd0204")
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("an Undo past its ten minutes steered %q", got)
+	}
+	if ans, _ := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); ans.Label != card.Options[0] {
+		t.Fatalf("answer = %+v, want the new pick to stand", ans)
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, "had passed") || strings.Contains(drawn, cardUndoAction) {
+		t.Fatalf("card %s, want the late Undo refused on the card and its button gone", drawn)
+	}
+	if events := undoneEvents(); len(events) != 0 {
+		t.Fatalf("undo events %v after the first, want none", events)
+	}
+}
+
 func pickFixture(t *testing.T) (*fixture, statusCard, string) {
 	t.Helper()
 	f := newFixture(t)

@@ -29,6 +29,7 @@ const (
 	cardRowBlock      = "card-row-"
 	cardOptionBlock   = "card-option-"
 	cardFoldBlock     = "card-fold"
+	cardUndoBlock     = "card-undo"
 	cardAckAction     = cardActionPrefix + ":ack"
 	cardFoldAction    = cardActionPrefix + ":fold"
 	cardPauseAction   = cardActionPrefix + ":pause"
@@ -40,6 +41,7 @@ const (
 	cardOtherAction   = cardActionPrefix + ":other:"
 	cardWroteAction   = cardActionPrefix + ":wrote:"
 	cardRowAction     = cardActionPrefix + ":row:"
+	cardUndoAction    = cardActionPrefix + ":undo:"
 	cardExplainLabel  = "Explain more"
 	cardOtherLabel    = "Other"
 	cardGitHubLabel   = "Open on GitHub"
@@ -47,6 +49,8 @@ const (
 	cardRecommended   = "(Recommended)"
 	cardAckLabel      = "Ack"
 	cardPauseLabel    = "Pause"
+	cardUndoLabel     = "Undo"
+	cardUndoWindow    = 10 * time.Minute
 	cardPickLabel     = "Pick"
 	cardMaxOptions    = 4
 	cardMaxOptionLen  = cardMaxDetailLen
@@ -233,6 +237,8 @@ type askAnswer struct {
 	Drawn       bool      `json:"drawn,omitempty"`
 	Undelivered string    `json:"undelivered,omitempty"`
 	Withdrawn   bool      `json:"withdrawn,omitempty"`
+	Tap         string    `json:"tap,omitempty"`
+	UndoUntil   time.Time `json:"undo_until,omitzero"`
 }
 
 func runes(s string) int { return utf8.RuneCountInString(s) }
@@ -336,8 +342,12 @@ func optionReference(text string) string {
 	return ""
 }
 
+func permissionAsk(waits string) bool {
+	return strings.HasPrefix(waits, cardPermission) || permissionCard.MatchString(waits)
+}
+
 func (c statusCard) checkPermissionWords() error {
-	if !strings.HasPrefix(c.Waits, cardPermission) && !permissionCard.MatchString(c.Waits) {
+	if !permissionAsk(c.Waits) {
 		return nil
 	}
 	shown := []string{c.Title, c.Body}
@@ -1471,7 +1481,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		if v.answers[c.Waits].Withdrawn && len(prs) > 0 {
 			return slices.Concat(title, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped)}, prs, asks), nil
 		}
-		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))}), nil
+		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))}, c.undo(v)), nil
 	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block
@@ -1523,6 +1533,13 @@ func (c statusCard) tail(v cardView) []slack.Block {
 		return append(blocks, mrkdwn(cardWaitBlock, cmp.Or(v.hint, c.waitHint())), c.waitActions(), c.context(v.tag, v.at, ""))
 	}
 	return append(blocks, c.actions(), c.context(v.tag, v.at, ""))
+}
+
+func (c statusCard) undo(v cardView) []slack.Block {
+	if c.Waits == "" || !v.now.Before(v.answers[c.Waits].UndoUntil) {
+		return nil
+	}
+	return []slack.Block{slack.NewActionBlock(cardUndoBlock, button(cardUndoAction+c.Waits, cardUndoLabel))}
 }
 
 func (c statusCard) refsOnly() bool {

@@ -544,7 +544,7 @@ func (a *app) copyCardInto(ctx context.Context, db *sql.DB, id identity, thread 
 	if err != nil {
 		return err
 	}
-	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
+	blocks, answers, err := copyBlocks(ctx, a.newAPI(id.Token), id, ref, link)
 	if err != nil {
 		return err
 	}
@@ -671,30 +671,6 @@ func approvesOn(blocks []slack.Block, card string) bool {
 	})
 }
 
-func (a *app) redrawCopies(ctx context.Context, id identity, card cardRef) error {
-	copies := a.cards.copiesOf(card.channel, card.ts)
-	if len(copies) == 0 {
-		return nil
-	}
-	link := id.permalink(card.channel, card.ts, card.thread)
-	ref, err := parsePermalink(link)
-	if err != nil {
-		return err
-	}
-	blocks, answers, err := a.copyBlocks(ctx, id, ref, link)
-	if err != nil {
-		return err
-	}
-	api := a.newAPI(id.Token)
-	entities := a.cards.workObjectsOf(card.channel, card.ts, a.now())
-	for _, copied := range copies {
-		if err := updateMessage(ctx, api, copied.channel, copied.ts, copyLead(blocks, answers), blocks, entities...); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func shownCard(p providedCard) map[string]any {
 	return map[string]any{"repo": p.Repo, "number": p.Number, "waits": p.Card.Waits}
 }
@@ -774,7 +750,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		return err
 	}
 	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
-	return a.redrawCopies(ctx, id, card)
+	return a.cards.redrawCopies(ctx, id, card)
 }
 
 func uploadPRCardPictures(ctx context.Context, id identity, card *statusCard) error {

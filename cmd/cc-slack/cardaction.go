@@ -73,6 +73,7 @@ type actionPayload struct {
 	Capture     string   `json:"capture,omitempty"`
 	NotesLabel  string   `json:"notes_label,omitempty"`
 	PosterEnded bool     `json:"poster_ended,omitempty"`
+	Undo        bool     `json:"undo,omitempty"`
 	Permalink   string   `json:"permalink"`
 }
 
@@ -87,6 +88,7 @@ type askTap struct {
 	Explain  bool     `json:"-"`
 	Other    bool     `json:"-"`
 	Row      bool     `json:"-"`
+	Undo     bool     `json:"-"`
 }
 
 type tapQueue struct {
@@ -146,6 +148,7 @@ type waitsAnswer struct {
 	via       string
 	viaName   string
 	dedup     string
+	undo      string
 	settled   bool
 	withdrawn bool
 }
@@ -153,6 +156,7 @@ type waitsAnswer struct {
 var (
 	errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
 	errCardMoved       = errors.New("the card was redrawn with another question after this answer was drawn")
+	errUndoClosed      = errors.New("the ten minutes to undo this answer had passed")
 )
 
 func hostName() string {
@@ -179,6 +183,8 @@ func (a cardActionPush) tap() (askTap, bool) {
 		return askTap{Label: cardPauseLabel}, true
 	case a.ActionID == cardFoldAction:
 		return askTap{Label: cardExplainLabel, Fold: true}, true
+	case strings.HasPrefix(a.ActionID, cardUndoAction):
+		return askTap{ID: strings.TrimPrefix(a.ActionID, cardUndoAction), Label: cardUndoLabel, Undo: true}, true
 	case strings.HasPrefix(a.ActionID, cardOptionAction) && a.Value != "":
 		return askTap{Label: a.Value}, true
 	case strings.HasPrefix(a.ActionID, cardAskAction):
@@ -324,12 +330,16 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 	if !p.cards.asks(a.Channel, a.ThreadTS, k.ID, k.Question) {
 		return errCardMoved
 	}
+	undo := ""
+	if p.undoable(id, a.ref(), k) {
+		undo = tapKey(a)
+	}
 	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
-		dedup: tapKey(a),
+		dedup: tapKey(a), undo: undo,
 	})
 	if err == nil && res.Answered && !k.Other {
-		if !p.answerCopies(ctx, id, a.ref(), k.Label, false, at) {
+		if !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, undo) {
 			p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 		}
 	}
@@ -361,7 +371,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		return nil
 	}
 	err := p.takeTap(ctx, id, card, k)
-	if errors.Is(err, errNoStatusSession) && !k.Explain {
+	if errors.Is(err, errNoStatusSession) && !k.Explain && !k.Undo {
 		err = p.handOn(ctx, id, card, k, at)
 	}
 	if why, dropped := droppedBecause(err); dropped {
@@ -415,7 +425,7 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)
-	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at) {
+	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, "") {
 		p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 	}
 	return nil
@@ -505,6 +515,8 @@ func droppedBecause(err error) (string, bool) {
 		return "the session that posted this card has ended.", true
 	case errors.Is(err, errCardMoved):
 		return "this card now asks something else.", true
+	case errors.Is(err, errUndoClosed):
+		return "the ten minutes to undo this answer had passed, so it stands.", true
 	}
 	return "", false
 }
@@ -559,7 +571,7 @@ func (p *poller) answerCopy(ctx context.Context, id identity, api slackAPI, card
 		p.cards.rememberCopy(copied.channel, copied.thread, liveCardCopy{Card: card.ts, TS: copied.ts}, p.now())
 	}
 	line := "✓ *" + mrkdwnEscapes.Replace(clipRunes(ans.Label, cardMaxDetailLen)) + "* · answered " + clock(ans.At, p.now())
-	if err := markCopy(ctx, api, id, card, copied, post, line); err != nil {
+	if err := markCopy(ctx, api, id, card, copied, post, line, p.cards.undoing(card)); err != nil {
 		p.log.Printf("card copy %s stays as drawn after its answer: %v", copied.ts, err)
 	}
 }
@@ -604,6 +616,9 @@ func (p *poller) unfold(ctx context.Context, id identity, a cardActionPush, k as
 }
 
 func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k askTap) error {
+	if k.Undo {
+		return p.undoTap(ctx, id, a, k)
+	}
 	if k.expired(slackTime(a.ActionTS)) {
 		p.log.Printf("card action %s on %s: dropped: the ask expired", a.ActionID, a.MessageTS)
 		if err := p.markAsk(ctx, id, a, k); err != nil {
@@ -685,7 +700,7 @@ func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
 	card := offeredCard{ref: a.ref(), waits: k.ID, pr: pr}
 	if p.answerPRCard(ctx, id, card, k.Label, at, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), false, a.press()) {
-		p.answerCopies(ctx, id, a.ref(), k.Label, true, at)
+		p.answerCopies(ctx, id, a.ref(), k.Label, true, at, "")
 	}
 	return nil
 }
@@ -717,7 +732,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	return true
 }
 
-func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time) bool {
+func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time, undo string) bool {
 	prs, picks := p.cards.otherOffers(tapped)
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		prs = nil
@@ -733,7 +748,7 @@ func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, 
 		copied := waitsAnswer{
 			card: c.ref, tap: askTap{ID: c.waits, Label: label, Question: c.question, Options: c.options, Waits: true}, at: at,
 			source: cardSource(id, "Slack tap", at.In(pacific).Format(cardTimeLayout), link), where: "Slack card " + link,
-			dedup: fmt.Sprintf("slack-copy:%s:%s:%s", c.ref.channel, c.ref.ts, c.waits),
+			dedup: fmt.Sprintf("slack-copy:%s:%s:%s", c.ref.channel, c.ref.ts, c.waits), undo: undo,
 		}
 		_, err := p.answerWaits(ctx, id, copied)
 		if errors.Is(err, errNoStatusSession) {
@@ -819,7 +834,11 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.withdrawn || w.settled {
 		undelivered = ""
 	}
-	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: undelivered, Withdrawn: w.withdrawn})
+	ans := askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: undelivered, Withdrawn: w.withdrawn, Tap: w.undo}
+	if until := w.at.Add(cardUndoWindow); w.undo != "" && p.now().Before(until) {
+		ans.UndoUntil = until
+	}
+	won, prior := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, ans)
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
 		return cardAnswerResult{Label: prior.Label, Other: prior.Other, At: prior.At}, nil
@@ -926,6 +945,90 @@ func (p *poller) noteSuperseded(ctx context.Context, id identity, posts []string
 	}
 }
 
+func askedAgain(title, card string) string {
+	return "↪ *" + mrkdwnEscapes.Replace(title) + "* is asked again as a card with buttons: " + slackLink(card, "answer it there")
+}
+
+func (p *poller) undoable(id identity, card cardRef, k askTap) bool {
+	if permissionAsk(k.ID) {
+		return false
+	}
+	if len(id.Config.PRLinks.CardCommand) == 0 || k.Other {
+		return true
+	}
+	prs, _ := p.cards.otherOffers(card)
+	_, carriesPR := p.cards.waitingPR(card.channel, card.thread, k.ID)
+	return !carriesPR && len(prs) == 0
+}
+
+func (p *poller) undoTap(ctx context.Context, id identity, a cardActionPush, k askTap) error {
+	ans, done := p.cards.answer(a.Channel, a.ThreadTS, k.ID)
+	if !done {
+		p.log.Printf("card action %s on %s: dropped: the answer was already undone", a.ActionID, a.MessageTS)
+		return nil
+	}
+	if at := slackTime(a.ActionTS); ans.Tap == "" || !at.Before(ans.UndoUntil) {
+		p.cards.redrawClosedUndos(ctx, id, p.cards.closeUndos(at), p.now())
+		return errUndoClosed
+	}
+	db := p.plane.DB()
+	watches, err := p.dmWatches(ctx, db, a.Channel, a.ThreadTS)
+	if err != nil {
+		return err
+	}
+	if len(watches) == 0 {
+		return errNoStatusSession
+	}
+	var errs []error
+	for _, u := range p.cards.undo(a.Channel, ans.Tap) {
+		if err := p.reopen(ctx, id, db, a, u); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActionPush, u undoneAnswer) error {
+	api := p.newAPI(id.Token)
+	if _, err := p.cards.redraw(ctx, api, u.card.channel, u.card.thread, u.card.ts, p.now()); err != nil {
+		p.log.Printf("card %s: its answer %q is undone, but the card still shows it: %v", u.card.ts, u.answer.Label, err)
+	}
+	if err := p.cards.redrawCopies(ctx, id, u.card); err != nil {
+		p.log.Printf("card %s: its answer %q is undone, but its copies still show it: %v", u.card.ts, u.answer.Label, err)
+	}
+	if err := api.RemoveReactionContext(ctx, cardAnsweredReaction, slack.NewRefToMessage(u.card.channel, u.card.ts)); err != nil && errorCode(err) != "no_reaction" {
+		p.log.Printf("card %s: its answer is undone, but the %s reaction stays: %v", u.card.ts, cardAnsweredReaction, err)
+	}
+	permalink := id.permalink(u.card.channel, u.card.ts, u.card.thread)
+	p.noteSuperseded(ctx, id, u.supersedes, askedAgain(u.question, permalink))
+	watches, err := p.dmWatches(ctx, db, u.card.channel, u.card.thread)
+	if err != nil {
+		return err
+	}
+	who := cardSource(id, "Slack tap", slackTime(u.card.ts).In(pacific).Format(cardTimeLayout), permalink)
+	line := fmt.Sprintf("%s: they undid their answer %q to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
+		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, u.answer.Label, u.waits)
+	for _, w := range watches {
+		msg := actionPayload{
+			WatchID: w.ID, ChannelID: u.card.channel, ThreadTS: u.card.thread, TS: u.card.ts, ActionTS: a.ActionTS, Label: u.answer.Label, ID: u.waits,
+			Waits: true, Other: u.answer.Other, Question: u.question, Undo: true, Permalink: permalink,
+		}
+		if err := p.deliver(ctx, db, w, delivery{
+			base:   eventAction,
+			origin: event.OriginHuman,
+			dedup:  fmt.Sprintf("slack-undo:%s:%s:%s", u.card.channel, u.card.ts, a.ActionTS),
+			line:   line,
+			payload: func(typ string) []byte {
+				msg.Type = typ
+				return mustJSON(msg)
+			},
+		}); err != nil {
+			return fmt.Errorf("waiting ask %s is open again, but telling watch %d its answer %q was undone failed: %w", u.waits, w.ID, u.answer.Label, err)
+		}
+	}
+	return nil
+}
+
 func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via, from string) (cardAnswerResult, error) {
 	ref, err := parsePermalink(card)
 	if err != nil {
@@ -973,7 +1076,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	}
 	if err == nil && res.Answered && !other && !withdrawn {
 		answered := cardRef{id.DMChannelID, thread, m.TS}
-		if !p.answerCopies(ctx, id, answered, label, false, at) {
+		if !p.answerCopies(ctx, id, answered, label, false, at, "") {
 			p.recordPRTap(ctx, id, answered, waits, label, cardPress{"", "answered " + via})
 		}
 	}
@@ -1026,7 +1129,7 @@ func (p *poller) answerPRCardElsewhere(ctx context.Context, id identity, r cardR
 	if !p.answerPRCard(ctx, id, card, label, at, line, false, cardPress{"", "answered on " + via}) {
 		return cardAnswerResult{}, fmt.Errorf("PR card %s did not take %q; the daemon log says why", permalink, label)
 	}
-	p.answerCopies(ctx, id, r, label, true, at)
+	p.answerCopies(ctx, id, r, label, true, at, "")
 	return cardAnswerResult{Answered: true, Label: label, At: at}, nil
 }
 
@@ -1050,7 +1153,7 @@ func (p *poller) showFold(ctx context.Context, id identity, r cardRef) (bool, er
 }
 
 func (p *poller) markOption(ctx context.Context, id identity, r cardRef, line string) error {
-	defer p.markCopies(ctx, id, r, line)
+	defer p.cards.markCopies(ctx, id, r, line)
 	return p.drawTap(ctx, id, r, cardActionsBlock, line, p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) { m.Tapped = line }))
 }
 
