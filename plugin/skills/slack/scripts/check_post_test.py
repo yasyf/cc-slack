@@ -142,8 +142,8 @@ class CheckPostTest(unittest.TestCase):
 
     def test_flags_an_option_named_by_number_or_position(self) -> None:
         text = (
-            "Own process plus a memory cap: as 1, and a script over the cap stops.\n"
-            "Option 2 is the only one; options 1 and 2 add a process.\n"
+            "Own process plus a memory cap: as 1, and a script over the cap stops.\n\n"
+            "Option 2 is the only one; options 1 and 2 add a process.\n\n"
             "Same as 2 but slower, unlike (1). Pick the first option."
         )
         self.assertEqual(
