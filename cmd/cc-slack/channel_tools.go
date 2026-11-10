@@ -286,7 +286,7 @@ var (
 		},
 		{
 			name:        "slack_thread",
-			description: "Read a thread oldest first; a reply needs a read within 10 minutes reaching its newest message, so pass since_ts to read only what is new.",
+			description: "Read a thread oldest first; omit channel_id for your DM. A reply needs a read within 10 minutes reaching its newest message, so pass since_ts to read only what is new.",
 			op:          opThread, failure: actionRead,
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,

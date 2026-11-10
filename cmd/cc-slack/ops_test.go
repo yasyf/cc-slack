@@ -1707,3 +1707,32 @@ func TestPartialHistorySaysSo(t *testing.T) {
 		t.Fatalf("rendered %q, want the partial mark", out.String())
 	}
 }
+
+func TestAThreadReadWithNoChannelReadsYourDMAndAGuessedOneNamesIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	var posted map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]string{"text": "release is rolling out"}).Body, &posted); err != nil {
+		t.Fatal(err)
+	}
+	dm := posted["channel_id"]
+	l.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000090.000000", ThreadTimestamp: posted["ts"], User: testUser, Text: "how far along?"}})
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"thread_ts": posted["ts"], "since_ts": posted["ts"]}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 1 || res.Messages[0].Text != "how far along?" {
+		t.Fatalf("thread with no channel = %+v, want the reply in your DM", res.Messages)
+	}
+
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	raw, err := json.Marshal(map[string]string{"channel_id": "D0", "thread_ts": posted["ts"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = invoke(l.ctx, l.deps, testSession, "/any/cwd", opThread, raw)
+	if err == nil || !strings.Contains(err.Error(), "channel_not_found") || !strings.Contains(err.Error(), "your DM with the app is "+dm) {
+		t.Fatalf("guessed DM read = %v, want channel_not_found naming %s", err, dm)
+	}
+}
