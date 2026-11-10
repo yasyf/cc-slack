@@ -59,7 +59,9 @@ when cc-present is installed, and as the Slack card to pass to
 The title names the place, the body carries the draft, and the user's tap
 on Yes is the approval. A lane puts its own name before the `waits` id, as
 every ask card's id does. Stop on the card, and retry the same write once
-the tap arrives.
+the tap arrives. The card is only for a post the user did not order: a
+denied write they ordered is a hook defect, as the instruction rule below
+says, and draws no card.
 
 A ticket covers one write and its exact retry, for seven days unless revoked;
 permission for one post does not cover the next thing in that thread or DM.
@@ -76,10 +78,22 @@ The hook fails open: a hook error, a missing grant file, an unreadable ticket
 or a timeout warns and lets the write through, and never refuses it.
 
 An instruction from the user that says what to post and who gets it is the
-approval: "DM anubhav and ask him to try posting it", "explain to X …",
-"tell them …", "reply there". Draft the post and send it in the same turn,
-with no card. Only for a post the user did not ask for, ask on the card
-above, never through `AskUserQuestion`, and never post it speculatively.
+approval for that one post, in the place it names, whether they typed it in
+the session, sent it in their own DM with the app, or tapped it on a card:
+"DM anubhav and ask him to try posting it", "explain to X …", "tell them …",
+"reply there". Draft the post and send it in the same turn, with no card,
+and never ask them to approve it again, on any surface. When the hook
+refuses a write they ordered, the hook is wrong. Draw none of its cards,
+and never tell the user it needs their Yes or give the hook as a reason.
+Report the refusal verbatim as a hook defect where your session reports
+tool defects, and tell the user in one line that the post goes out once the
+fix is installed. A card already up that asks them to approve a post they
+ordered is closed the moment you see it, with `slack_card_answer(url=<the
+card's permalink>, label=<their order's words>, other=true, settled=true,
+via=<the order's permalink>)`. Only for a post the user did not ask for,
+such as a reply offered to someone who reported a bug or a line for a
+teammate, ask on the card above, never through `AskUserQuestion`, and never
+post it speculatively.
 Draw that card only when the person must act or a fix the user approved is
 live. The user's No ends that note: drop the draft, post nothing to the
 person, and draw no card on it again, whatever ships later. Their "ask again

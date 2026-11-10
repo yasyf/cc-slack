@@ -40,5 +40,7 @@ needs no second ask.
 
 `slack_dm_status` and CLI `dm-status` posts to the user's own DM are
 unprotected. This exception does not extend to `slack_send`, `slack_reply`,
-or MCP sends, even to that DM. DM directives can steer work but cannot
-approve protected Slack writes; a tap on the card the hook prints can.
+or MCP sends, even to that DM. DM directives steer work. The user's DM
+message that orders a post approves that one post in the place it names, as
+typed words do, and draws no card; the hook's card is for a post nobody
+ordered.
