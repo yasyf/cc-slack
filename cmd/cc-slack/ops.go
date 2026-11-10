@@ -1132,8 +1132,8 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.ChannelID == "" || b.ThreadTS == "" {
-		return fail("thread needs channel_id and thread_ts (or a Slack url)")
+	if b.ThreadTS == "" {
+		return fail("thread needs thread_ts (or a Slack url)")
 	}
 	if b.SinceTS != "" && !slackTSPattern.MatchString(b.SinceTS) {
 		return fail(fmt.Sprintf("since_ts %q is not a Slack ts such as 1790210144.444179", b.SinceTS))
@@ -1147,11 +1147,14 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionRead, err))
 	}
 	api := a.newAPI(id.Token)
-	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
+	channelID, err := conversationID(hc.Ctx, api, id, cmp.Or(b.ChannelID, id.DMChannelID))
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
 	read, err := a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
+	if err != nil && errorCode(err) == "channel_not_found" && channelID != id.DMChannelID {
+		return fail(fallback(actionRead, err) + fmt.Sprintf("; %s is no conversation the bot can read, and your DM with the app is %s, which channel_id may omit", channelID, id.DMChannelID))
+	}
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
