@@ -297,6 +297,8 @@ class Judged(CustomTicketCondition):
     judge: Decide
 
     def evidence(self, ctx: Context) -> list[Evidence] | None:
+        if solved_grants(ctx) and not plain(pending(live(ctx))[0].text):
+            return None
         try:
             found = self.judge.evidence(ctx)
         except Undecided as exc:
@@ -428,14 +430,22 @@ class NotRevoked(CustomTicketCondition):
         return None if found.answer is not None and not found.grants else []
 
 
+def solved_grants(ctx: Context) -> list[dict[str, Any]]:
+    channel = ctx.place["channel"]
+    grant = f"{GRANT_LABEL}{channel}{SOLVED}"
+    return [answer for answer in live_answers(ctx, channel) if grant in answer.get("tags", ())] if ctx.place["thread"] else []
+
+
+def plain(text: str) -> bool:
+    return not ASKS.search(text) and not check_post().check(text)
+
+
 @dataclass(frozen=True, slots=True)
 class SolvedLine(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
-        channel, thread = ctx.place["channel"], ctx.place["thread"]
         write = pending(live(ctx))[0]
-        grant = f"{GRANT_LABEL}{channel}{SOLVED}"
-        grants = [answer for answer in live_answers(ctx, channel) if grant in answer.get("tags", ())]
-        if not thread or not grants or write.verb != "post" or write.files or write.fields.get("blocks") or ASKS.search(write.text) or check_post().check(write.text):
+        grants = solved_grants(ctx)
+        if not grants or write.verb != "post" or write.files or write.fields.get("blocks") or not plain(write.text):
             return None
         read = thread_of(ctx)
         if not read.readable or read.stale or any(message.from_claude for message in read.messages):
@@ -1189,6 +1199,10 @@ on(
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT | {"tags": ["scope:durable", f"slack-grant:{PETS}{SOLVED}"]}) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT, THREAD_REVOKED) | thread_read(DANA_OPENED)) >> DENY,
             case(TOP_LEVEL | {"text": SOLVED_TEXT}, tool="slack_send", **said("status?"), commands=ruled(SOLVED_GRANT)) >> DENY,
+            case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> DENY,
+            case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> DENY,
+            case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
+            case(transcript=card_tapped(DANA_CARD, "Yes"), commands=ruled(SOLVED_GRANT)) >> ALLOW,
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
