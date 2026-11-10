@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -1452,18 +1453,69 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return !card.carries(only) })
 		listing = a.cards.cardsListing(only)
 	}
-	go func(ctx context.Context) {
-		for _, card := range posted {
-			a.recardPR(ctx, id, card.card, card.prs[0])
-		}
-		for _, card := range listing {
-			a.poller.redrawWithFreshPRLines(ctx, id, card)
-			if err := a.cards.redrawCopies(ctx, id, card); err != nil {
-				a.poller.log.Printf("card %s: its copies keep the lines they were drawn with: %v", card.ts, err)
-			}
-		}
-	}(context.WithoutCancel(hc.Ctx))
+	a.prRedraws.push(prRedraw{id: id, posted: posted, listing: listing})
 	return ok(map[string]int{"redrawing": len(posted) + len(listing)})
+}
+
+type prRedraw struct {
+	id      identity
+	posted  []postedPRCard
+	listing []cardRef
+}
+
+type prRedraws struct {
+	mu   sync.Mutex
+	jobs []prRedraw
+	wake chan struct{}
+}
+
+func (q *prRedraws) push(job prRedraw) {
+	q.mu.Lock()
+	q.jobs = append(q.jobs, job)
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (q *prRedraws) take() []prRedraw {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	jobs := q.jobs
+	q.jobs = nil
+	return jobs
+}
+
+func (a *app) runPRRedraws(ctx context.Context) {
+	for {
+		for _, job := range a.prRedraws.take() {
+			a.redrawPRCards(ctx, job)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.prRedraws.wake:
+		}
+	}
+}
+
+func (a *app) redrawPRCards(ctx context.Context, job prRedraw) {
+	for _, card := range job.posted {
+		if ctx.Err() != nil {
+			return
+		}
+		a.recardPR(ctx, job.id, card.card, card.prs[0])
+	}
+	for _, card := range job.listing {
+		if ctx.Err() != nil {
+			return
+		}
+		a.poller.redrawWithFreshPRLines(ctx, job.id, card)
+		if err := a.cards.redrawCopies(ctx, job.id, card); err != nil {
+			a.poller.log.Printf("card %s: its copies keep the lines they were drawn with: %v", card.ts, err)
+		}
+	}
 }
 
 func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {
