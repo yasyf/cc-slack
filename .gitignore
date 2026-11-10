@@ -42,3 +42,4 @@ coverage.txt
 
 # Repo-specific ignore rules go here.
 /cc-slack
+/cmd/cc-slack/cc-slack
