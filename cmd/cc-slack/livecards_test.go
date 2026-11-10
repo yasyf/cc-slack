@@ -10,6 +10,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -532,12 +534,24 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 			tap = got
 		}
 	}
-	keys := slices.Sorted(maps.Keys(tap))
-	if want := []string{"action_ts", "channel_id", "id", "label", "permalink", "thread_ts", "ts", "type", "waits", "watch_id"}; !slices.Equal(keys, want) {
-		t.Fatalf("tap payload %v has keys %v, want %v: the question, options and capture stay in the directive", tap, keys, want)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "capt-hook", "hooks", "fixtures", "slack_action.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if keys, want := slices.Sorted(maps.Keys(tap)), slices.Sorted(maps.Keys(fixture)); !slices.Equal(keys, want) {
+		t.Fatalf("tap payload %v has keys %v, want %v, the keys of the tap the permission hook's tests read", tap, keys, want)
 	}
 	if tap["id"] != "step-3:merge" || tap["waits"] != true {
 		t.Fatalf("tap payload = %v, want the card id and waits", tap)
+	}
+	question, _ := tap["question"].(string)
+	options, _ := tap["options"].([]any)
+	if question != "Merge #41 now?" || !slices.Equal(options, []any{"Merge", "Hold"}) || !slices.Contains(options, tap["label"]) {
+		t.Fatalf("tap payload = %v, want the question, every option as a string, and the label among them: capt-hook's card_answer reads a tap as his answer only then", tap)
 	}
 	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) != 2 || !strings.Contains(edits[1], "✓ *Merge* · answered") ||
 		strings.Contains(edits[1], cardWaitAction) || strings.Contains(edits[1], "You asked for more") {

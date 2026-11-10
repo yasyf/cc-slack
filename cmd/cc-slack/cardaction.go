@@ -57,18 +57,20 @@ func (a cardActionPush) press() cardPress {
 }
 
 type actionPayload struct {
-	Type      string `json:"type"`
-	WatchID   int64  `json:"watch_id"`
-	ChannelID string `json:"channel_id"`
-	ThreadTS  string `json:"thread_ts"`
-	TS        string `json:"ts"`
-	ActionTS  string `json:"action_ts"`
-	Label     string `json:"label"`
-	ID        string `json:"id,omitempty"`
-	Waits     bool   `json:"waits,omitempty"`
-	Other     bool   `json:"other,omitempty"`
-	Via       string `json:"via,omitempty"`
-	Permalink string `json:"permalink"`
+	Type      string   `json:"type"`
+	WatchID   int64    `json:"watch_id"`
+	ChannelID string   `json:"channel_id"`
+	ThreadTS  string   `json:"thread_ts"`
+	TS        string   `json:"ts"`
+	ActionTS  string   `json:"action_ts"`
+	Label     string   `json:"label"`
+	ID        string   `json:"id,omitempty"`
+	Waits     bool     `json:"waits,omitempty"`
+	Other     bool     `json:"other,omitempty"`
+	Question  string   `json:"question,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	Via       string   `json:"via,omitempty"`
+	Permalink string   `json:"permalink"`
 }
 
 type askTap struct {
@@ -458,7 +460,7 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
-		Waits: k.Waits, Other: k.Other, Permalink: permalink,
+		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, Permalink: permalink,
 	}
 	if err := p.deliver(ctx, db, w, delivery{
 		base:   eventAction,
@@ -647,7 +649,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
-			Waits: k.Waits, Permalink: permalink,
+			Waits: k.Waits, Question: k.Question, Options: k.Options, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
@@ -869,7 +871,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	for _, watch := range watches {
 		msg := actionPayload{
 			WatchID: watch.ID, ChannelID: w.card.channel, ThreadTS: w.card.thread, TS: w.card.ts, ActionTS: w.actionTS, Label: w.tap.Label, ID: w.tap.ID,
-			Waits: true, Other: w.other, Via: w.via, Permalink: permalink,
+			Waits: true, Other: w.other, Question: w.tap.Question, Options: w.tap.Options, Via: w.via, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, watch, delivery{
 			base:   eventAction,
