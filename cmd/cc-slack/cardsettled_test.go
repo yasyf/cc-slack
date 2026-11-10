@@ -68,22 +68,23 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 	routes := map[string]struct {
 		settle func(*liveDaemon, postedCard)
 		want   string
+		undo   bool
 	}{
 		"tap": {func(l *liveDaemon, c postedCard) {
 			n++
 			l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
 				ActionID: cardWaitAction + "0:step-3:merge", Value: string(mustJSON(askTap{ID: "step-3:merge", Label: "Hold", Question: "Merge #41 now?"})),
 				ActionTS: fmt.Sprintf("%d.%06d", time.Now().Unix(), n), Seq: fmt.Sprintf("001800000100000-abce%04d", n)})
-		}, "✓ *Hold* · answered"},
+		}, "✓ *Hold* · answered", true},
 		"answered elsewhere": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "Hold", "via": board})
-		}, board + "|the board"},
+		}, board + "|the board", false},
 		"settled": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "Landed as 5480445", "other": true, "settled": true, "via": "https://github.com/acme/app/pull/41"})
-		}, "https://github.com/acme/app/pull/41|Landed as 5480445"},
+		}, "https://github.com/acme/app/pull/41|Landed as 5480445", false},
 		"withdrawn": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board})
-		}, "*Withdrawn:* superseded by step 4"},
+		}, "*Withdrawn:* superseded by step 4", false},
 	}
 	for name, route := range routes {
 		t.Run(name, func(t *testing.T) {
@@ -102,8 +103,12 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 			if err := json.Unmarshal([]byte(last), &drawn); err != nil {
 				t.Fatal(err)
 			}
-			if len(drawn) != 2 || !strings.Contains(last, "Merge #41 now?") || !strings.Contains(last, route.want) {
-				t.Fatalf("last edit %s, want the title and %q alone", last, route.want)
+			blocks := 2
+			if route.undo {
+				blocks++
+			}
+			if len(drawn) != blocks || !strings.Contains(last, "Merge #41 now?") || !strings.Contains(last, route.want) || strings.Contains(last, cardUndoAction) != route.undo {
+				t.Fatalf("last edit %s, want the title and %q alone, with Undo only after his own tap", last, route.want)
 			}
 			if strings.Contains(last, "CI is green.") || strings.Contains(last, cardWaitAction) {
 				t.Fatalf("last edit %s keeps the body or the buttons", last)
