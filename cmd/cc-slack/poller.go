@@ -558,6 +558,9 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		latest = m.Timestamp
+		if g.key.channelID == id.DMChannelID {
+			m = dashboardWords(id, m)
+		}
 		if g.root && isShortcutMessage(id, m) {
 			if err := p.shortcuts.fromDM(ctx, id, m); err != nil {
 				return c, err

@@ -1031,6 +1031,25 @@ func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func dmRelayCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f          sessionFlags
+		text, card string
+	)
+	c := &cobra.Command{
+		Use:   "dm-relay",
+		Short: "Post words typed on a drive dashboard in your DM, marked as yours, and route them as your DM",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opDMRelay, map[string]any{"text": text, "url": card})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&text, "text", "", "the words, as typed")
+	c.Flags().StringVar(&card, "under", "", "permalink of the DM message to reply under; empty starts a new message")
+	return c
+}
+
 func bindAgent(c *cobra.Command, name *string) {
 	c.Flags().StringVar(name, "agent", "", "agent writing the post, shown after your name as <display name> (<agent>): claude, codex, cursor (default agent)")
 }

@@ -69,6 +69,7 @@ type messagePayload struct {
 	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
 	Acked       string       `json:"acked,omitempty"`
 	Operator    bool         `json:"operator,omitempty"`
+	Dashboard   bool         `json:"dashboard,omitempty"`
 }
 
 type threadOwner struct {
@@ -124,7 +125,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	msg := messagePayload{
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
-		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m),
+		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m), Dashboard: typedOnDashboard(m),
 	}
 	switch {
 	case m.BotID != "" && w.Kind == kindChannel:
@@ -234,9 +235,12 @@ func (o threadOwner) line() string {
 }
 
 func messageLine(m messagePayload) string {
-	acked := ""
+	told := ""
+	if m.Dashboard {
+		told = " They typed it on the drive dashboard, and cc-slack posted it in the DM as the bot, marked as theirs."
+	}
 	if m.Acked != "" {
-		acked = fmt.Sprintf(" cc-slack already acked it in its thread (ts %s) while this session was compacting, so do not ack it again.", m.Acked)
+		told += fmt.Sprintf(" cc-slack already acked it in its thread (ts %s) while this session was compacting, so do not ack it again.", m.Acked)
 	}
 	if m.Kind == kindDM {
 		status := "slack_dm_status"
@@ -244,7 +248,7 @@ func messageLine(m messagePayload) string {
 			status += fmt.Sprintf(" and thread_ts %s, the thread this message is in", m.ThreadTS)
 		}
 		return fmt.Sprintf("Slack DM from %s, your operator, to this session (ts %s, %s): %q.%s "+
-			"Act on it as operator steering, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, acked, status)
+			"Act on it as operator steering, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, told, status)
 	}
 	if m.Operator {
 		owned := ""
@@ -253,7 +257,7 @@ func messageLine(m messagePayload) string {
 		}
 		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q.%s%s "+
 			"Act on it as operator steering; a Slack reply still needs the operator's approval.",
-			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned, acked)
+			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned, told)
 	}
 	who := m.UserName
 	if m.FromClaude {
