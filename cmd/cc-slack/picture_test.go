@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -127,6 +128,33 @@ func TestACardWithAPictureMakesNoPostButTheCard(t *testing.T) {
 		if !strings.Contains(card, `"image_url":"`+srv.URL+"/cc-slack-pictures/"+key+"?") || !strings.Contains(card, "X-Amz-Expires=604800") || strings.Contains(card, "slack_file") {
 			t.Fatalf("card blocks = %s, want the picture drawn from a 7-day signed link to %s and no Slack file", card, key)
 		}
+	}
+}
+
+func TestABodyPictureDrawsWhereItsLineSitsAndARedrawKeepsItsUpload(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	bucket := withBucket(t, l)
+	card := mergeCard()
+	card.Body = "CI is green.\n![The queue after the merge](" + writeFile(t, "queue.png", pngBytes) + ")\nAfter the picture."
+	c := mirroredCard(t, l, map[string]any{"card": card})
+
+	blocks := l.postedAt(t, c.ts).blocks
+	if urls := imageURLs(t, blocks); len(urls) != 1 || bucket.body(t, urls[0]) != pngBytes {
+		t.Fatalf("image urls %v, want the body's picture from the bucket", urls)
+	}
+	if at := strings.Index(blocks, `"image_url"`); strings.Index(blocks, "CI is green.") > at || strings.Index(blocks, "After the picture.") < at {
+		t.Fatalf("blocks %s, want the picture between the lines around it", blocks)
+	}
+
+	l.do(opDMStatus, map[string]any{"card": card, "mirrored": true})
+	if n := bucket.put(); n != 1 {
+		t.Fatalf("%d uploads after the same card came again, want the one", n)
+	}
+	edits := slices.DeleteFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts != c.ts })
+	if len(edits) == 0 || len(imageURLs(t, edits[len(edits)-1].blocks)) != 1 {
+		t.Fatalf("edits %+v, want the redrawn card to keep its picture", edits)
 	}
 }
 

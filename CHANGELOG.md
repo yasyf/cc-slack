@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A card's `body` line that holds only a markdown image, `![what it shows](/absolute/path.png)` or one drawn from an https url, shows that picture on the card where the line sits. The daemon uploads it to the `[pictures]` bucket as it does an artifact's picture, and a card redrawn in place keeps it without a second upload. `cc-slack card render` reads each such picture and refuses one it cannot read, one that is no PNG, JPEG, GIF or WebP image, one with no caption, and one named by a relative path. An image inside a sentence, a table cell or a code block stays text. Before, a body had no way to show a picture among its lines: on Nov 10 at 6:09 PM a question card about two dashboard layouts showed its screenshots as links only.
+
 ### Fixed
 
 - `card-copy` returns `posted: true` and the thread it posted in. Before, every copy it posted read `posted: false` with an empty `thread_ts`, so on Nov 10 at 4:46 PM and 4:51 PM a handler reported two copies of PR cards as failed when both were up. Both were also second copies, since the post with `tap_prs` had put the card's copy in that thread seconds earlier. `card-copy` into a thread that already holds the card's copy now posts nothing and fails naming that copy and saying which posts draw one themselves.

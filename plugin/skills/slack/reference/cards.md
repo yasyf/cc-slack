@@ -32,6 +32,8 @@ a short conversational answer to the user's DM reply. The CLI takes
 
 A card's `body` takes markdown or Slack mrkdwn up to 40,000 characters and renders in Block Kit: bold, links, lists, one table block per message, sections split under Slack's 3,000 limit. A status card shows its first 400 characters and a waiting card its first 1,500, ending on a whole sentence. The rest stays behind Explain more, which posts it in the card's thread; nothing is cut.
 
+A `body` line holding only a markdown image, `![what it shows](/absolute/path.png)`, draws that picture as an image block where the line sits, from the `[pictures]` bucket. The source is an absolute path or an https url, wrapped in `<>` when the path has spaces, and the file is a PNG, JPEG, GIF, or WebP; a caption is required. An image inside a sentence or a table cell stays text, and `cc-slack card render` refuses a picture it cannot read.
+
 A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. A drive's question card, a `waits` card that sets `drive`, always posts at the DM root, where the user expects an answer to be asked: with `thread_ts` it posts there and puts one copy of itself, buttons included, in that thread. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script
 that keeps a drive's rollup current: the first call posts it, and each later

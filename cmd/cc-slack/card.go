@@ -310,6 +310,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkSupersedes(),
 		c.checkPermissionWords(),
 		c.checkOptionRefs(),
+		c.checkPictureLines(tailnet),
 	)
 }
 
@@ -435,7 +436,7 @@ func (p cardPR) fields(v cardView) []cardFact {
 }
 
 func (p cardPR) pictured(image cardImage) bool {
-	return slices.ContainsFunc(p.Pictures, func(path string) bool { return filepath.Base(path) == image.Title })
+	return image.Source == "" && slices.ContainsFunc(p.Pictures, func(path string) bool { return filepath.Base(path) == image.Title })
 }
 
 func (p cardPR) images(all []cardImage) []cardImage {
@@ -444,8 +445,30 @@ func (p cardPR) images(all []cardImage) []cardImage {
 
 func (c statusCard) unplacedImages() []cardImage {
 	return slices.DeleteFunc(slices.Clone(c.Images), func(image cardImage) bool {
-		return slices.ContainsFunc(c.PRs, func(p cardPR) bool { return p.pictured(image) })
+		return image.Source != "" || slices.ContainsFunc(c.PRs, func(p cardPR) bool { return p.pictured(image) })
 	})
+}
+
+func (c statusCard) pictureLines() []cardImage {
+	var lines []cardImage
+	for _, piece := range bodyPieces(withoutHidden(c.Body)) {
+		if piece.picture != nil {
+			lines = append(lines, *piece.picture)
+		}
+	}
+	return lines
+}
+
+func (c statusCard) checkPictureLines(tailnet string) error {
+	for _, line := range c.pictureLines() {
+		switch {
+		case line.Title == "":
+			return fmt.Errorf("the card's picture %s needs a caption saying what it shows: ![what it shows](%s)", line.Source, line.Source)
+		case !filepath.IsAbs(line.Source) && !checkURL(line.Source, tailnet):
+			return fmt.Errorf("the card's picture %q is drawn from an absolute path, an https url, or an http url on the [links] tailnet", line.Source)
+		}
+	}
+	return nil
 }
 
 func (c statusCard) checkReplaces() error {
@@ -1383,7 +1406,7 @@ func (p cardPR) folded() [][]slack.Block {
 		return nil
 	}
 	id, _ := parseRef(p.URL)
-	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, its description", id.Repo, id.Number)), description), cardMaxPageBlock, cardMaxVisible, true)
+	return bodyPages(fmt.Sprintf("*%s*\n\n%s", slackLink(p.URL, fmt.Sprintf("%s PR %d, its description", id.Repo, id.Number)), description), cardMaxPageBlock, cardMaxVisible, true, nil)
 }
 
 func plainMrkdwn(text string) string {
@@ -1497,7 +1520,13 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		visible -= runes(p.markdown(v))
 	}
 	if c.Body != "" {
-		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(prs)-len(tail)-1, max(visible, 0), true)
+		pictures := map[string]slack.Block{}
+		for _, image := range c.Images {
+			if image.Source != "" {
+				pictures[image.Source] = image.block(v.pictures)
+			}
+		}
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(prs)-len(tail)-1, max(visible, 0), true, pictures)
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}
@@ -1563,7 +1592,7 @@ func (c statusCard) rootBlocks(v cardView) []slack.Block {
 		if c.Body != "" {
 			latest += "\n" + c.Body
 		}
-		blocks = append(blocks, bodyPages(latest, cardMaxBlocks, cardMaxBodyLen, false)[0]...)
+		blocks = append(blocks, bodyPages(latest, cardMaxBlocks, cardMaxBodyLen, false, nil)[0]...)
 	}
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)

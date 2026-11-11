@@ -105,6 +105,35 @@ func TestRenderKeepsEveryWordOfALongOptionAcrossSections(t *testing.T) {
 	}
 }
 
+func TestRenderDrawsABodyPictureWhereItsLineSits(t *testing.T) {
+	shot := writeFile(t, "queue.png", pngBytes)
+	card := statusCard{Title: "Two queues", Body: "Two layouts.\n*Show me*\n![The queue in layout A](" + shot + ")\nAfter the picture."}
+	got, err := renderCardFile(t, string(mustJSON(card)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := renderedBlocks(got.Blocks)
+	at := strings.Index(blocks, shot)
+	if at < 0 || strings.Index(blocks, "*Show me*") > at || strings.Index(blocks, "After the picture.") < at || !strings.Contains(blocks, "The queue in layout A") {
+		t.Fatalf("blocks %s, want the picture drawn from %s under its Show me line, captioned", blocks, shot)
+	}
+}
+
+func TestRenderRefusesABodyPictureItCannotDraw(t *testing.T) {
+	words := writeFile(t, "notes.png", "plain words")
+	for line, want := range map[string]string{
+		"![The queue](shots/queue.png)":                                "absolute path",
+		"![](" + writeFile(t, "a.png", pngBytes) + ")":                 "needs a caption",
+		"![The queue](" + filepath.Join(t.TempDir(), "gone.png") + ")": "read the card's picture",
+		"![The notes](" + words + ")":                                  "no PNG, JPEG, GIF, or WebP image",
+	} {
+		card := statusCard{Title: "Two queues", Body: "Two layouts.\n" + line}
+		if _, err := renderCardFile(t, string(mustJSON(card))); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", line, err, want)
+		}
+	}
+}
+
 func TestRenderRefusesWhatPostingRefuses(t *testing.T) {
 	card := `{"title":"Which?","waits":"pick","options":["A","B"]}`
 	if _, err := renderCardFile(t, card); err == nil || !strings.Contains(err.Error(), "recommends one of its options") {

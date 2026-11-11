@@ -39,7 +39,12 @@ func cardRenderCmd() *cobra.Command {
 blocks of the card itself, under fold the pages Explain more posts, and under
 entities the Work Objects its artifacts post. It refuses what dm-status refuses
 for that card. It reaches neither Slack nor the daemon, so PR and link previews
-and an artifact's uploaded picture, which need them, stay out of the output.`,
+and an artifact's uploaded picture, which need them, stay out of the output.
+
+A body line holding only ![caption](<absolute path or url>) draws that picture
+where the line sits. Render reads each one and refuses a picture it cannot read
+or that is no PNG, JPEG, GIF or WebP image; its image block names the path or
+url as written, where dm-status draws it from the [pictures] bucket.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			dir := cwdOr(f.cwd)
@@ -89,6 +94,11 @@ func renderCard(ctx context.Context, raw []byte, session, dir string, mirrored b
 	if err := check(now, false, cfg.Links.Tailnet); err != nil {
 		return renderedCard{}, err
 	}
+	lines := card.pictureLines()
+	if _, err := loadPictures(ctx, lines); err != nil {
+		return renderedCard{}, err
+	}
+	card.Images = append(card.Images, lines...)
 	blocks, fold := card.layout(cardView{tag: gitCardTag(ctx, session, dir), at: now, now: now})
 	return renderedCard{Text: card.text(), Blocks: blocks, Fold: fold, Entities: card.workObjects()}, nil
 }

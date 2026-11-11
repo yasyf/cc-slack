@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -36,6 +37,7 @@ var (
 	mdBullet        = regexp.MustCompile(`(?m)^([ \t]*)[-*] +`)
 	mdEndsOnHeading = regexp.MustCompile(`(?:^|\n)(?:#{1,6} +[^\n]*|\*{1,2}[^*\n]+\*{1,2})\s*$`)
 	mdRule          = regexp.MustCompile(`^\|?[\s:|-]*-[\s:|-]*\|?$`)
+	mdPicture       = regexp.MustCompile(`^!\[([^\]\n]*)\]\(\s*(?:<([^<>\n]+)>|([^\s()<>]+))\s*\)$`)
 	mdMarks         = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\|`)
 	cellToken       = regexp.MustCompile("<(https?://[^|>\\s]+)\\|([^>]+)>|\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|\\*\\*?([^*\\n]+)\\*\\*?|`([^`\\n]+)`")
 	htmlComment     = regexp.MustCompile(`(?s)[ \t]*<!--.*?-->`)
@@ -44,8 +46,9 @@ var (
 )
 
 type bodyPiece struct {
-	text  string
-	table [][]string
+	text    string
+	table   [][]string
+	picture *cardImage
 }
 
 func bodyPieces(body string) []bodyPiece {
@@ -86,6 +89,11 @@ func bodyPieces(body string) []bodyPiece {
 		case trimmed == "":
 			flushPara()
 			flushTable()
+		case mdPicture.MatchString(trimmed):
+			flushPara()
+			flushTable()
+			m := mdPicture.FindStringSubmatch(trimmed)
+			pieces = append(pieces, bodyPiece{picture: &cardImage{Title: strings.TrimSpace(m[1]), Source: cmp.Or(m[2], m[3])}})
 		case mdHeading.MatchString(trimmed):
 			flushPara()
 			flushTable()
@@ -268,7 +276,7 @@ type bodyPage struct {
 	table  bool
 }
 
-func bodyPages(body string, firstBlocks, firstChars int, firstTable bool) [][]slack.Block {
+func bodyPages(body string, firstBlocks, firstChars int, firstTable bool, pictures map[string]slack.Block) [][]slack.Block {
 	page := &bodyPage{table: !firstTable}
 	var pages [][]slack.Block
 	maxBlocks, maxChars := firstBlocks, firstChars
@@ -279,9 +287,15 @@ func bodyPages(body string, firstBlocks, firstChars int, firstTable bool) [][]sl
 		page = &bodyPage{}
 		maxBlocks, maxChars = cardMaxPageBlock, cardMaxVisible
 	}
+	put := func(block slack.Block, chars, limit int) {
+		if len(page.blocks) >= maxBlocks || page.chars+chars > limit {
+			turn()
+		}
+		page.blocks = append(page.blocks, block)
+		page.chars += chars
+	}
 	place := func(part string) {
-		page.blocks = append(page.blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
-		page.chars += runes(part)
+		put(slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil), runes(part), maxChars)
 	}
 	add := func(text string) {
 		for _, part := range splitSection(text, cardMaxSectionLen) {
@@ -291,23 +305,22 @@ func bodyPages(body string, firstBlocks, firstChars int, firstTable bool) [][]sl
 				place(strings.TrimRight(head, " \n"))
 				part = strings.TrimLeft(strings.TrimPrefix(part, head), " \n")
 			}
-			if len(page.blocks) >= maxBlocks || page.chars+runes(part) > maxChars {
-				turn()
-			}
 			place(part)
 		}
 	}
 	for _, piece := range bodyPieces(body) {
 		switch {
+		case piece.picture != nil:
+			block, drawn := pictures[piece.picture.Source]
+			if !drawn {
+				add(pictureCaption(*piece.picture))
+				continue
+			}
+			put(block, runes(piece.picture.Title), maxChars)
 		case piece.table == nil:
 			add(piece.text)
 		case len(piece.table) <= cardMaxTableRows && !tableTooWide(piece.table) && !page.table:
-			size := tableChars(piece.table)
-			if len(page.blocks) >= maxBlocks || page.chars+size > max(maxChars, cardMaxVisible) {
-				turn()
-			}
-			page.blocks = append(page.blocks, tableBlock(piece.table))
-			page.chars += size
+			put(tableBlock(piece.table), tableChars(piece.table), max(maxChars, cardMaxVisible))
 			page.table = true
 		case len(piece.table) > 1:
 			add(tableLines(piece.table))
@@ -316,6 +329,14 @@ func bodyPages(body string, firstBlocks, firstChars int, firstTable bool) [][]sl
 		}
 	}
 	return append(pages, page.blocks)
+}
+
+func pictureCaption(picture cardImage) string {
+	caption := cmp.Or(picture.Title, picture.Source)
+	if !strings.HasPrefix(picture.Source, "https://") && !strings.HasPrefix(picture.Source, "http://") {
+		return caption
+	}
+	return slackLink(picture.Source, caption)
 }
 
 func tableChars(rows [][]string) int {

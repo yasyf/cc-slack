@@ -2297,7 +2297,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
 			return msg, nil
 		}
-		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true)
+		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true, nil)
 		msg.text, msg.blocks = clipRunes(mrkdwnText(msg.text), cardMaxSectionLen), pages[0]
 		return msg, pages[1:]
 	}
@@ -2379,22 +2379,23 @@ func (a *app) uploadCardPictures(ctx context.Context, id identity, b opBody) err
 		return errors.New("an artifact's image is a PNG, JPEG, GIF, or WebP")
 	}
 	pictures := slices.Concat(b.Files, drawn)
-	if len(pictures) == 0 {
-		return nil
+	lines, err := loadPictures(ctx, b.Card.pictureLines())
+	if err != nil || len(pictures)+len(lines) == 0 {
+		return err
 	}
-	if b.Card.ImagesHash, err = hashFiles(pictures); err != nil {
+	if b.Card.ImagesHash, err = hashFiles(pictures, lines...); err != nil {
 		return err
 	}
 	if shown := a.cards.shownImages(id.DMChannelID, *b.Card); shown != nil {
 		b.Card.Images = shown
 		return nil
 	}
-	b.Card.Images, err = uploadPictures(ctx, id, pictures)
+	b.Card.Images, err = uploadPictures(ctx, id, pictures, lines...)
 	return err
 }
 
-func hashFiles(paths []string) (string, error) {
-	if len(paths) == 0 {
+func hashFiles(paths []string, lines ...loadedPicture) (string, error) {
+	if len(paths)+len(lines) == 0 {
 		return "", nil
 	}
 	sum := sha256.New()
@@ -2405,6 +2406,12 @@ func hashFiles(paths []string) (string, error) {
 		}
 		file := sha256.Sum256(body)
 		sum.Write(file[:])
+	}
+	for _, line := range lines {
+		for _, part := range [][]byte{line.body, []byte(line.Title), []byte(line.Source)} {
+			digest := sha256.Sum256(part)
+			sum.Write(digest[:])
+		}
 	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
