@@ -23,6 +23,7 @@ const (
 	slackMaxHeader   = 150
 	slackMaxSection  = 3000
 	slackMaxField    = 2000
+	slackMaxTable    = 20000
 	slackMaxFields   = 10
 	slackMaxActions  = 25
 	slackMaxButton   = 75
@@ -336,11 +337,10 @@ func sectionCut(text []rune, limit int) string {
 type bodyPage struct {
 	blocks []slack.Block
 	chars  int
-	table  bool
 }
 
 func bodyPages(body string, firstBlocks, firstChars int, firstTable bool, pictures map[string]slack.Block) [][]slack.Block {
-	page := &bodyPage{table: !firstTable}
+	page := &bodyPage{}
 	var pages [][]slack.Block
 	maxBlocks, maxChars := firstBlocks, firstChars
 	turn := func() {
@@ -382,9 +382,8 @@ func bodyPages(body string, firstBlocks, firstChars int, firstTable bool, pictur
 			put(block, runes(piece.picture.Title), maxChars)
 		case piece.table == nil:
 			add(piece.text)
-		case len(piece.table) <= cardMaxTableRows && !tableTooWide(piece.table) && !page.table:
+		case (firstTable || len(pages) > 0) && dataTableFits(piece.table):
 			put(tableBlock(piece.table), tableChars(piece.table), max(maxChars, cardMaxVisible))
-			page.table = true
 		case len(piece.table) > 1:
 			add(tableLines(piece.table))
 		default:
@@ -412,8 +411,9 @@ func tableChars(rows [][]string) int {
 	return total
 }
 
-func tableTooWide(rows [][]string) bool {
-	return slices.ContainsFunc(rows, func(row []string) bool { return len(row) > cardMaxTableCols })
+func dataTableFits(rows [][]string) bool {
+	return len(rows) > 1 && len(rows) <= cardMaxTableRows && tableChars(rows) <= slackMaxTable &&
+		!slices.ContainsFunc(rows, func(row []string) bool { return len(row) > cardMaxTableCols })
 }
 
 func prDescription(body string) string {
@@ -437,7 +437,6 @@ func checkBlocks(blocks []slack.Block) error {
 		return blockLimitError{cardMaxBlocks, "message", fmt.Sprintf("the message holds %d blocks, past Slack's %d", len(blocks), cardMaxBlocks)}
 	}
 	ids := map[string]bool{}
-	tables := 0
 	for i, b := range blocks {
 		refuse := func(format string, args ...any) error {
 			return blockLimitError{i, string(b.BlockType()), fmt.Sprintf(format, args...)}
@@ -447,12 +446,6 @@ func checkBlocks(blocks []slack.Block) error {
 				return refuse("block_id %q repeats or runs past %d characters", id, slackMaxID)
 			}
 			ids[id] = true
-		}
-		if _, table := b.(*slack.DataTableBlock); table {
-			tables++
-		}
-		if tables > 1 {
-			return refuse("a message holds one table")
 		}
 		if err := checkBlock(b, refuse); err != nil {
 			return err
