@@ -171,7 +171,8 @@ func TestTheHolderGetsACardThreadBackWhenItsSessionEnds(t *testing.T) {
 
 func cardForDrive(f *fixture, thread, drive string) {
 	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
-		Waiting: map[string]*liveMessage{"card-" + thread: {TS: thread, Card: statusCard{Title: "Ship it?", Waits: "card-" + thread, Drive: drive}}}}
+		Waiting: map[string]*liveMessage{"card-" + thread: {TS: thread, Card: statusCard{Title: "Ship it?", Waits: "card-" + thread, Drive: drive}}},
+		Answers: map[string]askAnswer{"card-" + thread: {Label: "Ship it"}}}
 }
 
 func TestTheDMHolderTakesOverRepliesUnderItsDrivesOtherSessions(t *testing.T) {

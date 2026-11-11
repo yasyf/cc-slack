@@ -116,6 +116,15 @@ question and a text box, and what they type there answers the card. A copy of
 the card posted before `card-copy` was removed carries Other too, and an answer
 written from it answers the card.
 
+On a drive's question card that still waits, the user's reply in the card's
+own thread answers it, as the card's buttons would. A reply that is an
+option's words, in any case, is that option's tap; any other words are the
+written-in answer, shown on the card with an Undo button for 10 minutes, as
+after a tap. Either way the session gets the `slack.action` a tap sends, never the
+reply as a message, and the drive's card command records the answer once. A
+reply carrying a file, and any reply once the card is answered, reaches the
+session as a message.
+
 A card that reuses the `waits` id of a card still waiting edits that one card
 in place and posts nothing. When its words change, each older copy of it loses
 its buttons and reads one line, Redrawn in place, linking the card, so only the
