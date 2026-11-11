@@ -113,8 +113,9 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 }
 
 type hookInput struct {
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
+	SessionID      string `json:"session_id"`
+	Cwd            string `json:"cwd"`
+	TranscriptPath string `json:"transcript_path"`
 }
 
 func readHookInput(c *cobra.Command) (hookInput, error) {

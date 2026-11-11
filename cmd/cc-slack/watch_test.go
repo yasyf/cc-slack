@@ -139,6 +139,7 @@ func TestWatchUntilProvenExitsOnChannelAck(t *testing.T) {
 func TestChannelEventAdmitsOnlyWhatTheSessionActsOn(t *testing.T) {
 	for typ, want := range map[string]bool{
 		eventMessage:                          true,
+		eventAcked:                            true,
 		eventAction:                           true,
 		eventWatchError:                       true,
 		agent.EventRelay:                      true,
