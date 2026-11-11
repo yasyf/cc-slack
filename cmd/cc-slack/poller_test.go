@@ -554,9 +554,9 @@ func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 	}
 }
 
-func watchChannel(t *testing.T, f *fixture, oldest string) int64 {
+func watchChannel(t *testing.T, f *fixture) int64 {
 	t.Helper()
-	id, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, testChannel, "", oldest, f.now)
+	id, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, testChannel, "", testThread, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func TestPollerDeliversEachThreadReplyToAChannelWatch(t *testing.T) {
 	f := newFixture(t)
 	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: testThread, User: "UOTHER", Text: "Datadog alert"}})
 	f.slack.add(testChannel, reply("1800000000.000200", "before the watch"))
-	watchChannel(t, f, testThread)
+	watchChannel(t, f)
 	f.tick()
 	calls := f.slack.callCount(methodReplies)
 
@@ -608,7 +608,7 @@ func TestPollerDeliversEachThreadReplyToAChannelWatch(t *testing.T) {
 
 func TestPollerKeepsAChannelWatchWhenOneOfItsThreadsVanishes(t *testing.T) {
 	f := newFixture(t)
-	id := watchChannel(t, f, testThread)
+	id := watchChannel(t, f)
 	f.tick()
 	f.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "thread_not_found"})
 
@@ -628,7 +628,7 @@ func TestPollerKeepsAChannelWatchWhenOneOfItsThreadsVanishes(t *testing.T) {
 func TestPollerSendsAReplyOnceToASessionWatchingItsThreadAndChannel(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
-	watchChannel(t, f, testThread)
+	watchChannel(t, f)
 	f.tick()
 
 	f.slack.add(testChannel, reply("1800000000.000300", "looks good"))
@@ -1253,7 +1253,7 @@ func deliveredTo(t *testing.T, f *fixture) map[string][]messagePayload {
 func TestPollerSendsTheOperatorsChannelWordsOnlyToTheSessionHoldingTheDM(t *testing.T) {
 	f := newFixture(t)
 	holder, held := dmHeldElsewhere(t, f)
-	watchChannel(t, f, testThread)
+	watchChannel(t, f)
 	f.tick()
 
 	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", User: testUser, Text: "ship the fix"}})
@@ -1277,7 +1277,7 @@ func TestPollerSendsTheOperatorsReplyToTheSessionWatchingItsThread(t *testing.T)
 	f := newFixture(t)
 	holder, _ := dmHeldElsewhere(t, f)
 	f.watch(agent.TopLevel, testThread)
-	watchChannel(t, f, testThread)
+	watchChannel(t, f)
 	f.tick()
 
 	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", ThreadTimestamp: testThread, User: testUser, Text: "ship the fix"}})
