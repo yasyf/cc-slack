@@ -536,6 +536,35 @@ func TestATapOnACopyPostedBeforeCardsUnfurledAnswersTheCardAndEveryCopyShowsTheA
 	}
 }
 
+func TestACopyOfAWaitingCardCarriesOtherAndAnAnswerWrittenThereAnswersTheCard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	thread := postThread(t, l, "About the merge.")
+	legacyCopy(t, l, c.url(), thread)
+	copied := lastPost(l)
+	buttons := copiedButtonsOf(t, copied)
+	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool { return b.ActionID == cardOtherAction+"step-3:merge" })
+	if at < 0 || buttons[at].Text.Text != cardOtherLabel {
+		t.Fatalf("copy buttons = %+v, want the card's own Other, whose tap opens the modal", buttons)
+	}
+	var written askTap
+	if err := json.Unmarshal([]byte(buttons[at].Value), &written); err != nil {
+		t.Fatal(err)
+	}
+	written.Label = "Merge after the 5pm freeze"
+
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: copied.ts, ThreadTS: thread,
+		ActionID: cardWroteAction + "step-3:merge", Value: string(mustJSON(written)), ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0701"})
+
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Other:* Merge after the 5pm freeze") {
+		t.Fatalf("card edits %v, want the answer written on the copy shown on the card", edits)
+	}
+	if edits := editsOf(l.slack.edited(), copied.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], cardOtherAction) || !strings.Contains(edits[len(edits)-1], "Merge after the 5pm freeze") {
+		t.Fatalf("copy edits %v, want the written answer in place of the copy's buttons", edits)
+	}
+}
+
 func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	long := strings.Repeat("A paragraph long enough that the old copy would clip it. ", 12)
 	l, id, card, thread := copyDaemon(t, map[string]any{"card": statusCard{Status: "needs_you", Title: "Merge the stack?", Body: long + "\n\nThe last paragraph.", Options: []string{"merge it", "hold it"}}})

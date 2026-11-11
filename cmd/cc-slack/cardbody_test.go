@@ -829,8 +829,8 @@ func TestAPRCardOpensEachPROnGitHubAndItsCopyKeepsTheButton(t *testing.T) {
 	if got := opens(blocks); !maps.Equal(got, map[string]string{card.PRs[0].URL: cardOpenLabel}) {
 		t.Fatalf("a waiting PR card opens %v", got)
 	}
-	if _, answers := copiedCard(blocks, permalinkRef{channelID: "D1", ts: "1.2"}); answers != 2 {
-		t.Fatalf("its copy answers %d, want Approve and Hold", answers)
+	if _, answers := copiedCard(blocks, permalinkRef{channelID: "D1", ts: "1.2"}); answers != 3 {
+		t.Fatalf("its copy answers %d, want Approve, Hold and Other", answers)
 	}
 	info := statusCard{Status: "info", Title: "Two PRs", PRs: []cardPR{fullPR(7), fullPR(8)}}
 	want := map[string]string{fullPR(7).URL: cardOpenLabel, fullPR(8).URL: cardOpenLabel}

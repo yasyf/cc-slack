@@ -468,6 +468,23 @@ func TestARedrawWithdrawsTheCardsCopies(t *testing.T) {
 	}
 }
 
+func TestACardDrawnAgainWithItsWordsRedrawsItsCopiesFromIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	copied := legacyCopy(t, l, c.url(), postThread(t, l, "About the merge."))
+	posts := len(l.slack.sent())
+
+	postWaiting(t, l, mergeCard())
+
+	if len(l.slack.sent()) != posts {
+		t.Fatalf("drawing the card again posted %d messages, want none", len(l.slack.sent())-posts)
+	}
+	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !strings.Contains(edits[0], cardOtherAction+"step-3:merge") || !strings.Contains(edits[0], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want the copy redrawn once from the card, with its answers and Other", edits)
+	}
+}
+
 func TestATextEditOfACardIsRefusedForARedraw(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
