@@ -40,17 +40,20 @@ type cardActionPush struct {
 	Value     string `json:"value"`
 	ActionTS  string `json:"action_ts"`
 	Seq       string `json:"seq"`
-	Typed     string `json:"-"`
+	Typed     bool   `json:"-"`
 }
 
-// cardPress says how his answer reached a card: the Slack action or message it came from, and whether he pressed the button, typed its number in the thread, wrote his answer in the thread, or answered another card it copies.
+// cardPress says how his answer reached a card: the Slack action or message it came from, and whether he pressed the button, typed its number in the thread, wrote in the card's thread, or answered another card it copies.
 type cardPress struct {
 	ActionTS string
 	Source   string
 }
 
 func (a cardActionPush) press() cardPress {
-	return cardPress{a.ActionTS, cmp.Or(a.Typed, "pressed the button")}
+	if a.Typed {
+		return cardPress{a.ActionTS, "typed its number in the thread"}
+	}
+	return cardPress{a.ActionTS, "pressed the button"}
 }
 
 type actionPayload struct {
@@ -711,26 +714,13 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	return nil
 }
 
-func (p *poller) typedAnswer(id identity, m slack.Message) (cardActionPush, bool) {
-	text := strings.TrimSpace(m.Text)
-	if !id.fromOperator(m) || m.SubType != "" || text == "" || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
+func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool) {
+	if !id.fromOperator(m) || m.SubType != "" || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
 		return cardActionPush{}, false
 	}
-	if ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, text); ok {
-		return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
-			ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp, Typed: "typed its number in the thread"}, true
-	}
-	card, asked, ok := p.cards.waitingDriveCard(id.DMChannelID, m.ThreadTimestamp)
-	if !ok || len(m.Files) > 0 {
-		return cardActionPush{}, false
-	}
-	written := cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: card.ts, ThreadTS: card.thread, ActionTS: m.Timestamp, Typed: "wrote in the card's thread",
-		ActionID: cardWroteAction + asked.Waits, Value: string(mustJSON(askTap{ID: asked.Waits, Label: text, Question: asked.Title, Options: asked.answers()}))}
-	if n := slices.IndexFunc(asked.answers(), func(o string) bool { return strings.EqualFold(withoutHidden(o), text) }); n >= 0 {
-		pick := asked.picks()[n]
-		written.ActionID, written.Value = pick.actionID, pick.value
-	}
-	return written, true
+	ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, strings.TrimSpace(m.Text))
+	return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
+		ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp, Typed: true}, ok
 }
 
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
@@ -1039,14 +1029,53 @@ func (p *poller) undoTap(ctx context.Context, id identity, a cardActionPush, k a
 	}
 	var errs []error
 	for _, u := range p.cards.undo(a.Channel, ans.Tap) {
-		if err := p.reopen(ctx, id, db, a, u); err != nil {
+		if err := p.reopen(ctx, id, db, a.press(), u, "Slack tap", fmt.Sprintf("they undid their answer %q", u.answer.Label)); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActionPush, u undoneAnswer) error {
+func (p *poller) reopenReply(ctx context.Context, id identity, card, reply string) error {
+	cardLink, err := parsePermalink(card)
+	if err != nil {
+		return err
+	}
+	replyLink, err := parsePermalink(reply)
+	if err != nil {
+		return err
+	}
+	ref, ok := p.cards.cardAt(cardLink.channelID, cardLink.ts)
+	if !ok || ref.channel != id.DMChannelID {
+		return fmt.Errorf("no card at %s in your DM", card)
+	}
+	msgs, err := fetchReplies(ctx, p.newAPI(id.Token), ref.channel, ref.thread, justBefore(replyLink.ts))
+	if err != nil {
+		return err
+	}
+	at := slices.IndexFunc(msgs, func(m slack.Message) bool {
+		return replyLink.channelID == ref.channel && m.Timestamp == replyLink.ts && m.Timestamp != ref.thread && id.fromOperator(m)
+	})
+	if at < 0 {
+		return fmt.Errorf("%s is no reply of %s's in the thread of card %s", reply, id.name(), card)
+	}
+	words := strings.TrimSpace(msgs[at].Text)
+	undone := p.cards.undoReply(ref, words)
+	if len(undone) == 0 {
+		return fmt.Errorf("card %s is not answered with the words of %s, %q", card, reply, words)
+	}
+	db := p.plane.DB()
+	var errs []error
+	for _, u := range undone {
+		if err := p.reopen(ctx, id, db, cardPress{replyLink.ts, "wrote in the card's thread"}, u, "reply in the card's thread",
+			fmt.Sprintf("their reply %q was taken as their answer", words)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press cardPress, u undoneAnswer, how, why string) error {
 	api := p.newAPI(id.Token)
 	if _, err := p.cards.redraw(ctx, api, u.card.channel, u.card.thread, u.card.ts, p.now()); err != nil {
 		p.log.Printf("card %s: its answer %q is undone, but the card still shows it: %v", u.card.ts, u.answer.Label, err)
@@ -1063,18 +1092,18 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActi
 	if err != nil {
 		return err
 	}
-	who := cardSource(id, "Slack tap", slackTime(u.card.ts).In(pacific).Format(cardTimeLayout), permalink)
-	line := fmt.Sprintf("%s: they undid their answer %q to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
-		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, u.answer.Label, u.waits)
+	who := cardSource(id, how, slackTime(u.card.ts).In(pacific).Format(cardTimeLayout), permalink)
+	line := fmt.Sprintf("%s: %s to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
+		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, why, u.waits)
 	for _, w := range watches {
 		msg := actionPayload{
-			WatchID: w.ID, ChannelID: u.card.channel, ThreadTS: u.card.thread, TS: u.card.ts, ActionTS: a.ActionTS, Label: u.answer.Label, ID: u.waits,
+			WatchID: w.ID, ChannelID: u.card.channel, ThreadTS: u.card.thread, TS: u.card.ts, ActionTS: press.ActionTS, Label: u.answer.Label, ID: u.waits,
 			Waits: true, Other: u.answer.Other, Question: u.question, Undo: true, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
 			origin: event.OriginHuman,
-			dedup:  fmt.Sprintf("slack-undo:%s:%s:%s", u.card.channel, u.card.ts, a.ActionTS),
+			dedup:  fmt.Sprintf("slack-undo:%s:%s:%s", u.card.channel, u.card.ts, press.ActionTS),
 			line:   line,
 			payload: func(typ string) []byte {
 				msg.Type = typ
@@ -1084,7 +1113,7 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActi
 			return fmt.Errorf("waiting ask %s is open again, but telling watch %d its answer %q was undone failed: %w", u.waits, w.ID, u.answer.Label, err)
 		}
 	}
-	p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, a.press())
+	p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, press)
 	return nil
 }
 

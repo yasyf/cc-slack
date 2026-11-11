@@ -117,14 +117,16 @@ question and a text box, and what they type there answers the card. A copy of
 the card posted before `card-copy` was removed carries Other too, and an answer
 written from it answers the card.
 
-On a drive's question card that still waits, the user's reply in the card's
-own thread answers it, as the card's buttons would. A reply that is an
-option's words, in any case, is that option's tap; any other words are the
-written-in answer, shown on the card with an Undo button for 10 minutes, as
-after a tap. Either way the session gets the `slack.action` a tap sends, never the
-reply as a message, and the drive's card command records the answer once. A
-reply carrying a file, and any reply once the card is answered, reaches the
-session as a message.
+Any other reply the user writes in a card's thread, a waiting question card
+included, is their message: the daemon puts eyes and the working line on it
+and delivers it as a `slack.message` whose `thread_card` names the card's
+`waits` id, and the card keeps its buttons. Only their tap or your
+`slack_card_answer` answers the card. When their words pick an option or
+answer the question, call `slack_card_answer` with them; when they ask
+something, answer it in that thread and leave the card waiting. A card
+closed on their words that answered nothing waits again after
+`cc-slack card-reopen --card <its permalink> --reply <their reply's permalink>`,
+which refuses unless the card shows that reply's words as its answer.
 
 A card that reuses the `waits` id of a card still waiting, with the same
 words, edits that one card in place and posts nothing, and each copy that

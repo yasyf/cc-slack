@@ -603,7 +603,7 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		if g.key.channelID == id.DMChannelID {
-			tapped, err := p.dmMessage(ctx, id, m)
+			tapped, err := p.dmMessage(ctx, api, id, m)
 			if err != nil {
 				return c, err
 			}
@@ -730,8 +730,9 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 	return nil
 }
 
-func (p *poller) dmMessage(ctx context.Context, id identity, m slack.Message) (bool, error) {
-	if tap, ok := p.typedAnswer(id, m); ok {
+func (p *poller) dmMessage(ctx context.Context, api slackAPI, id identity, m slack.Message) (bool, error) {
+	if tap, ok := p.numberedTap(id, m); ok {
+		p.eyes(ctx, api, id, m)
 		return true, p.cardAction(ctx, id, tap)
 	}
 	return false, p.trackOwed(ctx, id, m)
@@ -761,16 +762,20 @@ func (p *poller) newToAny(ctx context.Context, db *sql.DB, watches []watch, m sl
 }
 
 func (p *poller) pickUp(ctx context.Context, api slackAPI, id identity, m slack.Message) {
+	p.eyes(ctx, api, id, m)
+	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
+	if line := setWorkingLine(ctx, api, id, id.DMChannelID, thread, workingStatus, arrivalLoading); line != "" {
+		p.log.Printf("pick up %s: working line under thread %s: %s", m.Timestamp, thread, line)
+	}
+}
+
+func (p *poller) eyes(ctx context.Context, api slackAPI, id identity, m slack.Message) {
 	switch err := api.AddReactionContext(ctx, pickupReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: m.Timestamp}); {
 	case err == nil:
 		sec, micro := splitTS(m.Timestamp)
 		p.log.Printf("pick up %s: eyes on %.1fs after it was sent", m.Timestamp, p.now().Sub(time.Unix(sec, micro*1000)).Seconds())
 	case errorCode(err) != "already_reacted":
 		p.log.Printf("pick up %s: eyes: %v", m.Timestamp, err)
-	}
-	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
-	if line := setWorkingLine(ctx, api, id, id.DMChannelID, thread, workingStatus, arrivalLoading); line != "" {
-		p.log.Printf("pick up %s: working line under thread %s: %s", m.Timestamp, thread, line)
 	}
 }
 

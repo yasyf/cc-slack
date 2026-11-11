@@ -57,6 +57,7 @@ const (
 	opThreadSeen    daemon.Op = "thread-seen"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
+	opCardReopen    daemon.Op = "card-reopen"
 	opDMRelay       daemon.Op = "dm-relay"
 	opRevoke        daemon.Op = "revoke"
 	opAgentSubject  daemon.Op = "agent-subject"
@@ -353,6 +354,7 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opThreadSeen, a.handleThreadSeen)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
+	s.Register(opCardReopen, a.handleCardReopen)
 	s.Register(opDMRelay, a.handleDMRelay)
 	s.Register(opWithdrawPRCard, a.handleWithdrawPRCard)
 	s.Register(opRevoke, a.handleRevoke)
@@ -2627,6 +2629,24 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return ok(res)
+}
+
+func (a *app) handleCardReopen(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if b.URL == "" || b.Via == "" {
+		return fail("card-reopen needs url, the card's permalink, and via, the permalink of the reply its answer was taken from")
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if err := a.poller.reopenReply(hc.Ctx, id, b.URL, b.Via); err != nil {
+		return fail(err.Error())
+	}
+	return ok(map[string]bool{"reopened": true})
 }
 
 func checkDMStatus(b opBody, now time.Time, id identity) error {

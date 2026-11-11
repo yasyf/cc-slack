@@ -103,6 +103,7 @@ func root() *cobra.Command {
 		threadSeenCmd(d),
 		dmStatusCmd(d),
 		cardAnswerCmd(d),
+		cardReopenCmd(d),
 		dmRelayCmd(d),
 		cardCmd(),
 		checkPostCmd(),
