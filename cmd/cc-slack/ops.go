@@ -2335,10 +2335,10 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
 		msg.text, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
-		if len(blocks)+len(b.Files) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
+		if len(blocks) > 0 || !mdMarks.MatchString(msg.text) && runes(msg.text) <= cardMaxSectionLen {
 			return msg, nil
 		}
-		pages := bodyPages(msg.text, cardMaxPageBlock, cardMaxVisible, true, nil)
+		pages := bodyPages(msg.text, cardMaxPageBlock-len(b.Files), cardMaxVisible, true, nil)
 		msg.text, msg.blocks = clipRunes(mrkdwnText(msg.text), cardMaxSectionLen), pages[0]
 		return msg, pages[1:]
 	}

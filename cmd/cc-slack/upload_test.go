@@ -163,7 +163,8 @@ func TestPostImagesSharesTheFilesInTheThreadBeforeTheMessageNamesThem(t *testing
 	if len(blocks) != 3 || blocks[0]["type"] != "section" || blocks[1]["type"] != "image" || blocks[2]["type"] != "image" {
 		t.Fatalf("blocks = %s", update["blocks"])
 	}
-	if ids := imageIDs(t, update["blocks"]); strings.Join(ids, ",") != "Fa.png,Fb.gif" || blocks[1]["alt_text"] != "a.png" {
+	title, _ := blocks[1]["title"].(map[string]any)
+	if ids := imageIDs(t, update["blocks"]); strings.Join(ids, ",") != "Fa.png,Fb.gif" || blocks[1]["alt_text"] != "a" || title["text"] != "a" {
 		t.Fatalf("image blocks = %+v", blocks[1:])
 	}
 }
@@ -232,6 +233,39 @@ func TestDMStatusAttachesImagesWithoutText(t *testing.T) {
 	sent := l.slack.sent()
 	if len(sent) != 2 || status["thread_ts"] != sent[0].ts || sent[1].threadTS != sent[0].ts || status["channel_id"] != "D"+testUser {
 		t.Fatalf("dm-status = %v, sent = %+v, want the post to open the session thread and its file's share under it", status, sent)
+	}
+}
+
+func TestDMStatusWithPicturesStillTurnsItsMarkdownIntoSlacksAndTitlesEachPictureWithItsName(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	png := writeFile(t, "p95 before and after.png", pngBytes)
+	l.do(opDMStatus, map[string]any{"text": "**The copy is fixed.** See [the run](https://example.com/run/1).", "files": []string{png}})
+	edits := l.slack.edited()
+	if len(edits) == 0 {
+		t.Fatal("dm-status never named its picture in the post")
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text struct {
+			Text string `json:"text"`
+		} `json:"text"`
+		AltText string `json:"alt_text"`
+		Title   struct {
+			Text string `json:"text"`
+		} `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(edits[len(edits)-1].blocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 2 || blocks[0].Type != "section" || blocks[1].Type != "image" {
+		t.Fatalf("blocks = %+v, want the words then the picture", blocks)
+	}
+	if want := "*The copy is fixed.* See <https://example.com/run/1|the run>."; blocks[0].Text.Text != want {
+		t.Fatalf("words = %q, want Slack's own markup %q", blocks[0].Text.Text, want)
+	}
+	if blocks[1].Title.Text != "p95 before and after" || blocks[1].AltText != "p95 before and after" {
+		t.Fatalf("picture titled %q with alt %q, want its name without .png", blocks[1].Title.Text, blocks[1].AltText)
 	}
 }
 
