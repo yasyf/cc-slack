@@ -99,7 +99,7 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			reply, err := invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, nil)
+			reply, err := invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, mustJSON(sessionStartBody{Source: in.Source}))
 			if err != nil {
 				return err
 			}
@@ -116,6 +116,8 @@ type hookInput struct {
 	SessionID      string `json:"session_id"`
 	Cwd            string `json:"cwd"`
 	TranscriptPath string `json:"transcript_path"`
+	Trigger        string `json:"trigger"`
+	Source         string `json:"source"`
 }
 
 func readHookInput(c *cobra.Command) (hookInput, error) {

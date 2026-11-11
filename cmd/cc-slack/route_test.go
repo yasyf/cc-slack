@@ -287,7 +287,7 @@ func TestSessionStartIsIdempotentPerWindow(t *testing.T) {
 func TestAPreCompactMarksTheWindowCompactingUntilItStartsAgain(t *testing.T) {
 	l := startDaemon(t)
 	held := []watch{{SubjectID: l.subID, Owner: agent.TopLevel}}
-	l.do(opPreCompact, nil)
+	l.do(opPreCompact, preCompactBody{Transcript: writeTranscript(t, assistantUsage("claude-opus-5-5", 566000)), Trigger: "auto", Context: 566000, Point: 567047})
 	if len(l.app.poller.compacting(held)) == 0 {
 		t.Fatal("the window is not compacting after pre-compact")
 	}

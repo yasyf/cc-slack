@@ -513,17 +513,27 @@ func messageThreadOf(ctx context.Context, api slackAPI, channelID string, b opBo
 	return "", nil
 }
 
+type sessionStartBody struct {
+	Source string `json:"source"`
+}
+
 type sessionStartResult struct {
 	WatchesBack int64 `json:"watches_back"`
 }
 
 func (a *app) handleSessionStart(hc daemon.HandlerCtx) daemon.Reply {
+	var b sessionStartBody
+	if len(hc.Env.Body) > 0 {
+		if err := json.Unmarshal(hc.Env.Body, &b); err != nil {
+			return fail(fmt.Sprintf("bad %s body: %v", hc.Env.Op, err))
+		}
+	}
 	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if a.poller.endCompacting(sub.ID) {
-		a.poller.log.Printf("session %s started again after compacting", hc.Env.Session)
+	if b.Source != "compact" && a.poller.endCompacting(sub.ID) {
+		a.poller.log.Printf("session %s started again with source %q while marked compacting", hc.Env.Session, b.Source)
 	}
 	var res sessionStartResult
 	if resumed {

@@ -69,7 +69,7 @@ type poller struct {
 	pending map[cursorKey]uint64
 	since   map[cursorKey]string
 	streams map[string]int
-	compact map[string]string
+	compact map[string]transcriptMark
 	held    []heldAck
 	edits   map[string]bool
 	handed  map[string]string
