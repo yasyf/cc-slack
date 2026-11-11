@@ -148,7 +148,7 @@ func TestAReleaseReadsEachStateItsPostIsEditedTo(t *testing.T) {
 	link := f.id.permalink(testChannel, testRelease, testRelease)
 
 	f.post(slack.Message{Msg: slack.Msg{Timestamp: testRelease, User: "UPLATY", BotID: "BPLATY", Text: runningLine}})
-	f.slack.setText(testChannel, testRelease, finishedLine)
+	f.slack.setText(testRelease, finishedLine)
 	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000500.000000", Subtype: editedSubtype})
 	f.tick()
 
@@ -176,7 +176,7 @@ func TestEachNewLineOfAWatchedReleaseReachesTheCardCommandOnce(t *testing.T) {
 	link := f.id.permalink(testChannel, testRelease, testRelease)
 
 	f.post(slack.Message{Msg: slack.Msg{Timestamp: testRelease, User: "UPLATY", BotID: "BPLATY", Text: runningLine}})
-	f.slack.setText(testChannel, testRelease, failingLine)
+	f.slack.setText(testRelease, failingLine)
 	for _, ts := range []string{"1800000500.000000", "1800000600.000000"} {
 		f.poller.nudged(messageNudge{Channel: testChannel, TS: ts, Subtype: editedSubtype})
 		f.tick()
