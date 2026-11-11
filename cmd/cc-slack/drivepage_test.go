@@ -52,7 +52,7 @@ func TestATapThatNamesItsCardAsTheThreadSettlesTheCardInTheThreadThatHoldsIt(t *
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 	asked := mergeCard()
 	asked.Drive = "brook"
-	c := postWaitingInTextThread(t, l, asked)
+	c := postDriveCardDrawnInTextThreadBeforeRootPlacement(t, l, asked)
 	endWatches(t, l, c.thread)
 
 	tap := mergeTap(c, 2)
@@ -164,7 +164,7 @@ func TestDriveCardsDropACardAnsweredOnACopyLinkedWithoutItsThreadThatNoSessionHo
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 	asked := mergeCard()
 	asked.Drive = "brook"
-	c := postWaitingInTextThread(t, l, asked)
+	c := postDriveCardDrawnInTextThreadBeforeRootPlacement(t, l, asked)
 	copied, merge := copyCard(t, l, c.bareLink(), postThread(t, l, "Elsewhere."))
 	endWatches(t, l, c.thread)
 
@@ -183,7 +183,7 @@ func TestDriveCardsListOneCardWhereACardLinkedWithoutItsThreadIsReplacedInPlace(
 	loggedIn(t, l)
 	asked := mergeCard()
 	asked.Drive = "brook"
-	c := postWaitingInTextThread(t, l, asked)
+	c := postDriveCardDrawnInTextThreadBeforeRootPlacement(t, l, asked)
 	again := mergeCard()
 	again.Drive, again.Waits, again.Title, again.Replaces = "brook", "step-4:merge", "Merge #41 and #42 now?", c.bareLink()
 	l.do(opDMStatus, map[string]any{"card": again})

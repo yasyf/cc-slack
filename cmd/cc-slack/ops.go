@@ -2146,10 +2146,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
-	copyInto := ""
-	if b.Card != nil && b.Card.Drive != "" && b.Card.Waits != "" && !b.RootOnly {
-		copyInto, b.ThreadTS = b.ThreadTS, ""
-	}
+	copyInto := rootDriveQuestion(&b)
 	blocks, err := checkMessage(b)
 	if err != nil {
 		return fail(err.Error())
@@ -2192,13 +2189,27 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	a.embedCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, b)
-	if copyInto != "" && copyInto != thread {
-		if err := a.copyCardInto(hc.Ctx, hc.DB, id, copyInto, cardRef{id.DMChannelID, thread, ts}); err != nil {
-			notePostWarning(hc.Ctx, fmt.Sprintf("NO CARD COPY: the card is up at %s, and its copy in thread %s failed: %v", id.permalink(id.DMChannelID, ts, thread), copyInto, err))
-		}
-	}
+	a.copyDriveQuestion(hc.Ctx, hc.DB, id, copyInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	return a.tappedReply(hc, sub, id, thread, ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
+}
+
+func rootDriveQuestion(b *opBody) string {
+	if b.Card == nil || b.Card.Drive == "" || b.Card.Waits == "" || b.RootOnly {
+		return ""
+	}
+	thread := b.ThreadTS
+	b.ThreadTS = ""
+	return thread
+}
+
+func (a *app) copyDriveQuestion(ctx context.Context, db *sql.DB, id identity, into string, card cardRef) {
+	if into == "" || into == card.thread {
+		return
+	}
+	if err := a.copyCardInto(ctx, db, id, into, card); err != nil {
+		notePostWarning(ctx, fmt.Sprintf("NO CARD COPY: the card is up at %s, and its copy in thread %s failed: %v", id.permalink(card.channel, card.ts, card.thread), into, err))
+	}
 }
 
 func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag) daemon.Reply {

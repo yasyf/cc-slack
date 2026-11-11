@@ -74,9 +74,11 @@ func postThread(t *testing.T, l *liveDaemon, text string) string {
 	return res["thread_ts"]
 }
 
-func postWaitingInTextThread(t *testing.T, l *liveDaemon, card statusCard) postedCard {
+func postDriveCardDrawnInTextThreadBeforeRootPlacement(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 	t.Helper()
 	thread := postThread(t, l, "About the merge.")
+	drive := card.Drive
+	card.Drive = ""
 	var res map[string]string
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": thread}).Body, &res); err != nil {
 		t.Fatal(err)
@@ -88,6 +90,9 @@ func postWaitingInTextThread(t *testing.T, l *liveDaemon, card statusCard) poste
 	if res["thread_ts"] != thread || res["ts"] == thread {
 		t.Fatalf("dm-status result %v, want the card posted under text thread %s", res, thread)
 	}
+	l.app.cards.mu.Lock()
+	l.app.cards.threads[threadKey(id.DMChannelID, thread)].Waiting[card.Waits].Card.Drive = drive
+	l.app.cards.mu.Unlock()
 	return postedCard{id: id, thread: thread, ts: res["ts"]}
 }
 
