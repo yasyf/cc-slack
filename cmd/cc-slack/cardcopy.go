@@ -20,6 +20,8 @@ const (
 
 	cardRedrawnLine  = "Redrawn in place"
 	cardRewordedLine = "Asked again with new words"
+
+	freshLinkParam = "post"
 )
 
 var (

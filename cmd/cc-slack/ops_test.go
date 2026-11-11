@@ -121,6 +121,34 @@ func TestAPostLinkingASlackMessageUnfurls(t *testing.T) {
 	}
 }
 
+func TestEachPostLinksACardByALinkSlackHasNotShownThisHour(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := "https://example.slack.com/archives/" + testDM + "/p1793818357021259"
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "first: <" + card + "|the lock card>"})
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "again: <" + card + "|the lock card>"})
+	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on <" + card + "|the lock card>"}})
+	posts := l.slack.sent()
+	var links []string
+	for _, p := range posts {
+		found := messageLink.FindAllString(p.text+p.blocks, -1)
+		if len(found) == 0 {
+			continue
+		}
+		if p.unfurlLinks != "true" {
+			t.Fatalf("post %+v links the card with unfurl_links=%s, want true", p, p.unfurlLinks)
+		}
+		ref, err := parsePermalink(found[0])
+		if err != nil || ref.channelID != testDM || ref.ts != "1793818357.021259" {
+			t.Fatalf("link %q parses to %+v (%v), want the card itself", found[0], ref, err)
+		}
+		links = append(links, found[0])
+	}
+	if len(links) != 3 || len(slices.Compact(slices.Sorted(slices.Values(links)))) != 3 {
+		t.Fatalf("links = %q, want three posts each linking the card by a link no other post used, since Slack draws no link it showed in the conversation within the hour", links)
+	}
+}
+
 func TestAnAlertLinkInADMCardUnfurls(t *testing.T) {
 	for _, tc := range []struct {
 		name, link, want string

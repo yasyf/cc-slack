@@ -66,7 +66,9 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
 
 func (c postedCard) linkedBy(p fakePost, title string) bool {
-	return p.text == slackLink(c.url(), title) && p.blocks == "" && p.unfurlLinks == "true"
+	link, label, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(p.text, "<"), ">"), "|")
+	fresh, linked := strings.CutPrefix(link, c.url())
+	return found && linked && strings.Contains(fresh, freshLinkParam+"=") && label == title && p.blocks == "" && p.unfurlLinks == "true"
 }
 
 func postThread(t *testing.T, l *liveDaemon, text string) string {
