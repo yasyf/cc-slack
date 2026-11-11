@@ -299,12 +299,34 @@ func TestAPreCompactMarksTheWindowCompactingUntilItStartsAgain(t *testing.T) {
 
 func TestADMDirectiveNamesTheThreadItsMessageIsIn(t *testing.T) {
 	const root = "1800000000.000100"
-	if got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: root, Text: "hi", Operator: true}); strings.Contains(got, "thread_ts") {
+	if got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: root, Text: "hi", Operator: true}, false); strings.Contains(got, "thread_ts") {
 		t.Fatalf("root message directive = %q, want no thread", got)
 	}
-	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi", Operator: true})
+	got := messageLine(messagePayload{Kind: kindDM, ThreadTS: root, TS: "1800000000.000200", Text: "hi", Operator: true}, false)
 	if !strings.Contains(got, "slack_dm_status and thread_ts "+root) {
 		t.Fatalf("thread message directive = %q, want it to name thread %s", got, root)
+	}
+}
+
+func TestADMHolderCardedOnADriveIsToldToAckThenStartAHandler(t *testing.T) {
+	l := startDaemon(t)
+	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, DMChannelID: "D" + testUser}
+	w := watch{ID: 1, Kind: kindDM, ChannelID: id.DMChannelID, SubjectID: l.subID, Owner: agent.TopLevel}
+	m := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000500", User: testUser, Text: "ship the fix"}}
+	for name, want := range map[string]struct {
+		mates     driveMates
+		said, not string
+	}{
+		"a DM holder with no drive card": {nil, "Act on it as operator steering", "start a handler"},
+		"a DM holder on a drive's card":  {driveMates{l.subID: "drive:brook"}, "Ack it in one sentence, then start a handler", "Act on it"},
+	} {
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, want.mates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(d.line, want.said) || strings.Contains(d.line, want.not) {
+			t.Fatalf("%s was told %q, want %q and not %q", name, d.line, want.said, want.not)
+		}
 	}
 }
 

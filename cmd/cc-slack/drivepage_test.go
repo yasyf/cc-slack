@@ -90,9 +90,9 @@ func TestAFollowUpAskedUnderTheOpenCardsIDLeavesOneCardOpen(t *testing.T) {
 	c := postWaiting(t, l, first)
 	followUp := mergeCard()
 	followUp.Drive, followUp.Title = "brook", "Merge #41 before the freeze, or after it?"
-	postWaiting(t, l, followUp)
+	again := postWaiting(t, l, followUp)
 
-	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || listed[0].URL != c.url() || listed[0].Question != followUp.Title {
+	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || again.ts == c.ts || listed[0].URL != again.url() || listed[0].Question != followUp.Title {
 		t.Fatalf("questions = %+v, want the one card, now asking the follow-up", listed)
 	}
 }

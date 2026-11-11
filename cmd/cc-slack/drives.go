@@ -64,6 +64,11 @@ func loadDriveMates(ctx context.Context, threads *dmThreads, cards *liveCards, d
 	return mates, nil
 }
 
+func (d driveMates) holds(w watch) bool {
+	_, carded := d[w.SubjectID]
+	return carded && (w.Kind == kindDM || w.Relayed)
+}
+
 func (d driveMates) same(a, b string) bool {
 	family, ok := d[a]
 	return ok && family == d[b]

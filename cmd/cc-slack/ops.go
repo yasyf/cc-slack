@@ -2692,12 +2692,12 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 }
 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
-	thread, ts, posted, again, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
+	thread, ts, posted, was, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
 	switch {
 	case err != nil || ts == "":
-	case again:
-		if err := a.cards.withdrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
-			a.poller.log.Printf("card %s redrawn in place, but older copies of it keep their buttons: %v", ts, err)
+	case was != "":
+		if err := a.cards.withdrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}, was); err != nil {
+			a.poller.log.Printf("card %s drawn again, but older copies of %s keep their buttons: %v", ts, was, err)
 		}
 	default:
 		if err := a.cards.redrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
@@ -2707,41 +2707,42 @@ func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, i
 	return thread, ts, posted, err
 }
 
-func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, bool, error) {
+func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, string, error) {
 	cards := a.cards
 	cards.mu.Lock()
 	defer cards.mu.Unlock()
 	threads, err := a.poller.threads.sessionThreads(ctx, id.DMChannelID, sub.ID)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, "", err
 	}
 	if msg.rootOnly {
 		thread, posted, err := a.rootCard(ctx, db, sub, id, threads, msg)
-		return thread, "", posted, false, err
+		return thread, "", posted, "", err
 	}
 	card := *msg.card
 	replaces := ""
 	if card.Replaces != "" {
 		ref, err := parsePermalink(card.Replaces)
 		if err != nil {
-			return "", "", false, false, err
+			return "", "", false, "", err
 		}
 		stored, _ := cards.storedCard(id.DMChannelID, ref.ts)
 		under, replaces, card.Replaces = cmp.Or(stored.thread, ref.threadTS, ref.ts), ref.ts, ""
 	}
 	place, err := cards.placeFor(id.DMChannelID, under, replaces, threads, card)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, "", err
 	}
+	card.InPlace = false
 	if place.nothing {
-		return "", "", false, false, nil
+		return "", "", false, "", nil
 	}
-	t, prior, asked, superseded := place.thread, place.prior, place.asked, place.superseded
-	again := place.redraws(card)
+	t, prior, asked, superseded, moved := place.thread, place.prior, place.asked, place.superseded, place.moved
+	was := place.withdraws(card)
 	t.apply(card, msg.tag, a.now(), false)
 	placed, err := a.placeCard(ctx, db, id, t, asked)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, "", err
 	}
 	if place.revived && asked != nil {
 		if err := unmarkWithdrawn(ctx, a.newAPI(id.Token), cardRef{channel: id.DMChannelID, ts: asked.TS}); err != nil {
@@ -2749,8 +2750,8 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		}
 	}
 	t.keep(card, placed)
-	if superseded != nil {
-		cards.forget(prior, superseded.TS)
+	if gone := cmp.Or(superseded, moved); gone != nil {
+		cards.forget(prior, gone.TS)
 	}
 	askedAgainLine := askedAgain(card.Title, id.permalink(id.DMChannelID, placed.TS, t.Thread))
 	if asked == nil {
@@ -2763,27 +2764,52 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 			a.poller.log.Printf("card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, placed.TS, err)
 		}
 	}
+	a.markReworded(ctx, id, moved, t, placed)
 	if asked == nil {
 		a.poller.noteSuperseded(ctx, id, card.Supersedes, askedAgainLine)
 	}
 	if prior != nil && asked != nil {
-		return t.Thread, placed.TS, true, again, nil
+		return t.Thread, placed.TS, true, was, nil
 	}
 	if err := a.bindSessionThread(ctx, db, sub, id, t.Thread); err != nil {
-		return "", placed.TS, true, false, err
+		return "", placed.TS, true, "", err
 	}
-	return t.Thread, placed.TS, true, again, nil
+	return t.Thread, placed.TS, true, was, nil
+}
+
+func (a *app) markReworded(ctx context.Context, id identity, moved *liveMessage, t *liveThread, placed *liveMessage) {
+	if moved == nil {
+		return
+	}
+	v := t.view(placed, a.now(), a.cards.canvas())
+	v.final = true
+	blocks := placed.Card.replyBlocks(v)
+	line := mrkdwn(cardCopyBlock+"-reworded", cardRewordedLine+" · "+slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer the new card"))
+	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, moved.TS, placed.Card.replyText(v), slices.Insert(blocks, len(blocks)-1, line)); err != nil {
+		a.poller.log.Printf("card %s/%s asked again with new words at %s, but it keeps its buttons: %v", id.DMChannelID, moved.TS, placed.TS, err)
+	}
 }
 
 type cardPlace struct {
-	thread            *liveThread
-	prior             *liveThread
-	asked, superseded *liveMessage
-	nothing, revived  bool
+	thread                   *liveThread
+	prior                    *liveThread
+	asked, superseded, moved *liveMessage
+	nothing, revived         bool
 }
 
-func (p cardPlace) redraws(card statusCard) bool {
-	return p.asked != nil && card.Waits != "" && (p.revived || p.asked.Card.Waits != "" && !sameCard(p.asked.Card, card))
+func (p cardPlace) withdraws(card statusCard) string {
+	switch {
+	case p.moved != nil:
+		return p.moved.TS
+	case p.asked != nil && (p.revived || reworded(p.asked.Card, card)):
+		return p.asked.TS
+	}
+	return ""
+}
+
+func reworded(was, now statusCard) bool {
+	now.InPlace = false
+	return now.Waits != "" && was.Waits != "" && !sameCard(was, now)
 }
 
 func (l *liveCards) placeFor(channel, under, replaces string, threads []string, card statusCard) (cardPlace, error) {
@@ -2800,13 +2826,16 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 	switch {
 	case place.asked != nil && card.gainsRows(place.asked.Card):
 		place.superseded, place.asked = place.asked, nil
-		place.thread.Answers = maps.Clone(place.prior.Answers)
+		place.thread.carryAnswers(place.prior)
+	case place.asked != nil && !place.revived && !card.InPlace && reworded(place.asked.Card, card):
+		place.moved, place.asked = place.asked, nil
+		place.thread.carryAnswers(place.prior)
 	case place.asked != nil:
 		place.thread = l.draft(place.prior.Channel, place.prior.Thread)
 	case card.Group != "" && len(card.Rows) == 0:
 		place.nothing = true
 	}
-	if place.asked == nil && place.superseded == nil && replaces != "" {
+	if place.asked == nil && place.superseded == nil && place.moved == nil && replaces != "" {
 		place.asked = &liveMessage{TS: replaces}
 	}
 	if place.revived {
