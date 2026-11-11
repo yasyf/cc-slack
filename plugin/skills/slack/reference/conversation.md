@@ -81,9 +81,12 @@ write every post so a person can answer it, and answer each reply as it lands.
   DM with the app, link the open card's permalink from `cc-slack drive-cards`
   under words that name it, as `<permalink|the lock card>`, and Slack draws the
   card under the line; the post copies nothing and shows no raw URL, so the card
-  stays one message. A PR's tap card comes from `tap_prs`. A DM line that says
-  something waits on you, with no open card linked, no `tap_prs`, no PR link
-  and no open card in its thread, is refused before it posts. When a card was
+  stays one message. A PR's tap card comes from `tap_prs`, or from linking the
+  PR's URL in a DM post that says something waits on you. A DM line that says
+  something waits on you, with no open card linked, no PR linked or in `tap_prs`
+  and no open card in its thread, is refused before it posts, and so is one
+  linking a PR that draws no card. Put each card on its own line, since Slack
+  draws five a message and cc-slack pages a longer DM post between lines. When a card was
   removed or went stale, say so in the same breath and name its replacement.
 - Keep answering as the thread continues. Once the user has told you to
   answer someone there, each new question gets its reply without asking again.

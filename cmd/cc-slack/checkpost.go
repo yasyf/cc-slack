@@ -34,10 +34,12 @@ func checkPostCmd() *cobra.Command {
 from stdin with -, then check that a line saying something waits on the reader
 links the open card it means, and that no link to a message in your DM with the
 app shows as a raw URL, bare or labeled with its own URL, where words naming it
-would show the words and Slack would draw the message under them. It prints each finding with its fix and exits 1
-when there is one, 0 when the text is clean, and 2 on a usage error, as the
-script does. It runs the check-post of the newest installed plugin, which a
-session's PATH may not hold.`,
+would show the words and Slack would draw the message under them, and that no
+one line links more than five Slack messages, since Slack draws five a message
+and cc-slack sends a longer post to your DM as pages cut between lines. It
+prints each finding with its fix and exits 1 when there is one, 0 when the text
+is clean, and 2 on a usage error, as the script does. It runs the check-post of
+the newest installed plugin, which a session's PATH may not hold.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			root, err := pluginRoot()
@@ -64,6 +66,9 @@ session's PATH may not hold.`,
 			}
 			for _, raw := range rawCardLinks(text, dmCard) {
 				findings = append(findings, raw)
+			}
+			if crowded, found := crowdedLineIn(text); found {
+				findings = append(findings, crowded)
 			}
 			for _, finding := range findings {
 				if _, err := fmt.Fprintln(c.OutOrStdout(), finding); err != nil {

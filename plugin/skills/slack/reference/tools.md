@@ -79,9 +79,11 @@ names, so write `#123`, `owner/repo#123`, or the PR URL and never build the
 link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
 this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. Code spans and text already inside `<...>` are left
-alone. A link never draws a card or a button. With `card_command` set, a PR the
-user has to tap gets its card only when the call lists its URL in `tap_prs` (the
-CLI's repeatable `--tap-pr` on `dm-status`), once per PR and head. List a
+alone. With `card_command` set, a PR the user has to tap gets its card when the
+call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`),
+once per PR and head. In the user's DM, a post that says something waits on the
+user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
+so name a PR the user has nothing to tap in a post that waits on nothing. List a
 stack's PRs in one call: they draw one card, and an older card of any of them
 is edited to say it was replaced. When a PR no longer waits on the user's tap,
 `slack_withdraw_pr_card(pr, reason)` takes down every open card carrying it, a
@@ -95,8 +97,7 @@ picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM th
 card opens at the root in its own thread, wherever the post sits; a post lands in
 a DM thread only when its call names that thread. In a listed channel the card
 goes in the post's thread. When an open PR in `tap_prs` draws no card, the call
-fails after the post went out: the error names that post, so never post it again,
-and each PR with the reason; fix the reason, such as a PR body missing What you'll
+fails and sends nothing, naming each PR with the reason; fix the reason, such as a PR body missing What you'll
 hate most, a login whose config sets no `card_command`, or a channel that draws no
 PR cards, then send `tap_prs` for that PR alone. Never post a PR card or add a
 `refs` entry by hand for a PR your text names. With `preview_command` set, a PR
@@ -162,6 +163,13 @@ Slack never previews a link whose label is its own URL; either is refused, as
 is a copy of its blocks or its title repeated without the link. Slack skips the
 preview of a link it unfurled in the same thread a moment earlier, and of every
 link after a message's fifth, so such a link shows only its words. A post to
+your DM with no `blocks` that links more than five Slack messages, Sentry issues
+and Datadog monitors goes out as pages, each cut at the last blank line before
+the line holding its sixth link, or at that line's start, so every card draws;
+the pages go where the post goes, and the result's `page_permalink` names each
+page after the first. Put each card on its own line: a line linking six or more
+is refused, and so is an edit in your DM linking six or more, since an edit
+cannot add a page. A post to
 your DM that links a Sentry issue or a Datadog monitor asks Slack to unfurl it
 too; posts to channels do not. `thread`
 and `history` list what Slack unfurled for each message: Slack messages under
