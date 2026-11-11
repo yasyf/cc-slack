@@ -1523,7 +1523,7 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	posted := a.cards.postedPRCards()
+	posted := a.cards.postedPRCards(b.PR != "")
 	var listing []cardRef
 	if b.PR != "" {
 		only, found := parseRef(b.PR)
@@ -2501,7 +2501,7 @@ func (a *app) replaceCard(ctx context.Context, id identity, old cardRef, card st
 	if err != nil {
 		return fmt.Errorf("replace card %s in place: %w", old.ts, err)
 	}
-	if err := api.RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: old.ts}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
+	if err := unmarkWithdrawn(ctx, api, cardRef{channel: id.DMChannelID, ts: old.ts}); err != nil {
 		a.poller.log.Printf("card %s replaced, but its withdrawn mark stays: %v", old.ts, err)
 	}
 	return nil
@@ -2731,7 +2731,7 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		return "", "", false, false, err
 	}
 	if place.revived && asked != nil {
-		if err := a.newAPI(id.Token).RemoveReactionContext(ctx, cardWithdrawnReaction, slack.ItemRef{Channel: id.DMChannelID, Timestamp: asked.TS}); err != nil && !strings.Contains(err.Error(), "no_reaction") {
+		if err := unmarkWithdrawn(ctx, a.newAPI(id.Token), cardRef{channel: id.DMChannelID, ts: asked.TS}); err != nil {
 			a.poller.log.Printf("card %s asked again in place, but its withdrawn mark stays: %v", asked.TS, err)
 		}
 	}

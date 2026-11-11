@@ -834,7 +834,7 @@ func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	var pr string
 	c := &cobra.Command{
 		Use:   "redraw-pr-cards",
-		Short: "Redraw every open PR card in place from the card command, with no new posts; with --pr, every card listing that PR and its copies too",
+		Short: "Redraw every open PR card in place from the card command, with no new posts; with --pr, every card listing that PR and its copies too, and its withdrawn cards, which come back in place when drawn under the waits id they were withdrawn from",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runOp(c, d, f, opRedrawPRCards, map[string]any{"pr": pr})
