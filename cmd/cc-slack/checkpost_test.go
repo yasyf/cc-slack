@@ -88,3 +88,41 @@ func TestCheckPostFlagsABadPostAndPassesACleanOneWithTheScriptsExitStatus(t *tes
 		})
 	}
 }
+
+func TestCheckPostPassesTheDriveInAnAnswerToAQuestionAboutIt(t *testing.T) {
+	plugin, err := filepath.Abs(filepath.Join("..", "..", "plugin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(pluginRootEnv, plugin)
+	cases := map[string]struct {
+		asked  []string
+		status exitStatus
+	}{
+		"answers his question about the drive": {[]string{"how far along is the drive?"}, 0},
+		"answers a question about the deploy":  {[]string{"is the deploy out?"}, 1},
+		"answers nothing":                      {nil, 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			check := checkPostCmd()
+			args := []string{"-"}
+			for _, message := range tc.asked {
+				args = append(args, "--asked", message)
+			}
+			check.SetArgs(args)
+			check.SetIn(strings.NewReader("The drive has two PRs left to merge."))
+			check.SetOut(&out)
+			check.SetErr(&out)
+			err := check.Execute()
+			status, exited := errors.AsType[exitStatus](err)
+			if err != nil && !exited || status != tc.status {
+				t.Fatalf("check-post = %v, output %q, want exit status %d", err, out.String(), tc.status)
+			}
+			if tc.status == 1 && !strings.Contains(out.String(), "drive-term 'The drive'") {
+				t.Fatalf("output = %q, want the drive flagged", out.String())
+			}
+		})
+	}
+}

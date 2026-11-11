@@ -124,6 +124,25 @@ class CheckPostTest(unittest.TestCase):
             [("drive-term", "lane"), ("drive-term", "o308"), ("drive-term", "j789")],
         )
 
+    def test_passes_a_multi_agent_term_the_question_it_answers_used(self) -> None:
+        answer = "The drive has two PRs left, and each lane waits on CI."
+        self.assertEqual(
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["how far along is the drive?", "which lanes are still running"])],
+            [],
+        )
+        self.assertEqual(
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["what's left in this drive?"])],
+            [("drive-term", "lane")],
+        )
+        self.assertEqual(
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["is the deploy out?"])],
+            [("drive-term", "The drive"), ("drive-term", "lane")],
+        )
+        self.assertEqual(
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["is the driver fixed?", "which laneways are closed"])],
+            [("drive-term", "The drive"), ("drive-term", "lane")],
+        )
+
     def test_ignores_letters_inside_words_and_names(self) -> None:
         text = "I asked Walker about the U.S. region, C++ builds, Q&A notes, and a T-shirt; S3 and E2E are fine."
         self.assertEqual(kinds(text), [])

@@ -12,6 +12,7 @@ import (
 
 const (
 	mentioned        = "\x00"
+	linksAState      = "\x01"
 	pastedTitleWords = 3
 )
 
@@ -28,6 +29,8 @@ var (
 	waitsClause   = regexp.MustCompile(`[.!?;:,()\[\]—–]+(?:\s|$)|\s[-–—]\s|[;:—–]`)
 	waitsWord     = regexp.MustCompile(`[a-z]+(?:['’][a-z]+)*(?:-[a-z]+)*`)
 	waitsThankYou = regexp.MustCompile(`\bthank(?:s| you)\b`)
+	waitsLinking  = regexp.MustCompile(`(?i)\b(?:is|are|was|were|am|be|been|being|stays?|remains?)\b`)
+	waitsStates   = regexp.MustCompile(`(?i)(?:\b[a-z-]+(?: [a-z-]+){0,2}, )+[a-z-]+(?: [a-z-]+){0,2},? or waiting on you([^\w\s'’]|\s*$)`)
 	dmCardLink    = regexp.MustCompile(`^D[A-Z0-9]+$`)
 )
 
@@ -214,7 +217,7 @@ func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) er
 
 func waitsOnReader(text string) (waitsLine, bool) {
 	for number, line := range strings.Split(text, "\n") {
-		shown := waitsUnread.ReplaceAllString(waitsLabel.ReplaceAllString(waitsMention.ReplaceAllString(line, mentioned), "$1"), " ")
+		shown := withoutStateLists(waitsUnread.ReplaceAllString(waitsLabel.ReplaceAllString(waitsMention.ReplaceAllString(line, mentioned), "$1"), " "))
 		for _, sentence := range strings.FieldsFunc(shown, func(r rune) bool { return r == '.' || r == '!' || r == '?' }) {
 			if strings.Contains(sentence, mentioned) {
 				continue
@@ -227,6 +230,10 @@ func waitsOnReader(text string) (waitsLine, bool) {
 		}
 	}
 	return waitsLine{}, false
+}
+
+func withoutStateLists(line string) string {
+	return strings.ReplaceAll(waitsStates.ReplaceAllString(waitsLinking.ReplaceAllString(line, "${0}"+linksAState), " $1"), linksAState, "")
 }
 
 func waitsOn(words []string) bool {

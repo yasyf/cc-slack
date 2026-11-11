@@ -129,6 +129,20 @@ func TestAPickupSlackRefusesTheWorkingLineForFailsAndSaysWhy(t *testing.T) {
 	}
 }
 
+func TestAPickupOfAReplyPutsTheWorkingLineUnderItsThread(t *testing.T) {
+	l := startDaemon(t)
+	loginAs(t, l, "yasyf")
+	l.slack.add(testChannel, rootMessage(testThread, "root"))
+	l.slack.add(testChannel, reply(firstReply, "can you look at this"))
+	l.do(opPickup, map[string]string{"channel_id": testChannel, "ts": firstReply})
+	l.do(opPickup, map[string]any{"channel_id": testChannel, "ts": firstReply, "done": true})
+	l.slack.mu.Lock()
+	defer l.slack.mu.Unlock()
+	if len(l.slack.statuses) != 2 || l.slack.statuses[0].ThreadTS != testThread || l.slack.statuses[0].Status != workingStatus || l.slack.statuses[1].ThreadTS != testThread {
+		t.Fatalf("working lines = %+v, want one set and one cleared under the reply's thread %s", l.slack.statuses, testThread)
+	}
+}
+
 func TestPickupAndStepsRefuseAnAgentNameThatWouldShowAsWords(t *testing.T) {
 	l := startDaemon(t)
 	dm := loginAs(t, l, "yasyf").DMChannelID

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
 FENCE = re.compile(r"^\s*```")
+LEADING_THE = re.compile(r"^the\s+", re.IGNORECASE)
 MAX_SENTENCES = 3
 UNFURLING_URLS = (
     r"[\w-]+\.sentry\.io/issues/",
@@ -29,6 +31,7 @@ class Rule:
     fix: str
     reads_code: bool = True
     reads_labels: bool = False
+    passes_his_words: bool = False
 
 
 RULES = (
@@ -55,6 +58,7 @@ RULES = (
         "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
         reads_code=False,
         reads_labels=True,
+        passes_his_words=True,
     ),
     Rule(
         "internal-id",
@@ -163,18 +167,23 @@ def plain(line: str, labels: bool = False) -> str:
     return mask_emphasis(mask_slack_tokens(line, labels))
 
 
-def check(text: str) -> list[Finding]:
+def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
     findings = walls(text)
     for number, line in enumerate(text.splitlines(), start=1):
         masked = {labels: plain(line, labels) for labels in (False, True)}
         for rule in RULES:
             span = "token" if "token" in rule.pattern.groupindex else 0
             read = masked[rule.reads_labels]
-            findings.extend(
-                Finding(number, match.start(span) + 1, rule.kind, line[match.start(span) : match.end(span)], rule.fix)
-                for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read))
-            )
+            for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read)):
+                token = line[match.start(span) : match.end(span)]
+                if not (rule.passes_his_words and his_word(token, asked)):
+                    findings.append(Finding(number, match.start(span) + 1, rule.kind, token, rule.fix))
     return sorted(findings, key=lambda finding: (finding.line, finding.column))
+
+
+def his_word(token: str, asked: Sequence[str]) -> bool:
+    word = re.compile(rf"(?<!\w){re.escape(LEADING_THE.sub('', token))}s?(?!\w)", re.IGNORECASE)
+    return any(word.search(message) for message in asked)
 
 
 def walls(text: str) -> list[Finding]:
@@ -199,9 +208,15 @@ def main() -> int:
         description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post, reading the words of each link as the reader sees them."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
+    parser.add_argument(
+        "--asked",
+        action="append",
+        default=[],
+        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes",
+    )
     args = parser.parse_args()
     text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text()
-    findings = check(text)
+    findings = check(text, args.asked)
     for finding in findings:
         print(finding)
     return 1 if findings else 0

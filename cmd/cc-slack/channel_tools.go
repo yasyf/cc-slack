@@ -220,7 +220,7 @@ var (
 			properties: map[string]any{
 				"channel_id": channelProp,
 				"ts":         map[string]any{"type": "string"},
-				"thread_ts":  map[string]any{"type": "string", "description": "omit when ts is the parent"},
+				"thread_ts":  map[string]any{"type": "string", "description": "omit to read it from ts"},
 				"url":        urlProp,
 				"done":       map[string]any{"type": "boolean"},
 				"state":      map[string]any{"type": "string", "description": "what you are doing now"},
