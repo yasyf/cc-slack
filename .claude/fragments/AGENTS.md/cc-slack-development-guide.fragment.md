@@ -180,7 +180,9 @@ will not draw, such as one whose body lacks a section the card needs, with the
 reason in plain words. A card whose `prs` lists several PRs, such as
 one stack, is the card of each of them: it is asked for and posted once, no
 PR it lists counts as uncarded, and any of them changing redraws it, asked for
-by its first PR. In the bot's DM the card opens at the root in
+by its first PR. A redraw of a posted card asks with `"redraw": true` beside `prs`, and the
+program draws the card as the PR stands now, putting any reason it would draw no
+fresh card on the card itself. In the bot's DM the card opens at the root in
 its own thread, watched by the session whose post named the PR, wherever that
 post sits; a post lands in a DM thread only when its call names that thread.
 Each PR's card, a pick card already offering it included, then shows with the

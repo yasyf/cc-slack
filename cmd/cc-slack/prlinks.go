@@ -331,7 +331,7 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 }
 
 func (a *app) askCardCommand(ctx context.Context, id identity, channelID, thread string, t *tapCards) {
-	provided, skipped, err := askPRCards(ctx, id, t.ask)
+	provided, skipped, err := askPRCards(ctx, id, t.ask, false)
 	why := "the card command answered no card for it"
 	if err != nil {
 		a.poller.log.Printf("PR cards for %s/%s not asked for: %v", channelID, thread, err)
@@ -771,12 +771,16 @@ func (a *app) tellRefused(ctx context.Context, id identity, p providedCard, refu
 	}
 }
 
-func askPRCards(ctx context.Context, id identity, prs []refID) ([]providedCard, []skippedCard, error) {
+func askPRCards(ctx context.Context, id identity, prs []refID, posted bool) ([]providedCard, []skippedCard, error) {
 	asked := make([]map[string]any, 0, len(prs))
 	for _, pr := range prs {
 		asked = append(asked, map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number})
 	}
-	out, said, err := cardCommandOutput(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
+	ask := map[string]any{"prs": asked}
+	if posted {
+		ask["redraw"] = true
+	}
+	out, said, err := cardCommandOutput(ctx, id.Config.PRLinks.CardCommand, ask)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -820,7 +824,7 @@ func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID)
 }
 
 func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr refID) error {
-	provided, skipped, err := askPRCards(ctx, id, []refID{pr})
+	provided, skipped, err := askPRCards(ctx, id, []refID{pr}, true)
 	if err != nil {
 		return err
 	}

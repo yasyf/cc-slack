@@ -341,6 +341,22 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	}
 }
 
+func TestAPRSectionOpensWithItsSummaryBeforeItsRefresher(t *testing.T) {
+	pr := fullPR(49624)
+	pr.Summary = "store.Credentials keeps one row per team in team_credentials, and launch reads it instead of minting one."
+	card := statusCard{Status: "needs_you", Title: "Approve the team credential?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-49624", PRs: []cardPR{pr}}
+	if err := card.check(bodyAt, false, ""); err != nil {
+		t.Fatalf("a PR card with a summary refused: %v", err)
+	}
+	said := asSection(t, card.replyBlocks(view())[3]).Text.Text
+	if !strings.HasPrefix(said, "*Summary*\nstore.Credentials keeps one row per team") || strings.Index(said, "*Refresher*") < strings.Index(said, "*Summary*") {
+		t.Fatalf("fourth block %q, want the summary first and the refresher after it", said)
+	}
+	if lines := pr.lines(); lines[0] != (cardFact{cardSummary, "*Summary*"}) {
+		t.Fatalf("lines %+v, want the summary's line read back first", lines)
+	}
+}
+
 func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *testing.T) {
 	pr := fullPR(49623)
 	pr.Review = "CI red; approved by poetic-svc; grade pass"

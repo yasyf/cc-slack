@@ -89,6 +89,7 @@ const (
 	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
 	cardOpenLabel     = "Open"
 	cardChanged       = "Changed since your answer"
+	cardSummary       = "Summary"
 	cardRefresher     = "Refresher"
 	cardSurprise      = "Biggest surprise"
 	cardDefaultLands  = "you approve"
@@ -169,6 +170,7 @@ type cardPR struct {
 	Title       string   `json:"title,omitempty"`
 	Head        string   `json:"head,omitempty"`
 	Changed     string   `json:"changed,omitempty"`
+	Summary     string   `json:"summary,omitempty"`
 	Review      string   `json:"review,omitempty"`
 	Surprise    string   `json:"surprise,omitempty"`
 	HateMost    string   `json:"hate_most,omitempty"`
@@ -432,7 +434,7 @@ func (p cardPR) stands(v cardView) string {
 
 func (p cardPR) fields(v cardView) []cardFact {
 	return []cardFact{
-		{cardChanged, p.Changed}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
+		{cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
 		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
 	}
 }
@@ -905,7 +907,7 @@ func (c statusCard) visible() statusCard {
 func (p cardPR) visible() cardPR {
 	p.Title, p.Changed, p.Review, p.Surprise = withoutHidden(p.Title), withoutHidden(p.Changed), withoutHidden(p.Review), withoutHidden(p.Surprise)
 	p.Plan, p.Refresher, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.Refresher), withoutHidden(p.Blocks), withoutHidden(p.Lands)
-	p.ShowMe, p.HateMost, p.Port = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port)
+	p.ShowMe, p.HateMost, p.Port, p.Summary = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port), withoutHidden(p.Summary)
 	return p
 }
 

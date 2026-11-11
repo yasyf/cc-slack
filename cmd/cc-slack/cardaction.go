@@ -1305,7 +1305,7 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 	if len(asked) == 0 {
 		return
 	}
-	provided, _, err := askPRCards(ctx, id, asked)
+	provided, _, err := askPRCards(ctx, id, asked, true)
 	if err != nil {
 		p.log.Printf("card %s keeps the PR lines it was drawn with: %v", r.ts, err)
 		return
@@ -1322,7 +1322,7 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 			}
 			now := provided[at].Card.PRs[0]
 			fresh := *pr
-			fresh.Review, fresh.Surprise, fresh.Plan, fresh.Refresher, fresh.Blocks, fresh.Lands = now.Review, now.Surprise, now.Plan, now.Refresher, now.Blocks, now.Lands
+			fresh.Summary, fresh.Review, fresh.Surprise, fresh.Plan, fresh.Refresher, fresh.Blocks, fresh.Lands = now.Summary, now.Review, now.Surprise, now.Plan, now.Refresher, now.Blocks, now.Lands
 			changed = changed || !reflect.DeepEqual(fresh, *pr)
 			*pr = fresh
 		}
