@@ -159,9 +159,12 @@ permalink and never draw a preview of a card by hand. A post to your DM that
 links a Sentry issue or a Datadog monitor asks Slack to unfurl it too; posts to
 channels do not. `thread` and `history` list what Slack unfurled for each message:
 Slack messages under `shares`, other links under `unfurls`. Slack's preview has no
-working buttons, so when a post needs a tap on an open card beside it, run
-`cc-slack card-copy --url <permalink> --thread <ts>`. A tap on that copy answers
-the card.
+working buttons, so a post to your DM that links an open card puts the card's
+working copy in the post's thread, as a post with `tap_prs` and a drive's
+question card do. For a thread with no copy, run
+`cc-slack card-copy --url <permalink> --thread <ts>`. It returns `posted: true`
+and the copy's permalink, and in a thread that already holds the card's copy it
+posts nothing and fails naming that copy. A tap on any copy answers the card.
 
 To read a card before it goes out, run `cc-slack card render --card <file>`. It
 prints the card's Block Kit as JSON and posts nothing, so no test card is needed.

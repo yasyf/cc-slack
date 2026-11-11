@@ -335,6 +335,33 @@ func TestATapPostNamesItsCardAndACopyOfItsLineNamesThatCard(t *testing.T) {
 	l.refused(opCardCopy, map[string]any{"url": sent["permalink"], "thread_ts": hisThread}, "it is the line a tap_prs post wrote, and its card is "+sent["card_permalink"])
 }
 
+func TestACopyIntoTheThreadOfATapPostIsRefusedNamingTheCopyItAlreadyHolds(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	cards := awaitPRCards(t, l, testDM)
+	held := slices.IndexFunc(cards, func(p fakePost) bool { return p.threadTS == hisThread })
+	if held < 0 {
+		t.Fatalf("PR cards = %+v, want the card's copy in thread %s", cards, hisThread)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts := len(l.slack.sent())
+
+	l.refused(opCardCopy, map[string]any{"url": sent["card_permalink"], "thread_ts": hisThread},
+		"thread "+hisThread+" already holds this card's copy, "+id.permalink(id.DMChannelID, cards[held].ts, hisThread)+", so nothing was posted")
+
+	if got := l.slack.sent()[posts:]; len(got) != 0 {
+		t.Fatalf("posted %+v, want no second copy in the thread", got)
+	}
+}
+
 func TestACopyWithNothingToAnswerLeadsWithItsTitleUntilItsCardAsks(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
