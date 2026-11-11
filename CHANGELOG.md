@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A release post in a channel whose feed you watch for releases also goes to `card_command` as `{"release": {"name", "line", "link"}}` each time its line changes, so a drive learns the turn a release one of its incidents named fails a step and reopens that incident's stop. Before, nothing went after a failed incident release until someone noticed: on Nov 10 the release carrying an incident's stop stuck at 9:36 PM and nobody went after it until 10:39 PM.
 - A card's `body` line that holds only a markdown image, `![what it shows](/absolute/path.png)` or one drawn from an https url, shows that picture on the card where the line sits. The daemon uploads it to the `[pictures]` bucket as it does an artifact's picture, and a card redrawn in place keeps it without a second upload. `cc-slack card render` reads each such picture and refuses one it cannot read, one that is no PNG, JPEG, GIF or WebP image, one with no caption, and one named by a relative path. An image inside a sentence, a table cell or a code block stays text. Before, a body had no way to show a picture among its lines: on Nov 10 at 6:09 PM a question card about two dashboard layouts showed its screenshots as links only.
 
 ### Removed

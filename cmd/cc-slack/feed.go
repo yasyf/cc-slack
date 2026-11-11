@@ -85,9 +85,17 @@ type fedWatch struct {
 }
 
 type feedItem struct {
-	kind string
-	key  string
-	line string
+	kind    string
+	key     string
+	line    string
+	release *releasePost
+}
+
+type releasePost struct {
+	Name    string `json:"name"`
+	Line    string `json:"line"`
+	Link    string `json:"link"`
+	running bool
 }
 
 type feedPayload struct {
@@ -135,7 +143,9 @@ type releaseLine struct {
 }
 
 func (r releaseLine) item(ts, link string) feedItem {
-	return feedItem{kind: feedReleases, key: "release:" + ts + ":" + r.state, line: "RELEASE " + r.line + " " + link}
+	name := strings.Fields(strings.TrimPrefix(r.state, "Hotfix "))[0]
+	return feedItem{kind: feedReleases, key: "release:" + ts + ":" + r.state, line: "RELEASE " + r.line + " " + link,
+		release: &releasePost{Name: name, Line: r.line, Link: link, running: r.running}}
 }
 
 func parseRelease(text string) (releaseLine, bool) {
@@ -398,7 +408,34 @@ func (p *poller) routeFeed(ctx context.Context, db *sql.DB, api slackAPI, id ide
 	if err != nil || !ok {
 		return err
 	}
-	return p.deliverFeed(ctx, db, fed, it)
+	if err := p.deliverFeed(ctx, db, fed, it); err != nil {
+		return err
+	}
+	p.handRelease(ctx, id, fed, it)
+	return nil
+}
+
+func (p *poller) handRelease(ctx context.Context, id identity, fed []fedWatch, it feedItem) {
+	if it.release == nil || len(id.Config.PRLinks.CardCommand) == 0 || !slices.ContainsFunc(fed, func(fw fedWatch) bool { return fw.wants(it) }) || !p.handing(it.release) {
+		return
+	}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"release": it.release}); err != nil {
+		p.log.Printf("hand release %s to the card command: %v", it.release.Name, err)
+	}
+}
+
+func (p *poller) handing(r *releasePost) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.handed[r.Link] == r.Line {
+		return false
+	}
+	if r.running {
+		p.handed[r.Link] = r.Line
+	} else {
+		delete(p.handed, r.Link)
+	}
+	return true
 }
 
 func (p *poller) deliverFeed(ctx context.Context, db *sql.DB, fed []fedWatch, it feedItem) error {
@@ -478,9 +515,11 @@ func (p *poller) rereadChannel(ctx context.Context, db *sql.DB, api slackAPI, id
 		if !ok {
 			continue
 		}
-		if err := p.deliverFeed(ctx, db, on, r.item(ts, id.permalink(channelID, ts, ts))); err != nil {
+		it := r.item(ts, id.permalink(channelID, ts, ts))
+		if err := p.deliverFeed(ctx, db, on, it); err != nil {
 			return err
 		}
+		p.handRelease(ctx, id, on, it)
 	}
 	return nil
 }

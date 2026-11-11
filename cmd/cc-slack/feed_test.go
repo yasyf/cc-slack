@@ -16,6 +16,7 @@ const (
 	beforeFeedTS     = "1800000000.000000"
 	testRelease      = "1800000400.000000"
 	runningLine      = "*:rocket: stark-maclean is running · <@U0000000001> via `claude` · `api`*\n:black_nib: Maclean: Scottish poet."
+	failingLine      = "*:rocket: stark-maclean is running · <@U0000000001> via `claude` · `api` · api on prod failed*\n:black_nib: Maclean."
 	finishedLine     = "*:white_check_mark: stark-maclean is live · <@U0000000001> via `claude` · `api` · finished 10:25 PM*\n:black_nib: Maclean."
 	monitorTitle     = "Checkout endpoint failing"
 	alertSummaryText = "*Monitor alert summary:* " + monitorTitle + "\n*First alerted:* now\n*Latest status:* Triggered"
@@ -160,6 +161,33 @@ func TestAReleaseReadsEachStateItsPostIsEditedTo(t *testing.T) {
 	f.tick()
 	if n := f.slack.callCount(methodReplies); n != replies {
 		t.Fatalf("replies calls = %d after an edit once the release finished, want none", n-replies)
+	}
+}
+
+func TestEachNewLineOfAWatchedReleaseReachesTheCardCommandOnce(t *testing.T) {
+	f := newFixture(t)
+	cmd := fakeCardCommand(t, nil)
+	f.id.Config.PRLinks.CardCommand = cmd.argv
+	if err := saveIdentity(f.ctx, f.db(), f.id); err != nil {
+		t.Fatal(err)
+	}
+	subscribeFeed(t, f, feedReleases)
+	f.tick()
+	link := f.id.permalink(testChannel, testRelease, testRelease)
+
+	f.post(slack.Message{Msg: slack.Msg{Timestamp: testRelease, User: "UPLATY", BotID: "BPLATY", Text: runningLine}})
+	f.slack.setText(testChannel, testRelease, failingLine)
+	for _, ts := range []string{"1800000500.000000", "1800000600.000000"} {
+		f.poller.nudged(messageNudge{Channel: testChannel, TS: ts, Subtype: editedSubtype})
+		f.tick()
+	}
+
+	handed := func(line string) string {
+		return string(mustJSON(map[string]any{"release": releasePost{Name: "stark-maclean", Line: line, Link: link}}))
+	}
+	want := []string{handed("stark-maclean is running · api"), handed("stark-maclean is running · api · api on prod failed")}
+	if got := cmd.requests(t); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %q, want each new line of the release once", got)
 	}
 }
 
