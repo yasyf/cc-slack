@@ -31,7 +31,7 @@ The tool names below have the full prefix
 | Read a channel's latest top-level messages, newest first, with reply counts and permalinks | `slack_history(channel_id, limit?)` |
 | Download a file attachment, such as a screenshot, to a local path you can Read (CLI `cc-slack file <permalink or id> [--out <path>]`) | `slack_file(file_id or url, out?)`; without `out` it writes to the daemon's files directory |
 | List unarchived public channels, and private ones the bot is in, by name prefix, with id, name, and created | `slack_channels(prefix?)` |
-| Find active users by handle, display name, real name, or email, ignoring case (CLI `cc-slack users <query>`) | `slack_users(query)` |
+| Find active users by handle, display name, real name, or email, ignoring case, or the one a user id or exact email names (CLI `cc-slack users <query>`) | `slack_users(query)`; a user id such as `U0123ABCDE` goes to `users.info` and an exact email to `users.lookupByEmail`, so both still resolve when `users.list` fails |
 | Watch a thread, or a channel's top-level messages and thread replies | `slack_watch(channel_id, thread_ts?, owner?)` |
 | Hear a channel's alerts, releases or posts as one line per event, not each message | CLI only: `cc-slack subscribe --channel <id> --kind alerts,releases,posts [--match <text>] [--owner <agent id>]`; `slack_unwatch` ends it |
 | End a watch, or stop hearing one thread, such as a DM thread | `slack_unwatch(watch_id)`, or `slack_unwatch(url)` |

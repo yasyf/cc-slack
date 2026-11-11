@@ -321,13 +321,13 @@ var (
 		{
 			name:        "slack_channels",
 			description: "List channels the bot can see.",
-			op:          opChannels, failure: actionRead,
+			op:          opChannels, failure: actionChannels,
 			properties: map[string]any{"prefix": map[string]any{"type": "string"}},
 		},
 		{
 			name:        "slack_users",
-			description: "Find active users by handle, name or email substring.",
-			op:          opUsers, failure: actionRead,
+			description: "Find active users by handle, name or email substring, or one by user id or exact email.",
+			op:          opUsers, failure: actionUsers,
 			properties: map[string]any{"query": map[string]any{"type": "string"}},
 			required:   []string{"query"},
 		},

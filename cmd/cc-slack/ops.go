@@ -1532,11 +1532,11 @@ func (a *app) handleChannels(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(fallback(actionChannels, err))
 	}
 	channels, err := fetchChannels(hc.Ctx, a.newAPI(id.Token))
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(fallback(actionChannels, slackCallError{"conversations.list", err}))
 	}
 	out := []channelInfo{}
 	for _, c := range channels {
@@ -1558,24 +1558,56 @@ func (a *app) handleUsers(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(fallback(actionUsers, err))
 	}
-	users, err := a.newAPI(id.Token).GetUsersContext(hc.Ctx, slack.GetUsersOptionLimit(listPageLimit))
+	users, err := findUsers(hc.Ctx, a.newAPI(id.Token), b.Query)
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(fallback(actionUsers, err))
 	}
-	query := strings.ToLower(b.Query)
 	out := []userInfo{}
 	for _, u := range users {
-		info := userInfo{ID: u.ID, Name: u.Name, DisplayName: u.Profile.DisplayName, RealName: u.RealName, Email: u.Profile.Email}
-		if !u.Deleted && slices.ContainsFunc([]string{info.Name, info.DisplayName, info.RealName, info.Email}, func(f string) bool {
-			return strings.Contains(strings.ToLower(f), query)
-		}) {
-			out = append(out, info)
+		if !u.Deleted {
+			out = append(out, userInfo{ID: u.ID, Name: u.Name, DisplayName: u.Profile.DisplayName, RealName: u.RealName, Email: u.Profile.Email})
 		}
 	}
 	slices.SortFunc(out, func(x, y userInfo) int { return strings.Compare(x.Name, y.Name) })
 	return ok(usersResult{Users: out})
+}
+
+var (
+	slackUserID  = regexp.MustCompile(`^[UW][A-Z0-9]{8,}$`)
+	emailAddress = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+)
+
+func findUsers(ctx context.Context, api slackAPI, query string) ([]slack.User, error) {
+	if slackUserID.MatchString(query) {
+		u, err := api.GetUserInfoContext(ctx, query)
+		return oneUser(u, err, "users.info", "user_not_found")
+	}
+	if emailAddress.MatchString(query) {
+		u, err := api.GetUserByEmailContext(ctx, query)
+		return oneUser(u, err, "users.lookupByEmail", "users_not_found")
+	}
+	users, err := api.GetUsersContext(ctx, slack.GetUsersOptionLimit(listPageLimit))
+	if err != nil {
+		return nil, slackCallError{"users.list", err}
+	}
+	lower := strings.ToLower(query)
+	return slices.DeleteFunc(users, func(u slack.User) bool {
+		return !slices.ContainsFunc([]string{u.Name, u.Profile.DisplayName, u.RealName, u.Profile.Email}, func(f string) bool {
+			return strings.Contains(strings.ToLower(f), lower)
+		})
+	}), nil
+}
+
+func oneUser(u *slack.User, err error, method, missing string) ([]slack.User, error) {
+	if err == nil {
+		return []slack.User{*u}, nil
+	}
+	if errorCode(err) == missing {
+		return nil, nil
+	}
+	return nil, slackCallError{method, err}
 }
 
 func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {

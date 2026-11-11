@@ -775,7 +775,7 @@ func usersCmd(d cmd.Deps) *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "users <query>",
-		Short: "List the active Slack users whose handle, display name, real name, or email contains the query, ignoring case",
+		Short: "List the active Slack users whose handle, display name, real name, or email contains the query, ignoring case, or the one a user id or exact email names",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return renderOp(c, d, f, opUsers, map[string]any{"query": args[0]}, asJSON, renderUsers)
