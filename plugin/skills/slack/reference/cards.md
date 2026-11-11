@@ -110,12 +110,15 @@ number or position, such as "same as 1", "options 1 and 2", "like #2", or
 "the first option", and the refusal quotes the words.
 
 Other is the user's own answer. A tap on Other opens a Slack modal with the
-question and a text box, and what they type there answers the card.
+question and a text box, and what they type there answers the card. A copy of
+the card posted before `card-copy` was removed carries Other too, and an answer
+written from it answers the card.
 
-A card that reuses the `waits` id of a card still waiting and changes its
-words edits that one card in place and posts nothing. Each older copy of it
-loses its buttons and reads one line, Redrawn in place, linking the card, so
-only the card asks. The same words post nothing. `text` that repeats the
+A card that reuses the `waits` id of a card still waiting edits that one card
+in place and posts nothing. When its words change, each older copy of it loses
+its buttons and reads one line, Redrawn in place, linking the card, so only the
+card asks. When they stay the same, each copy that still has buttons is drawn
+again from the card, Other included. `text` that repeats the
 card's `body` is dropped, so the body reads once. A redraw is always this
 `slack_dm_status` call with the card: `slack_edit` with only text refuses a
 card, since that edit would replace its layout and buttons with plain text.

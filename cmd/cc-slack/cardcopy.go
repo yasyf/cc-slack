@@ -171,6 +171,8 @@ func copiedButtons(actions *slack.ActionBlock, ref permalinkRef) (answered, link
 		case !isButton:
 		case answers(b.ActionID):
 			answered = append(answered, copiedAnswer(b, ref))
+		case strings.HasPrefix(b.ActionID, cardOtherAction):
+			answered = append(answered, b)
 		case strings.HasPrefix(b.ActionID, cardLinkAction+"github-"):
 			links = append(links, b)
 		}

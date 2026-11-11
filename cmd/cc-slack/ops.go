@@ -2526,9 +2526,15 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
 	thread, ts, posted, again, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
-	if err == nil && again {
+	switch {
+	case err != nil || ts == "":
+	case again:
 		if err := a.cards.withdrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
 			a.poller.log.Printf("card %s redrawn in place, but older copies of it keep their buttons: %v", ts, err)
+		}
+	default:
+		if err := a.cards.redrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
+			a.poller.log.Printf("card %s drawn again with its words, but its copies keep the buttons they were drawn with: %v", ts, err)
 		}
 	}
 	return thread, ts, posted, err

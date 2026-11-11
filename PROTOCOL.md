@@ -131,8 +131,10 @@ A waiting card's Other button, `cc-slack-card:other:<id>`, is the backend's
 to handle: it opens a modal with one text box, using the button's `{"id", "label",
 "q", "o"}` value for the question, and pushes nothing for the tap itself. The
 modal's submission is pushed as `cc-slack-card:wrote:<id>`, with the typed text
-as the value's `label`, on the card's own channel, `message_ts`, and `thread_ts`.
-The daemon drops an empty written answer.
+as the value's `label`, on the channel, `message_ts`, and `thread_ts` of the
+message whose Other was tapped: the card, or a copy of it, which carries the
+card's Other unchanged and whose `message_ts` the daemon maps to its card. The
+daemon drops an empty written answer.
 Fixtures: `action.json`, `action_ask.json`, `action_wait.json`, `action_wrote.json`, `action_explain.json`.
 
 #### `cc_slack_shortcut`

@@ -528,6 +528,10 @@ func (l *liveCards) drawnAt(channel, ts string) (cardRef, bool) {
 	if card, found := l.storedCard(channel, ts); found {
 		return card, true
 	}
+	return l.copySource(channel, ts)
+}
+
+func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
 	for _, t := range l.threads {
 		if at := slices.IndexFunc(t.Copies, func(c liveCardCopy) bool { return c.TS == ts && !c.Link }); t.Channel == channel && at >= 0 {
 			return l.storedCard(channel, t.Copies[at].Card)
@@ -541,9 +545,12 @@ func (l *liveCards) located(a cardActionPush) (cardActionPush, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	stored, found := l.storedCard(a.Channel, card.MessageTS)
+	if !found && !copied {
+		stored, found = l.copySource(a.Channel, card.MessageTS)
+	}
 	switch {
 	case found:
-		card.ThreadTS = stored.thread
+		card.MessageTS, card.ThreadTS = stored.ts, stored.thread
 	case copied:
 		a.ActionID = card.ActionID
 		return a, fmt.Errorf("%w: copy %s answers card %s", errNoStoredCard, a.MessageTS, card.MessageTS)
