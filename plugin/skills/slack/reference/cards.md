@@ -11,7 +11,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji; defaults to `needs_you` on a waiting card and `info` otherwise |
 | `title` | one line; the card header and the phone notification; defaults to the body's first line |
 | `body` | 1-3 sentences of mrkdwn, under the post rules in [voice.md](voice.md) |
-| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts with no board warning |
+| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts at the DM root with no board warning |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
 | `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
@@ -32,7 +32,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 
 A card's `body` takes markdown or Slack mrkdwn up to 40,000 characters and renders in Block Kit: bold, links, lists, one table block per message, sections split under Slack's 3,000 limit. A status card shows its first 400 characters and a waiting card its first 1,500, ending on a whole sentence. The rest stays behind Explain more, which posts it in the card's thread; nothing is cut.
 
-A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. `root_only`
+A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. A drive's question card, a `waits` card that sets `drive`, always posts at the DM root, where the user expects an answer to be asked: with `thread_ts` it posts there and puts one copy of itself, buttons included, in that thread. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script
 that keeps a drive's rollup current: the first call posts it, and each later
 call redraws it, keeping the last progress, times, facts, refs, links, and

@@ -1041,6 +1041,36 @@ func TestADriveQuestionCardPostsWithNoBoardWarning(t *testing.T) {
 	}
 }
 
+func TestADriveQuestionCardNamingAThreadPostsAtTheDMRootWithOneCopyInThatThread(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	thread := postThread(t, l, "About the merge.")
+	ask := func(card statusCard) map[string]string {
+		t.Helper()
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": thread}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	card := mergeCard()
+	card.Drive = "checkout-rewrite"
+	posts := len(l.slack.sent())
+	first := ask(card)
+	sent := l.slack.sent()[posts:]
+	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || sent[1].text != cardCopyLead {
+		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its copy in that thread", thread, first, sent)
+	}
+	card.Title = "Merge #41 before the freeze?"
+	posts = len(l.slack.sent())
+	again := ask(card)
+	sent = l.slack.sent()[posts:]
+	if again["ts"] != first["ts"] || len(sent) != 1 || sent[0].threadTS != "" || sent[0].text != cardCopyLead {
+		t.Fatalf("a redraw got %v with posts %+v, want the card edited in place and one fresh copy beside it at the DM root", again, sent)
+	}
+}
+
 func TestPermissionCardTapNamesItsGrantOrRevokeLabel(t *testing.T) {
 	options := []string{"Yes", "No"}
 	for _, c := range []struct {
