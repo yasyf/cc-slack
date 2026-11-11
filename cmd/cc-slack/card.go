@@ -918,7 +918,7 @@ func (c statusCard) text() string {
 	if summary = strings.TrimSpace(summary); summary == "" {
 		return c.emoji() + " " + c.Title
 	}
-	return clipRunes(c.emoji()+" "+c.Title+" — "+summary, cardMaxSectionLen)
+	return clipRunes(c.emoji()+" "+c.Title+" — "+mrkdwnText(summary), cardMaxSectionLen)
 }
 
 func gitCardTag(ctx context.Context, session, dir string) cardTag {
