@@ -789,6 +789,18 @@ func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
 	return t.changedSinceAnswer(m, drawn)
 }
 
+func (l *liveCards) linkCopy(copied cardRef) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.draft(copied.channel, copied.thread)
+	for i := range t.Copies {
+		if t.Copies[i].TS == copied.ts {
+			t.Copies[i].Link = true
+		}
+	}
+	l.commit(t)
+}
+
 func (l *liveCards) copyIn(channel, thread, card string) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
