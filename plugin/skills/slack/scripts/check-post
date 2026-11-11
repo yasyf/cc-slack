@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SLACK_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
+LINK_LABEL = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|([^<>]*)>")
 CODE_SPAN = re.compile(r"`[^`\n]+`")
 EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
@@ -27,6 +28,7 @@ class Rule:
     pattern: re.Pattern[str]
     fix: str
     reads_code: bool = True
+    reads_labels: bool = False
 
 
 RULES = (
@@ -45,27 +47,32 @@ RULES = (
         re.compile(r"(?<![\w'’./@#&+-])(?<![Dd]irection )(?<![Oo]ption )(?<![Pp]lan )(?<![Pp]hase )(?<![Ss]tep )[B-HJ-Z](?![\w'’/&+#-]|\.\w)"),
         "a one-letter name for work in flight means nothing to the reader; name the thing, such as the new release pipeline",
         reads_code=False,
+        reads_labels=True,
     ),
     Rule(
         "drive-term",
         re.compile(r"(?<![\w./-])(?i:(?:lanes?|desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)(?![-/]\w|\.\w)|\b(?:merge-)?walker\b|(?<![\w./:-])[oj]\d{2,}(?![\w/-]|\.\w)"),
         "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
         reads_code=False,
+        reads_labels=True,
     ),
     Rule(
         "internal-id",
         re.compile(r"\b(?:brw|run|exec|ctx)_[A-Za-z0-9]+"),
         "link the run or browser page, or describe it in the reader's terms",
+        reads_labels=True,
     ),
     Rule(
         "zone-label",
         re.compile(r"\b(?:UTC|GMT|PST|PDT|PT)\b|\b\d{1,2}:\d{2}(?::\d{2})?Z\b"),
         "state the time in the team's local time with no zone label, such as 5:25pm",
+        reads_labels=True,
     ),
     Rule(
         "ulid",
         re.compile(r"\b[0-9A-HJKMNP-TV-Z]{26}\b"),
         "pod and object ULIDs mean nothing to the reader; link the dashboard or describe the object",
+        reads_labels=True,
     ),
     Rule(
         "bare-number",
@@ -92,12 +99,14 @@ RULES = (
         ),
         "a card draws its recommended option first and renumbers the rest; name the option in its own words, never by number or position",
         reads_code=False,
+        reads_labels=True,
     ),
     Rule(
         "bare-identifier",
         re.compile(r"(?<![\w`])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?![\w`])"),
         "wrap identifiers such as env, secret, and setting names in backticks",
         reads_code=False,
+        reads_labels=True,
     ),
     Rule(
         "unproven",
@@ -130,8 +139,14 @@ class Finding:
         return f"{self.line}:{self.column} {self.kind} {self.token!r}: {self.fix}"
 
 
-def mask_slack_tokens(line: str) -> str:
-    return SLACK_TOKEN.sub(lambda match: " " * len(match.group()), line)
+def mask_slack_tokens(line: str, labels: bool = False) -> str:
+    return SLACK_TOKEN.sub(lambda match: masked_token(match.group(), labels), line)
+
+
+def masked_token(token: str, labels: bool) -> str:
+    if not (labels and (link := LINK_LABEL.fullmatch(token))):
+        return " " * len(token)
+    return f"{' ' * link.start(1)}{link[1]}{' ' * (len(token) - link.end(1))}"
 
 
 def mask_code(line: str) -> str:
@@ -144,20 +159,20 @@ def mask_emphasis(line: str) -> str:
     return line
 
 
-def plain(line: str) -> str:
-    return mask_emphasis(mask_slack_tokens(line))
+def plain(line: str, labels: bool = False) -> str:
+    return mask_emphasis(mask_slack_tokens(line, labels))
 
 
 def check(text: str) -> list[Finding]:
     findings = walls(text)
     for number, line in enumerate(text.splitlines(), start=1):
-        masked = plain(line)
-        prose = mask_code(masked)
+        masked = {labels: plain(line, labels) for labels in (False, True)}
         for rule in RULES:
             span = "token" if "token" in rule.pattern.groupindex else 0
+            read = masked[rule.reads_labels]
             findings.extend(
                 Finding(number, match.start(span) + 1, rule.kind, line[match.start(span) : match.end(span)], rule.fix)
-                for match in rule.pattern.finditer(masked if rule.reads_code else prose)
+                for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read))
             )
     return sorted(findings, key=lambda finding: (finding.line, finding.column))
 
@@ -181,7 +196,7 @@ def walls(text: str) -> list[Finding]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post."
+        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post, reading the words of each link as the reader sees them."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     args = parser.parse_args()

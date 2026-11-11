@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `cc-slack check-post` reads the words of each link, `<url|words>`, as the reader sees them, for drive words, one-letter codenames, internal ids and ULIDs, zone labels, options named by number and unwrapped identifiers. Before, it skipped every link whole, so words such as "the lane" or "option 2" passed under a link. A linked commit sha, PR number or build number still passes.
 - A short DM line or reply holding a ```` ```chart ```` fence, such as a drive's `say` post with a chart, draws the chart as Slack's own chart. Before, a short text with no other markdown went out as plain text, so its chart showed as the spec's JSON.
 - `cc-slack check-post` flags a line that reports no change, such as "No change since the last update." or "Nothing new.", and says to post nothing, or to react :+1: to a message that needs no answer. A line that says what changed, such as "No change to the API; the fix only touches the worker.", passes.
 - `cc-slack check-post`'s wall-of-text fix no longer says to end with one direct question. A session whose questions go on cards read it as an order to ask in text; the fix now says only to keep each paragraph to three sentences and put steps and settings in a list.
