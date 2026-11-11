@@ -112,7 +112,12 @@ PNG, since Slack draws only PNG, JPEG and GIF from a link. Without
 and builds they cite. `login` reads `token_env` from its own environment and
 stores the value, and resolves `token_command`'s program on its `PATH`; the
 daemon runs that command when it needs a token, keeps the output for 30
-minutes, and reruns it after a 401.
+minutes, and reruns it after a 401. The daemon reads GitHub through ccx's GitHub
+gateway, `ccx vcs gh -- api graphql` with `GH_REPO` naming the repository and
+`CCX_CALLER=cc-slack`, in one query per repository for up to 25 PRs, so every read
+runs on ccx's GitHub App token, is charged in its ledger under `cc-slack`, and stops
+at its rate-limit floor. No GitHub read uses `[github]`'s token. When a read fails,
+each PR it asked about keeps the daemon's last answer for it.
 
 With `[github]` set, `send`, `reply`, `edit`, and `dm-status` link every pull
 request the text names, and a card's body, before posting. A GitHub PR URL,
@@ -126,9 +131,9 @@ candidate holds that PR, so a number two repos hold stays plain, as does one
 the program cannot answer.
 Text inside a Slack `<...>` link or mention, a Markdown link, a code span, or a code block is
 not scanned, and a number no candidate repo holds stays plain. The daemon
-asks GitHub about every candidate in one GraphQL query per post, with a 5 s
-limit; when that read fails, the post goes out as written and the daemon
-logs why.
+asks GitHub about every candidate in one GraphQL query per repository, with a
+5 s limit; when a read fails, each PR the daemon read before links from that
+read, the rest stay as written, and the daemon logs why.
 
 A post or edit that links a Slack message, in its text or in its blocks, goes out
 with `unfurl_links` on, so Slack draws that message under the line: a card's

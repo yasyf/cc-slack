@@ -1508,7 +1508,7 @@ func (l *liveCards) host(name string, cfg config) *refHost {
 
 func (l *liveCards) fetch(ctx context.Context, name string, h *refHost, refs []refID) (map[string]refState, error) {
 	if name == refHostGitHub {
-		return l.client.pullRequests(ctx, h.token, refs)
+		return l.client.pullRequests(ctx, refs)
 	}
 	out := map[string]refState{}
 	var errs []error

@@ -302,7 +302,7 @@ func buildPreviewDaemon(t *testing.T, build, message string) *liveDaemon {
 	refs, srv := serveRefs(t)
 	refs.build, refs.buildMessage = build, message
 	l := startDaemon(t, func(a *app) {
-		a.cards.client = refClient{http: srv.Client(), githubURL: srv.URL, buildkiteURL: srv.URL, now: time.Now}
+		a.cards.client = newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, time.Now)
 	})
 	loggedInWithRefs(t, l)
 	return l
@@ -357,7 +357,7 @@ func TestBuildPreviewsShareTheLimitWithPRs(t *testing.T) {
 	github := httptest.NewServer(gh)
 	t.Cleanup(github.Close)
 	l := startDaemon(t, func(a *app) {
-		a.cards.client = refClient{http: srv.Client(), githubURL: github.URL, buildkiteURL: srv.URL, now: time.Now}
+		a.cards.client = newRefClient(fakeGHArgv(github), srv.Client(), srv.URL, time.Now)
 	})
 	l.slack.setUser(&slack.User{ID: testUser, Name: "ym", RealName: "Yasyf Mohamedali", Profile: slack.UserProfile{
 		Email: "ym@example.com", Image512: "https://avatars/ym.png", DisplayName: "yasyf",

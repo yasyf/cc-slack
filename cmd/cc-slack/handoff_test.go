@@ -23,6 +23,9 @@ func TestMain(m *testing.M) {
 		fmt.Printf("%s version %s\n", binaryName, release)
 		os.Exit(0)
 	}
+	if len(os.Args) > 2 && os.Args[1] == fakeGHArg {
+		os.Exit(fakeGH(os.Args[2], os.Args[3:]))
+	}
 	os.Exit(m.Run())
 }
 

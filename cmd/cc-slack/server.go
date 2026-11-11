@@ -67,7 +67,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 	}
 	cards := &liveCards{
 		path:    liveCardsPath(),
-		client:  refClient{http: &http.Client{Timeout: 30 * time.Second}, githubURL: githubAPI, buildkiteURL: buildkiteAPI, now: time.Now},
+		client:  newRefClient([]string{"ccx", "vcs", "gh"}, &http.Client{Timeout: 30 * time.Second}, buildkiteAPI, time.Now),
 		log:     log.New(os.Stderr, "["+binaryName+" cards] ", log.LstdFlags),
 		now:     time.Now,
 		newAPI:  newAPI,

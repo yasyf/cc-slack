@@ -101,7 +101,7 @@ func prLinksDaemon(t *testing.T, prLinks map[string]any, held ...string) (*liveD
 	srv := httptest.NewServer(gh)
 	t.Cleanup(srv.Close)
 	l := startDaemon(t, func(a *app) {
-		a.cards.client = refClient{http: srv.Client(), githubURL: srv.URL, buildkiteURL: srv.URL, now: time.Now}
+		a.cards.client = newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, time.Now)
 	})
 	l.slack.setUser(&slack.User{ID: testUser, Name: "ym", RealName: "Yasyf Mohamedali", Profile: slack.UserProfile{
 		Email: "ym@example.com", Image512: "https://avatars/ym.png", DisplayName: "yasyf",
@@ -472,7 +472,19 @@ func TestPostGoesOutUnlinkedWhenGitHubFails(t *testing.T) {
 	}
 }
 
-func TestPostReadsGitHubOnceHoweverManyPRs(t *testing.T) {
+func TestAPostLinksAPRFromItsLastReadWhileGitHubFails(t *testing.T) {
+	l, gh := linkingDaemon(t, "acme/app#41")
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green"})
+	gh.mu.Lock()
+	gh.down = true
+	gh.mu.Unlock()
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is still green"})
+	if got, want := lastText(l), "<https://github.com/acme/app/pull/41|#41> is still green"; got != want {
+		t.Fatalf("posted %q while GitHub failed, want %q from the PR's last read", got, want)
+	}
+}
+
+func TestPostReadsGitHubOncePerRepoHoweverManyPRs(t *testing.T) {
 	for _, n := range []int{1, 20} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			var held, refs []string
@@ -482,8 +494,8 @@ func TestPostReadsGitHubOnceHoweverManyPRs(t *testing.T) {
 			}
 			l, gh := linkingDaemon(t, held...)
 			l.post(opSend, map[string]any{"channel_id": testChannel, "text": strings.Join(refs, " ")})
-			if reads := gh.readCount(); reads != 1 {
-				t.Fatalf("%d PRs took %d GitHub reads, want 1", n, reads)
+			if reads := gh.readCount(); reads != 2 {
+				t.Fatalf("%d PRs took %d GitHub reads, want 2, one for each repo a bare number may name", n, reads)
 			}
 			if links := strings.Count(lastText(l), "<https://github.com/acme/lib/pull/"); links != n {
 				t.Fatalf("posted %q with %d links, want %d", lastText(l), links, n)
