@@ -1228,6 +1228,16 @@ func TestDMStatusPostsEachUpdateAtTheRootWithItsOwnThread(t *testing.T) {
 	}
 }
 
+func TestAShortDMLineHoldingAChartFenceDrawsItAsSlacksChart(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.do(opDMStatus, map[string]string{"text": "Posts against alerts today.\n" + barChart})
+	sent := l.slack.sent()
+	if len(sent) != 1 || !strings.Contains(sent[0].blocks, `"type":"data_visualization"`) || strings.Contains(sent[0].blocks, "vega-lite") {
+		t.Fatalf("dm-status posts = %+v, want the chart fence drawn as Slack's chart, not its spec as code", sent)
+	}
+}
+
 func dmSubscriptionCount(t *testing.T, l *liveDaemon) int {
 	t.Helper()
 	var n int

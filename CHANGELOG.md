@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A short DM line or reply holding a ```` ```chart ```` fence, such as a drive's `say` post with a chart, draws the chart as Slack's own chart. Before, a short text with no other markdown went out as plain text, so its chart showed as the spec's JSON.
 - A ```` ```chart ```` fence in a card's body or a PR's Show me draws as Slack's own chart, a bar, line, area or pie, from the Vega-Lite spec it holds. `cc-slack card render` refuses a chart Slack cannot hold, such as a label past 20 characters, naming the label. Before, cc-slack showed such a fence as its JSON, so a drive drew each chart as a picture: on Nov 10 at 10:52 PM you wrote under one: "for the chart slack literally has the native version of this why didn't you build that for the renderer".
 - Two to ten pictures in a row on a card draw side by side as one Slack carousel, each titled with its caption, so a question's pictures read as its options 1 and 2. A PR's pictures and a card's other pictures draw the same way. Before, each picture was its own full-width image, one under the next: at 10:55 PM you asked for them "gallery style labeled with each option (e.g 1, 2)".
 - A table in a PR card's Show me draws as a Slack data table, as a table in a card's body does. Before, it drew as one line of text a row. At 11:01 PM you wrote "the two tables should be rendered in slack natively".

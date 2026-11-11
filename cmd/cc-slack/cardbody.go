@@ -42,7 +42,7 @@ var (
 	mdEndsOnHeading = regexp.MustCompile(`(?:^|\n)(?:#{1,6} +[^\n]*|\*{1,2}[^*\n]+\*{1,2})\s*$`)
 	mdRule          = regexp.MustCompile(`^\|?[\s:|-]*-[\s:|-]*\|?$`)
 	mdPicture       = regexp.MustCompile(`^!\[([^\]\n]*)\]\(\s*(?:<([^<>\n]+)>|([^\s()<>]+))\s*\)$`)
-	mdMarks         = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\|`)
+	mdMarks         = regexp.MustCompile(`(?m)\*\*[^*\n]+\*\*|\]\(https?://|^#{1,6} |^\s*\||^` + "```" + `chart\s*$`)
 	cellToken       = regexp.MustCompile("<(https?://[^|>\\s]+)\\|([^>]+)>|\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|\\*\\*?([^*\\n]+)\\*\\*?|`([^`\\n]+)`")
 	htmlComment     = regexp.MustCompile(`(?s)[ \t]*<!--.*?-->`)
 	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
