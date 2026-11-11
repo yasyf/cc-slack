@@ -77,14 +77,33 @@ func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 	}
 }
 
-func TestAMessageCarriesOneTableAndAnyOtherAsLines(t *testing.T) {
-	body := "| a | b |\n|---|---|\n| 1 | 2 |\n\nBetween.\n\n| c | d |\n|---|---|\n| 3 | 4 |"
+func TestEveryTableInABodyDrawsAsItsOwnDataTable(t *testing.T) {
+	body := "| Who creates it | Network call per run | Who can make a database |\n|---|---|---|\n| Run's own writer | none | only the run |\n| API | one call | only the API |\n\n" +
+		"Between.\n\n| Started by | Acts as |\n|---|---|\n| a run | run:<run id> |\n| a cloud agent | env:<env id> |"
 	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)[0]
-	if len(tables(blocks)) != 1 {
-		t.Fatalf("blocks %s, want one table block, the most Slack takes on a message", blocksJSON(t, blocks))
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the body: %v", err)
 	}
-	if got := sectionTexts(blocks); !slices.Contains(got, "• *c:* 3 · *d:* 4") {
-		t.Fatalf("sections %q, want the second table's row as a line of its own", got)
+	drawn := tables(blocks)
+	if len(blocks) != 3 || len(drawn) != 2 || len(drawn[0].Rows[0]) != 3 || len(drawn[1].Rows[0]) != 2 || !slices.Equal(sectionTexts(blocks), []string{"Between."}) {
+		t.Fatalf("blocks %s, want both tables as data tables around the line between them", blocksJSON(t, blocks))
+	}
+	if cell, ok := drawn[1].Rows[1][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "run:<run id>" {
+		t.Fatalf("cell = %#v, want the second table's text as it was written", drawn[1].Rows[1][1])
+	}
+}
+
+func TestATableSlackWouldRefuseDrawsAsLines(t *testing.T) {
+	wide := strings.Repeat("x", slackMaxTable/(2*(cardMaxTableRows-1))+1)
+	rows := append([]string{"| a | b |", "|---|---|"}, slices.Repeat([]string{"| " + wide + " | " + wide + " |"}, cardMaxTableRows-1)...)
+	for name, body := range map[string]string{
+		"past 20,000 characters": strings.Join(rows, "\n"),
+		"a header alone":         "| a | b |\n|---|---|",
+	} {
+		pages := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)
+		if drawn := tables(slices.Concat(pages...)); len(drawn) != 0 {
+			t.Errorf("%s: %d data tables, want lines, since Slack refuses a table past %d characters or without a row under its header", name, len(drawn), slackMaxTable)
+		}
 	}
 }
 
@@ -642,7 +661,6 @@ func TestABlockSlackWouldRefuseIsNamedBeforeItPosts(t *testing.T) {
 	}{
 		"long section":  {[]slack.Block{head, section(long)}, "block 2 (section): its text is 3001 characters"},
 		"empty section": {[]slack.Block{section("")}, "block 1 (section): its text is 0 characters"},
-		"two tables":    {[]slack.Block{tableBlock([][]string{{"a"}}), tableBlock([][]string{{"b"}})}, "block 2 (data_table): a message holds one table"},
 		"long field": {[]slack.Block{slack.NewSectionBlock(nil, []*slack.TextBlockObject{slack.NewTextBlockObject(slack.MarkdownType, long, false, false)}, nil)},
 			"block 1 (section): a field is 3001 characters"},
 		"too many": {slices.Repeat([]slack.Block{section("a")}, cardMaxBlocks+1), "the message holds 51 blocks"},
