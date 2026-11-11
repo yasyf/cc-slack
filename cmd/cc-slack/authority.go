@@ -131,6 +131,10 @@ func (a *app) mintsTickets(ctx context.Context, pid int) bool {
 
 func (t hookTicket) once() bool { return t.Reach == reachOnce }
 
+func (w write) editsOwnersDM(id identity) bool {
+	return w.action == approveEdit && w.channelID == id.DMChannelID
+}
+
 func (w write) target() string {
 	where := w.named
 	if w.threadTS != "" {
@@ -193,7 +197,7 @@ func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, sessio
 
 func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticketSpend, w write) (hookTicket, *receipt, error) {
 	ctx, db := hc.Ctx, hc.DB
-	if s.TicketID == "" && !a.mintsTickets(ctx, hc.Env.ClaudePID) {
+	if s.TicketID == "" && (w.editsOwnersDM(id) || !a.mintsTickets(ctx, hc.Env.ClaudePID)) {
 		return hookTicket{}, nil, nil
 	}
 	t, err := a.spendTicket(ctx, api, id, hc.Env.Session, s, w)

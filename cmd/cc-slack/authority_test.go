@@ -342,6 +342,27 @@ func TestEditNeedsItsOwnTicket(t *testing.T) {
 	}
 }
 
+func TestEditInTheOwnersDMNeedsNoTicket(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+
+	ts := postThread(t, l, "PR is up")
+	var edited postResult
+	if err := json.Unmarshal(l.do(opEdit, map[string]any{"channel_id": testDM, "ts": ts, "text": "PR is up and green"}).Body, &edited); err != nil {
+		t.Fatal(err)
+	}
+	if !edited.Posted || edited.TicketID != "" || edited.TS != ts {
+		t.Fatalf("edit = %+v, want it made with no ticket", edited)
+	}
+	if n := l.tickets.callCount(); n != 0 {
+		t.Fatalf("capt-hook ran %d times, want never for an edit of the bot's post in the owner's DM", n)
+	}
+	if edits := l.slack.edited(); len(edits) != 1 || edits[0].channelID != testDM || edits[0].text != "PR is up and green" {
+		t.Fatalf("edits = %+v, want one chat.update in the owner's DM", edits)
+	}
+	l.refused(opDelete, map[string]any{"channel_id": testDM, "ts": ts}, "no ticket covers this delete")
+}
+
 func TestDeleteNeedsItsOwnTicket(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
