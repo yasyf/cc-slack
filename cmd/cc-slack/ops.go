@@ -14,6 +14,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -374,6 +375,33 @@ func okUnlessUndrawn(v any, undrawn error) daemon.Reply {
 		return fail(undrawn.Error())
 	}
 	return ok(v)
+}
+
+var sinceTSPattern = regexp.MustCompile(`^\d{10}(\.\d{1,6})?$`)
+
+var bodyFields = sync.OnceValue(func() []string {
+	var names []string
+	for _, t := range []reflect.Type{reflect.TypeFor[opBody](), reflect.TypeFor[ticketSpend]()} {
+		for i := range t.NumField() {
+			if name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+})
+
+func refuseUnknownFields(hc daemon.HandlerCtx) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(hc.Env.Body, &fields); err != nil {
+		return fmt.Errorf("bad %s body: %w", hc.Env.Op, err)
+	}
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		if !slices.Contains(bodyFields(), key) {
+			return fmt.Errorf("%s takes no field %q, and never reads past one it does not know; name the conversation as channel_id", hc.Env.Op, key)
+		}
+	}
+	return nil
 }
 
 func decodeBody(hc daemon.HandlerCtx) (opBody, error) {
@@ -1148,8 +1176,11 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if b.ThreadTS == "" {
 		return fail("thread needs thread_ts (or a Slack url)")
 	}
-	if b.SinceTS != "" && !slackTSPattern.MatchString(b.SinceTS) {
-		return fail(fmt.Sprintf("since_ts %q is not a Slack ts such as 1790210144.444179", b.SinceTS))
+	if err := refuseUnknownFields(hc); err != nil {
+		return fail(err.Error())
+	}
+	if b.SinceTS != "" && !sinceTSPattern.MatchString(b.SinceTS) {
+		return fail(fmt.Sprintf("since_ts %q is not a Slack ts such as 1790210144.444179, or whole seconds such as 1790210144", b.SinceTS))
 	}
 	limit := b.Limit
 	if limit <= 0 {
@@ -1162,14 +1193,11 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(hc.Ctx, api, id, cmp.Or(b.ChannelID, id.DMChannelID))
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(threadReadFailure(err, b.ChannelID, id.DMChannelID, b.ThreadTS))
 	}
 	read, err := a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
-	if err != nil && errorCode(err) == "channel_not_found" && channelID != id.DMChannelID {
-		return fail(fallback(actionRead, err) + fmt.Sprintf("; %s is no conversation the bot can read, and your DM with the app is %s, which channel_id may omit", channelID, id.DMChannelID))
-	}
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(threadReadFailure(err, b.ChannelID, id.DMChannelID, b.ThreadTS))
 	}
 	msgs := read.msgs
 	if b.SinceTS != "" {
@@ -2313,7 +2341,7 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	under := b.ThreadTS
 	if b.About != "" {
 		if b.Card != nil || b.Text == "" {
-			return "", tapCards{}, errors.New("about puts a text reply in a waiting card's thread; send text, not a card")
+			return "", tapCards{}, errors.New("about is for a text reply under a waiting card; a card names its card by card.waits, so drop about")
 		}
 		var err error
 		if under, err = a.cardThread(hc.Ctx, sub.ID, id, b.About); err != nil {

@@ -20,8 +20,10 @@ order.
    and build or PR numbers, bare URLs other than a Sentry issue or Datadog
    monitor, incident, or event link, which stay bare so Slack unfurls them,
    a Slack message link included, which unfurls under words that name it,
-   one-letter codenames such as "D",
-   multi-agent terms such as lane, desk, walker, parity, and fence, zone
+   one-letter codenames such as "D", but not a letter naming an option such as
+   "Direction B", multi-agent terms such as lane, desk, walker, parity, and
+   fence, and order and job ids such as o308, but never inside a function,
+   file, path, product or alert name or in a code span, zone
    labels such as `PT` or `17:35Z`, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
@@ -71,8 +73,10 @@ CI, and git before writing.
 Write every post for the person reading the thread, in plain words. Never
 use internal shorthand: tracking ids, agent lane names, raw commit shas, or
 object ULIDs. Name the work, never its codename: "the new release
-pipeline", not "D". Gloss code nouns in one plain phrase, or leave them
-out.
+pipeline", not "D". Call code, files, products and alerts by their proper
+names, as the owner put it: "use the proper fucking terms for things". A
+function, syscall, file, path or alert keeps its own name, in backticks
+when it is code, such as `fsync()` or `read_before_reply.py`.
 
 ```text
 Before (heads-up, teammate's thread): Heads-up: D landed today (old release pipeline gone; #345 changed image/build pairs), so rebase onto main first.

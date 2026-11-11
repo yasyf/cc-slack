@@ -729,7 +729,7 @@ def place_words(ctx: Context) -> Place:
         return Place(named)
     opener = next((message for message in thread_of(ctx).messages if message.ts == conv.thread), None)
     if opener is None:
-        return Place(f"{named}, thread {conv.thread}")
+        return Place(f"the {named} thread")
     name = f"the {named} thread {opener.user_name} started"
     return Place(name, f"{name} at {clock(conv.thread)}: {' '.join(opener.text.split())[:OPENER_SHOWN]}")
 
@@ -1242,7 +1242,7 @@ on(
                 + re.escape(f'{DANA_OPENED["text"]}\\n\\n{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "{DANA_CARD_ID}"')
             ),
             case(commands=NOT_DM | {f"{CC_SLACK} channel-info --channel {FOLLOWERS}": (1, "ratelimited")}) >> Block(pattern=re.escape(f'"title": "Post this in the {FOLLOWERS} thread Dana started?"')),
-            case(commands=NOT_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern=re.escape(f'"title": "Post this in #app-followers, thread {DANA_THREAD}?"')),
+            case(commands=NOT_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern=re.escape('"title": "Post this in the #app-followers thread?"')),
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=re.escape('"title": "Post this in a direct message to priya?",\n  "body": "Hey Priya')),
             case() >> Block(pattern=re.escape(f'then retry once they tap Yes.\n```json\n{{\n  "id": "{DANA_CARD_ID}",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "{DANA_CARD_ID}-context"')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,

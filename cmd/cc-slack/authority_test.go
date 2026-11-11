@@ -502,3 +502,9 @@ func TestRevokeRevokesTheCaptHookTicket(t *testing.T) {
 	l.refused(opRevoke, map[string]any{"ticket_id": "fffffffffff0"}, "no ticket fffffffffff0")
 	l.refused(opRevoke, map[string]any{}, "revoke needs ticket_id")
 }
+
+func TestAWriteTheHookNeverTicketedSaysToRetryIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.refused(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": "CI is green"}, "When it timed out before naming a ticket, retry the same call")
+}

@@ -308,3 +308,29 @@ func TestThreadOpSinceTSReadsOnlyWhatIsNewer(t *testing.T) {
 		t.Fatalf("read since a bad ts: %v, want it refused", err)
 	}
 }
+
+func TestThreadOpSinceTSTakesWholeSeconds(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, rootMessage(testThread, "root"))
+	l.slack.add(testChannel, reply(firstReply, "first"))
+	l.slack.add(testChannel, reply(secondReply, "second"))
+	whole, _, _ := strings.Cut(testThread, ".")
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "since_ts": whole}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 3 || res.Messages[2].TS != secondReply {
+		t.Fatalf("read since %s = %+v, want the root and both replies, all newer than that second", whole, res)
+	}
+}
+
+func TestThreadOpSaysWhatItReadAndRefusesAFieldItDoesNotKnow(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.refused(opThread, map[string]any{"channel": testChannel, "thread_ts": testThread}, `thread takes no field "channel"`)
+	l.slack.fail("conversations.open", slack.SlackErrorResponse{Err: "user_not_found"})
+	l.refused(opThread, map[string]any{"channel_id": "U0NOBODY001", "thread_ts": testThread}, "U0NOBODY001 is not a conversation the bot can read (user_not_found)")
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "thread_not_found"})
+	l.refused(opThread, map[string]any{"thread_ts": "1790000000.000001"}, "thread 1790000000.000001 is not in your DM with the app")
+}

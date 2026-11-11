@@ -1736,3 +1736,10 @@ func TestAThreadReadWithNoChannelReadsYourDMAndAGuessedOneNamesIt(t *testing.T) 
 		t.Fatalf("guessed DM read = %v, want channel_not_found naming %s", err, dm)
 	}
 }
+
+func TestAboutBesideACardSaysToDropAbout(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := map[string]any{"status": "needs_you", "title": "Which database?", "waits": "pick-db", "options": []string{"Postgres", "SQLite"}, "recommended": "Postgres"}
+	l.refused(opDMStatus, map[string]any{"about": "pick-db", "card": card}, "a card names its card by card.waits, so drop about")
+}

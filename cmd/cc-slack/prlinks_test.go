@@ -1828,3 +1828,16 @@ func TestAStackCardCarriesEveryPRItListsAndRedrawsWhenAnyOfThemMoves(t *testing.
 		t.Fatalf("card edits = %v, want the stack card redrawn when its second PR moves", edits)
 	}
 }
+
+func TestATapPRWithNoCardCarriesWhatTheCardCommandSaid(t *testing.T) {
+	argv := []string{filepath.Join(t.TempDir(), "card")}
+	script := "#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo '{\"prs\":[{\"repo\":\"acme/app\",\"number\":41}]}' ;;\n*) echo 'drive card: acme/app#41 is in no drive' >&2; echo '{\"cards\":[]}' ;;\nesac\n"
+	if err := os.WriteFile(argv[0], []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := cardingDaemon(t, argv, "acme/app#41")
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": drive card: acme/app#41 is in no drive; nothing was sent")
+	if got := l.slack.sentTo(testDM); len(got) != 0 {
+		t.Fatalf("posted %+v, want nothing", got)
+	}
+}

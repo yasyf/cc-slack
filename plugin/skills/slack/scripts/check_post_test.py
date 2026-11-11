@@ -98,6 +98,22 @@ class CheckPostTest(unittest.TestCase):
             ],
         )
 
+    def test_passes_proper_names_for_code_files_paths_and_alerts(self) -> None:
+        text = (
+            "The hang is in fsync(), called from read_before_reply.py through handleThread, which waits in epoll_wait; "
+            "see plugins/long-running/lib/drive/lanes.py, `the drive lane`, and SandSQL's unproven-replica-lane alert."
+        )
+        self.assertEqual(kinds(text), [])
+
+    def test_passes_a_letter_that_names_an_option(self) -> None:
+        self.assertEqual(kinds("Direction B keeps one lock, and Plan C, Phase D, Step E and option F follow it."), [])
+
+    def test_still_flags_a_lane_name_and_order_and_job_ids(self) -> None:
+        self.assertEqual(
+            kinds("The rt-slack-gates lane took o308 and j789."),
+            [("drive-term", "lane"), ("drive-term", "o308"), ("drive-term", "j789")],
+        )
+
     def test_ignores_letters_inside_words_and_names(self) -> None:
         text = "I asked Walker about the U.S. region, C++ builds, Q&A notes, and a T-shirt; S3 and E2E are fine."
         self.assertEqual(kinds(text), [])

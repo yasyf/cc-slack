@@ -664,7 +664,7 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 	}
 	f.bind(c)
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "most recent messages to print")
-	c.Flags().StringVar(&since, "since-ts", "", "print only messages newer than this ts")
+	c.Flags().StringVar(&since, "since-ts", "", "print only messages newer than this Slack ts, or whole epoch seconds")
 	c.Flags().BoolVar(&raw, "raw", false, "also print each message as Slack sends it, with its blocks, attachments and metadata")
 	return c
 }

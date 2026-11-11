@@ -291,7 +291,7 @@ var (
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,
 				"limit":    map[string]any{"type": "integer", "description": "default 50"},
-				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this"},
+				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this Slack ts, such as 1790210144.444179, or whole epoch seconds"},
 			},
 		},
 		{

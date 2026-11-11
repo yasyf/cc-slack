@@ -776,7 +776,7 @@ func askPRCards(ctx context.Context, id identity, prs []refID) ([]providedCard, 
 	for _, pr := range prs {
 		asked = append(asked, map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number})
 	}
-	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
+	out, said, err := cardCommandOutput(ctx, id.Config.PRLinks.CardCommand, map[string]any{"prs": asked})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -787,7 +787,26 @@ func askPRCards(ctx context.Context, id identity, prs []refID) ([]providedCard, 
 	if err := json.Unmarshal(out, &answer); err != nil {
 		return nil, nil, fmt.Errorf("decode %s: %w", id.Config.PRLinks.CardCommand[0], err)
 	}
-	return answer.Cards, answer.Skipped, nil
+	return answer.Cards, append(answer.Skipped, unanswered(prs, answer.Cards, answer.Skipped, said)...), nil
+}
+
+func unanswered(prs []refID, cards []providedCard, skipped []skippedCard, said string) []skippedCard {
+	var told []skippedCard
+	for _, pr := range prs {
+		named := func(r refID) bool { return r.key() == pr.key() }
+		if slices.ContainsFunc(skipped, func(s skippedCard) bool { return named(s.ref()) }) ||
+			slices.ContainsFunc(cards, func(p providedCard) bool { return slices.ContainsFunc(p.Card.refIDs(), named) }) {
+			continue
+		}
+		key := fmt.Sprintf("%s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+		for line := range strings.Lines(said) {
+			if strings.Contains(line, key) {
+				told = append(told, skippedCard{Repo: pr.Owner + "/" + pr.Repo, Number: pr.Number, Reason: strings.TrimSpace(line)})
+				break
+			}
+		}
+	}
+	return told
 }
 
 // recardPR redraws a PR card in place from what the card command says now, so
@@ -902,17 +921,24 @@ func (e cardCommandError) Error() string { return e.command + ": " + e.err.Error
 func (e cardCommandError) Unwrap() error { return e.err }
 
 func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, error) {
+	out, _, err := cardCommandOutput(ctx, command, ask)
+	return out, err
+}
+
+func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, installed(command[0]), command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
 	cmd.Stdin = bytes.NewReader(mustJSON(ask))
 	cmd.WaitDelay = time.Second
+	var said bytes.Buffer
+	cmd.Stderr = &said
 	out, err := cmd.Output()
-	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
-		return nil, cardCommandError{command[0], err, string(bytes.TrimSpace(exit.Stderr))}
+	if _, ok := errors.AsType[*exec.ExitError](err); ok {
+		return nil, "", cardCommandError{command[0], err, string(bytes.TrimSpace(said.Bytes()))}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", command[0], err)
+		return nil, "", fmt.Errorf("%s: %w", command[0], err)
 	}
-	return out, nil
+	return out, said.String(), nil
 }
