@@ -361,8 +361,9 @@ func imageMessage(text string, body []slack.Block, files []slack.FileSummary) []
 }
 
 func imageBlock(file slack.FileSummary) slack.Block {
-	return slack.NewImageBlockSlackFile(&slack.SlackFileObject{ID: file.ID}, file.Title, "",
-		slack.NewTextBlockObject(slack.PlainTextType, file.Title, false, false))
+	title := strings.TrimSuffix(file.Title, filepath.Ext(file.Title))
+	return slack.NewImageBlockSlackFile(&slack.SlackFileObject{ID: file.ID}, title, "",
+		slack.NewTextBlockObject(slack.PlainTextType, title, false, false))
 }
 
 func messageBlocks(text string, blocks []slack.Block) []slack.Block {
