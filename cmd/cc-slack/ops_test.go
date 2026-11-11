@@ -531,7 +531,7 @@ func TestACardLinkedIntoAThreadReadsItsBodyOnceAndItsShowMeTable(t *testing.T) {
 	if strings.Count(shared, body) != 1 || strings.Count(shared, card.Title) != 1 {
 		t.Fatalf("shared card reads %q, want its title and body once each", shared)
 	}
-	if !strings.Contains(shared, "| — | Before | After |\n| --- | --- | --- |\n| Uploader position | 0, retries every 300 s | 32 |\n| Replica ends at | 32 | 49 |") {
+	if !strings.Contains(shared, "[table block]\n| — | Before | After |\n| --- | --- | --- |\n| Uploader position | 0, retries every 300 s | 32 |\n| Replica ends at | 32 | 49 |") {
 		t.Fatalf("shared card reads %q, want its Show me table row by row", shared)
 	}
 }
@@ -1698,7 +1698,7 @@ func TestMessageTextAppendsAttachmentsAndBlocks(t *testing.T) {
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "The fix lands it.\n*Show me*\nBefore and after one sync.", false, false), nil, nil),
 				tableBlock([][]string{{"—", "Before", "After"}, {"Replica ends at", "32", "<https://acme.dev/49|49>"}}),
 			}}},
-			":raising_hand: Tap now?\nThe fix lands it.\n*Show me*\nBefore and after one sync.\n| — | Before | After |\n| --- | --- | --- |\n| Replica ends at | 32 | <https://acme.dev/49|49> |",
+			":raising_hand: Tap now?\nThe fix lands it.\n*Show me*\nBefore and after one sync.\n[table block]\n| — | Before | After |\n| --- | --- | --- |\n| Replica ends at | 32 | <https://acme.dev/49|49> |",
 		},
 		{
 			"a notification text keeps the piece its blocks leave out",

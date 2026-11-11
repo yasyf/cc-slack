@@ -1513,7 +1513,7 @@ func blockTexts(blocks slack.Blocks) []string {
 }
 
 func tableText(table *slack.DataTableBlock) string {
-	lines := make([]string, 0, len(table.Rows)+1)
+	lines := append(make([]string, 0, len(table.Rows)+2), "[table block]")
 	for i, row := range table.Rows {
 		cells := make([]string, len(row))
 		for j, cell := range row {
@@ -2628,7 +2628,7 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 			return msg, nil
 		}
 		pages := bodyPages(msg.text, cardMaxPageBlock-len(b.Files), cardMaxVisible, true, nil)
-		msg.text, msg.blocks = clipRunes(mrkdwnText(msg.text), cardMaxSectionLen), pages[0]
+		msg.text, msg.blocks = clipRunes(mrkdwnText(withoutTables(msg.text)), cardMaxSectionLen), pages[0]
 		return msg, pages[1:]
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
