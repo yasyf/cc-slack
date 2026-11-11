@@ -140,10 +140,24 @@ text Slack reads as the URL itself, which it never previews, carries blocks copi
 from a card, or repeats an open card's title in the DM without its link, outside
 the card's own thread, is refused with the link to write instead.
 
+Slack draws at most five link previews a message. A post to the engineer's DM
+with no blocks and no card that links more than five distinct Slack messages,
+Sentry issues and Datadog monitors goes out as pages, each cut at the last blank
+line before the line holding its sixth such link, or at that line's start when
+no blank line comes before it, so every card draws. `linkPages` in
+`linkpages.go` cuts them. Every page goes where the post goes, at the root or in
+the thread its call names; a root page is watched as the first is, and the
+result's `page_permalink` names each page after the first, space-separated. A
+line that links six or more is refused before anything posts, since no cut
+splits it, and so is an edit in the DM that links six or more, since an edit
+cannot add a page. `check-post` flags such a line as `links-past-five`.
+
 `card_command` names a program, resolved on `PATH` at `login`, that draws the
 card of a PR waiting on a tap. A checked-in config can name a tool only some engineers have,
 so `login` on a machine without it leaves cards off and links still work. A link
-in a post, text or card, never draws one. After a post in the bot's DM with the engineer, or in a
+draws one only in the bot's DM, in a post that says something waits on the
+engineer: each PR it links by URL counts as listed in `tap_prs`, so the PR's
+card draws with the post or the call fails and sends nothing. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 (`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`,
