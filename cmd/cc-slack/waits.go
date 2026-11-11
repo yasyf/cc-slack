@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -12,7 +10,7 @@ import (
 
 const mentioned = "\x00"
 
-const waitsNeedsCard = "a line that says something waits on the reader carries the open card it means: link the card by its permalink from `cc-slack drive-cards`, and the post copies it with its buttons into the thread, or draw a PR's tap card with tap_prs; outside your DM with the app, name who decides with a <@U…> mention instead"
+const waitsNeedsCard = "a line that says something waits on the reader carries the open card it means: link the card by its permalink from `cc-slack drive-cards`, which Slack unfurls into the card, or draw a PR's tap card with tap_prs; outside your DM with the app, name who decides with a <@U…> mention instead"
 
 var (
 	waitsMention  = regexp.MustCompile(`<@[UW][A-Z0-9]+(?:\|[^<>]*)?>`)
@@ -76,7 +74,7 @@ func waitsWithoutCard(text string, card func(permalinkRef) bool) (waitsLine, boo
 func dmCard(ref permalinkRef) bool { return dmCardLink.MatchString(ref.channelID) }
 
 func (w waitsLine) refusal() string {
-	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: add the card's permalink from `cc-slack drive-cards`, and the post draws the card with its buttons in its thread, or pass the PR as tap_prs for its tap card", w.sentence)
+	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: add the card's permalink from `cc-slack drive-cards`, which Slack unfurls into the card, or pass the PR as tap_prs for its tap card", w.sentence)
 }
 
 func (a *app) openCardIn(id identity) func(permalinkRef) bool {
@@ -93,21 +91,6 @@ func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) er
 		return errors.New(said.refusal())
 	}
 	return nil
-}
-
-func (a *app) embedCards(ctx context.Context, db *sql.DB, id identity, channelID, thread string, b opBody) {
-	if channelID != id.DMChannelID || b.Card != nil {
-		return
-	}
-	for _, link := range messageLink.FindAllString(b.Text, -1) {
-		ref, err := parsePermalink(link)
-		if err != nil || ref.threadTS == thread || !a.openCardIn(id)(ref) {
-			continue
-		}
-		if err := a.copyCardInto(ctx, db, id, thread, cardRef{ref.channelID, ref.threadTS, ref.ts}); err != nil {
-			notePostWarning(ctx, fmt.Sprintf("NO CARD: the post links the open card %s, and drawing it in thread %s failed: %v", link, thread, err))
-		}
-	}
 }
 
 func waitsOnReader(text string) (waitsLine, bool) {

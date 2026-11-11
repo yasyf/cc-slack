@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestALineThatWaitsOnYouDrawsItsCardOrIsRefused(t *testing.T) {
+func TestALineThatWaitsOnYouLinksItsCardOrIsRefused(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -25,13 +25,13 @@ func TestALineThatWaitsOnYouDrawsItsCardOrIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := l.slack.sent()[posts:]
-	if len(sent) != 2 || sent[1].text != cardCopyLead || sent[1].threadTS != line["thread_ts"] || !strings.Contains(sent[1].blocks, cardCopyAction) || !strings.Contains(sent[1].blocks, "Merge #41 now?") {
-		t.Fatalf("posts = %+v, want the line and then the card with its buttons in the line's thread", sent)
+	if len(sent) != 1 || !strings.Contains(sent[0].text, c.url()) {
+		t.Fatalf("posts = %+v, want the line alone, linking the card for Slack to unfurl", sent)
 	}
 
 	l.do(opDMStatus, map[string]any{"text": "The release is live, and every chat opens again."})
-	if len(l.slack.sent()) != posts+3 {
-		t.Fatalf("an ordinary line posted %d messages, want one", len(l.slack.sent())-posts-2)
+	if len(l.slack.sent()) != posts+2 {
+		t.Fatalf("an ordinary line posted %d messages, want one", len(l.slack.sent())-posts-1)
 	}
 }
 
