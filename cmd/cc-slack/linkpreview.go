@@ -219,7 +219,7 @@ func prPreview(pr refID, row ledgerRow) slack.Attachment {
 		standing = "*Not approved yet.*" + row.checks()
 	}
 	body := strings.Join([]string{"*" + slackLink(prURL(pr), title) + "*", plainMrkdwn(withoutHidden(row.ForUsers)), standing}, "\n\n")
-	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: slices.Concat(bodyPages(body, cardMaxBlocks, cardMaxVisible, false)...)}}
+	return slack.Attachment{Fallback: title, Blocks: slack.Blocks{BlockSet: slices.Concat(bodyPages(body, cardMaxBlocks, cardMaxVisible, false, nil)...)}}
 }
 
 func withoutRepeatedLinks(text string, drawn map[string]bool) string {

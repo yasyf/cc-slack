@@ -56,7 +56,7 @@ func fullPR(n int) cardPR {
 func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 	body := "## Storage\n**Fixed** in [the PR](https://github.com/acme/app/pull/2).\n- one\n- two\n\n" +
 		"| check | state |\n|---|---|\n| **lint** | [green](https://ci.example.com/1) |\n| tests | |\n\nDone."
-	pages := bodyPages(body, cardMaxBlocks, cardMaxVisible, true)
+	pages := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)
 	if len(pages) != 1 {
 		t.Fatalf("pages = %d, want the short body on one", len(pages))
 	}
@@ -79,12 +79,26 @@ func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 
 func TestAMessageCarriesOneTableAndAnyOtherAsLines(t *testing.T) {
 	body := "| a | b |\n|---|---|\n| 1 | 2 |\n\nBetween.\n\n| c | d |\n|---|---|\n| 3 | 4 |"
-	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true)[0]
+	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)[0]
 	if len(tables(blocks)) != 1 {
 		t.Fatalf("blocks %s, want one table block, the most Slack takes on a message", blocksJSON(t, blocks))
 	}
 	if got := sectionTexts(blocks); !slices.Contains(got, "• *c:* 3 · *d:* 4") {
 		t.Fatalf("sections %q, want the second table's row as a line of its own", got)
+	}
+}
+
+func TestAPictureOnALineOfItsOwnDrawsWhereItSitsAndAnyOtherStaysText(t *testing.T) {
+	queue := slack.NewImageBlock("https://bucket.example.com/queue.png", "The queue after", "", nil)
+	body := "Before the picture.\n![The queue after](/shots/queue.png)\nInline ![x](/shots/x.png) stays.\n\n" +
+		"![The board](<https://example.com/my board.png>)\n\n```\n![in a fence](/shots/f.png)\n```"
+	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, map[string]slack.Block{"/shots/queue.png": queue})[0]
+	if len(blocks) != 5 || blocks[1] != slack.Block(queue) {
+		t.Fatalf("blocks %s, want the drawn picture second, between the lines around it", blocksJSON(t, blocks))
+	}
+	want := []string{"Before the picture.", "Inline ![x](/shots/x.png) stays.", "<https://example.com/my board.png|The board>", "```\n![in a fence](/shots/f.png)\n```"}
+	if got := sectionTexts(blocks); !slices.Equal(got, want) {
+		t.Fatalf("sections %q, want %q: an inline image and a fenced one stay text, and an undrawn picture shows its caption", got, want)
 	}
 }
 
@@ -101,7 +115,7 @@ func TestALongBodySplitsAtItsLimitsAndLosesNoWord(t *testing.T) {
 		words = append(words, fmt.Sprintf("word%d", i))
 	}
 	body := strings.Join(words, " ") + "\n\n<https://example.com/a|a link with spaces in its label>"
-	pages := bodyPages(body, 40, cardMaxVisible, true)
+	pages := bodyPages(body, 40, cardMaxVisible, true, nil)
 	if len(pages) < 2 {
 		t.Fatalf("pages = %d, want what passes the card's budget folded", len(pages))
 	}
@@ -128,7 +142,7 @@ func TestALongBodySplitsAtItsLimitsAndLosesNoWord(t *testing.T) {
 
 func TestALongCodeBlockSplitsIntoClosedCodeBlocks(t *testing.T) {
 	body := "```\n" + strings.Repeat("a line of output\n", 400) + "```"
-	for _, text := range sectionTexts(bodyPages(body, cardMaxBlocks, cardMaxVisible, true)[0]) {
+	for _, text := range sectionTexts(bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)[0]) {
 		if !strings.HasPrefix(text, "```\n") || !strings.HasSuffix(text, "\n```") || runes(text) > cardMaxSectionLen {
 			t.Fatalf("section %d runes opens %q and closes %q, want a closed code block under the limit", runes(text), text[:6], text[len(text)-6:])
 		}
