@@ -33,6 +33,7 @@ The tool names below have the full prefix
 | List unarchived public channels, and private ones the bot is in, by name prefix, with id, name, and created | `slack_channels(prefix?)` |
 | Find active users by handle, display name, real name, or email, ignoring case (CLI `cc-slack users <query>`) | `slack_users(query)` |
 | Watch a thread, or a channel's top-level messages and thread replies | `slack_watch(channel_id, thread_ts?, owner?)` |
+| Hear a channel's alerts, releases or posts as one line per event, not each message | `slack_subscribe(channel_id, kinds, match?, owner?)` |
 | End a watch, or stop hearing one thread, such as a DM thread | `slack_unwatch(watch_id)`, or `slack_unwatch(url)` |
 | Update the user's own status DM | `slack_dm_status(text, thread_ts?, files?, blocks?)` |
 | Show you picked up a message: eyes plus Slack's working line, together | `slack_pickup(channel_id, ts, thread_ts?)`; `done: true` takes both away (CLI `cc-slack pickup`) |

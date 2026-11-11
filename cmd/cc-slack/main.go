@@ -97,6 +97,7 @@ func root() *cobra.Command {
 		channelsCmd(d),
 		usersCmd(d),
 		followCmd(d),
+		subscribeCmd(d),
 		unfollowCmd(d),
 		followsCmd(d),
 		threadSeenCmd(d),

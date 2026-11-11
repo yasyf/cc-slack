@@ -48,7 +48,7 @@ type app struct {
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
-func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, threads *dmThreads, replay *replayCursor) *app {
+func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, feeds *feedStore, threads *dmThreads, replay *replayCursor) *app {
 	newAPI = cache.expiring(newAPI)
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
@@ -85,6 +85,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		now:       time.Now,
 		cache:     cache,
 		owed:      owed,
+		feeds:     feeds,
 		threads:   threads,
 		replay:    replay,
 		shortcuts: shortcuts,
@@ -96,6 +97,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		since:     map[cursorKey]string{},
 		streams:   map[string]int{},
 		compact:   map[string]string{},
+		edits:     map[string]bool{},
 		log:       log.New(os.Stderr, "["+binaryName+" poller] ", log.LstdFlags),
 	}
 	a := &app{
@@ -139,7 +141,7 @@ func agentGreeting(info agent.Info) string {
 }
 
 func subscribe(_ subject.Subject, info agent.Info) []string {
-	return []string{ownedType(eventMessage, info.AgentID), ownedType(eventWatchError, info.AgentID)}
+	return []string{ownedType(eventMessage, info.AgentID), ownedType(eventFeed, info.AgentID), ownedType(eventWatchError, info.AgentID)}
 }
 
 func (a *app) buildServer() (*daemon.Server, error) {
@@ -205,6 +207,11 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = owed.Close() }()
+	feeds, err := openFeeds(ctx, feedsPath())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = feeds.Close() }()
 	threads, err := openDMThreads(ctx, dmThreadsPath())
 	if err != nil {
 		return err
@@ -214,7 +221,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, threads, replay).buildServer()
+	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, feeds, threads, replay).buildServer()
 	if err != nil {
 		return err
 	}

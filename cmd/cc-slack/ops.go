@@ -132,6 +132,8 @@ type opBody struct {
 	State     string   `json:"state"`
 	Recipient string   `json:"recipient"`
 	Verdict   string   `json:"verdict"`
+	Kinds     []string `json:"kinds"`
+	Match     string   `json:"match"`
 	ticketSpend
 }
 
@@ -1681,9 +1683,9 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWatch, err))
 	}
-	kind := kindChannel
-	if b.ThreadTS != "" {
-		kind = kindThread
+	kind, err := followKind(b)
+	if err != nil {
+		return fail(err.Error())
 	}
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
@@ -1702,7 +1704,7 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 	if existing, oldest, found, err := activeWatch(hc.Ctx, hc.DB, subjectID, b.Owner, channelID, b.ThreadTS); err != nil {
 		return fail(err.Error())
 	} else if found {
-		return ok(followResult{WatchID: existing, ChannelID: channelID, Cursor: oldest, Channel: a.followChannel(hc, subjectID, b.Owner)})
+		return a.subscribed(hc.Ctx, b, followResult{WatchID: existing, ChannelID: channelID, Cursor: oldest, Channel: a.followChannel(hc, subjectID, b.Owner)})
 	}
 	joined, err := joinPublic(hc.Ctx, api, channelID)
 	if err != nil {
@@ -1716,8 +1718,31 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	reply := a.subscribed(hc.Ctx, b, followResult{WatchID: watchID, ChannelID: channelID, Joined: joined, Cursor: cursor, Channel: a.followChannel(hc, subjectID, b.Owner)})
 	a.poller.nudge(cursorKey{channelID, b.ThreadTS})
-	return ok(followResult{WatchID: watchID, ChannelID: channelID, Joined: joined, Cursor: cursor, Channel: a.followChannel(hc, subjectID, b.Owner)})
+	return reply
+}
+
+func followKind(b opBody) (string, error) {
+	if unknown := slices.DeleteFunc(slices.Clone(b.Kinds), func(k string) bool { return slices.Contains(feedKinds, k) }); len(unknown) > 0 {
+		return "", fmt.Errorf("unknown subscription kinds %s: a subscription takes %s", strings.Join(unknown, ", "), strings.Join(feedKinds, ", "))
+	}
+	switch {
+	case b.ThreadTS == "":
+		return kindChannel, nil
+	case len(b.Kinds) > 0:
+		return "", errors.New("a subscription covers a whole channel: drop thread_ts")
+	}
+	return kindThread, nil
+}
+
+func (a *app) subscribed(ctx context.Context, b opBody, res followResult) daemon.Reply {
+	if len(b.Kinds) > 0 {
+		if err := a.poller.feeds.subscribe(ctx, res.WatchID, b.Kinds, b.Match); err != nil {
+			return fail(err.Error())
+		}
+	}
+	return ok(res)
 }
 
 func (a *app) handleAgentSubject(hc daemon.HandlerCtx) daemon.Reply {

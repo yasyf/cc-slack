@@ -53,6 +53,7 @@ type poller struct {
 	now       func() time.Time
 	cache     *readCache
 	owed      *owedReplies
+	feeds     *feedStore
 	threads   *dmThreads
 	replay    *replayCursor
 	shortcuts *shortcutHandler
@@ -70,6 +71,7 @@ type poller struct {
 	streams map[string]int
 	compact map[string]string
 	held    []heldAck
+	edits   map[string]bool
 }
 
 type messageNudge struct {
@@ -144,6 +146,11 @@ func (p *poller) markLocked(keys ...cursorKey) {
 }
 
 func (p *poller) nudged(n messageNudge) {
+	if n.Subtype == editedSubtype {
+		p.edited(n.Channel)
+		p.wake()
+		return
+	}
 	if !routedSubtypes[n.Subtype] {
 		return
 	}
@@ -207,6 +214,11 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 
 func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, watches []watch) error {
 	p.mark(cursorKey{dmChannelID, ""})
+	running, err := p.feeds.running(ctx)
+	if err != nil {
+		return err
+	}
+	p.edited(slices.Collect(maps.Keys(running))...)
 	threads := map[string]bool{}
 	var subscribers []string
 	for _, w := range watches {
@@ -343,6 +355,13 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		}
 	}
 	if due := p.ackHeld(ctx, db, api, id); !due.IsZero() {
+		next = earliest(next, due)
+	}
+	due, err := p.feedTick(ctx, db, api, id, watches)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !due.IsZero() {
 		next = earliest(next, due)
 	}
 	seq := p.replay.latest()
@@ -685,7 +704,17 @@ func (g cursorGroup) toHolder(watching []watch) []watch {
 }
 
 func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates) error {
+	fed, err := p.feeds.fed(ctx, watches)
+	if err != nil {
+		return err
+	}
+	if err := p.routeFeed(ctx, db, api, id, fed, m); err != nil {
+		return err
+	}
 	for _, w := range watches {
+		if slices.ContainsFunc(fed, func(fw fedWatch) bool { return fw.ID == w.ID }) {
+			continue
+		}
 		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
