@@ -299,6 +299,8 @@ func TestASendWhoseAnswerWasLostIsResentAndPostsOnce(t *testing.T) {
 	if err != nil || !found || stored.TS != held[0].TS {
 		t.Fatalf("receipt = %+v (%t, %v), want it to name the post", stored, found, err)
 	}
+	delete(body, "request_key")
+	delete(body, "request_resend")
 	var later postResult
 	if err := json.Unmarshal(l.do(opSend, retried(body)).Body, &later); err != nil {
 		t.Fatal(err)
