@@ -223,6 +223,16 @@ func heldRowCard() providedCard {
 	return held
 }
 
+func TestARedrawAsksTheCardCommandForThePostedCardAsItStandsNow(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	awaitPRCards(t, l, testDM)
+	l.do(opRedrawPRCards, map[string]any{})
+	want := []string{`{"prs":[{"number":41,"repo":"acme/app"}]}`, `{"prs":[{"number":41,"repo":"acme/app"}],"redraw":true}`}
+	eventually(t, "the redraw asked as a redraw", func() bool { return reflect.DeepEqual(cmd.requests(t), want) })
+}
+
 func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
