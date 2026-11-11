@@ -563,7 +563,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		}
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
 		text, blocks := t.replyMessage(m, now, cards.canvas())
-		res, err := a.post(ctx, db, id, channelID, thread, text, blocks, nil, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
+		res, err := a.post(atStep(ctx, fmt.Sprintf("tap:%s#%d:%s", p.Repo, p.Number, p.Card.Waits)), db, id, channelID, thread, text, blocks, nil, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
 			return placed, shown, replaced
@@ -628,7 +628,7 @@ func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread 
 }
 
 func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, under string, card cardRef) error {
-	res, err := a.post(ctx, db, id, card.channel, under, slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts)), nil, nil)
+	res, err := a.post(atStep(ctx, "link:"+card.ts+":"+under), db, id, card.channel, under, slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts)), nil, nil)
 	if err != nil {
 		return err
 	}

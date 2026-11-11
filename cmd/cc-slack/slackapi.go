@@ -106,7 +106,7 @@ func withoutRateWait(ctx context.Context) context.Context {
 
 func newSlackClient(token, endpoint string, hc doer) slackAPI {
 	hc = retrying{hc}
-	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(workObjectPoster{token, hc})), token, endpoint, hc}
+	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(requestPoster{token, workObjectPoster{token, hc}})), token, endpoint, hc}
 }
 
 func newSlackAPI(token string) slackAPI { return newSlackClient(token, slack.APIURL, &http.Client{}) }
@@ -336,7 +336,7 @@ func workObjectBody(form []byte) (map[string]any, bool, error) {
 	if len(metadata.Entities) == 0 {
 		return nil, false, nil
 	}
-	body := map[string]any{"metadata": map[string]any{"entities": metadata.Entities}}
+	body := map[string]any{"metadata": json.RawMessage(raw)}
 	for key, value := range values {
 		switch {
 		case key == "token" || key == "metadata":
@@ -377,32 +377,12 @@ func (c *apiClient) RawMessage(ctx context.Context, channelID, threadTS, ts stri
 }
 
 func (c *apiClient) rawMessages(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+method+"?"+query.Encode(), http.NoBody)
+	messages, _, err := slackMessages(ctx, c.http, c.token, c.endpoint+method, query)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		return nil, &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
-	}
-	var answer struct {
-		slack.SlackResponse
-		Messages []json.RawMessage `json:"messages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
-		return nil, fmt.Errorf("%s: %s: %w", method, resp.Status, err)
-	}
-	if !answer.Ok {
-		return nil, slack.SlackErrorResponse{Err: answer.Error, Errors: answer.Errors, ResponseMetadata: answer.ResponseMetadata}
-	}
-	found := make(map[string]json.RawMessage, len(answer.Messages))
-	for _, raw := range answer.Messages {
+	found := make(map[string]json.RawMessage, len(messages))
+	for _, raw := range messages {
 		var message struct {
 			TS string `json:"ts"`
 		}
@@ -412,6 +392,34 @@ func (c *apiClient) rawMessages(ctx context.Context, method string, query url.Va
 		found[message.TS] = raw
 	}
 	return found, nil
+}
+
+func slackMessages(ctx context.Context, hc doer, token, method string, query url.Values) ([]json.RawMessage, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, method+"?"+query.Encode(), http.NoBody)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := hc.Do(req) //nolint:gosec // G704: the request goes to the Slack API endpoint
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return nil, "", &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
+	}
+	var answer struct {
+		slack.SlackResponse
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return nil, "", fmt.Errorf("%s: %s: %w", path.Base(method), resp.Status, err)
+	}
+	if !answer.Ok {
+		return nil, "", slack.SlackErrorResponse{Err: answer.Error, Errors: answer.Errors, ResponseMetadata: answer.ResponseMetadata}
+	}
+	return answer.Messages, answer.ResponseMetadata.Cursor, nil
 }
 
 const (

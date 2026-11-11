@@ -200,7 +200,7 @@ func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticke
 	if err != nil {
 		return t, nil, err
 	}
-	if t.once() {
+	if t.once() && !resent(ctx) {
 		r, found, err := loadReceipt(ctx, db, t.ID)
 		if err != nil {
 			return t, nil, err
@@ -275,7 +275,7 @@ func (a *app) claimReceipt(ctx context.Context, db *sql.DB, t hookTicket, w writ
 	if err != nil {
 		return fmt.Errorf("claim receipt %s: %w", t.ID, err)
 	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
+	if n, err := res.RowsAffected(); err != nil || n == 0 && !resent(ctx) {
 		return uncertain(t.ID, w)
 	}
 	return nil

@@ -25,7 +25,7 @@ func TestAcrossRestartResendsACallTheRestartRefused(t *testing.T) {
 		t.Fatalf("status with no daemon listening = %v, want a restart refusal", err)
 	}
 	awaited := false
-	err := acrossRestart(func(context.Context) error {
+	err := acrossRestart(restarting, func(context.Context) error {
 		awaited = true
 		launchDaemon(t)
 		return nil
@@ -39,7 +39,7 @@ func TestAcrossRestartReportsARestartThatNeverSettles(t *testing.T) {
 	shortHome(t)
 	stalled := errors.New("restart window spent")
 	calls := 0
-	err := acrossRestart(func(context.Context) error { return stalled }, func(ctx context.Context) error {
+	err := acrossRestart(restarting, func(context.Context) error { return stalled }, func(ctx context.Context) error {
 		calls++
 		return daemonStatus(ctx)
 	})(context.Background())
@@ -60,7 +60,7 @@ func TestAcrossRestartPassesOtherOutcomesThrough(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			err := acrossRestart(func(context.Context) error {
+			err := acrossRestart(restarting, func(context.Context) error {
 				t.Fatal("waited for a restart nothing refused")
 				return nil
 			}, func(context.Context) error {

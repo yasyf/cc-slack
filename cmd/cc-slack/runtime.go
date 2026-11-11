@@ -53,6 +53,10 @@ func restarting(err error) bool {
 		errors.Is(err, daemonkit.ErrNotReady))
 }
 
+func cut(err error) bool {
+	return restarting(err) || errors.Is(err, context.Canceled) || daemonkit.Unanswered(err)
+}
+
 func awaitRestart(ctx context.Context) error {
 	client, err := daemonkit.Open(launcher().Daemon)
 	if err != nil {
@@ -64,10 +68,10 @@ func awaitRestart(ctx context.Context) error {
 	return err
 }
 
-func acrossRestart(await, call func(context.Context) error) func(context.Context) error {
+func acrossRestart(resend func(error) bool, await, call func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
 		err := call(ctx)
-		if !restarting(err) {
+		if ctx.Err() != nil || !resend(err) {
 			return err
 		}
 		if waitErr := await(ctx); waitErr != nil {

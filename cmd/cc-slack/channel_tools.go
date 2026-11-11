@@ -31,18 +31,23 @@ var (
 )
 
 func invoke(ctx context.Context, d cmd.Deps, session, scope string, op daemon.Op, body json.RawMessage) (daemon.Reply, error) {
+	resend, again := restarting, body
 	if slices.Contains(attachmentWrites, op) {
 		staged, cleanup, err := stageAttachments(body)
 		if err != nil {
 			return daemon.Reply{}, err
 		}
 		defer cleanup()
-		body = staged
+		if body, again, err = keyedBodies(staged, time.Now()); err != nil {
+			return daemon.Reply{}, err
+		}
+		resend = cut
 	}
 	var reply daemon.Reply
-	err := acrossRestart(awaitRestart, func(ctx context.Context) error {
+	err := acrossRestart(resend, awaitRestart, func(ctx context.Context) error {
 		var err error
 		reply, err = invokeOnce(ctx, d, session, scope, op, body)
+		body = again
 		return err
 	})(ctx)
 	return reply, err
