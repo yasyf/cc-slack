@@ -47,6 +47,7 @@ var (
 	htmlComment     = regexp.MustCompile(`(?s)[ \t]*<!--.*?-->`)
 	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
 	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
+	slackEscapable  = regexp.MustCompile(`<(?:https?://|mailto:|[@#!])[^<>\n]*>|&(?:amp|lt|gt);|[&<>]`)
 )
 
 type bodyPiece struct {
@@ -193,9 +194,18 @@ func mrkdwnText(text string) string {
 }
 
 func mrkdwnLine(line string) string {
-	line = mdLink.ReplaceAllString(line, "<$2|$1>")
+	line = slackEscaped(mdLink.ReplaceAllString(line, "<$2|$1>"))
 	line = mdBold.ReplaceAllString(line, "*$1*")
 	return mdBullet.ReplaceAllString(line, "$1• ")
+}
+
+func slackEscaped(text string) string {
+	return slackEscapable.ReplaceAllStringFunc(text, func(found string) string {
+		if len(found) > 1 {
+			return found
+		}
+		return cardWordEscapes.Replace(found)
+	})
 }
 
 func tableCells(line string) []string {
