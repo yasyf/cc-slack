@@ -674,7 +674,6 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		drawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, taps, asked)
 		res.CardTS, res.CardPermalink = drawn.named(id)
-		a.embedCards(hc.Ctx, hc.DB, id, res.ChannelID, res.ThreadTS, b)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
 			return okUnlessUndrawn(res, drawn.err)
@@ -2192,7 +2191,6 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
-	a.embedCards(hc.Ctx, hc.DB, id, id.DMChannelID, thread, b)
 	a.copyDriveQuestion(hc.Ctx, hc.DB, id, copyInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	return a.tappedReply(hc, sub, id, thread, ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))

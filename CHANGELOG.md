@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A card redrawn under its `waits` id edits that one card in place and posts nothing new. Each older copy of it loses its buttons and reads Redrawn in place with a link to the card, and no later redraw brings them back. Before, every redraw also posted a fresh copy, which since drive question cards moved to the DM root was a new top-level message in the DM, while the older copies kept working buttons: on Nov 10 between 8:17 and 8:33 PM one card had four live copies at the DM root.
+- A post that links an open card by its permalink copies nothing: Slack unfurls the link, and the card stays one message. Before, `send`, `reply` and `dm-status` posted a buttoned copy of each linked card under the post; on Nov 10 at 9:02 PM a thread line linking five question cards put five copies in that thread.
 - `slack_edit` with only text refuses a card and names the `slack_dm_status` redraw. Such an edit cleared the card's blocks, leaving its words as plain text with no layout or buttons.
 
 ### Added

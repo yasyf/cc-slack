@@ -415,7 +415,7 @@ func TestWrittenInAnswerFromTheOtherModalAnswersTheCardOnce(t *testing.T) {
 	}
 }
 
-func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsItAgainBesideIt(t *testing.T) {
+func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsNothing(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -433,8 +433,8 @@ func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsItAgainBesideIt(t *testing.
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") {
 		t.Fatalf("card edits %v, want the new question drawn over the old card", edits)
 	}
-	if sent := l.slack.sent()[posts:]; len(sent) != 1 || sent[0].threadTS != "" || sent[0].text != cardCopyLead || !strings.Contains(sent[0].blocks, "Merge #41 before the freeze?") {
-		t.Fatalf("posts after the redraw = %+v, want one copy of the new card at the DM root", sent)
+	if sent := l.slack.sent()[posts:]; len(sent) != 0 {
+		t.Fatalf("posts after the redraw = %+v, want none: the card is edited in place", sent)
 	}
 	answerOnBoard(t, l, c2, "Merge")
 	raw := mustJSON(map[string]any{"card": redrawn})
@@ -707,7 +707,7 @@ func TestAReplyAboutAWaitingCardLandsInThatCardsThread(t *testing.T) {
 	}
 }
 
-func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsItAgain(t *testing.T) {
+func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsNothing(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
@@ -718,8 +718,8 @@ func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsItAgain(t *testin
 	redrawn.Title = "Merge #41 before the freeze?"
 	again := mirroredCard(t, l, map[string]any{"card": redrawn, "thread_ts": c.thread})
 	sent := l.slack.sent()
-	if again.ts != c.ts || again.thread != c.thread || len(sent) != 2 || sent[1].threadTS != "" || sent[1].text != cardCopyLead || len(editsOf(l.slack.edited(), c.ts)) != 1 {
-		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited and one copy at the DM root", again, c, sent)
+	if again.ts != c.ts || again.thread != c.thread || len(sent) != 1 || len(editsOf(l.slack.edited(), c.ts)) != 1 {
+		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited and nothing posted", again, c, sent)
 	}
 }
 
