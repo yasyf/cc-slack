@@ -21,8 +21,8 @@ SEEN_TIMEOUT = 5
 PICKUP = P + "slack_pickup"
 FALLBACK_READ = "mcp__slack__slack_get_thread"
 UNREAD_THREAD = (
-    "A thread reply needs this agent's read, in the last 10 minutes, through the thread's newest message, neither truncated, stale, nor piped."
-    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `since_ts` set to the newest ts you have read, then retry."
+    "A thread reply needs this agent's whole, fresh, unpiped read of the thread through its newest message in the last 10 minutes."
+    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `since_ts`, or `mcp__slack__slack_get_thread` outside the bot's channels, then retry."
 )
 REPLY = THREAD | {"text": "On it."}
 FULL_READ = json.dumps(THREAD | {"messages": [], "truncated": False})
@@ -107,7 +107,7 @@ class ReadsThread:
     Event.PreToolUse,
     only_if=[RepliesInThread()],
     tests={
-        Input(tool=P + "slack_reply", tool_input=REPLY, commands=UNSEEN): Block(pattern=r"`slack_thread` with `channel_id` C0APPTHREAD, `thread_ts` 1790210144\.444179 and `since_ts`"),
+        Input(tool=P + "slack_reply", tool_input=REPLY, commands=UNSEEN): Block(pattern=r"`slack_thread` with `channel_id` C0APPTHREAD, `thread_ts` 1790210144\.444179 and `since_ts`, or `mcp__slack__slack_get_thread`"),
         Input(tool=P + "slack_send", tool_input=REPLY, commands=UNSEEN): Block(),
         Input(tool="mcp__slack__slack_send_message", tool_input=REPLY, commands=UNSEEN): Block(),
         Input(command=f"{CLI} reply --url {THREAD_LINK} --text 'on it'", commands=UNSEEN): Block(),

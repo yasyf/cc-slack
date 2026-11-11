@@ -72,6 +72,23 @@ func fallback(a action, err error) string {
 	}
 }
 
+func threadReadFailure(err error, named, dm, thread string) string {
+	code := errorCode(err)
+	searched := named
+	if named == "" {
+		searched = "your DM with the app, " + dm + ", the conversation a read with no channel_id searches"
+	}
+	switch code {
+	case "user_not_found":
+		return fmt.Sprintf("%s is not a conversation the bot can read (%s); your DM with the app is %s, which channel_id may omit", named, code, dm)
+	case "channel_not_found":
+		return fmt.Sprintf("%s is not a conversation the bot can read (%s); a private channel the bot is not in reads through %s, and your DM with the app is %s, which channel_id may omit", named, code, mcpThread, dm)
+	case "thread_not_found":
+		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)
+	}
+	return fallback(actionRead, err)
+}
+
 func fallbackTool(a action) string {
 	switch a {
 	case actionWrite:

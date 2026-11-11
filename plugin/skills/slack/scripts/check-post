@@ -42,13 +42,15 @@ RULES = (
     ),
     Rule(
         "codename",
-        re.compile(r"(?<![\w'’./@#&+-])[B-HJ-Z](?![\w'’/&+#-]|\.\w)"),
+        re.compile(r"(?<![\w'’./@#&+-])(?<![Dd]irection )(?<![Oo]ption )(?<![Pp]lan )(?<![Pp]hase )(?<![Ss]tep )[B-HJ-Z](?![\w'’/&+#-]|\.\w)"),
         "a one-letter name for work in flight means nothing to the reader; name the thing, such as the new release pipeline",
+        reads_code=False,
     ),
     Rule(
         "drive-term",
-        re.compile(r"(?i:\b(?:lanes?|desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)|\b(?:merge-)?walker\b"),
+        re.compile(r"(?<![\w./-])(?i:(?:lanes?|desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)(?![-/]\w|\.\w)|\b(?:merge-)?walker\b|(?<![\w./:-])[oj]\d{2,}(?![\w/-]|\.\w)"),
         "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
+        reads_code=False,
     ),
     Rule(
         "internal-id",
@@ -68,7 +70,7 @@ RULES = (
     Rule(
         "bare-number",
         re.compile(r"(?<![\w&])#\d+\b|\b(?:PR|pull|build|deploy|release)\s+#?\d{3,}\b(?!\.\d)", re.IGNORECASE),
-        "link it as <url|#N> or <url|deploy #N>",
+        "link it under words saying what it is, as <url|the fix that adds the update button>",
     ),
     Rule(
         "bare-url",

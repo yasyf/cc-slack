@@ -51,7 +51,7 @@ When done, react with `white_check_mark`, then call `slack_pickup` with `done: t
 
 Post to a person unprompted only when they must act or when the fix they reported is live and verified. In a bug report thread, write one or two plain sentences stating what is fixed, with no asks. Tests, progress updates, and follow-ups are never posts. Answer every question in a watched thread as it lands in one to three sentences.
 
-Write for a reader with no context. Mention people as `<@U...>`, resolved with `slack_users`. Link every PR, build, issue, and doc as `<url|label>`. State times in local time without a zone label. Never use internal shorthand like lane names, codenames, raw shas, or ids.
+Write for a reader with no context. Mention people as `<@U...>`, resolved with `slack_users`. Link every PR, build, issue, and doc as `<url|label>`. State times in local time without a zone label. Never use internal shorthand like lane names, codenames, raw shas, or ids, and call code, files, products and alerts by their proper names, such as `fsync()` or `read_before_reply.py`.
 
 Before every send, reply, `dm-status`, or fallback post, run `cc-slack check-post <file>` (or `-` for stdin) and fix every reported line. Quote the checked text verbatim in any approval question and post it verbatim.
 
