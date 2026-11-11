@@ -37,6 +37,8 @@ A session hears only its own subscriptions: top-level `slack_watch` calls, its s
 
 Each Slack event reaches a top-level session once: as a channel tag when this window's channel is proven, otherwise as an injected directive at the next tool call. A message from the user carries `operator: true`, and a card tap's tag carries what to act on, as `reference/cards.md` describes. While a watch Monitor runs, a message can also arrive as a Monitor line: deduplicate every delivery by `(channel_id, ts)` before acting.
 
+To follow alerts, incidents or releases in a busy channel, call `slack_subscribe` with the `kinds` you need instead of `slack_watch`. Each event then arrives as one `slack.feed` line. A flapping Datadog monitor reads as one open and one close, and a release as one line per state.
+
 On `agent.relay`, `SendMessage` the named agent a wake only, with no directive content. To block on a reply, dispatch `cc-slack:slack-waiter` in the background; never call `await` from the top-level session.
 
 ## React before you reply

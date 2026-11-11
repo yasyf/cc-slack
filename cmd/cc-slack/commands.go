@@ -896,6 +896,31 @@ func followCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func subscribeCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f     messageFlags
+		owner string
+		kinds []string
+		match string
+	)
+	c := &cobra.Command{
+		Use:   "subscribe",
+		Short: "Subscribe to a Slack channel's alerts, releases or posts as one-line events",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			body := f.body()
+			body["owner"], body["kinds"], body["match"] = owner, kinds, match
+			return runOp(c, d, f.sessionFlags, opFollow, body)
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&owner, "owner", "", "agent id that owns the subscription (empty for the top-level session)")
+	c.Flags().StringSliceVar(&kinds, "kind", nil, "alerts, releases or posts; repeat or comma-separate")
+	c.Flags().StringVar(&match, "match", "", "keep only lines containing this, such as a monitor id or a word of its name")
+	_ = c.MarkFlagRequired("kind")
+	return c
+}
+
 func unfollowCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	c := &cobra.Command{

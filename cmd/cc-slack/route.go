@@ -30,7 +30,7 @@ const (
 
 func ownedType(base, agentID string) string { return base + "@" + agentID }
 
-var watchFrames = map[string]bool{eventMessage: true, eventStreamed: true, eventAcked: true, eventAction: true}
+var watchFrames = map[string]bool{eventMessage: true, eventStreamed: true, eventAcked: true, eventAction: true, eventFeed: true}
 
 func (a *app) endedWatchFrame(subjectID string, e event.Event) bool {
 	if !watchFrames[e.Type] {

@@ -336,6 +336,20 @@ var (
 			},
 		},
 		{
+			name: "slack_subscribe",
+			description: "Subscribe to a channel as one-line events in place of its raw messages: alerts (a Datadog monitor opens once and closes " +
+				"after 30 quiet minutes however often it re-fires; a Sentry issue once), releases (each state of a Platy release), posts " +
+				"(each new top-level post). Subscribing a watched channel converts its watch; slack_unwatch ends it.",
+			op: opFollow, failure: actionWatch,
+			properties: map[string]any{
+				"channel_id": channelProp, "url": urlProp,
+				"kinds": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": feedKinds}},
+				"match": map[string]any{"type": "string", "description": "keep only lines containing this, such as a monitor id or a word of its name"},
+				"owner": map[string]any{"type": "string", "description": "owning subagent id; omit for this session"},
+			},
+			required: []string{"kinds"},
+		},
+		{
 			name:        "slack_unwatch",
 			description: "Stop a watch by watch_id, or a thread by channel_id and thread_ts or url; returns remaining, this session's top-level watches.",
 			op:          opUnfollow, failure: actionWatch,
