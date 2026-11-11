@@ -513,6 +513,13 @@ func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
 	return l.storedCard(channel, ts)
 }
 
+func (l *liveCards) titleOf(channel, ts string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, m := l.liveMessage(channel, ts)
+	return m.Card.Title
+}
+
 func (l *liveCards) storedCard(channel, ts string) (cardRef, bool) {
 	for _, t := range l.threads {
 		if t.Channel == channel && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {

@@ -130,12 +130,14 @@ limit; when that read fails, the post goes out as written and the daemon
 logs why.
 
 A post or edit that links a Slack message, in its text or in its blocks, goes out
-with `unfurl_links` on, so Slack draws that message under the line: a card's bare
-permalink shows the card itself, in the engineer's DM too. Every other post keeps
+with `unfurl_links` on, so Slack draws that message under the line: a card's
+permalink under words that name it, `<permalink|the lock card>`, shows those words
+and the card itself under them, in the engineer's DM too. Every other post keeps
 unfurls off. The setting covers the whole post, so another link in it may unfurl
-too. A post that wraps a posted card's link as `<url|text>`, carries blocks copied
+too. A post that shows a posted card's link as its raw URL, bare or labeled with
+text Slack reads as the URL itself, which it never previews, carries blocks copied
 from a card, or repeats an open card's title in the DM without its link, outside
-the card's own thread, is refused with the bare link to write instead.
+the card's own thread, is refused with the link to write instead.
 
 `card_command` names a program, resolved on `PATH` at `login`, that draws the
 card of a PR waiting on a tap. A checked-in config can name a tool only some engineers have,
@@ -171,7 +173,7 @@ own words, with the card's answer buttons; a tap on one answers the card
 itself, and the status card redraws whenever the card does, so a tap on
 either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
-gets the card's bare permalink in its thread, which Slack unfurls as the card. Each card shows once per post,
+gets the card's permalink in its thread under the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
 names. The call asks the program for its cards before it posts anything. When an
 open PR its `tap_prs` names gets no card, such as the program's `skipped` reason,

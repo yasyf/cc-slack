@@ -154,15 +154,19 @@ session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
 A post or edit that links a Slack message shows Slack's own preview of it, so
-refer to a card by its bare permalink, from `cc-slack drive-cards`, and Slack
-draws the card under the line. Never wrap it as `<url|text>`, copy its blocks,
-or repeat its title without the link: each is refused. Slack skips the preview
-of a link it unfurled in the same channel in the past hour, and of every link in
-a message with more than five. A post to your DM that links a Sentry issue or a
-Datadog monitor asks Slack to unfurl it too; posts to channels do not. `thread`
+refer to a card by its permalink, from `cc-slack drive-cards`, under words that
+name it, as `<permalink|the lock card>`: the line reads as words, and Slack
+draws the card under it. A bare permalink shows the raw URL above the card, and
+Slack never previews a link whose label is its own URL; either is refused, as
+is a copy of its blocks or its title repeated without the link. Slack skips the
+preview of a link it unfurled in the same thread a moment earlier, and of every
+link after a message's fifth, so such a link shows only its words. A post to
+your DM that links a Sentry issue or a Datadog monitor asks Slack to unfurl it
+too; posts to channels do not. `thread`
 and `history` list what Slack unfurled for each message: Slack messages under
 `shares`, other links under `unfurls`. A post with `tap_prs` and a drive's
-question card put the card's link in the post's thread themselves.
+question card put the card's link in the post's thread themselves, under the
+card's question.
 
 To read a card before it goes out, run `cc-slack card render --card <file>`. It
 prints the card's Block Kit as JSON and posts nothing, so no test card is needed.

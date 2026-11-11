@@ -17,9 +17,10 @@ order.
    not reach. Fix every line it prints; it exits 1 on a finding. It flags raw commit
    shas, but not a hex run joined to a longer id such as a UUID or a
    `term_` handle, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
-   and build or PR numbers, bare URLs other than a Slack message, Sentry
-   issue, or Datadog monitor, incident, or event link, which stay bare so
-   Slack unfurls them, one-letter codenames such as "D",
+   and build or PR numbers, bare URLs other than a Sentry issue or Datadog
+   monitor, incident, or event link, which stay bare so Slack unfurls them,
+   a Slack message link included, which unfurls under words that name it,
+   one-letter codenames such as "D",
    multi-agent terms such as lane, desk, walker, parity, and fence, zone
    labels such as `PT` or `17:35Z`, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
@@ -28,7 +29,8 @@ order.
    that leads with what is not proven yet under any label, such as "Not
    proven yet", "Not seen working yet", "Unverified" or "Untested", and a
    sentence that says something waits on the reader in a post that links no
-   card in your DM with the app and no PR. Delete a not-proven paragraph and
+   card in your DM with the app and no PR, and a link to a message in your DM
+   with the app shown as its raw URL, bare or labeled with its own URL. Delete a not-proven paragraph and
    put a job on the unknown: the reader gets its result, or nothing. It reads
    through `*bold*`, `_italic_` and `~strike~` markers, ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier

@@ -19,8 +19,9 @@ func TestALineThatWaitsOnYouLinksItsCardOrIsRefused(t *testing.T) {
 		t.Fatalf("a refused line posted %d messages", len(l.slack.sent())-posts)
 	}
 
-	l.refused(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: <" + c.url() + "|the card>"}, cardLinkBare)
-	l.do(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: " + c.url()})
+	l.refused(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: " + c.url()}, cardLinkNamed)
+	l.refused(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: <" + c.url() + "|" + c.url() + ">"}, cardLinkNamed)
+	l.do(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: <" + c.url() + "|the card>"})
 	sent := l.slack.sent()[posts:]
 	if len(sent) != 1 || sent[0].unfurlLinks != "true" || sent[0].blocks != "" {
 		t.Fatalf("posts = %+v, want the line alone, unfurling the card it links", sent)
@@ -79,11 +80,11 @@ func TestAPostThatCopiesACardIsRefusedAndItsLinkIsNot(t *testing.T) {
 	posts := len(l.slack.sent())
 	copied := map[string]any{"type": "section", "block_id": cardCopyBlock + "-" + c.ts, "text": map[string]string{"type": "mrkdwn", "text": "Merge #41 now?"}}
 	l.refused(opSend, map[string]any{"channel_id": testChannel, "text": "Merge #41 now?", "blocks": []any{copied}}, "these blocks copy a card")
-	l.refused(opDMStatus, map[string]any{"text": "Merge #41 now? still waits, the release goes out after it."}, "repeats the open card \"Merge #41 now?\" without its link: write its bare permalink "+c.url())
+	l.refused(opDMStatus, map[string]any{"text": "Merge #41 now? still waits, the release goes out after it."}, "repeats the open card \"Merge #41 now?\" without its link: link it as "+slackLink(c.url(), "Merge #41 now?"))
 	if len(l.slack.sent()) != posts {
 		t.Fatalf("refused posts sent %+v", l.slack.sent()[posts:])
 	}
-	l.do(opDMStatus, map[string]any{"text": "Merge #41 now? still waits: " + c.url()})
+	l.do(opDMStatus, map[string]any{"text": "Merge #41 now? still waits: <" + c.url() + "|the merge card>"})
 	l.do(opDMStatus, map[string]any{"thread_ts": c.thread, "text": "Merge #41 now? is the card above."})
 	if len(l.slack.sent()) != posts+2 {
 		t.Fatalf("posts = %+v, want the line that links the card and the reply in its own thread", l.slack.sent()[posts:])

@@ -106,7 +106,7 @@ func TestAPostLinkingASlackMessageUnfurls(t *testing.T) {
 	}{
 		{"a message link", "card: <" + message + "|card>", "true"},
 		{"a message link in a thread", "card: " + message + "?thread_ts=1793818357.021259", "true"},
-		{"a link to one of his DM cards, which draws the card under the line", "card: https://example.slack.com/archives/" + testDM + "/p1793818357021259", "true"},
+		{"a link to one of his DM cards, which draws the card under the words that name it", "card: <https://example.slack.com/archives/" + testDM + "/p1793818357021259|the lock card>", "true"},
 		{"any other link", "see <https://example.com/a|a>", "false"},
 		{"no link", "plain words", "false"},
 	} {

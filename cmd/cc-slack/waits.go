@@ -16,8 +16,8 @@ const (
 )
 
 const (
-	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: write the card's permalink from `cc-slack drive-cards` bare, and Slack unfurls the card under the line, or draw a PR's tap card with tap_prs; outside your DM with the app, name who decides with a <@U…> mention instead"
-	cardLinkBare   = "write a card's permalink bare, never wrapped as <url|text>, and Slack unfurls the card under the line"
+	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or draw a PR's tap card with tap_prs; outside your DM with the app, name who decides with a <@U…> mention instead"
+	cardLinkNamed  = "link a card under words that name it, as <permalink|the lock card>, and Slack draws the card under the line; a bare permalink, or one labeled with its own URL, shows him a raw URL"
 )
 
 var (
@@ -83,46 +83,55 @@ func waitsWithoutCard(text string, card func(permalinkRef) bool) (waitsLine, boo
 
 func dmCard(ref permalinkRef) bool { return dmCardLink.MatchString(ref.channelID) }
 
-func dmLinkAsLabel(ref permalinkRef, link, label string) bool { return dmCard(ref) && label == link }
-
 func (w waitsLine) refusal() string {
-	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: add the card's bare permalink from `cc-slack drive-cards`, and Slack unfurls the card under the line, or pass the PR as tap_prs for its tap card", w.sentence)
+	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or pass the PR as tap_prs for its tap card", w.sentence)
 }
 
-type wrappedCardLink struct {
+type rawCardLink struct {
 	line int
 	link string
 }
 
-func (w wrappedCardLink) String() string {
-	return fmt.Sprintf("%d:1 wrapped-card-link %q: %s", w.line, w.link, cardLinkBare)
+func (w rawCardLink) String() string {
+	return fmt.Sprintf("%d:1 raw-card-link %q: %s", w.line, w.link, cardLinkNamed)
 }
 
-func wrappedCardLinks(text string, card func(ref permalinkRef, link, label string) bool) []wrappedCardLink {
-	var found []wrappedCardLink
+func rawCardLinks(text string, card func(permalinkRef) bool) []rawCardLink {
+	var found []rawCardLink
 	for number, line := range strings.Split(text, "\n") {
-		for _, m := range wrappedLink.FindAllStringSubmatch(line, -1) {
-			if ref, err := parsePermalink(m[1]); err == nil && ref.ts != "" && card(ref, m[1], m[2]) {
-				found = append(found, wrappedCardLink{number + 1, m[0]})
+		shown := wrappedLink.ReplaceAllStringFunc(line, func(link string) string {
+			m := wrappedLink.FindStringSubmatch(link)
+			if namesLink(m[1], m[2]) {
+				return ""
+			}
+			return m[1]
+		})
+		for _, link := range messageLink.FindAllString(shown, -1) {
+			if ref, err := parsePermalink(link); err == nil && ref.ts != "" && card(ref) {
+				found = append(found, rawCardLink{number + 1, link})
 			}
 		}
 	}
 	return found
 }
 
+func namesLink(url, label string) bool {
+	return !strings.Contains(strings.TrimPrefix(url, "https://"), strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(label), "https://"), "http://"))
+}
+
 func (a *app) refuseCardCopies(id identity, channelID string, b opBody) error {
-	if wrapped := wrappedCardLinks(b.Text, a.storedCardIn(id)); len(wrapped) > 0 {
-		return fmt.Errorf("this post wraps the card link %s as link text: %s", wrapped[0].link, cardLinkBare)
+	if raw := rawCardLinks(b.Text, a.storedCardIn(id)); len(raw) > 0 {
+		return fmt.Errorf("this post shows the card link %s as a raw URL: %s", raw[0].link, cardLinkNamed)
 	}
 	if slices.ContainsFunc(b.Blocks, func(raw json.RawMessage) bool { return bytes.Contains(raw, []byte(`"`+cardActionPrefix)) }) {
-		return errors.New("these blocks copy a card: post the card's bare permalink in the text instead, and Slack unfurls the card under the line")
+		return errors.New("these blocks copy a card: link the card in the text under words that name it instead, and Slack draws the card under the line")
 	}
 	if channelID != id.DMChannelID {
 		return nil
 	}
 	for _, c := range a.cards.askingCards(channelID) {
 		if c.ref.thread != b.ThreadTS && pastesTitle(b.Text, c.title) && !linksMessage(b.Text, c.ref.ts) {
-			return fmt.Errorf("this post repeats the open card %q without its link: write its bare permalink %s, and Slack unfurls the card under the line", c.title, id.permalink(c.ref.channel, c.ref.ts, c.ref.thread))
+			return fmt.Errorf("this post repeats the open card %q without its link: link it as %s, and Slack draws the card under the line", c.title, slackLink(id.permalink(c.ref.channel, c.ref.ts, c.ref.thread), c.title))
 		}
 	}
 	return nil
@@ -139,8 +148,8 @@ func (a *app) refuseBlanking(id identity, b opBody) error {
 	return fmt.Errorf("this message draws the card %s, and an edit with no blocks replaces its layout and buttons with plain text: redraw it with dm-status and its card instead, under the same waits id while it waits on him, or once he answered under a new waits id whose supersedes names this permalink, and every copy of it follows", id.permalink(card.channel, card.ts, card.thread))
 }
 
-func (a *app) storedCardIn(id identity) func(permalinkRef, string, string) bool {
-	return func(ref permalinkRef, _, _ string) bool {
+func (a *app) storedCardIn(id identity) func(permalinkRef) bool {
+	return func(ref permalinkRef) bool {
 		_, found := a.cards.cardAt(ref.channelID, ref.ts)
 		return ref.channelID == id.DMChannelID && found
 	}

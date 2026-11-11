@@ -56,9 +56,11 @@ func TestCheckPostFlagsABadPostAndPassesACleanOneWithTheScriptsExitStatus(t *tes
 		"bad":                 {"Hi Anubhav, I rolled restate to 06ca99cdcd.", 1, []string{"plain-name 'Hi Anubhav'", "commit-sha '06ca99cdcd'"}},
 		"clean":               {"The release is live, and every chat opens again.", 0, nil},
 		"waits with no card":  {"The Hima fix waits on your pick.", 1, []string{`waits-without-card "The Hima fix waits on your pick"`}},
-		"waits with its card": {"The Hima fix waits on your pick: https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779", 0, nil},
-		"card link as its own label": {"The Hima fix waits on your pick: <https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779|https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779>", 1,
-			[]string{`wrapped-card-link "<https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779|https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779>"`}},
+		"waits with its card": {"The Hima fix waits on your pick: <https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779|the Hima card>", 0, nil},
+		"bare card link": {"The Hima fix waits on your pick: <https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779>", 1,
+			[]string{`raw-card-link "https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779"`}},
+		"card link as its own label": {"The Hima fix waits on your pick: <https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779|acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779>", 1,
+			[]string{`raw-card-link "https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779"`}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
