@@ -282,6 +282,22 @@ func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testin
 	}
 }
 
+func TestAPRCardThatNoLongerWaitsOnHisTapSaysWhyUnderItsPR(t *testing.T) {
+	pr := fullPR(7)
+	pr.Blocks = "A reader's check found it not ready: Releasable alone needs #43 live first"
+	card := statusCard{Status: "info", Title: "Fix: retry flaky uploads", Waits: "merge-7", Options: []string{"Approve", "Hold"}, PRs: []cardPR{pr}}
+	v := view()
+	v.tapped = cardNoLongerWaits
+	got := blocksJSON(t, card.replyBlocks(v))
+	if !strings.Contains(got, cardNoLongerWaits) || !strings.Contains(got, "found it not ready: Releasable alone needs #43 live first") || strings.Contains(got, `"Approve"`) {
+		t.Fatalf("card %s, want why it no longer waits under its PR and no Approve", got)
+	}
+	v.tapped = "✓ *Approve* · answered"
+	if got := blocksJSON(t, card.replyBlocks(v)); strings.Contains(got, "found it not ready") {
+		t.Fatalf("card %s, want a card he answered to keep its settled line alone", got)
+	}
+}
+
 func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	pr := fullPR(49622)
 	pr.Description = "It keeps one storage credential per team."

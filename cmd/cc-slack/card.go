@@ -1358,7 +1358,11 @@ func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 
 func (p cardPR) settledLine(v cardView) string {
 	id, _ := parseRef(p.URL)
-	return refLine(p.URL, "", id, v.refs[id.key()], p.Title)
+	line := refLine(p.URL, "", id, v.refs[id.key()], p.Title)
+	if why := p.waitsOn(); v.tapped == cardNoLongerWaits && why != "" {
+		line += "\n" + plainMrkdwn(why)
+	}
+	return line
 }
 
 func (p cardPR) section(v cardView, at, of int, images []cardImage) []slack.Block {
