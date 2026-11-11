@@ -1035,6 +1035,45 @@ func TestAnAnswerDrawnForAnEarlierQuestionDoesNotAnswerTheRewordedCard(t *testin
 	}
 }
 
+func TestACardAskedAgainInAnotherCardsThreadKeepsThatCardsAnswer(t *testing.T) {
+	reworded := mergeCard()
+	reworded.Title = "Merge #41 before the freeze?"
+	for name, asked := range map[string]struct{ first, again statusCard }{
+		"new words": {mergeCard(), reworded},
+		"a new row": {groupCard(prRow(41)), groupCard(prRow(41), prRow(42))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			postWaiting(t, l, asked.first)
+			held := mergeCard()
+			held.Title, held.Waits = "Release #42 today?", "step-4:release"
+			b := postWaiting(t, l, held)
+			answer := func(label string) cardAnswerResult {
+				var res cardAnswerResult
+				if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"waits": held.Waits, "url": b.url(), "label": label, "via": "http://127.0.0.1:7000/p/asks--ab12"}).Body, &res); err != nil {
+					t.Fatal(err)
+				}
+				return res
+			}
+			if res := answer("Hold"); !res.Answered {
+				t.Fatalf("the first answer to %q = %+v, want it to win", held.Title, res)
+			}
+
+			var res map[string]string
+			if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": asked.again, "thread_ts": b.thread}).Body, &res); err != nil {
+				t.Fatal(err)
+			}
+			if res["thread_ts"] != b.thread || res["ts"] == b.ts {
+				t.Fatalf("the card asked again gave %v, want a new card in thread %s", res, b.thread)
+			}
+			if res := answer("Merge"); res.Answered || !res.Already || res.Label != "Hold" {
+				t.Fatalf("a second answer to %q = %+v, want it refused as already answered with Hold", held.Title, res)
+			}
+		})
+	}
+}
+
 func TestALosingBoardAnswerLearnsTheWinnerWasWrittenIn(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

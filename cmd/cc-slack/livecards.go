@@ -154,6 +154,13 @@ func (t *liveThread) keep(card statusCard, m *liveMessage) {
 	}
 }
 
+func (t *liveThread) carryAnswers(from *liveThread) {
+	answers := map[string]askAnswer{}
+	maps.Copy(answers, from.Answers)
+	maps.Copy(answers, t.Answers)
+	t.Answers = answers
+}
+
 func (t *liveThread) messages() []*liveMessage {
 	return slices.Concat([]*liveMessage{t.Reply}, slices.Collect(maps.Values(t.Waiting)), slices.Collect(maps.Values(t.Groups)), slices.Collect(maps.Values(t.Keyed)), t.PRCards)
 }

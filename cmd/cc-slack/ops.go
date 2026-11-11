@@ -2826,10 +2826,10 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 	switch {
 	case place.asked != nil && card.gainsRows(place.asked.Card):
 		place.superseded, place.asked = place.asked, nil
-		place.thread.Answers = maps.Clone(place.prior.Answers)
+		place.thread.carryAnswers(place.prior)
 	case place.asked != nil && !place.revived && !card.InPlace && reworded(place.asked.Card, card):
 		place.moved, place.asked = place.asked, nil
-		place.thread.Answers = maps.Clone(place.prior.Answers)
+		place.thread.carryAnswers(place.prior)
 	case place.asked != nil:
 		place.thread = l.draft(place.prior.Channel, place.prior.Thread)
 	case card.Group != "" && len(card.Rows) == 0:
