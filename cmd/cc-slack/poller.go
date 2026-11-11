@@ -730,7 +730,7 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 }
 
 func (p *poller) dmMessage(ctx context.Context, id identity, m slack.Message) (bool, error) {
-	if tap, ok := p.numberedTap(id, m); ok {
+	if tap, ok := p.typedAnswer(id, m); ok {
 		return true, p.cardAction(ctx, id, tap)
 	}
 	return false, p.trackOwed(ctx, id, m)

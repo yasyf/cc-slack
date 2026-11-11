@@ -40,20 +40,17 @@ type cardActionPush struct {
 	Value     string `json:"value"`
 	ActionTS  string `json:"action_ts"`
 	Seq       string `json:"seq"`
-	Typed     bool   `json:"-"`
+	Typed     string `json:"-"`
 }
 
-// cardPress says how his answer reached a PR card: the Slack action or message it came from, and whether he pressed the button, typed its number in the thread, or answered another card it copies.
+// cardPress says how his answer reached a card: the Slack action or message it came from, and whether he pressed the button, typed its number in the thread, wrote his answer in the thread, or answered another card it copies.
 type cardPress struct {
 	ActionTS string
 	Source   string
 }
 
 func (a cardActionPush) press() cardPress {
-	if a.Typed {
-		return cardPress{a.ActionTS, "typed its number in the thread"}
-	}
-	return cardPress{a.ActionTS, "pressed the button"}
+	return cardPress{a.ActionTS, cmp.Or(a.Typed, "pressed the button")}
 }
 
 type actionPayload struct {
@@ -714,13 +711,26 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	return nil
 }
 
-func (p *poller) numberedTap(id identity, m slack.Message) (cardActionPush, bool) {
-	if !id.fromOperator(m) || m.SubType != "" || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
+func (p *poller) typedAnswer(id identity, m slack.Message) (cardActionPush, bool) {
+	text := strings.TrimSpace(m.Text)
+	if !id.fromOperator(m) || m.SubType != "" || text == "" || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp {
 		return cardActionPush{}, false
 	}
-	ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, strings.TrimSpace(m.Text))
-	return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
-		ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp, Typed: true}, ok
+	if ts, pick, ok := p.cards.numberedPick(id.DMChannelID, m.ThreadTimestamp, text); ok {
+		return cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: m.ThreadTimestamp,
+			ActionID: pick.actionID, Value: pick.value, ActionTS: m.Timestamp, Typed: "typed its number in the thread"}, true
+	}
+	card, asked, ok := p.cards.waitingDriveCard(id.DMChannelID, m.ThreadTimestamp)
+	if !ok || len(m.Files) > 0 {
+		return cardActionPush{}, false
+	}
+	written := cardActionPush{User: m.User, Channel: id.DMChannelID, MessageTS: card.ts, ThreadTS: card.thread, ActionTS: m.Timestamp, Typed: "wrote in the card's thread",
+		ActionID: cardWroteAction + asked.Waits, Value: string(mustJSON(askTap{ID: asked.Waits, Label: text, Question: asked.Title, Options: asked.answers()}))}
+	if n := slices.IndexFunc(asked.answers(), func(o string) bool { return strings.EqualFold(withoutHidden(o), text) }); n >= 0 {
+		pick := asked.picks()[n]
+		written.ActionID, written.Value = pick.actionID, pick.value
+	}
+	return written, true
 }
 
 func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {

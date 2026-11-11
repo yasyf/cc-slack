@@ -594,6 +594,71 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 }
 
+func TestHisWordsUnderAWaitingDriveCardAnswerItOnceThroughTheCardCommand(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := func(waits string) string {
+		t.Helper()
+		card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Drive: "demo", Waits: waits, Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res["ts"]
+	}
+	steered := ""
+	say := func(card string, n int, text string) string {
+		t.Helper()
+		ts := fmt.Sprintf("%d.%06d", slackTime(card).Unix()+1, n)
+		l.slack.add(id.DMChannelID, slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: card, User: testUser, Text: text}})
+		l.app.poller.nudged(messageNudge{Channel: id.DMChannelID, TS: ts, ThreadTS: card})
+		steered = ""
+		eventually(t, "his words to reach the session", func() bool {
+			steered += l.inject(agent.TopLevel)
+			return steered != ""
+		})
+		return ts
+	}
+	answer := func(waits, card, label string, other bool, at string) string {
+		return string(mustJSON(map[string]any{"answer": map[string]any{
+			"waits": waits, "label": label, "other": other, "undone": false, "url": id.permalink(id.DMChannelID, card, card),
+			"action_ts": at, "source": "wrote in the card's thread",
+		}}))
+	}
+
+	named := ask("demo:j3-661440")
+	namedAt := say(named, 1, " table ")
+	if !strings.Contains(steered, `answered the waiting ask "demo:j3-661440" with "Table"`) {
+		t.Fatalf("directive = %q, want words naming one option taken as that option", steered)
+	}
+	written := ask("demo:j3-661441")
+	writtenAt := say(written, 2, "Keep both until Friday")
+	if !strings.Contains(steered, `answered the waiting ask "demo:j3-661441" with "Keep both until Friday"`) {
+		t.Fatalf("directive = %q, want his words taken as the written-in answer", steered)
+	}
+	if edits := editsOf(l.slack.edited(), written); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Other:* Keep both until Friday · answered") ||
+		!strings.Contains(edits[len(edits)-1], cardUndoAction+"demo:j3-661441") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want his words on the card with an Undo and no options", edits)
+	}
+	want := []string{answer("demo:j3-661440", named, "Table", false, namedAt), answer("demo:j3-661441", written, "Keep both until Friday", true, writtenAt)}
+	eventually(t, "the card command to record both answers", func() bool { return len(answersOf(cmd.requests(t))) == len(want) })
+	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %v, want one answer record per card, the option he named and his words verbatim", got)
+	}
+
+	say(written, 3, "why is this still open?")
+	if strings.Contains(steered, "answered the waiting ask") || !strings.Contains(steered, "why is this still open?") {
+		t.Fatalf("directive = %q, want his words under the answered card delivered as a message", steered)
+	}
+	if got := answersOf(cmd.requests(t)); len(got) != len(want) {
+		t.Fatalf("card command asked %v, want no answer from words under an answered card", got)
+	}
+}
+
 func TestUndoReopensAStrayPickForTenMinutes(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
