@@ -133,10 +133,8 @@ logs why.
 A post or edit that links a Slack message, in its text or in its blocks, goes out
 with `unfurl_links` on, so Slack draws that message under the line: a card's
 permalink under words that name it, `<permalink|the lock card>`, shows those words
-and the card itself under them, in the engineer's DM too. Slack draws no link it showed in the
-same conversation within the past hour, so each Slack message link a post carries goes out with a
-`post` query parameter unique to that post, which Slack ignores when it opens the message. Every
-other post keeps unfurls off. The setting covers the whole post, so another link in it may unfurl
+and the card itself under them, in the engineer's DM too. Every other post keeps
+unfurls off. The setting covers the whole post, so another link in it may unfurl
 too. A post that shows a posted card's link as its raw URL, bare or labeled with
 text Slack reads as the URL itself, which it never previews, carries blocks copied
 from a card, or repeats an open card's title in the DM without its link, outside
