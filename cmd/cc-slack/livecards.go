@@ -62,7 +62,6 @@ type liveThread struct {
 	Keyed     map[string]*liveMessage `json:"keyed,omitempty"`
 	PRCards   []*liveMessage          `json:"pr_cards,omitempty"`
 	Copies    []liveCardCopy          `json:"copies,omitempty"`
-	TapLines  []liveTapLine           `json:"tap_lines,omitempty"`
 	Carries   []string                `json:"carries,omitempty"`
 	Continued []string                `json:"continued,omitempty"`
 	Timeline  []timelineEntry         `json:"timeline,omitempty"`
@@ -79,9 +78,9 @@ type liveCardCopy struct {
 	Link bool   `json:"link,omitempty"`
 }
 
-type liveTapLine struct {
-	TS    string   `json:"ts"`
-	Cards []string `json:"cards"`
+type askingCard struct {
+	ref   cardRef
+	title string
 }
 
 func threadKey(channel, thread string) string { return channel + "/" + thread }
@@ -311,39 +310,6 @@ func (l *liveCards) rememberCopy(channel, thread string, copied liveCardCopy, at
 	l.commit(t)
 }
 
-func (l *liveCards) rememberTapLine(channel, thread string, line liveTapLine, at time.Time) {
-	if len(line.Cards) == 0 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t := l.draft(channel, thread)
-	t.TapLines = append(t.TapLines, line)
-	t.Updated = at
-	l.commit(t)
-}
-
-func (l *liveCards) tapLineCards(channel, thread, ts string) []cardRef {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(channel, thread)]
-	if !ok {
-		return nil
-	}
-	var cards []cardRef
-	for _, line := range t.TapLines {
-		if line.TS != ts {
-			continue
-		}
-		for _, card := range line.Cards {
-			if stored, found := l.storedCard(channel, card); found {
-				cards = append(cards, stored)
-			}
-		}
-	}
-	return cards
-}
-
 func (l *liveCards) carry(channel, thread, card string, at time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -517,20 +483,28 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	return copies
 }
 
-func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
+func (l *liveCards) showsIn(channel, thread, card string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == card })
+}
+
+func (l *liveCards) askingCards(channel string) []askingCard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var open []askingCard
 	for _, t := range l.threads {
 		if t.Channel != channel {
 			continue
 		}
-		for _, c := range t.Copies {
-			if c.TS == ts && !c.Link {
-				return l.storedCard(channel, c.Card)
+		for _, m := range t.messages() {
+			if m != nil && t.asks(m) {
+				open = append(open, askingCard{cardRef{channel, t.Thread, m.TS}, m.Card.Title})
 			}
 		}
 	}
-	return cardRef{}, false
+	return open
 }
 
 func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
@@ -543,6 +517,20 @@ func (l *liveCards) storedCard(channel, ts string) (cardRef, bool) {
 	for _, t := range l.threads {
 		if t.Channel == channel && slices.ContainsFunc(append(t.messages(), t.Root), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {
 			return cardRef{channel, t.Thread, ts}, true
+		}
+	}
+	return cardRef{}, false
+}
+
+func (l *liveCards) drawnAt(channel, ts string) (cardRef, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if card, found := l.storedCard(channel, ts); found {
+		return card, true
+	}
+	for _, t := range l.threads {
+		if at := slices.IndexFunc(t.Copies, func(c liveCardCopy) bool { return c.TS == ts && !c.Link }); t.Channel == channel && at >= 0 {
+			return l.storedCard(channel, t.Copies[at].Card)
 		}
 	}
 	return cardRef{}, false
@@ -639,7 +627,7 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok && thread != "" {
 		c := *t
 		c.Timeline, c.Asks, c.Answers, c.Waiting, c.Groups, c.Keyed = slices.Clone(t.Timeline), slices.Clone(t.Asks), maps.Clone(t.Answers), maps.Clone(t.Waiting), maps.Clone(t.Groups), maps.Clone(t.Keyed)
-		c.PRCards, c.Copies, c.TapLines, c.Carries = slices.Clone(t.PRCards), slices.Clone(t.Copies), slices.Clone(t.TapLines), slices.Clone(t.Carries)
+		c.PRCards, c.Copies, c.Carries = slices.Clone(t.PRCards), slices.Clone(t.Copies), slices.Clone(t.Carries)
 		return &c
 	}
 	return &liveThread{Channel: channel, Thread: thread}

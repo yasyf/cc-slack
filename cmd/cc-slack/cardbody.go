@@ -28,6 +28,8 @@ const (
 	slackMaxButton   = 75
 	slackMaxValue    = 2000
 	slackMaxID       = 255
+	fencedTableRows  = 3
+	fencedTableCols  = 3
 )
 
 var (
@@ -73,7 +75,7 @@ func bodyPieces(body string) []bodyPiece {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trimmed, "```") && inFence:
-			pieces = append(pieces, bodyPiece{text: strings.Join(append(fence, line), "\n")})
+			pieces = append(pieces, fencedPieces(fence[0], fence[1:], line)...)
 			fence, inFence = fence[:0], false
 		case inFence:
 			fence = append(fence, line)
@@ -106,9 +108,70 @@ func bodyPieces(body string) []bodyPiece {
 	flushPara()
 	flushTable()
 	if inFence {
-		pieces = append(pieces, bodyPiece{text: strings.Join(append(fence, "```"), "\n")})
+		pieces = append(pieces, fencedPieces(fence[0], fence[1:], "```")...)
 	}
 	return pieces
+}
+
+func fencedPieces(open string, lines []string, closing string) []bodyPiece {
+	var pieces []bodyPiece
+	code := func(lines []string) {
+		if kept := strings.Trim(strings.Join(lines, "\n"), "\n"); strings.TrimSpace(kept) != "" {
+			pieces = append(pieces, bodyPiece{text: open + "\n" + kept + "\n" + closing})
+		}
+	}
+	from := 0
+	for at := 0; at < len(lines); {
+		rows, used := columnRows(lines[at:])
+		if len(rows) < fencedTableRows {
+			at++
+			continue
+		}
+		code(lines[from:at])
+		pieces = append(pieces, bodyPiece{table: rows})
+		at += used
+		from = at
+	}
+	code(lines[from:])
+	return pieces
+}
+
+func columnRows(lines []string) ([][]string, int) {
+	head := []rune(strings.TrimRight(lines[0], " "))
+	var starts []int
+	for at, r := range head {
+		if r != ' ' && (at == 0 || at >= 2 && head[at-1] == ' ' && head[at-2] == ' ') {
+			starts = append(starts, at)
+		}
+	}
+	if len(starts) < fencedTableCols || starts[0] != 0 {
+		return nil, 0
+	}
+	rows := [][]string{columnCells(head, starts)}
+	for used, line := range lines[1:] {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && mdRule.MatchString(trimmed) {
+			continue
+		}
+		row := []rune(strings.TrimRight(line, " "))
+		cells := columnCells(row, starts)
+		if len(row) == 0 || row[0] == ' ' || slices.ContainsFunc(starts[1:], func(at int) bool { return at >= len(row) || row[at-1] != ' ' && row[at] != ' ' }) || slices.Contains(cells, "") {
+			return rows, used + 1
+		}
+		rows = append(rows, cells)
+	}
+	return rows, len(lines)
+}
+
+func columnCells(row []rune, starts []int) []string {
+	cells := make([]string, len(starts))
+	for i, at := range starts {
+		end := len(row)
+		if i+1 < len(starts) {
+			end = min(starts[i+1], len(row))
+		}
+		cells[i] = strings.TrimSpace(string(row[min(at, end):end]))
+	}
+	return cells
 }
 
 func mrkdwnText(text string) string {

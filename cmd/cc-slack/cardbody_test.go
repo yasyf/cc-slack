@@ -887,3 +887,49 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *te
 		t.Fatalf("blocks %s, want no old labels and no commit", got)
 	}
 }
+
+const fencedTable = "*Show me*\n```\nThe 5 tables past the line (measured)\n" +
+	"table  team class                  table GB  its database GB  what it did in the last day            parts at 1.7 GB\n" +
+	"-----  --------------------------  --------  ---------------  -------------------------------------  ---------------\n" +
+	"1      Forge, shared cluster       9.25      21.01            +4.03 GB in 5.6 hours (inserts)         6\n" +
+	"2      second team, shared cluster 8.94      13.55            database 5.02 to 13.55 GB in a day      6\n" +
+	"3      staging test team           7.22      7.40             no change since Nov 7                   5\n" +
+	"\nby creation time: a new empty part every 2.4 hours\nby id hash:       every part takes the inserts\n```"
+
+func TestATableLaidOutInACodeBlockDrawsAsATable(t *testing.T) {
+	blocks := bodyPages("Five tables are past 1.7 GB.\n\n"+fencedTable, cardMaxBlocks, cardMaxVisible, true, nil)[0]
+	table := tables(blocks)
+	if len(table) != 1 || len(table[0].Rows) != 4 || len(table[0].Rows[2]) != 6 || !strings.HasPrefix(table[0].Caption, "table · team class · table GB") {
+		t.Fatalf("blocks %s, want the four aligned lines as one table of six columns, its rule line gone", blocksJSON(t, blocks))
+	}
+	if cell, ok := table[0].Rows[2][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "second team, shared cluster" {
+		t.Fatalf("row 2 cell = %#v, want the whole team class though one space parts it from the next column", table[0].Rows[2][1])
+	}
+	want := []string{"Five tables are past 1.7 GB.", "*Show me*", "```\nThe 5 tables past the line (measured)\n```", "```\nby creation time: a new empty part every 2.4 hours\nby id hash:       every part takes the inserts\n```"}
+	if got := sectionTexts(blocks); !slices.Equal(got, want) {
+		t.Fatalf("sections %q, want %q: the lines around the table stay code", got, want)
+	}
+}
+
+func TestIndentedAlignedCodeStaysACodeBlock(t *testing.T) {
+	code := "```\nCREATE TABLE parts (\n  table_id    bigint       NOT NULL,\n  created_at  timestamptz  NOT NULL,\n  size_bytes  bigint       NOT NULL\n);\n```"
+	blocks := bodyPages(code, cardMaxBlocks, cardMaxVisible, true, nil)[0]
+	if got := sectionTexts(blocks); len(tables(blocks)) != 0 || !slices.Equal(got, []string{code}) {
+		t.Fatalf("blocks %s, want the SQL as the one code block it was", blocksJSON(t, blocks))
+	}
+}
+
+func TestAPRCardShowsATableInItsShowMeAsLinesAndItsNotificationLeavesShowMeOut(t *testing.T) {
+	pr := fullPR(52919)
+	pr.ShowMe = strings.TrimPrefix(fencedTable, "*Show me*\n")
+	shown := pr.showMe()
+	for _, want := range []string{"• *table:* 1 · *team class:* Forge, shared cluster · *table GB:* 9.25 · *its database GB:* 21.01", "```\nThe 5 tables past the line (measured)\n```"} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("Show me %q, want %q in it", shown, want)
+		}
+	}
+	card := statusCard{Status: "needs_you", Title: "Split big tables?", Body: "Five tables are past 1.7 GB.\n" + fencedTable}
+	if got := card.text(); got != "🙋 Split big tables? — Five tables are past 1.7 GB." {
+		t.Fatalf("notification text = %q, want the title and summary without the Show me", got)
+	}
+}

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/slack-go/slack"
-	"github.com/yasyf/cc-interact/daemon"
 )
 
 const (
@@ -28,51 +27,6 @@ var (
 
 	errDrewAsText = errors.New("that message drew as text, with no card to copy")
 )
-
-func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
-	b, err := decodeBody(hc)
-	if err != nil {
-		return fail(err.Error())
-	}
-	if b.URL == "" || b.ThreadTS == "" {
-		return fail("card-copy needs url, the open card's permalink, and thread_ts, the thread to post the copy in")
-	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
-	if err != nil {
-		return fail(err.Error())
-	}
-	link := b.URL
-	ref, err := parsePermalink(link)
-	if err != nil {
-		return fail(err.Error())
-	}
-	if source, isCopy := a.cards.copySource(ref.channelID, ref.ts); isCopy {
-		link = id.permalink(source.channel, source.ts, source.thread)
-		if ref, err = parsePermalink(link); err != nil {
-			return fail(err.Error())
-		}
-	}
-	if held := a.cards.copyIn(id.DMChannelID, b.ThreadTS, ref.ts); held != "" {
-		return fail(fmt.Sprintf("thread %s already holds this card's copy, %s, so nothing was posted; a tap on that copy answers the card. "+
-			"A post with tap_prs, a drive's question card and a post that links the card each put its copy in the post's thread, so card-copy is only for a thread with no copy",
-			b.ThreadTS, id.permalink(id.DMChannelID, held, b.ThreadTS)))
-	}
-	copied, err := a.cardCopy(hc.Ctx, id, ref, link)
-	if cards := a.cards.tapLineCards(ref.channelID, cmp.Or(ref.threadTS, ref.ts), ref.ts); errors.Is(err, errDrewAsText) && len(cards) > 0 {
-		_, links := tapDrawn{cards: cards}.named(id)
-		return fail(fmt.Sprintf("%v: it is the line a tap_prs post wrote, and its card is %s; copy that", err, links))
-	}
-	if err != nil {
-		return fail(err.Error())
-	}
-	res, err := a.post(hc.Ctx, hc.DB, id, id.DMChannelID, b.ThreadTS, cardCopyLead, copied, nil, a.cards.workObjectsOf(ref.channelID, ref.ts, a.now())...)
-	if err != nil {
-		return fail(fallback(actionWrite, err))
-	}
-	a.cards.rememberCopy(id.DMChannelID, b.ThreadTS, liveCardCopy{Card: ref.ts, TS: res.TS}, a.now())
-	res.Posted, res.ThreadTS = true, b.ThreadTS
-	return ok(res)
-}
 
 func (l *liveCards) withdrawCopies(ctx context.Context, id identity, card cardRef) error {
 	api := l.newAPI(id.Token)
@@ -94,17 +48,6 @@ func (l *liveCards) withdrawCopies(ctx context.Context, id identity, card cardRe
 func sameCard(was, now statusCard) bool {
 	was.Images, now.Images = nil, nil
 	return bytes.Equal(mustJSON(was), mustJSON(now))
-}
-
-func (a *app) cardCopy(ctx context.Context, id identity, ref permalinkRef, link string) ([]slack.Block, error) {
-	blocks, answers, err := copyBlocks(ctx, a.newAPI(id.Token), id, ref, link)
-	if err != nil {
-		return nil, err
-	}
-	if answers == 0 {
-		return nil, errors.New("that card has no answer left to tap")
-	}
-	return blocks, nil
 }
 
 func copyBlocks(ctx context.Context, api slackAPI, id identity, ref permalinkRef, link string) ([]slack.Block, int, error) {

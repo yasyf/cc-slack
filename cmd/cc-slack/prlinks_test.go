@@ -298,29 +298,28 @@ func TestATapPostAsksAgainWhenThePRsStandingCardWaitsOnNoTap(t *testing.T) {
 	}
 }
 
-func TestACopyUnderAPostFollowsARedrawOfItsCard(t *testing.T) {
+func TestATapPostInAThreadLinksItsCardThereAndARedrawEditsTheCardAlone(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41})
-	copied := func() (fakePost, bool) {
-		for _, p := range prCards(l, testDM) {
-			if p.threadTS == hisThread {
-				return p, true
-			}
-		}
-		return fakePost{}, false
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	eventually(t, "the card's link in his thread", func() bool { return linksIn(l, card, hisThread) })
+	if copies := slices.DeleteFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS != hisThread }); len(copies) != 0 {
+		t.Fatalf("posts in his thread = %+v, want the card's link alone and no copy of its blocks", copies)
 	}
-	eventually(t, "the copy", func() bool { _, drawn := copied(); return drawn })
-	theCopy, _ := copied()
+	link := cardLinks(l, card)[0]
 	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	l.do(opRedrawPRCards, map[string]any{})
-	eventually(t, "the copy redrawn", func() bool { return len(editsOf(l.slack.edited(), theCopy.ts)) > 0 })
+	eventually(t, "the card redrawn", func() bool { return len(editsOf(l.slack.edited(), card.ts)) > 0 })
+	if edits := editsOf(l.slack.edited(), link.ts); len(edits) != 0 {
+		t.Fatalf("the link line was edited %v, want it left for Slack's unfurl to follow the card", edits)
+	}
 }
 
-func TestATapPostNamesItsCardAndACopyOfItsLineNamesThatCard(t *testing.T) {
+func TestATapPostNamesItsCard(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
@@ -332,62 +331,22 @@ func TestATapPostNamesItsCardAndACopyOfItsLineNamesThatCard(t *testing.T) {
 	if len(cards) != 1 || sent["card_ts"] != cards[0].ts || !strings.Contains(sent["card_permalink"], "/p"+strings.ReplaceAll(cards[0].ts, ".", "")) {
 		t.Fatalf("dm-status = %v, want it to name the card %+v", sent, cards)
 	}
-	l.refused(opCardCopy, map[string]any{"url": sent["permalink"], "thread_ts": hisThread}, "it is the line a tap_prs post wrote, and its card is "+sent["card_permalink"])
 }
 
-func TestACopyIntoTheThreadOfATapPostIsRefusedNamingTheCopyItAlreadyHolds(t *testing.T) {
+func TestASecondTapPostInAThreadAddsNoSecondLink(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	var sent map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	cards := awaitPRCards(t, l, testDM)
-	held := slices.IndexFunc(cards, func(p fakePost) bool { return p.threadTS == hisThread })
-	if held < 0 {
-		t.Fatalf("PR cards = %+v, want the card's copy in thread %s", cards, hisThread)
-	}
-	id, err := loadIdentity(l.ctx, l.srv.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	posts := len(l.slack.sent())
-
-	l.refused(opCardCopy, map[string]any{"url": sent["card_permalink"], "thread_ts": hisThread},
-		"thread "+hisThread+" already holds this card's copy, "+id.permalink(id.DMChannelID, cards[held].ts, hisThread)+", so nothing was posted")
-
-	if got := l.slack.sent()[posts:]; len(got) != 0 {
-		t.Fatalf("posted %+v, want no second copy in the thread", got)
-	}
-}
-
-func TestACopyWithNothingToAnswerLeadsWithItsTitleUntilItsCardAsks(t *testing.T) {
-	const hisThread = "1793804574.412309"
-	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
-	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is held", "tap_prs": tapPR41})
-	copied := func() (fakePost, bool) {
-		at := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
-			return p.threadTS == hisThread && strings.HasSuffix(headerOf(p.blocks), "#41 at e718a74")
-		})
-		if at < 0 {
-			return fakePost{}, false
-		}
-		return l.slack.sentTo(testDM)[at], true
-	}
-	eventually(t, "the copy", func() bool { _, drawn := copied(); return drawn })
-	theCopy, _ := copied()
-	if theCopy.text != headerOf(theCopy.blocks) {
-		t.Fatalf("copy text = %q, want the card's title %q, since it carries nothing to answer", theCopy.text, headerOf(theCopy.blocks))
-	}
-	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{mergeRowCard()}}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	l.do(opRedrawPRCards, map[string]any{})
-	eventually(t, "the copy asks once its card carries Merge", func() bool {
-		return slices.ContainsFunc(l.slack.edited(), func(e fakeEdit) bool { return e.ts == theCopy.ts && e.text == cardCopyLead })
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	eventually(t, "the card's link in his thread", func() bool { return linksIn(l, card, hisThread) })
+	l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": "#41 still waits on your tap", "tap_prs": tapPR41})
+	eventually(t, "the second post", func() bool {
+		return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return strings.Contains(p.text, "still waits on your tap") })
 	})
+	if links := cardLinks(l, card); len(links) != 1 {
+		t.Fatalf("links to the card = %+v, want the one the first post put in his thread", links)
+	}
 }
 
 func prCards(l *liveDaemon, channelID string) []fakePost {
@@ -559,9 +518,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 	l.do(opDMStatus, map[string]any{"thread_ts": sent["thread_ts"], "text": "acme/app#41 again", "tap_prs": tapPR41})
 	l.do(opDMStatus, map[string]any{"text": "acme/app#41 elsewhere", "tap_prs": tapPR41})
 	l.do(opDMStatus, map[string]any{"thread_ts": cards[0].ts, "text": "acme/app#41 under its own card", "tap_prs": tapPR41})
-	eventually(t, "the copy under the reply naming the PR", func() bool {
-		return slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == sent["thread_ts"] })
-	})
+	eventually(t, "the card's link under the reply naming the PR", func() bool { return linksIn(l, cards[0], sent["thread_ts"]) })
 	if cards := rootCards(prCards(l, testDM)); len(cards) != 1 || len(cmd.requests(t)) != 1 {
 		t.Fatalf("later mentions drew cards %+v after %d asks, want the one card and one ask", cards, len(cmd.requests(t)))
 	}
@@ -604,9 +561,7 @@ func TestAPostInHisThreadNamingAPRDrawsItsCardAtTheDMRoot(t *testing.T) {
 	if len(cards) != 1 {
 		t.Fatalf("cards = %+v, want one at the DM root, not in his thread %s", cards, hisThread)
 	}
-	eventually(t, "a working copy under the post in his thread", func() bool {
-		return slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == hisThread })
-	})
+	eventually(t, "the card's link under the post in his thread", func() bool { return linksIn(l, cards[0], hisThread) })
 	eventually(t, "the watch on the card's own thread", func() bool { return slices.Contains(activeDMThreads(t, l), cards[0].ts) })
 	tapMerge(t, l, cards[0])
 	if edits := editsOf(l.slack.edited(), cards[0].ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") {
@@ -666,9 +621,9 @@ func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *
 	asks := len(cmd.requests(t))
 	l.do(opDMStatus, map[string]any{"thread_ts": old.ts, "text": "#41 is held", "tap_prs": tapPR41})
 	eventually(t, "the ask with nothing changed", func() bool { return len(cmd.requests(t)) > asks })
-	inOwnThread := slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == old.ts })
+	inOwnThread := linksIn(l, old, old.ts)
 	if got := rootCards(prCards(l, testDM)); len(got) != 1 || inOwnThread || !strings.Contains(oldNow(), "✓ *Hold* · answered") || strings.Contains(oldNow(), "*Replaced:*") {
-		t.Fatalf("PR cards = %+v, old card %s; want the one card, still answered Hold, and no copy in its own thread", prCards(l, testDM), oldNow())
+		t.Fatalf("PR cards = %+v, old card %s; want the one card, still answered Hold, and no link to it in its own thread", prCards(l, testDM), oldNow())
 	}
 
 	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{changedTapCard(rewritten)}}), 0o600); err != nil {
@@ -687,8 +642,8 @@ func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *
 	if !strings.Contains(oldNow(), strings.ReplaceAll(fresh.ts, ".", "")) || !strings.Contains(oldNow(), "✓ *Hold* · answered") {
 		t.Fatalf("old card = %s, want a link to the fresh card and his Hold kept as the old version's answer", oldNow())
 	}
-	if !slices.ContainsFunc(prCards(l, testDM), func(p fakePost) bool { return p.threadTS == old.ts }) {
-		t.Fatalf("PR cards = %+v, want a working copy of the fresh card in the thread the post named", prCards(l, testDM))
+	if !linksIn(l, fresh, old.ts) {
+		t.Fatalf("posts = %+v, want the fresh card's link in the thread the post named", l.slack.sentTo(testDM))
 	}
 	var listed driveCardsResult
 	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
@@ -855,11 +810,7 @@ func TestOnePostNamingAStackDrawsOneCardAndMarksAMembersOlderCardReplaced(t *tes
 
 			asked := len(prAsks(cmd.requests(t)))
 			l.do(opDMStatus, map[string]any{"thread_ts": laterThread, "text": "the stack still waits on you", "tap_prs": urls})
-			eventually(t, "the stack's card under the later post", func() bool {
-				return slices.ContainsFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
-					return p.threadTS == laterThread && strings.Contains(p.blocks, stack.Card.Waits)
-				})
-			})
+			eventually(t, "the stack's card linked under the later post", func() bool { return linksIn(l, fresh, laterThread) })
 			replaced, redrawn := oldNow(), len(editsOf(l.slack.edited(), fresh.ts))
 			l.do(opRedrawPRCards, map[string]any{})
 			eventually(t, "the stack's card redrawn in place", func() bool { return len(editsOf(l.slack.edited(), fresh.ts)) > redrawn })
@@ -1572,8 +1523,8 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	eventually(t, "the ask", func() bool { return len(cmd.requests(t)) == 1 })
-	if cards := prCards(l, testDM); len(cards) != 0 || len(cardCopies(l, pick)) != 1 || len(l.slack.sentTo(testDM)) != 3 {
-		t.Fatalf("cards = %+v in %d posts, want the pick as the one offer and its working copy under the post", cards, len(l.slack.sentTo(testDM)))
+	if cards := prCards(l, testDM); len(cards) != 0 || len(cardLinks(l, pick)) != 1 || len(l.slack.sentTo(testDM)) != 3 {
+		t.Fatalf("cards = %+v in %d posts, want the pick as the one offer and its link under the post", cards, len(l.slack.sentTo(testDM)))
 	}
 }
 
@@ -1587,8 +1538,8 @@ func TestAPickAskingAboutAPRDrawsNoButtonlessCardBesideIt(t *testing.T) {
 	if drawn := slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return !strings.Contains(p.blocks, "#41 at e718a74") }); len(drawn) != 0 {
 		t.Fatalf("posts = %+v, want no card for #41 without buttons while the pick asks about it", drawn)
 	}
-	if copies := cardCopies(l, pick); len(copies) != 1 {
-		t.Fatalf("copies of the pick = %+v, want its working copy under the post", copies)
+	if links := cardLinks(l, pick); len(links) != 1 {
+		t.Fatalf("links to the pick = %+v, want its link under the post", links)
 	}
 }
 
@@ -1753,25 +1704,14 @@ func TestATapPostFailsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
 	l.refused(opDMStatus, map[string]any{"text": "Here it is.", "tap_prs": tapPR41}, tapPR41[0]+": its body has no What you'll hate most section")
 }
 
-func cardCopies(l *liveDaemon, card fakePost) []fakePost {
-	posts := l.slack.sentTo(testDM)
-	header := headerOf(posts[slices.IndexFunc(posts, func(p fakePost) bool { return p.ts == card.ts })].blocks)
-	return slices.DeleteFunc(posts, func(p fakePost) bool {
-		return p.threadTS == "" || p.text != cardCopyLead || headerOf(p.blocks) != header
+func cardLinks(l *liveDaemon, card fakePost) []fakePost {
+	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
+		return p.blocks != "" || p.unfurlLinks != "true" || !linksMessage(p.text, card.ts)
 	})
 }
 
-func headerOf(raw string) string {
-	var blocks slack.Blocks
-	if json.Unmarshal([]byte(raw), &blocks) != nil {
-		return ""
-	}
-	for _, block := range blocks.BlockSet {
-		if h, ok := block.(*slack.HeaderBlock); ok {
-			return h.Text.Text
-		}
-	}
-	return ""
+func linksIn(l *liveDaemon, card fakePost, thread string) bool {
+	return slices.ContainsFunc(cardLinks(l, card), func(p fakePost) bool { return p.threadTS == thread })
 }
 
 func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) {

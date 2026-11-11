@@ -99,14 +99,14 @@ func TestLoginPostsAsTheHandleWithoutADisplayName(t *testing.T) {
 	}
 }
 
-func TestOnlyAPostLinkingASlackMessageOutsideHisDMUnfurls(t *testing.T) {
+func TestAPostLinkingASlackMessageUnfurls(t *testing.T) {
 	message := "https://example.slack.com/archives/C1/p1793818357021259"
 	for _, tc := range []struct {
 		name, text, want string
 	}{
 		{"a message link", "card: <" + message + "|card>", "true"},
 		{"a message link in a thread", "card: " + message + "?thread_ts=1793818357.021259", "true"},
-		{"a link to one of his DM cards, which would draw as a share with no buttons", "card: <https://example.slack.com/archives/" + testDM + "/p1793818357021259|card>", "false"},
+		{"a link to one of his DM cards, which draws the card under the line", "card: https://example.slack.com/archives/" + testDM + "/p1793818357021259", "true"},
 		{"any other link", "see <https://example.com/a|a>", "false"},
 		{"no link", "plain words", "false"},
 	} {
@@ -173,7 +173,7 @@ func TestAThreadListsTheLinksSlackUnfurledApartFromSharedMessages(t *testing.T) 
 	}
 }
 
-func TestAStatusCardLinkingOneOfHisCardsDrawsNoShareOfIt(t *testing.T) {
+func TestAStatusCardLinkingOneOfHisCardsUnfurlsIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.do(opDMStatus, cardBody("Merge the stack?", "merge it"))
@@ -185,8 +185,8 @@ func TestAStatusCardLinkingOneOfHisCardsDrawsNoShareOfIt(t *testing.T) {
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on " + link}})
 	posts := l.slack.sent()
 	at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.blocks, link) })
-	if at < 0 || posts[at].unfurlLinks == "true" {
-		t.Fatalf("posts = %+v, want the status card keeping its link with no button-less share of the card", posts)
+	if at < 0 || posts[at].unfurlLinks != "true" {
+		t.Fatalf("posts = %+v, want the status card keeping its link and Slack drawing the card under it", posts)
 	}
 	if slices.ContainsFunc(posts, func(p fakePost) bool { return p.attachments != "" }) {
 		t.Fatalf("posts = %+v, want no hand-built preview", posts)
