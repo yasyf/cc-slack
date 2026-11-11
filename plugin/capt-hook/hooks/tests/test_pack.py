@@ -95,7 +95,7 @@ class PackTest(unittest.TestCase):
 
     def test_discover_pack_loads_every_module_and_hook(self) -> None:
         self.assertEqual(app._state.load_errors, [])
-        self.assertEqual(len(app._state.hooks), 12)
+        self.assertEqual(len(app._state.hooks), 13)
         for module in ("agent_plane", "common", "slack_comms_need_proof", "session", "permission", "plain_words", "read_before_reply", "writes"):
             self.assertIn(f"{self.package}.{module}", sys.modules)
 
@@ -111,6 +111,7 @@ class PackTest(unittest.TestCase):
             "fixed_lines_name_the_proven_user": (Event.PreToolUse, False, True),
             "replies_read_their_thread_first": (Event.PreToolUse, False, True),
             "thread_reads_are_recorded": (Event.PostToolUse, False, True),
+            "own_replies_are_recorded": (Event.PostToolUse, False, True),
             "pickups_are_recorded": (Event.PostToolUse, False, True),
         }
         actual = {
