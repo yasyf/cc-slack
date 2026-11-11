@@ -1119,6 +1119,39 @@ func TestADriveQuestionCardPostsAtTheDMRootWithItsLinkInTheThreadAndARedrawPosts
 	}
 }
 
+func TestTwoDriveQuestionsNamingAThreadOutsideTheDMPostEachCardOnce(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const elsewhere = "1794365473.701939"
+	l.slack.threadElsewhere(id.DMChannelID, elsewhere)
+	for _, asked := range []struct{ title, waits string }{
+		{"Warn the open window at launch?", "durable-agents:j633-660964"},
+		{"Make the api's refusal the only floor?", "durable-agents:j633-660965"},
+	} {
+		card := mergeCard()
+		card.Drive, card.Title, card.Waits = "durable-agents", asked.title, asked.waits
+		posts := len(l.slack.sent())
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": elsewhere}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		sent := l.slack.sent()[posts:]
+		if len(sent) != 1 || sent[0].ts != res["ts"] || !strings.Contains(res["warning"], "NO CARD LINK") || !strings.Contains(res["warning"], "no thread in your DM") {
+			t.Fatalf("card %q naming thread %s outside the DM got %v with posts %+v, want the card posted once and a warning that its link was left out", asked.title, elsewhere, res, sent)
+		}
+	}
+	posts := len(l.slack.sent())
+	l.refused(opDMStatus, map[string]any{"text": "Both questions are up.", "thread_ts": elsewhere}, "no thread in your DM")
+	if sent := l.slack.sent()[posts:]; len(sent) != 0 {
+		t.Fatalf("a line naming thread %s outside the DM posted %+v, want nothing sent", elsewhere, sent)
+	}
+}
+
 func TestPermissionCardTapNamesItsGrantOrRevokeLabel(t *testing.T) {
 	options := []string{"Yes", "No"}
 	for _, c := range []struct {

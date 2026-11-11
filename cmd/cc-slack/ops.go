@@ -2205,9 +2205,24 @@ func (a *app) linkDriveQuestion(ctx context.Context, db *sql.DB, id identity, in
 	if into == "" || into == card.thread {
 		return
 	}
-	if err := a.linkCardInto(ctx, db, id, into, card); err != nil {
+	err := a.missingDMThread(ctx, id, into)
+	if err == nil {
+		err = a.linkCardInto(ctx, db, id, into, card)
+	}
+	if err != nil {
 		notePostWarning(ctx, fmt.Sprintf("NO CARD LINK: the card is up at %s, and its link in thread %s failed: %v", id.permalink(card.channel, card.ts, card.thread), into, err))
 	}
+}
+
+func (a *app) missingDMThread(ctx context.Context, id identity, thread string) error {
+	if thread == "" {
+		return nil
+	}
+	_, _, _, err := a.newAPI(id.Token).GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{ChannelID: id.DMChannelID, Timestamp: thread, Limit: 1})
+	if err == nil || errorCode(err) != "thread_not_found" {
+		return nil
+	}
+	return fmt.Errorf("thread %s is no thread in your DM with the app, and Slack posts a reply under a thread it cannot find at the DM root", thread)
 }
 
 func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag) daemon.Reply {
@@ -2279,6 +2294,9 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 		if under, err = a.cardThread(hc.Ctx, sub.ID, id, b.About); err != nil {
 			return "", tapCards{}, err
 		}
+	}
+	if err := a.missingDMThread(hc.Ctx, id, under); err != nil {
+		return "", tapCards{}, fmt.Errorf("%w: leave thread_ts out to post at the root, or answer a thread in another channel with slack_reply; nothing was sent", err)
 	}
 	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, asked)
 	if err != nil {
