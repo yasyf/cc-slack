@@ -773,9 +773,9 @@ func assertBackInPlace(t *testing.T, l *liveDaemon, card fakePost, unreacted int
 	if got := rootCards(prCards(l, testDM)); len(got) != posts || len(got) != 1 {
 		t.Fatalf("PR cards at the DM root = %+v, want the one card back in place and nothing new posted", got)
 	}
-	if l.slack.callCount("reactions.remove") == unreacted {
-		t.Fatal("the card came back with its withdrawn mark")
-	}
+	eventually(t, "the withdrawn mark taken off the card back in place", func() bool {
+		return l.slack.callCount("reactions.remove") > unreacted
+	})
 	var listed driveCardsResult
 	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
 		t.Fatal(err)
