@@ -130,6 +130,13 @@ func (c *readCache) generation(ctx context.Context, channelID, threadTS string) 
 	return entry.gen, err
 }
 
+func (c *readCache) after(ctx context.Context, channelID, threadTS, since string) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, _, err := c.load(ctx, channelID, threadTS)
+	return len(slices.DeleteFunc(entry.msgs, func(m slack.Message) bool { return !tsLess(since, m.Timestamp) })), err
+}
+
 func (c *readCache) observe(ctx context.Context, channelID, threadTS, since string, gen int64, fetched []slack.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
