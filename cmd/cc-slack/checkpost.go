@@ -27,7 +27,8 @@ type exitStatus int
 func (s exitStatus) Error() string { return "exit status " + strconv.Itoa(int(s)) }
 
 func checkPostCmd() *cobra.Command {
-	return &cobra.Command{
+	var asked []string
+	c := &cobra.Command{
 		Use:   "check-post <file|->",
 		Short: "Check a Slack post's text with the plugin's check-post before sending it",
 		Long: `Run the plugin's bundled check-post on a post's text, read from a file or
@@ -38,8 +39,10 @@ would show the words and Slack would draw the message under them, and that no
 one line links more than five Slack messages, since Slack draws five a message
 and cc-slack sends a longer post to your DM as pages cut between lines. It
 prints each finding with its fix and exits 1 when there is one, 0 when the text
-is clean, and 2 on a usage error, as the script does. It runs the check-post of
-the newest installed plugin, which a session's PATH may not hold.`,
+is clean, and 2 on a usage error, as the script does. Each --asked is a message
+of the reader's the post answers, word for word, and a multi-agent term the
+reader used there, such as the drive, passes. It runs the check-post of the
+newest installed plugin, which a session's PATH may not hold.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			root, err := pluginRoot()
@@ -50,7 +53,11 @@ the newest installed plugin, which a session's PATH may not hold.`,
 			if err != nil {
 				return fmt.Errorf("check-post: %w", err)
 			}
-			check := exec.CommandContext(c.Context(), filepath.Join(root, checkPostScript), "-") //nolint:gosec // G204: the plugin's own check-post script, never a shell
+			script := []string{"-"}
+			for _, message := range asked {
+				script = append(script, "--asked="+message)
+			}
+			check := exec.CommandContext(c.Context(), filepath.Join(root, checkPostScript), script...) //nolint:gosec // G204: the plugin's own check-post script, never a shell
 			check.Stdin, check.Stdout, check.Stderr = strings.NewReader(text), c.OutOrStdout(), c.ErrOrStderr()
 			status := 0
 			if err := check.Run(); err != nil {
@@ -82,6 +89,8 @@ the newest installed plugin, which a session's PATH may not hold.`,
 			return nil
 		},
 	}
+	c.Flags().StringArrayVar(&asked, "asked", nil, "a message of the reader's that the post answers, word for word; repeat for each")
+	return c
 }
 
 func postText(c *cobra.Command, args []string) (string, error) {

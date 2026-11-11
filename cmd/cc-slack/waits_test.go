@@ -73,6 +73,21 @@ func TestWaitsOnYouReadsPlainVariantsAndLeavesOtherLines(t *testing.T) {
 	}
 }
 
+func TestAListOfStatesEndingInWaitingOnYouWaitsOnNothing(t *testing.T) {
+	cases := map[string]bool{
+		"I'm gathering where each order stands, merged, open or waiting on you, and the list goes in this thread.": false,
+		"Every PR is merged, in review or waiting on you.":                                                         false,
+		"Merged, open or waiting on you to pick a route.":                                                          true,
+		"The fix is open or waiting on you.":                                                                       true,
+		"Tests passed, release is open or waiting on you.":                                                         true,
+	}
+	for text, want := range cases {
+		if _, got := waitsOnReader(text); got != want {
+			t.Errorf("waitsOnReader(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
 func TestAPostThatCopiesACardIsRefusedAndItsLinkIsNot(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

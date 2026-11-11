@@ -32,7 +32,8 @@ order.
    proven yet", "Not seen working yet", "Unverified" or "Untested", a line
    that reports no change, such as "No change since the last update" or
    "Nothing new", which a post leaves out or a :+1: reaction replaces, and a
-   sentence that says something waits on the reader in a post that links no
+   sentence that says something waits on the reader, though not a list of
+   states that ends in "or waiting on you", in a post that links no
    card in your DM with the app and no PR, a link to a message in your DM
    with the app shown as its raw URL, bare or labeled with its own URL, and a
    line that links more than five Slack messages or alerts, since Slack draws
@@ -41,8 +42,11 @@ order.
    put a job on the unknown: the reader gets its result, or nothing. It reads
    through `*bold*`, `_italic_` and `~strike~` markers, ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier
-   or sentence inside backticks or a code fence. Then check what the script
-   cannot detect:
+   or sentence inside backticks or a code fence. When the post answers a
+   message of the reader's, pass that message word for word with
+   `--asked "<message>"`, once for each: a multi-agent term the reader used
+   there, such as "the drive" in a question about the drive, then passes in
+   the answer. Then check what the script cannot detect:
 
    - Would someone who only reads this thread understand every noun?
    - Is everything mentioned linked?

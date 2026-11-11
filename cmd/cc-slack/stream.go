@@ -128,7 +128,11 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil && errorCode(err) != settled {
 		return fail(fallback(act, err))
 	}
-	thread := cmp.Or(b.ThreadTS, b.TS)
+	thread, err := messageThreadOf(hc.Ctx, api, channelID, b)
+	if err != nil {
+		return fail(fmt.Sprintf("the working line is unchanged: cc-slack could not %v", err))
+	}
+	thread = cmp.Or(thread, b.TS)
 	line := setWorkingLine(hc.Ctx, api, id, channelID, thread, status, loading)
 	if line != "" && !b.Done {
 		return fail(fmt.Sprintf("the eyes are on %s, but Slack refused the working line under thread %s: %s", b.TS, thread, line))

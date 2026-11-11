@@ -7,7 +7,9 @@ On any message you have read and are acting on but have not answered, add
 DM, so its readers can see whether it is being read or worked on:
 
 1. When you first look at it, call `slack_pickup`. It adds `eyes` and Slack's
-   working line under the thread, together and nothing else. Your operator's
+   working line under the thread, together and nothing else. For a reply in
+   a thread it reads the thread from Slack when you leave out `thread_ts`,
+   since Slack refuses the line under a reply's own ts. Your operator's
    message in your DM with the app already has both: the daemon puts them on
    as it hands you the message, so `slack_pickup` there only sets what the line
    says. When your session or one of its agents is compacting and the message
