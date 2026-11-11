@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -20,13 +19,11 @@ func TestALineThatWaitsOnYouLinksItsCardOrIsRefused(t *testing.T) {
 		t.Fatalf("a refused line posted %d messages", len(l.slack.sent())-posts)
 	}
 
-	var line map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: <" + c.url() + "|the card>"}).Body, &line); err != nil {
-		t.Fatal(err)
-	}
+	l.refused(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: <" + c.url() + "|the card>"}, cardLinkBare)
+	l.do(opDMStatus, map[string]any{"text": "The Hima fix waits on your pick: " + c.url()})
 	sent := l.slack.sent()[posts:]
-	if len(sent) != 1 || !strings.Contains(sent[0].text, c.url()) {
-		t.Fatalf("posts = %+v, want the line alone, linking the card for Slack to unfurl", sent)
+	if len(sent) != 1 || sent[0].unfurlLinks != "true" || sent[0].blocks != "" {
+		t.Fatalf("posts = %+v, want the line alone, unfurling the card it links", sent)
 	}
 
 	l.do(opDMStatus, map[string]any{"text": "The release is live, and every chat opens again."})
@@ -63,10 +60,42 @@ func TestWaitsOnYouReadsPlainVariantsAndLeavesOtherLines(t *testing.T) {
 		"<@U0123ABCD>, this waits on your review.":                                                                  false,
 		"Your approval landed it at 6:40pm.":                                                                        false,
 		"`waits on your pick` is the line that was refused.":                                                        false,
+		"Everything waiting on you is in the list below.":                                                           false,
+		"Here is all that still needs your tap.":                                                                    false,
+		"A list of whichever needs your approval.":                                                                  false,
+		"Reading what that still waits on you now.":                                                                 false,
 	}
 	for text, want := range cases {
 		if _, got := waitsOnReader(text); got != want {
 			t.Errorf("waitsOnReader(%q) = %v, want %v", text, got, want)
 		}
+	}
+}
+
+func TestAPostThatCopiesACardIsRefusedAndItsLinkIsNot(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	posts := len(l.slack.sent())
+	copied := map[string]any{"type": "section", "block_id": cardCopyBlock + "-" + c.ts, "text": map[string]string{"type": "mrkdwn", "text": "Merge #41 now?"}}
+	l.refused(opSend, map[string]any{"channel_id": testChannel, "text": "Merge #41 now?", "blocks": []any{copied}}, "these blocks copy a card")
+	l.refused(opDMStatus, map[string]any{"text": "Merge #41 now? still waits, the release goes out after it."}, "repeats the open card \"Merge #41 now?\" without its link: write its bare permalink "+c.url())
+	if len(l.slack.sent()) != posts {
+		t.Fatalf("refused posts sent %+v", l.slack.sent()[posts:])
+	}
+	l.do(opDMStatus, map[string]any{"text": "Merge #41 now? still waits: " + c.url()})
+	l.do(opDMStatus, map[string]any{"thread_ts": c.thread, "text": "Merge #41 now? is the card above."})
+	if len(l.slack.sent()) != posts+2 {
+		t.Fatalf("posts = %+v, want the line that links the card and the reply in its own thread", l.slack.sent()[posts:])
+	}
+}
+
+func TestAnEditThatLinksAMessageUnfurlsIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "now see https://example.slack.com/archives/C1/p1793818357021259"})
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "see https://example.com/a"})
+	if edits := l.slack.edited(); len(edits) != 2 || edits[0].unfurlLinks != "true" || edits[1].unfurlLinks == "true" {
+		t.Fatalf("edits = %+v, want the one linking a message to unfurl it and the other left alone", edits)
 	}
 }

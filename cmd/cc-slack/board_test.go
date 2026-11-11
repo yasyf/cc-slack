@@ -65,6 +65,10 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 
 func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
 
+func (c postedCard) linkedBy(p fakePost) bool {
+	return p.text == c.url() && p.blocks == "" && p.unfurlLinks == "true"
+}
+
 func postThread(t *testing.T, l *liveDaemon, text string) string {
 	t.Helper()
 	var res map[string]string
@@ -447,14 +451,7 @@ func TestARedrawWithdrawsTheCardsCopies(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
-	var thread map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "About the merge."}).Body, &thread); err != nil {
-		t.Fatal(err)
-	}
-	var copied postResult
-	if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": c.url(), "thread_ts": thread["thread_ts"]}).Body, &copied); err != nil {
-		t.Fatal(err)
-	}
+	copied := legacyCopy(t, l, c.url(), postThread(t, l, "About the merge."))
 
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
@@ -477,7 +474,9 @@ func TestATextEditOfACardIsRefusedForARedraw(t *testing.T) {
 	c := postWaiting(t, l, mergeCard())
 	edits := len(l.slack.edited())
 
-	l.refused(opEdit, l.hooked(opEdit, map[string]any{"channel_id": c.id.DMChannelID, "ts": c.ts, "text": "Merge #41 before the freeze?"}), "redraw it with dm-status")
+	for _, channel := range []string{c.id.DMChannelID, testUser} {
+		l.refused(opEdit, l.hooked(opEdit, map[string]any{"channel_id": channel, "ts": c.ts, "text": "Merge #41 before the freeze?"}), "this message draws the card "+c.url()+", and an edit with no blocks replaces its layout and buttons with plain text: redraw it with dm-status")
+	}
 
 	if len(l.slack.edited()) != edits {
 		t.Fatal("a refused text edit of a card still edited it")
@@ -1062,7 +1061,7 @@ func TestADriveQuestionCardPostsWithNoBoardWarning(t *testing.T) {
 	}
 }
 
-func TestADriveQuestionCardPostsAtTheDMRootAndARedrawWithdrawsItsCopy(t *testing.T) {
+func TestADriveQuestionCardPostsAtTheDMRootWithItsLinkInTheThreadAndARedrawPostsNothing(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1079,9 +1078,14 @@ func TestADriveQuestionCardPostsAtTheDMRootAndARedrawWithdrawsItsCopy(t *testing
 	card.Drive = "checkout-rewrite"
 	posts := len(l.slack.sent())
 	first := ask(card)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := postedCard{id, first["thread_ts"], first["ts"]}
 	sent := l.slack.sent()[posts:]
-	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || sent[1].text != cardCopyLead {
-		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its copy in that thread", thread, first, sent)
+	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || !c.linkedBy(sent[1]) {
+		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its link in that thread", thread, first, sent)
 	}
 	card.Title = "Merge #41 before the freeze?"
 	posts = len(l.slack.sent())
@@ -1093,8 +1097,8 @@ func TestADriveQuestionCardPostsAtTheDMRootAndARedrawWithdrawsItsCopy(t *testing
 	if edits := editsOf(l.slack.edited(), first["ts"]); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
 		t.Fatalf("card edits = %v, want the new question with its buttons", edits)
 	}
-	if edits := editsOf(l.slack.edited(), l.slack.sent()[posts-1].ts); len(edits) != 1 || !strings.Contains(edits[0], cardRedrawnLine) || strings.Contains(edits[0], cardCopyAction) {
-		t.Fatalf("copy edits = %v, want the copy in thread %s withdrawn to a line linking the card", edits, thread)
+	if edits := editsOf(l.slack.edited(), l.slack.sent()[posts-1].ts); len(edits) != 0 {
+		t.Fatalf("link edits = %v, want the card's link in thread %s left for Slack's unfurl to follow the card", edits, thread)
 	}
 }
 

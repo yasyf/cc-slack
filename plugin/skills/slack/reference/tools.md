@@ -23,7 +23,7 @@ The tool names below have the full prefix
 | Revoke a captain-hook ticket | `slack_revoke(ticket_id)` |
 | Add a reaction | `slack_react(channel_id, ts, name)` |
 | Remove the bot's reaction | `slack_unreact(channel_id, ts, name)` |
-| Replace the text of the bot's own post | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
+| Replace the text of the bot's own post; a card is redrawn through `slack_dm_status` with its card, since an edit with no `blocks` would leave it plain text and is refused | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
 | Delete or rewrite a reviewed batch of the bot's own posts in the user's DM, archiving each first | CLI only: `cc-slack apply --plan <file> [--dry-run]`, below |
 | Close a waiting card the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(url, label, via, waits?, other?, settled?)`; the permalink `url` finds the card, whichever session posted it. `label` is one of its options, or with `other` the user's own words, and `via` is the permalink of where they answered, which the card links. The card collapses to its title and the answer, the asking session gets the answer's `slack.action` as from a tap, the board card resolves, and every post the card supersedes shows the outcome. When the asking session has ended, the card still shows the answer and no session is told. `settled` closes a question that what happened answered, such as the pull request landing, with no `slack.action`. A card answered before, by a tap, its Other field or another surface, keeps that answer: the call returns `answered: false`, `already_answered: true` and that answer as `label`, and the card already shows it, so it needs no second close. Needs no ticket |
@@ -97,8 +97,7 @@ goes in the post's thread. When an open PR in `tap_prs` draws no card, the call
 fails after the post went out: the error names that post, so never post it again,
 and each PR with the reason; fix the reason, such as a PR body missing What you'll
 hate most, a login whose config sets no `card_command`, or a channel that draws no
-PR cards, then send `tap_prs` for that PR alone. `card-copy` given a copy's link
-copies the card it copies. Never post a PR card or add a
+PR cards, then send `tap_prs` for that PR alone. Never post a PR card or add a
 `refs` entry by hand for a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what
 it changes and where it stands, and a line that only repeats a link is dropped,
@@ -154,17 +153,16 @@ MCP instead.
 session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
-A post that links a Slack message shows Slack's own preview of it, so post the
-permalink and never draw a preview of a card by hand. A post to your DM that
-links a Sentry issue or a Datadog monitor asks Slack to unfurl it too; posts to
-channels do not. `thread` and `history` list what Slack unfurled for each message:
-Slack messages under `shares`, other links under `unfurls`. A post that links an
-open card copies nothing: the card is referenced by its permalink, which Slack
-unfurls. A post with `tap_prs` and a drive's question card still put one copy in
-the thread they are given. For a thread that needs a working copy, run
-`cc-slack card-copy --url <permalink> --thread <ts>`. It returns `posted: true`
-and the copy's permalink, and in a thread that already holds the card's copy it
-posts nothing and fails naming that copy. A tap on any copy answers the card.
+A post or edit that links a Slack message shows Slack's own preview of it, so
+refer to a card by its bare permalink, from `cc-slack drive-cards`, and Slack
+draws the card under the line. Never wrap it as `<url|text>`, copy its blocks,
+or repeat its title without the link: each is refused. Slack skips the preview
+of a link it unfurled in the same channel in the past hour, and of every link in
+a message with more than five. A post to your DM that links a Sentry issue or a
+Datadog monitor asks Slack to unfurl it too; posts to channels do not. `thread`
+and `history` list what Slack unfurled for each message: Slack messages under
+`shares`, other links under `unfurls`. A post with `tap_prs` and a drive's
+question card put the card's link in the post's thread themselves.
 
 To read a card before it goes out, run `cc-slack card render --card <file>`. It
 prints the card's Block Kit as JSON and posts nothing, so no test card is needed.

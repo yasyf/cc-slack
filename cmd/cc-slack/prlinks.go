@@ -387,7 +387,6 @@ func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identit
 	ctx := context.WithoutCancel(hc.Ctx)
 	warning, placed, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, t)
 	notePostWarning(hc.Ctx, warning)
-	a.cards.rememberTapLine(channelID, postThread, liveTapLine{TS: postTS, Cards: cardStamps(placed)}, a.now())
 	link := id.permalink(channelID, postTS, postThread)
 	var said []string
 	for _, raw := range slices.Compact(slices.Sorted(slices.Values(asked))) {
@@ -618,27 +617,22 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 	if beside.thread == card.thread {
 		return nil
 	}
-	return a.copyCardInto(ctx, db, id, beside.thread, card)
+	return a.linkCardInto(ctx, db, id, beside.thread, card)
 }
 
-func (a *app) copyCardInto(ctx context.Context, db *sql.DB, id identity, thread string, card cardRef) error {
-	if a.cards.copyIn(card.channel, thread, card.ts) != "" {
+func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread string, card cardRef) error {
+	if a.cards.showsIn(card.channel, thread, card.ts) {
 		return nil
 	}
-	link := id.permalink(card.channel, card.ts, card.thread)
-	ref, err := parsePermalink(link)
+	return a.postCardLink(ctx, db, id, thread, card)
+}
+
+func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, under string, card cardRef) error {
+	res, err := a.post(ctx, db, id, card.channel, under, id.permalink(card.channel, card.ts, card.thread), nil, nil)
 	if err != nil {
 		return err
 	}
-	blocks, answers, err := copyBlocks(ctx, a.newAPI(id.Token), id, ref, link)
-	if err != nil {
-		return err
-	}
-	res, err := a.post(ctx, db, id, card.channel, thread, copyLead(blocks, answers), blocks, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
-	if err != nil {
-		return err
-	}
-	a.cards.rememberCopy(card.channel, thread, liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
+	a.cards.rememberCopy(card.channel, cmp.Or(under, res.TS), liveCardCopy{Card: card.ts, TS: res.TS, Link: true}, a.now())
 	return nil
 }
 

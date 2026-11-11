@@ -418,9 +418,31 @@ func copiedButtonsOf(t *testing.T, post fakePost) []*slack.ButtonBlockElement {
 	return buttons
 }
 
+func legacyCopy(t *testing.T, l *liveDaemon, link, thread string) postResult {
+	t.Helper()
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := parsePermalink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, err := copyBlocks(l.ctx, l.app.newAPI(id.Token), id, ref, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := l.app.post(l.ctx, l.srv.DB(), id, id.DMChannelID, thread, cardCopyLead, blocks, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.app.cards.rememberCopy(id.DMChannelID, thread, liveCardCopy{Card: ref.ts, TS: res.TS}, l.app.now())
+	return res
+}
+
 func copyCard(t *testing.T, l *liveDaemon, link, thread string) (fakePost, *slack.ButtonBlockElement) {
 	t.Helper()
-	l.do(opCardCopy, map[string]any{"url": link, "thread_ts": thread})
+	legacyCopy(t, l, link, thread)
 	post := lastPost(l)
 	buttons := copiedButtonsOf(t, post)
 	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {
@@ -473,7 +495,7 @@ func TestAThreadReadShowsEveryCopyAnsweredOnceItsCardIs(t *testing.T) {
 	}
 }
 
-func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
+func TestATapOnACopyPostedBeforeCardsUnfurledAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		option string
@@ -484,17 +506,9 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			l, id, card, thread := copyDaemon(t, cardBody("Merge the stack?", tc.option))
 			link := id.permalink(id.DMChannelID, card, "")
-			var first, second postResult
-			if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": link, "thread_ts": thread}).Body, &first); err != nil {
-				t.Fatal(err)
-			}
+			first := legacyCopy(t, l, link, thread)
 			post := lastPost(l)
-			if post.threadTS != thread || post.text != cardCopyLead || !first.Posted || first.ThreadTS != thread || first.Permalink == "" || !strings.Contains(post.blocks, "Merge the stack?") || post.attachments != "" {
-				t.Fatalf("post = %+v, reply = %+v, want the copy posted in thread %s and its permalink", post, first, thread)
-			}
-			if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": link, "thread_ts": postThread(t, l, "Another thread.")}).Body, &second); err != nil {
-				t.Fatal(err)
-			}
+			second := legacyCopy(t, l, link, postThread(t, l, "Another thread."))
 			buttons := copiedButtonsOf(t, post)
 			at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool { return strings.HasPrefix(b.ActionID, cardCopyAction) })
 			if at < 0 || strings.Contains(post.blocks, "Open the card") {
@@ -525,7 +539,7 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	long := strings.Repeat("A paragraph long enough that the old copy would clip it. ", 12)
 	l, id, card, thread := copyDaemon(t, map[string]any{"card": statusCard{Status: "needs_you", Title: "Merge the stack?", Body: long + "\n\nThe last paragraph.", Options: []string{"merge it", "hold it"}}})
-	l.do(opCardCopy, map[string]any{"url": id.permalink(id.DMChannelID, card, ""), "thread_ts": thread})
+	legacyCopy(t, l, id.permalink(id.DMChannelID, card, ""), thread)
 	post := lastPost(l)
 	var blocks slack.Blocks
 	if err := json.Unmarshal([]byte(post.blocks), &blocks); err != nil {
@@ -542,29 +556,6 @@ func TestACopyIsTheWholeCardWithEveryParagraph(t *testing.T) {
 	}
 }
 
-func TestACopyOfACopyCopiesTheCardItCopies(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-	card := postWaiting(t, l, mergeCard())
-	var thread, elsewhere map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "About the merge."}).Body, &thread); err != nil {
-		t.Fatal(err)
-	}
-	var first postResult
-	if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": card.url(), "thread_ts": thread["thread_ts"]}).Body, &first); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "Another thread."}).Body, &elsewhere); err != nil {
-		t.Fatal(err)
-	}
-	l.do(opCardCopy, map[string]any{"url": card.id.permalink(card.id.DMChannelID, first.TS, thread["thread_ts"]), "thread_ts": elsewhere["thread_ts"]})
-	second := lastPost(l)
-	buttons := copiedButtonsOf(t, second)
-	if second.threadTS != elsewhere["thread_ts"] || len(buttons) != 2 || !strings.HasPrefix(buttons[0].ActionID, cardCopyAction+card.ts+":") {
-		t.Fatalf("copy of the copy = %+v, want the card's two answers in thread %s, each tapping the card itself", second, elsewhere["thread_ts"])
-	}
-}
-
 func TestACopyOfACardWhoseHeaderReadsBackPastSlacksLimitIsCutOnAWord(t *testing.T) {
 	l, id, _, thread := copyDaemon(t, cardBody("Merge the stack?", "merge it"))
 	long := ":raising_hand: " + strings.Repeat("ship it ", 17) + "soon"
@@ -573,7 +564,7 @@ func TestACopyOfACardWhoseHeaderReadsBackPastSlacksLimitIsCutOnAWord(t *testing.
 		slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, long, true, false)),
 		slack.NewActionBlock(cardActionsBlock, button(cardOptionAction+"0", "Approve")),
 	}}}})
-	l.do(opCardCopy, map[string]any{"url": id.permalink(id.DMChannelID, card, ""), "thread_ts": thread})
+	legacyCopy(t, l, id.permalink(id.DMChannelID, card, ""), thread)
 	var blocks slack.Blocks
 	if err := json.Unmarshal([]byte(lastPost(l).blocks), &blocks); err != nil {
 		t.Fatal(err)
@@ -585,23 +576,6 @@ func TestACopyOfACardWhoseHeaderReadsBackPastSlacksLimitIsCutOnAWord(t *testing.
 	if got := head.Text.Text; runes(got) > 150 || !strings.HasSuffix(got, "…") || !strings.HasPrefix(long, strings.TrimSuffix(got, "…")+" ") {
 		t.Fatalf("header = %q (%d characters), want the 155 cut on a word to at most 150", got, runes(got))
 	}
-}
-
-func TestACopyOfAMessageThatDrewAsTextSaysSo(t *testing.T) {
-	l, id, _, thread := copyDaemon(t, map[string]any{"text": "Just words."})
-	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
-	l.refused(opCardCopy, map[string]any{"url": link, "thread_ts": thread}, "no card to copy")
-}
-
-func TestACopyIsRefusedWhenNoAnswerIsLeftToTap(t *testing.T) {
-	l, id, _, thread := copyDaemon(t, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "No question."}})
-	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
-	l.refused(opCardCopy, map[string]any{"url": link, "thread_ts": thread}, "no answer left")
-}
-
-func TestACopyIsRefusedOutsideTheDM(t *testing.T) {
-	l, _, _, thread := copyDaemon(t, cardBody("Merge the stack?", "merge it"))
-	l.refused(opCardCopy, map[string]any{"url": "https://example.slack.com/archives/C1/p1793818357021259", "thread_ts": thread}, "not a message in your DM")
 }
 
 func TestAPreviewKeepsAllOfWhatThePRChangesAndLinksGitHub(t *testing.T) {

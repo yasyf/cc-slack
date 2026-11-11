@@ -56,7 +56,6 @@ const (
 	opThreadSeen    daemon.Op = "thread-seen"
 	opDMStatus      daemon.Op = "dm-status"
 	opCardAnswer    daemon.Op = "card-answer"
-	opCardCopy      daemon.Op = "card-copy"
 	opDMRelay       daemon.Op = "dm-relay"
 	opRevoke        daemon.Op = "revoke"
 	opAgentSubject  daemon.Op = "agent-subject"
@@ -347,7 +346,6 @@ func (a *app) register(s *daemon.Server) {
 	s.Register(opThreadSeen, a.handleThreadSeen)
 	s.Register(opDMStatus, a.handleDMStatus)
 	s.Register(opCardAnswer, a.handleCardAnswer)
-	s.Register(opCardCopy, a.handleCardCopy)
 	s.Register(opDMRelay, a.handleDMRelay)
 	s.Register(opWithdrawPRCard, a.handleWithdrawPRCard)
 	s.Register(opRevoke, a.handleRevoke)
@@ -625,7 +623,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
-		if err := a.refuseWaitsWithoutCard(id, channelID, b); err != nil {
+		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b)); err != nil {
 			return fail(err.Error())
 		}
 		w := write{action: approvePost, named: b.ChannelID, channelID: channelID, threadTS: b.ThreadTS, text: b.Text}
@@ -820,7 +818,7 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
 		}
-		if linksBeyondDM(id.DMChannelID, text, blocks) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
+		if linksTo(text, blocks, messageLink) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
 			opts = append(opts, slack.MsgOptionEnableLinkUnfurl())
 		}
 		return api.PostMessageContext(ctx, channelID, opts...)
@@ -837,17 +835,6 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 
 func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
 	return link.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), link.MatchString)
-}
-
-// Slack draws a linked message as a share with no buttons, so a link to one of
-// his DM cards stays a link and its answers reach him through the card's copy.
-func linksBeyondDM(dm, text string, blocks []slack.Block) bool {
-	return slices.ContainsFunc(append([]string{text}, blockTexts(slack.Blocks{BlockSet: blocks})...), func(s string) bool {
-		return slices.ContainsFunc(messageLink.FindAllString(s, -1), func(link string) bool {
-			ref, err := parsePermalink(link)
-			return err == nil && ref.channelID != dm
-		})
-	})
 }
 
 func checkMessage(b opBody) ([]slack.Block, error) {
@@ -881,13 +868,19 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if _, isCard := a.cards.cardAt(b.ChannelID, b.TS); isCard && len(blocks) == 0 {
-		return fail(fmt.Sprintf("%s is a card, and an edit with only text replaces its layout and buttons with plain text: "+
-			"redraw it with dm-status passing its card, under its waits id when it has one, which edits it in place", b.TS))
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionEdit, err))
+	}
+	if err := cmp.Or(a.refuseBlanking(id, b), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
+		return fail(err.Error())
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 		return a.cards.editByHand(channelID, b.TS, func() error {
+			if linksTo(texts[0], blocks, messageLink) {
+				return changeMessage(ctx, api, channelID, b.TS, texts[0], blocks, slack.MsgOptionEnableLinkUnfurl())
+			}
 			return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
 		})
 	})
@@ -1098,13 +1091,16 @@ func (a *app) handleRevoke(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func updateMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block, extra ...slack.MsgOption) error {
+	return changeMessage(ctx, api, channelID, ts, text, blocks, append([]slack.MsgOption{slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl()}, extra...)...)
+}
+
+func changeMessage(ctx context.Context, api slackAPI, channelID, ts, text string, blocks []slack.Block, extra ...slack.MsgOption) error {
 	blocks = fitHeaders(blocks)
 	if err := checkBlocks(blocks); err != nil {
 		return err
 	}
 	text, blocks = fitText(text, blocks)
-	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, append([]slack.MsgOption{
-		slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...), slack.MsgOptionDisableLinkUnfurl()}, extra...)...)
+	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, append([]slack.MsgOption{slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...)}, extra...)...)
 	return err
 }
 
@@ -2146,10 +2142,10 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b)); err != nil {
+	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
-	copyInto := rootDriveQuestion(&b)
+	linkInto := rootDriveQuestion(&b)
 	blocks, err := checkMessage(b)
 	if err != nil {
 		return fail(err.Error())
@@ -2191,7 +2187,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
 		return fail(err.Error())
 	}
-	a.copyDriveQuestion(hc.Ctx, hc.DB, id, copyInto, cardRef{id.DMChannelID, thread, ts})
+	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	return a.tappedReply(hc, sub, id, thread, ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
 }
@@ -2205,12 +2201,12 @@ func rootDriveQuestion(b *opBody) string {
 	return thread
 }
 
-func (a *app) copyDriveQuestion(ctx context.Context, db *sql.DB, id identity, into string, card cardRef) {
+func (a *app) linkDriveQuestion(ctx context.Context, db *sql.DB, id identity, into string, card cardRef) {
 	if into == "" || into == card.thread {
 		return
 	}
-	if err := a.copyCardInto(ctx, db, id, into, card); err != nil {
-		notePostWarning(ctx, fmt.Sprintf("NO CARD COPY: the card is up at %s, and its copy in thread %s failed: %v", id.permalink(card.channel, card.ts, card.thread), into, err))
+	if err := a.linkCardInto(ctx, db, id, into, card); err != nil {
+		notePostWarning(ctx, fmt.Sprintf("NO CARD LINK: the card is up at %s, and its link in thread %s failed: %v", id.permalink(card.channel, card.ts, card.thread), into, err))
 	}
 }
 

@@ -31,7 +31,7 @@ func mergeTap(c postedCard, n int) cardActionPush {
 
 func TestATapNoSessionHoldsShowsItsPickOnTheCopyAndTheCard(t *testing.T) {
 	l, id, card, thread := copyDaemon(t, cardBody("Send the report?", "send it"))
-	l.do(opCardCopy, map[string]any{"url": id.permalink(id.DMChannelID, card, ""), "thread_ts": thread})
+	legacyCopy(t, l, id.permalink(id.DMChannelID, card, ""), thread)
 	post := lastPost(l)
 	buttons := copiedButtonsOf(t, post)
 	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool { return strings.HasPrefix(b.ActionID, cardCopyAction) })
@@ -135,7 +135,7 @@ func TestATapOnACopyThisDaemonDidNotPostRedrawsThatCopyAnswered(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
-	l.do(opCardCopy, map[string]any{"url": c.id.permalink(c.id.DMChannelID, c.ts, c.thread), "thread_ts": c.thread})
+	legacyCopy(t, l, c.url(), c.thread)
 	post := lastPost(l)
 	buttons := copiedButtonsOf(t, post)
 	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {
@@ -230,10 +230,7 @@ func TestAnAnswerNoSessionHoldsGoesToTheCardsOwnerAndClosesTheCardAndItsCopy(t *
 	command, asked := cardOwnerCommand(t, `echo '{"heard":true}'`)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 	c := postWaiting(t, l, mergeCard())
-	var copied postResult
-	if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": c.url(), "thread_ts": c.thread}).Body, &copied); err != nil {
-		t.Fatal(err)
-	}
+	legacyCopy(t, l, c.url(), c.thread)
 	post := lastPost(l)
 	buttons := copiedButtonsOf(t, post)
 	at := slices.IndexFunc(buttons, func(b *slack.ButtonBlockElement) bool {

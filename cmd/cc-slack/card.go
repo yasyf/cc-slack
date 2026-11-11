@@ -885,10 +885,12 @@ func (p cardPR) visible() cardPR {
 
 func (c statusCard) text() string {
 	c = c.visible()
-	if c.Body == "" {
+	summary, _, _ := strings.Cut(c.Body, "*Show me*")
+	summary, _, _ = strings.Cut(summary, "```")
+	if summary = strings.TrimSpace(summary); summary == "" {
 		return c.emoji() + " " + c.Title
 	}
-	return clipRunes(c.emoji()+" "+c.Title+" — "+c.Body, cardMaxSectionLen)
+	return clipRunes(c.emoji()+" "+c.Title+" — "+summary, cardMaxSectionLen)
 }
 
 func gitCardTag(ctx context.Context, session, dir string) cardTag {
@@ -1349,10 +1351,23 @@ func (p cardPR) head(at, of int) slack.Block {
 }
 
 func (p cardPR) showMe() string {
-	if shown := strings.TrimSpace(p.ShowMe); shown != "" {
-		return "*Show me*\n" + plainMrkdwn(shown)
+	var parts []string
+	for _, piece := range bodyPieces(cardWordEscapes.Replace(p.ShowMe)) {
+		switch {
+		case len(piece.table) > 1:
+			parts = append(parts, tableLines(piece.table))
+		case piece.table != nil:
+			parts = append(parts, strings.Join(piece.table[0], " · "))
+		case piece.picture != nil:
+			parts = append(parts, pictureCaption(*piece.picture))
+		default:
+			parts = append(parts, piece.text)
+		}
 	}
-	return ""
+	if len(parts) == 0 {
+		return ""
+	}
+	return "*Show me*\n" + strings.Join(parts, "\n\n")
 }
 
 func (p cardPR) headline(at, of int) string {

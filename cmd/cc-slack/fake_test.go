@@ -51,6 +51,7 @@ type fakeEdit struct {
 	blocks      string
 	metadata    string
 	attachments string
+	unfurlLinks string
 }
 
 type fakeSlack struct {
@@ -449,7 +450,7 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 	if err := f.checkPicturesShared(channelID, values); err != nil {
 		return "", "", "", err
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments")})
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments"), unfurlLinks: values.Get("unfurl_links")})
 	var blocks slack.Blocks
 	if values.Get("blocks") != "" {
 		if err := json.Unmarshal([]byte(values.Get("blocks")), &blocks); err != nil {
