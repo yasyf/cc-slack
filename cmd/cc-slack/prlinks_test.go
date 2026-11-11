@@ -1235,6 +1235,18 @@ func TestRedrawPRCardsCanTakeOnePR(t *testing.T) {
 	l.refused(opRedrawPRCards, map[string]any{"pr": "not a link"}, "pull request URL")
 }
 
+func TestRedrawPRCardsForOnePRRedrawsTheWaitingCardListingItOnce(t *testing.T) {
+	cmd, _ := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	listing := mergeCard()
+	listing.PRs = []cardPR{{URL: tapPR41[0], Surprise: "Chats load faster"}}
+	postWaiting(t, l, listing)
+	var redrawn map[string]int
+	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]}).Body, &redrawn); err != nil || redrawn["redrawing"] != 1 {
+		t.Fatalf("redraw-pr-cards --pr = %v, %v; want the one waiting card listing #41 redrawn once", redrawn, err)
+	}
+}
+
 func TestARedrawSlackWouldRefuseTellsTheCardCommandWhy(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")

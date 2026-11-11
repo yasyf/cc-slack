@@ -1759,8 +1759,9 @@ func (l *liveCards) cardsListing(pr refID) []cardRef {
 			if m == nil || slices.Contains(t.PRCards, m) {
 				continue
 			}
-			if slices.ContainsFunc(m.Card.allPRs(), func(p *cardPR) bool { r, ok := parseRef(p.URL); return ok && r.key() == pr.key() }) {
-				listing = append(listing, cardRef{t.Channel, t.Thread, m.TS})
+			card := cardRef{t.Channel, t.Thread, m.TS}
+			if !slices.Contains(listing, card) && slices.ContainsFunc(m.Card.allPRs(), func(p *cardPR) bool { r, ok := parseRef(p.URL); return ok && r.key() == pr.key() }) {
+				listing = append(listing, card)
 			}
 		}
 	}
