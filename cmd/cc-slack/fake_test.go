@@ -87,6 +87,7 @@ type fakeSlack struct {
 	clock     int64
 	canvases  map[string]fakeCanvas
 	gone      []string
+	elsewhere map[string]bool
 }
 
 type fakeCanvas struct {
@@ -108,6 +109,7 @@ func newFakeSlack() *fakeSlack {
 		invites:   map[string][]string{},
 		topics:    map[string]string{},
 		canvases:  map[string]fakeCanvas{},
+		elsewhere: map[string]bool{},
 		clock:     1_800_000_000,
 	}
 }
@@ -165,6 +167,12 @@ func (f *fakeSlack) fail(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.errs[method] = append(f.errs[method], err)
+}
+
+func (f *fakeSlack) threadElsewhere(channelID, ts string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.elsewhere[channelID+"/"+ts] = true
 }
 
 func (f *fakeSlack) repliesOldest() []string {
@@ -314,8 +322,12 @@ func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, opti
 	}
 	f.clock++
 	ts := fmt.Sprintf("%d.000000", f.clock)
+	thread := values.Get("thread_ts")
+	if f.elsewhere[channelID+"/"+thread] {
+		thread = ""
+	}
 	p := fakePost{
-		channelID: channelID, threadTS: values.Get("thread_ts"), text: values.Get("text"),
+		channelID: channelID, threadTS: thread, text: values.Get("text"),
 		username: values.Get("username"), iconURL: values.Get("icon_url"), ts: ts,
 		broadcast: values.Get("reply_broadcast") == "true", unfurlLinks: values.Get("unfurl_links"), blocks: values.Get("blocks"),
 		metadata: values.Get("metadata"), attachments: values.Get("attachments"),
@@ -504,6 +516,9 @@ func (f *fakeSlack) GetConversationRepliesContext(_ context.Context, params *sla
 	defer f.mu.Unlock()
 	if err := f.call(methodReplies); err != nil {
 		return nil, false, "", err
+	}
+	if f.elsewhere[params.ChannelID+"/"+params.Timestamp] {
+		return nil, false, "", slack.SlackErrorResponse{Err: "thread_not_found"}
 	}
 	f.oldest = append(f.oldest, params.Oldest)
 	var out []slack.Message
