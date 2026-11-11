@@ -580,10 +580,6 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Ring", Question: card.Title, Options: card.Options})),
 		ActionTS: fmt.Sprintf("%d.000100", picked.Unix()), Seq: "001800000100000-abcd0400"})
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "demo:j3-661440" with "Ring"`) ||
-		!strings.Contains(got, "post no record or capture of it") || strings.Contains(got, "hand it to that lane") || strings.Contains(got, `answered "Which store keeps the tally?" with "Ring" at `) {
-		t.Fatalf("directive = %q, want his answer named as the card command's one record, with no hand-off and no capture", got)
-	}
 	var tap map[string]any
 	for _, raw := range l.channelPayloads() {
 		var got map[string]any
@@ -596,6 +592,10 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 	if _, captured := tap["capture"]; tap["recorded"] != true || captured {
 		t.Fatalf("tap payload = %v, want recorded and no capture, so no session records it again", tap)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "demo:j3-661440" with "Ring"`) ||
+		!strings.Contains(got, "post no record or capture of it") || strings.Contains(got, "hand it to that lane") || strings.Contains(got, `answered "Which store keeps the tally?" with "Ring" at `) {
+		t.Fatalf("directive = %q, want his answer named as the card command's one record, with no hand-off and no capture", got)
 	}
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", undone.Unix()), Seq: "001800000100000-abcd0401"})

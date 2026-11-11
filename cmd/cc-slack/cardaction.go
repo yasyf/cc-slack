@@ -933,11 +933,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	p.react(ctx, id, w.card, cardAnsweredReaction)
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
-	recorded := w.via == "" && p.recordQuestionTap(ctx, id, w.card, w.tap, false, w.press)
-	capture, notesLabel := "", ""
-	if !recorded {
-		capture, notesLabel = captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap)
-	}
+	capture, notesLabel, recorded := p.recordAnswer(ctx, id, w)
 	line := tapLine(w.source, permalink, w.tap, capture, recorded)
 	for _, watch := range watches {
 		msg := actionPayload{
@@ -964,6 +960,13 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	p.answerSuperseded(ctx, id, w)
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+func (p *poller) recordAnswer(ctx context.Context, id identity, w waitsAnswer) (capture, notesLabel string, recorded bool) {
+	if w.via == "" && p.recordQuestionTap(ctx, id, w.card, w.tap, false, w.press) {
+		return "", "", true
+	}
+	return captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap), false
 }
 
 const (
