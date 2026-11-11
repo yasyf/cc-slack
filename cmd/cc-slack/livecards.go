@@ -974,19 +974,30 @@ type undoneAnswer struct {
 }
 
 func (l *liveCards) undo(channel, tap string) []undoneAnswer {
+	return l.undoWhere(func(t *liveThread, ans askAnswer, _ []*liveMessage) bool {
+		return t.Channel == channel && ans.Tap == tap
+	})
+}
+
+func (l *liveCards) undoReply(card cardRef, words string) []undoneAnswer {
+	return l.undoWhere(func(t *liveThread, ans askAnswer, answered []*liveMessage) bool {
+		return t.Channel == card.channel && t.Thread == card.thread && ans.Other && !ans.Withdrawn && ans.Label == words &&
+			slices.ContainsFunc(answered, func(m *liveMessage) bool { return m.TS == card.ts })
+	})
+}
+
+func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered []*liveMessage) bool) []undoneAnswer {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var undone []undoneAnswer
 	for _, t := range l.threads {
-		if t.Channel != channel {
-			continue
-		}
 		for waits, ans := range t.Answers {
-			if ans.Tap != tap {
+			answered := t.answered(waits)
+			if !match(t, ans, answered) {
 				continue
 			}
 			delete(t.Answers, waits)
-			for _, m := range t.answered(waits) {
+			for _, m := range answered {
 				m.Tapped = ""
 				if !slices.ContainsFunc(undone, func(u undoneAnswer) bool { return u.card == cardRef{t.Channel, t.Thread, m.TS} }) {
 					undone = append(undone, undoneAnswer{cardRef{t.Channel, t.Thread, m.TS}, waits, ans, m.Card.Title, m.Card.Supersedes})
@@ -1827,29 +1838,6 @@ func (l *liveCards) threadWaits(channel, thread string) string {
 		}
 	}
 	return ""
-}
-
-func (l *liveCards) waitingDriveCard(channel, thread string) (cardRef, statusCard, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	card := thread
-	if t, ok := l.threads[threadKey(channel, thread)]; ok {
-		for _, c := range t.Copies {
-			if c.TS == thread {
-				card = c.Card
-			}
-		}
-	}
-	t, ok := l.threads[threadKey(channel, card)]
-	if !ok {
-		return cardRef{}, statusCard{}, false
-	}
-	for _, m := range t.Waiting {
-		if m.TS == card && m.Card.Drive != "" && t.asks(m) && len(m.Card.refIDs()) == 0 {
-			return cardRef{channel, card, card}, m.Card, true
-		}
-	}
-	return cardRef{}, statusCard{}, false
 }
 
 func (l *liveCards) waitsAt(channel, ts string) string {

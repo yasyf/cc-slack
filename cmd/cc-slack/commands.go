@@ -1038,6 +1038,25 @@ func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func cardReopenCmd(d cmd.Deps) *cobra.Command {
+	var (
+		f           sessionFlags
+		card, reply string
+	)
+	c := &cobra.Command{
+		Use:   "card-reopen",
+		Short: "Reopen a card whose answer was taken from the user's reply in its thread, so it waits again",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opCardReopen, map[string]any{"url": card, "via": reply})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&card, "card", "", "the answered card's Slack permalink")
+	c.Flags().StringVar(&reply, "reply", "", "permalink of the user's reply in the card's thread whose words the card shows as its answer")
+	return c
+}
+
 func dmRelayCmd(d cmd.Deps) *cobra.Command {
 	var (
 		f          sessionFlags
