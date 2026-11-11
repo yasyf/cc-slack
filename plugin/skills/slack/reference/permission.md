@@ -76,7 +76,7 @@ a standing grant is judged against the grant's words: a reply about what was
 reported there passes, questions about that report included, and an ask about
 anything else passes only when those words name it. A rule of the user's that
 limits a place, such as one solved post per bug thread, holds back each write
-it limits. A refusal names Jev's reason.
+it limits. When Jev refuses, the refusal's card opens with Jev's reason on its `Why:` line.
 A new ask of a person, or any post a lane or root requests that is neither
 their words nor a standing grant's, goes to them as a card first, never to the
 person.

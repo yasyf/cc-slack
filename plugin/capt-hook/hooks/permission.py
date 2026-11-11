@@ -101,7 +101,7 @@ DRAFTED = (
 PLAN_VERDICTS = frozenset({"delete", "rewrite", "keep"})
 UNPLANNED = "This plan cannot run: {reason}. `cc-slack apply` only deletes, rewrites, or keeps the bot's own posts in one DM, so fix the plan and run it again."
 REFUSED = (
-    "No permission covers this Slack write.{why} Ask the user with `cc-present ask -` and the first card on stdin, or with"
+    "No permission covers this Slack write. Ask the user with `cc-present ask -` and the first card on stdin, or with"
     " `slack_dm_status` and the second card when cc-present is missing, its body opened by a `Why:` line, then retry once they tap Yes."
     "\n```json\n{board}\n```\n```json\n{ask}\n```"
 )
@@ -747,13 +747,14 @@ def place_words(ctx: Context) -> Place:
     return Place(name, f"{name} at {clock(conv.thread)}: {' '.join(opener.text.split())[:OPENER_SHOWN]}")
 
 
-def ask(write: Write, place: Place, card: str) -> dict[str, Any]:
+def ask(write: Write, place: Place, card: str, why: str) -> dict[str, Any]:
     if write.verb in TEXT_VERBS:
         title, body = f"{TEXT_VERBS[write.verb]} in {place.name}?", shown(write)
     else:
         title = f"{OTHER_VERBS[write.verb]} ({place.name})?" if place.name else f"{OTHER_VERBS[write.verb]}?"
         body = ", ".join(str(value) for value in (*write.fields.values(), *write.users) if isinstance(value, str) and value)
     body = f"Where: {place.detail}\n\n{body}" if place.detail else body
+    body = f"Why: {why}\n\n{body}" if why else body
     return {"status": "needs_you", "title": title, "body": card_body(body), "options": ["Yes", "No"], "recommended": "Yes", "waits": card}
 
 
@@ -764,9 +765,8 @@ def board_card(card: dict[str, Any]) -> dict[str, Any]:
 
 
 def refused(write: Write, ctx: Context) -> str:
-    card = ask(write, place_words(ctx), card_id(write, ctx.place))
-    why = f" Jev read the user's words and rules and refused it: {reason}" if (reason := ctx.facts.get(Refusal)) else ""
-    return REFUSED.format(why=why, board=json.dumps(board_card(card), ensure_ascii=False, indent=2), ask=json.dumps(card, ensure_ascii=False, indent=2))
+    card = ask(write, place_words(ctx), card_id(write, ctx.place), ctx.facts.get(Refusal, ""))
+    return REFUSED.format(board=json.dumps(board_card(card), ensure_ascii=False, indent=2), ask=json.dumps(card, ensure_ascii=False, indent=2))
 
 
 def context_of(evt: ToolHookEvent, write: Write, conv: Conversation) -> Context:
@@ -1491,7 +1491,7 @@ on(
             case(transcript=dm_arrived(text=f"tell her here {DANA_URL}"), decide=jev(ORDER_ID)) >> ALLOW,
             case(SHIPPED, **said("status?", agent_id="a-lane"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, HIS_QUESTION, BOT_ANSWERED), decide=jev(ASKED_ID)) >> Rewrite(ticket_agent="a-lane"),
             case(SHIPPED, **said("status?", agent_id="a-lane"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, HIS_QUESTION | {"from_user": False}, BOT_ANSWERED), decide=jev(ASKED_ID)) >> DENY,
-            case(SHIPPED, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), llm={"reason": "a second post", "allow": False, "refusal": "The user allows one solved post in this thread, and the bot already posted."}) >> Block(pattern="refused it: The user allows one solved post in this thread"),
+            case(SHIPPED, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), llm={"reason": "a second post", "allow": False, "refusal": "The user allows one solved post in this thread, and the bot already posted."}) >> Block(pattern="Why: The user allows one solved post in this thread"),
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=r'"waits": "slack:U0PRIYA0001::[0-9a-f]{12}"'),
             case(LANDED, tool="slack_send", **said("status?")) >> Block(pattern=rf'"waits": "slack:{FOLLOWERS}::[0-9a-f]{{12}}"'),
             case(env=DISABLED) >> Allow(),
