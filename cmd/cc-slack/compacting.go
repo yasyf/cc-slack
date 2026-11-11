@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -95,21 +96,25 @@ func (p *poller) holdAck(ctx context.Context, db *sql.DB, watches []watch, m sla
 	defer p.mu.Unlock()
 	h := heldAck{m: m, due: p.now().Add(compactionAckWait), watches: compacting}
 	for _, w := range compacting {
-		h.marks = append(h.marks, p.markTranscript(w.SubjectID, p.compact[w.SubjectID]))
+		mark, err := markTranscript(p.compact[w.SubjectID])
+		if err != nil {
+			p.log.Printf("no ack for %s: session subject %s: %v", m.Timestamp, w.SubjectID, err)
+			return
+		}
+		h.marks = append(h.marks, mark)
 	}
 	p.held = append(p.held, h)
 }
 
-func (p *poller) markTranscript(subjectID, path string) transcriptMark {
+func markTranscript(path string) (transcriptMark, error) {
 	if path == "" {
-		return transcriptMark{}
+		return transcriptMark{}, errors.New("its PreCompact hook named no transcript")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		p.log.Printf("read the transcript of session subject %s: %v", subjectID, err)
-		return transcriptMark{}
+		return transcriptMark{}, err
 	}
-	return transcriptMark{path: path, offset: info.Size()}
+	return transcriptMark{path: path, offset: info.Size()}, nil
 }
 
 func (p *poller) ackHeld(ctx context.Context, db *sql.DB, api slackAPI, id identity) time.Time {
@@ -138,8 +143,8 @@ func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id ide
 	for i, mark := range h.marks {
 		logged, err := mark.holds(h.m.Timestamp)
 		if err != nil {
-			p.log.Printf("read the transcript of session subject %s for %s: %v", h.watches[i].SubjectID, h.m.Timestamp, err)
-			continue
+			p.log.Printf("no ack for %s: read the transcript of session subject %s: %v", h.m.Timestamp, h.watches[i].SubjectID, err)
+			return
 		}
 		if logged {
 			p.log.Printf("no ack for %s: it is in the transcript of session subject %s", h.m.Timestamp, h.watches[i].SubjectID)
@@ -161,9 +166,6 @@ func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id ide
 }
 
 func (t transcriptMark) holds(ts string) (bool, error) {
-	if t.path == "" {
-		return false, nil
-	}
 	f, err := os.Open(t.path)
 	if err != nil {
 		return false, err
@@ -204,8 +206,10 @@ func (a *app) handlePreCompact(hc daemon.HandlerCtx) daemon.Reply {
 		return ok(preCompactResult{})
 	}
 	var b preCompactBody
-	if err := json.Unmarshal(hc.Env.Body, &b); err != nil {
-		return fail(fmt.Sprintf("bad %s body: %v", hc.Env.Op, err))
+	if len(hc.Env.Body) > 0 {
+		if err := json.Unmarshal(hc.Env.Body, &b); err != nil {
+			return fail(fmt.Sprintf("bad %s body: %v", hc.Env.Op, err))
+		}
 	}
 	a.poller.startCompacting(sub.ID, b.Transcript)
 	a.poller.log.Printf("session %s or one of its agents is compacting: an operator DM message not in its transcript %s after it arrives gets an ack", hc.Env.Session, compactionAckWait)

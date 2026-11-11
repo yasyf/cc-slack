@@ -115,3 +115,16 @@ func TestAMessageAfterTheSessionStartsAgainGetsNoAck(t *testing.T) {
 		t.Fatalf("acks = %+v, want none once the session is back", got)
 	}
 }
+
+func TestAMessageWhileTheSessionCompactsWithNoTranscriptGetsNoAck(t *testing.T) {
+	f, thread := compactingDM(t)
+	f.poller.startCompacting(testSubject, "")
+
+	ownerReplies(f, thread, compactingReply, "ship it")
+	f.now = f.now.Add(compactionAckWait)
+	f.tick()
+
+	if got := compactionAcks(f); len(got) != 0 {
+		t.Fatalf("acks = %+v, want none when no transcript can show the message is missing", got)
+	}
+}
