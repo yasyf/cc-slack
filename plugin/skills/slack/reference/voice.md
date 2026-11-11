@@ -29,7 +29,9 @@ order.
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
    identifier, a paragraph past three sentences, a line outside a `>` quote
    that leads with what is not proven yet under any label, such as "Not
-   proven yet", "Not seen working yet", "Unverified" or "Untested", and a
+   proven yet", "Not seen working yet", "Unverified" or "Untested", a line
+   that reports no change, such as "No change since the last update" or
+   "Nothing new", which a post leaves out or a :+1: reaction replaces, and a
    sentence that says something waits on the reader in a post that links no
    card in your DM with the app and no PR, and a link to a message in your DM
    with the app shown as its raw URL, bare or labeled with its own URL. Delete a not-proven paragraph and
