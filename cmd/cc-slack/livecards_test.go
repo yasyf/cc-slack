@@ -688,20 +688,14 @@ func TestCardReopenUndoesAnAnswerTakenFromHisReplyInTheCardsThread(t *testing.T)
 	}
 	question := "And what would the light run version look like?"
 	asked, other := reply(1, question), reply(2, "Ring, but only on staging")
-	if res := l.do(opCardAnswer, map[string]any{"url": cardURL, "label": question, "other": true, "via": asked}); !res.OK {
-		t.Fatalf("card-answer: %s", res.Error)
-	}
+	l.do(opCardAnswer, map[string]any{"url": cardURL, "label": question, "other": true, "via": asked})
 
-	if res := l.do(opCardReopen, map[string]any{"url": cardURL, "via": other}); res.OK || !strings.Contains(res.Error, "is not answered with the words of") {
-		t.Fatalf("card-reopen with a reply the card does not show = %+v, want a refusal", res)
-	}
+	l.refused(opCardReopen, map[string]any{"url": cardURL, "via": other}, "is not answered with the words of")
 	if _, done := l.app.cards.answer(id.DMChannelID, thread, card.Waits); !done {
 		t.Fatal("a refused card-reopen reopened the card")
 	}
 
-	if res := l.do(opCardReopen, map[string]any{"url": cardURL, "via": asked}); !res.OK {
-		t.Fatalf("card-reopen: %s", res.Error)
-	}
+	l.do(opCardReopen, map[string]any{"url": cardURL, "via": asked})
 	if _, done := l.app.cards.answer(id.DMChannelID, thread, card.Waits); done {
 		t.Fatal("card-reopen left the card answered")
 	}
