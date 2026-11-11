@@ -128,7 +128,7 @@ func fencedPieces(open string, lines []string, closing string) []bodyPiece {
 	var pieces []bodyPiece
 	code := func(lines []string) {
 		if kept := strings.Trim(strings.Join(lines, "\n"), "\n"); strings.TrimSpace(kept) != "" {
-			pieces = append(pieces, bodyPiece{text: open + "\n" + kept + "\n" + closing})
+			pieces = append(pieces, bodyPiece{text: open + "\n" + slackEscaped(kept) + "\n" + closing})
 		}
 	}
 	from := 0
