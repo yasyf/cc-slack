@@ -231,6 +231,7 @@ class CheckPostTest(unittest.TestCase):
             "• No updates yet": "No updates yet",
             "Nothing changed since 5:25pm.": "Nothing changed since 5:25pm",
             "Same as before.": "Same as before",
+            "No news from the build yet.": "No news from the build yet",
         }
         for line, token in cases.items():
             with self.subTest(line=line):
@@ -240,6 +241,9 @@ class CheckPostTest(unittest.TestCase):
         for line in (
             "The fix merged; the strip shows live incidents only.",
             "No change to the API; the fix only touches the worker.",
+            "No changes from this PR affect the API; the worker now retries failed uploads.",
+            "Nothing changed since Tuesday, and the worker now retries failed uploads.",
+            "No change since the deploy but the worker now retries failed uploads.",
         ):
             with self.subTest(line=line):
                 self.assertEqual(kinds(line), [])

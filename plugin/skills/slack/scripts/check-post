@@ -111,7 +111,7 @@ RULES = (
         "nothing-new",
         re.compile(
             r"(?i)^[ \t]*(?:(?:[-*•◦]|\d+[.)])[ \t]+)?(?P<token>(?:no[ \t]+(?:changes?|news|updates?|progress)|nothing[ \t]+(?:new|(?:has[ \t]+)?changed|to[ \t]+report)"
-            r"|(?:still[ \t]+)?(?:the[ \t]+)?same[ \t]+as[ \t]+(?:before|last[ \t]+time))(?:[ \t]+(?:yet|so[ \t]+far|here|since|from)\b[^.!?\n]*)?)[ \t]*[.!]?[ \t]*$"
+            r"|(?:still[ \t]+)?(?:the[ \t]+)?same[ \t]+as[ \t]+(?:before|last[ \t]+time))(?:[ \t]+(?:yet|so[ \t]+far|here|since|from)\b(?:[ \t]+(?:[^\s.!?;,:—–]|(?<=\d):(?=\d))+){0,3})?)[ \t]*[.!]?[ \t]*$"
         ),
         "this line reports no change, which tells the reader nothing; post nothing, or react :+1: to a message that needs no answer",
     ),
