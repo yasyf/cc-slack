@@ -12,8 +12,8 @@ DM, so its readers can see whether it is being read or worked on:
    since Slack refuses the line under a reply's own ts. Your operator's
    message in your DM with the app already has both: the daemon puts them on
    as it hands you the message, so `slack_pickup` there only sets what the line
-   says. When your session or one of its agents is compacting and the message
-   is not in your transcript 8 seconds after it arrived, the daemon also posts
+   says. When your session itself is compacting and the message is not in
+   your transcript 8 seconds after it arrived, the daemon also posts
    `Got it, back in a minute.` in that message's thread and sends you
    `slack.message.acked` with `acked` set to that post's ts: post no ack of
    your own for it. If you decide not to work on it, call `slack_pickup` with
