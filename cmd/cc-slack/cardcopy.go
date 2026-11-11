@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -19,6 +18,8 @@ const (
 	cardCopyAction = cardActionPrefix + ":preview:"
 	cardCopyBlock  = cardActionPrefix + "-copy"
 	cardCopyLead   = "Answer it here:"
+
+	cardRedrawnLine = "Redrawn in place"
 )
 
 var (
@@ -73,29 +74,21 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(res)
 }
 
-func (a *app) askAgain(ctx context.Context, db *sql.DB, id identity, card cardRef) error {
-	if err := a.cards.redrawCopies(ctx, id, card); err != nil {
-		return err
+func (l *liveCards) withdrawCopies(ctx context.Context, id identity, card cardRef) error {
+	api := l.newAPI(id.Token)
+	var errs []error
+	for _, copied := range l.copiesOf(card.channel, card.ts) {
+		post, err := messageAt(ctx, api, copied.channel, copied.thread, copied.ts)
+		if err == nil {
+			err = markCopy(ctx, api, id, card, copied, post, cardRedrawnLine, "")
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("copy %s: %w", copied.ts, err))
+			continue
+		}
+		l.linkCopy(copied)
 	}
-	link := id.permalink(card.channel, card.ts, card.thread)
-	ref, err := parsePermalink(link)
-	if err != nil {
-		return err
-	}
-	copied, err := a.cardCopy(ctx, id, ref, link)
-	if err != nil {
-		return err
-	}
-	under := card.thread
-	if under == card.ts {
-		under = ""
-	}
-	res, err := a.post(ctx, db, id, card.channel, under, cardCopyLead, copied, nil, a.cards.workObjectsOf(card.channel, card.ts, a.now())...)
-	if err != nil {
-		return err
-	}
-	a.cards.rememberCopy(card.channel, cmp.Or(under, res.TS), liveCardCopy{Card: card.ts, TS: res.TS}, a.now())
-	return nil
+	return errors.Join(errs...)
 }
 
 func sameCard(was, now statusCard) bool {

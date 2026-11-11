@@ -113,10 +113,12 @@ Other is the user's own answer. A tap on Other opens a Slack modal with the
 question and a text box, and what they type there answers the card.
 
 A card that reuses the `waits` id of a card still waiting and changes its
-words edits that card and its copies in place and posts one fresh copy where
-the card sits, so the user sees the new version and no old copy reads
-differently. The same words post nothing. `text` that repeats the card's
-`body` is dropped, so the body reads once.
+words edits that one card in place and posts nothing. Each older copy of it
+loses its buttons and reads one line, Redrawn in place, linking the card, so
+only the card asks. The same words post nothing. `text` that repeats the
+card's `body` is dropped, so the body reads once. A redraw is always this
+`slack_dm_status` call with the card: `slack_edit` with only text refuses a
+card, since that edit would replace its layout and buttons with plain text.
 Reusing the id of a card the user answered is refused; ask again under a new id. A card cc-present mirrors (`--mirrored`) that changes only the words of a card the user answered, such as its title, body, refs, hints or PR text, redraws that card in place: the user's answer stays and no button comes back. A mirrored card whose `replaces` names a post cc-slack no longer remembers is refused when that post is a card with no answer left to tap. A withdrawn card, such as one whose PR closed, asked again under its id comes back in place: the same card and thread, its buttons back and the withdrawn line gone. A mirrored resend of a withdrawn card that changes only its words keeps it withdrawn, with the new words and no buttons.
 
 The lane that asks stops on the card. It starts no dependent work, takes

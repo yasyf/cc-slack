@@ -443,7 +443,7 @@ func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsItAgainBesideIt(t *testing.
 	}
 }
 
-func TestACopyOfAWaitingCardFollowsItsRedraw(t *testing.T) {
+func TestARedrawWithdrawsTheCardsCopies(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -458,10 +458,29 @@ func TestACopyOfAWaitingCardFollowsItsRedraw(t *testing.T) {
 
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
+	posts := len(l.slack.sent())
+	postWaiting(t, l, redrawn)
+	redrawn.Title = "Merge #41 after the freeze?"
 	postWaiting(t, l, redrawn)
 
-	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !strings.Contains(edits[0], "Merge #41 before the freeze?") || !strings.Contains(edits[0], cardCopyAction) {
-		t.Fatalf("copy edits = %v, want the copy redrawn with the new question and its buttons", edits)
+	if len(l.slack.sent()) != posts {
+		t.Fatalf("two redraws posted %d messages, want none", len(l.slack.sent())-posts)
+	}
+	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !strings.Contains(edits[0], cardRedrawnLine) || strings.Contains(edits[0], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want the copy withdrawn once to a line linking the card, with no buttons", edits)
+	}
+}
+
+func TestATextEditOfACardIsRefusedForARedraw(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	edits := len(l.slack.edited())
+
+	l.refused(opEdit, l.hooked(opEdit, map[string]any{"channel_id": c.id.DMChannelID, "ts": c.ts, "text": "Merge #41 before the freeze?"}), "redraw it with dm-status")
+
+	if len(l.slack.edited()) != edits {
+		t.Fatal("a refused text edit of a card still edited it")
 	}
 }
 
@@ -474,11 +493,8 @@ func TestAWithdrawnWaitsIDAskedAgainRevivesTheCardInPlace(t *testing.T) {
 
 	again := postWaiting(t, l, mergeCard())
 
-	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts+1 {
-		t.Fatalf("asking again posted %d new messages at %s, want the card at %s revived in place and one copy of it", len(l.slack.sent())-posts, again.ts, c.ts)
-	}
-	if copied := l.slack.sent()[posts]; copied.threadTS != "" || copied.text != cardCopyLead || !strings.Contains(copied.blocks, "Merge #41 now?") {
-		t.Fatalf("copy = %+v, want the revived card posted again at the DM root", copied)
+	if again.ts != c.ts || again.thread != c.thread || len(l.slack.sent()) != posts {
+		t.Fatalf("asking again posted %d new messages at %s, want the card at %s revived in place and nothing posted", len(l.slack.sent())-posts, again.ts, c.ts)
 	}
 	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || strings.Contains(edits[len(edits)-1], "Withdrawn") || !strings.Contains(edits[len(edits)-1], "Merge #41 now?") {
 		t.Fatalf("card edits %v, want the question and its buttons back with the withdrawn line gone", edits)
@@ -906,8 +922,8 @@ func TestNewWordsOnAnOpenBoardCardStillAskItAgain(t *testing.T) {
 	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
 
 	sent, edits := l.slack.sent(), editsOf(l.slack.edited(), c.ts)
-	if again.ts != c.ts || len(sent) != 2 || sent[1].text != cardCopyLead || len(edits) != 1 {
-		t.Fatalf("new words on an open card gave %+v with posts %+v and edits %v, want it edited in place and one copy beside it", again, sent, edits)
+	if again.ts != c.ts || len(sent) != 1 || len(edits) != 1 {
+		t.Fatalf("new words on an open card gave %+v with posts %+v and edits %v, want it edited in place and nothing posted", again, sent, edits)
 	}
 	if !strings.Contains(edits[0], "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(edits[0], cardWaitAction) {
 		t.Fatalf("open card redrawn as %s, want the new title and its buttons", edits[0])
@@ -1046,7 +1062,7 @@ func TestADriveQuestionCardPostsWithNoBoardWarning(t *testing.T) {
 	}
 }
 
-func TestADriveQuestionCardNamingAThreadPostsAtTheDMRootWithOneCopyInThatThread(t *testing.T) {
+func TestADriveQuestionCardPostsAtTheDMRootAndARedrawWithdrawsItsCopy(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1071,8 +1087,14 @@ func TestADriveQuestionCardNamingAThreadPostsAtTheDMRootWithOneCopyInThatThread(
 	posts = len(l.slack.sent())
 	again := ask(card)
 	sent = l.slack.sent()[posts:]
-	if again["ts"] != first["ts"] || len(sent) != 1 || sent[0].threadTS != "" || sent[0].text != cardCopyLead {
-		t.Fatalf("a redraw got %v with posts %+v, want the card edited in place and one fresh copy beside it at the DM root", again, sent)
+	if again["ts"] != first["ts"] || len(sent) != 0 {
+		t.Fatalf("a redraw got %v with posts %+v, want the card edited in place and nothing posted", again, sent)
+	}
+	if edits := editsOf(l.slack.edited(), first["ts"]); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits = %v, want the new question with its buttons", edits)
+	}
+	if edits := editsOf(l.slack.edited(), l.slack.sent()[posts-1].ts); len(edits) != 1 || !strings.Contains(edits[0], cardRedrawnLine) || strings.Contains(edits[0], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want the copy in thread %s withdrawn to a line linking the card", edits, thread)
 	}
 }
 

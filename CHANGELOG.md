@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A card redrawn under its `waits` id edits that one card in place and posts nothing new. Each older copy of it loses its buttons and reads Redrawn in place with a link to the card, and no later redraw brings them back. Before, every redraw also posted a fresh copy, which since drive question cards moved to the DM root was a new top-level message in the DM, while the older copies kept working buttons: on Nov 10 between 8:17 and 8:33 PM one card had four live copies at the DM root.
+- `slack_edit` with only text refuses a card and names the `slack_dm_status` redraw. Such an edit cleared the card's blocks, leaving its words as plain text with no layout or buttons.
+
 ### Added
 
 - A card's `body` line that holds only a markdown image, `![what it shows](/absolute/path.png)` or one drawn from an https url, shows that picture on the card where the line sits. The daemon uploads it to the `[pictures]` bucket as it does an artifact's picture, and a card redrawn in place keeps it without a second upload. `cc-slack card render` reads each such picture and refuses one it cannot read, one that is no PNG, JPEG, GIF or WebP image, one with no caption, and one named by a relative path. An image inside a sentence, a table cell or a code block stays text. Before, a body had no way to show a picture among its lines: on Nov 10 at 6:09 PM a question card about two dashboard layouts showed its screenshots as links only.

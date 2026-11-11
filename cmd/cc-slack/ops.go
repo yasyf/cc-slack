@@ -882,6 +882,10 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if _, isCard := a.cards.cardAt(b.ChannelID, b.TS); isCard && len(blocks) == 0 {
+		return fail(fmt.Sprintf("%s is a card, and an edit with only text replaces its layout and buttons with plain text: "+
+			"redraw it with dm-status passing its card, under its waits id when it has one, which edits it in place", b.TS))
+	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 		return a.cards.editByHand(channelID, b.TS, func() error {
@@ -2529,8 +2533,8 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
 	thread, ts, posted, again, err := a.placeStatusCard(ctx, db, sub, id, under, msg)
 	if err == nil && again {
-		if err := a.askAgain(ctx, db, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
-			a.poller.log.Printf("card %s redrawn in place, but not posted again beside it: %v", ts, err)
+		if err := a.cards.withdrawCopies(ctx, id, cardRef{id.DMChannelID, thread, ts}); err != nil {
+			a.poller.log.Printf("card %s redrawn in place, but older copies of it keep their buttons: %v", ts, err)
 		}
 	}
 	return thread, ts, posted, err
