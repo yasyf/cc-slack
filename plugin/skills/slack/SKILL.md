@@ -23,7 +23,7 @@ Read before replying. Thread posts are refused unless this agent read the thread
 
 Call `slack_send(channel_id, text, thread_ts?)` and `slack_reply(channel_id, thread_ts, text)` to post approved text. Pass `files` as absolute paths or `blocks` as Block Kit. Every send and reply arms a thread watch and returns `watch_id` so replies reach this session. Pass `no_watch: true` only for one-shot posts or when an owner subagent already watches the thread. A result with `posted: true` and `watch_error` went out: never resend it.
 
-On the CLI, run one `cc-slack` call in each Bash command with literal values. No variable holding the binary and no `$(...)` in the text. Pass long or quote-heavy text with `--text-file <path>`. Write pull request references as `#123`, `owner/repo#123`, or the full URL; never build link markup yourself, as the daemon links them. A PR awaiting the user's tap gets its card only with `tap_prs`.
+On the CLI, run one `cc-slack` call in each Bash command with literal values. No variable holding the binary and no `$(...)` in the text. Pass long or quote-heavy text with `--text-file <path>`. Write pull request references as `#123`, `owner/repo#123`, or the full URL; never build link markup yourself, as the daemon links them. A PR awaiting the user's tap gets its card with `tap_prs`, or by its URL in a DM post that says it waits on the user.
 
 ## Take steering in the user's DM
 

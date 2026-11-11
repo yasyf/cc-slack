@@ -33,8 +33,11 @@ order.
    that reports no change, such as "No change since the last update" or
    "Nothing new", which a post leaves out or a :+1: reaction replaces, and a
    sentence that says something waits on the reader in a post that links no
-   card in your DM with the app and no PR, and a link to a message in your DM
-   with the app shown as its raw URL, bare or labeled with its own URL. Delete a not-proven paragraph and
+   card in your DM with the app and no PR, a link to a message in your DM
+   with the app shown as its raw URL, bare or labeled with its own URL, and a
+   line that links more than five Slack messages or alerts, since Slack draws
+   five a message: put each on its own line, and cc-slack sends a longer post
+   to your DM as pages. Delete a not-proven paragraph and
    put a job on the unknown: the reader gets its result, or nothing. It reads
    through `*bold*`, `_italic_` and `~strike~` markers, ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier

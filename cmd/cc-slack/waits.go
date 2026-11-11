@@ -16,7 +16,7 @@ const (
 )
 
 const (
-	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or draw a PR's tap card with tap_prs; outside your DM with the app, name who decides with a <@U…> mention instead"
+	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post; outside your DM with the app, name who decides with a <@U…> mention instead"
 	cardLinkNamed  = "link a card under words that name it, as <permalink|the lock card>, and Slack draws the card under the line; a bare permalink, or one labeled with its own URL, shows him a raw URL"
 )
 
@@ -84,7 +84,7 @@ func waitsWithoutCard(text string, card func(permalinkRef) bool) (waitsLine, boo
 func dmCard(ref permalinkRef) bool { return dmCardLink.MatchString(ref.channelID) }
 
 func (w waitsLine) refusal() string {
-	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or pass the PR as tap_prs for its tap card", w.sentence)
+	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post", w.sentence)
 }
 
 type rawCardLink struct {
@@ -173,8 +173,37 @@ func (a *app) openCardIn(id identity) func(permalinkRef) bool {
 	}
 }
 
+func waitingPRs(id identity, channelID string, b opBody) []string {
+	if channelID != id.DMChannelID || tapCardsRefused(id, channelID) != "" {
+		return nil
+	}
+	if _, found := waitsOnReader(b.Text); !found {
+		return nil
+	}
+	named := map[string]bool{}
+	for _, raw := range b.TapPRs {
+		if pr, ok := parseRef(raw); ok {
+			named[pr.key()] = true
+		}
+	}
+	var prs []string
+	for _, pr := range linkedPRRefs(b.Text) {
+		if !named[pr.key()] {
+			prs = append(prs, prURL(pr))
+		}
+	}
+	return prs
+}
+
+func tapCardsOwed(err error, waiting []string) error {
+	if len(waiting) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w; this post says something waits on him, so each PR it links draws its tap card under it: name a PR he has nothing to tap in a post that waits on nothing", err)
+}
+
 func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) error {
-	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || len(b.TapPRs)+len(linkedPRRefs(b.Text)) > 0 || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
+	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || len(b.TapPRs) > 0 || tapCardsRefused(id, channelID) != "" && len(linkedPRRefs(b.Text)) > 0 || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
 		return nil
 	}
 	if said, found := waitsWithoutCard(b.Text, a.openCardIn(id)); found {

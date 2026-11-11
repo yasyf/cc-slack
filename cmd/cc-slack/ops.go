@@ -157,6 +157,7 @@ type postResult struct {
 	Channel       daemon.ChannelState `json:"channel,omitempty"`
 	CardTS        string              `json:"card_ts,omitempty"`
 	CardPermalink string              `json:"card_permalink,omitempty"`
+	PagePermalink string              `json:"page_permalink,omitempty"`
 }
 
 func (r receipt) result(replayed bool) postResult {
@@ -653,7 +654,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
-		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b)); err != nil {
+		waiting := waitingPRs(id, channelID, b)
+		b.TapPRs = append(b.TapPRs, waiting...)
+		texts, crowded := b.pagesIn(id, channelID)
+		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b), crowded); err != nil {
 			return fail(err.Error())
 		}
 		w := write{action: approvePost, named: b.ChannelID, channelID: channelID, threadTS: b.ThreadTS, text: b.Text}
@@ -671,20 +675,17 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Text)
-		text, previews, ready := a.linkPreviews(hc.Ctx, id, channelID, texts[0], nil)
+		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts)
 		asked := slices.Clone(b.TapPRs)
 		b.TapPRs = append(b.TapPRs, ready...)
 		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
 		if err != nil {
-			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
+			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, tapCardsOwed(err, waiting).Error()))
 		}
-		if len(previews) > 0 {
-			extra = append(extra, slack.MsgOptionAttachments(previews...))
-		}
+		extra = append(extra, slack.MsgOptionAttachments(pages[0].previews...))
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, text, blocks, b.Files, extra...)
+			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, pages[0].text, blocks, b.Files, extra...)
 			return err
 		})
 		if err != nil {
@@ -700,6 +701,11 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
+		shown, err := a.sendLinkPages(hc, sub.ID, id, res.ChannelID, b, pages[1:])
+		if err != nil {
+			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
+		}
+		res.PagePermalink = strings.Join(shown, " ")
 		drawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, taps, asked)
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
@@ -717,6 +723,40 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		return okUnlessUndrawn(a.reportChannel(hc, sub.ID, res), drawn.err)
 	}
+}
+
+type linkedPage struct {
+	text     string
+	previews []slack.Attachment
+}
+
+func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string) ([]linkedPage, []string) {
+	texts, _ = a.linkPRs(ctx, id, scope, texts...)
+	pages := make([]linkedPage, len(texts))
+	var ready []string
+	for i, text := range texts {
+		var more []string
+		pages[i].text, pages[i].previews, more = a.linkPreviews(ctx, id, channelID, text, nil)
+		ready = append(ready, more...)
+	}
+	return pages, ready
+}
+
+func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, channelID string, b opBody, pages []linkedPage) ([]string, error) {
+	shown := make([]string, 0, len(pages))
+	for _, page := range pages {
+		res, err := a.post(hc.Ctx, hc.DB, id, channelID, b.ThreadTS, page.text, nil, nil, slack.MsgOptionAttachments(page.previews...))
+		if err != nil {
+			return shown, err
+		}
+		if b.ThreadTS == "" && !b.NoWatch {
+			if _, err := a.watchPostThread(hc.Ctx, hc.DB, subjectID, res.ChannelID, res.TS, res.TS); err != nil {
+				a.poller.log.Printf("page %s goes unwatched: %v", res.Permalink, err)
+			}
+		}
+		shown = append(shown, res.Permalink)
+	}
+	return shown, nil
 }
 
 func (a *app) replayedPost(hc daemon.HandlerCtx, subjectID string, replay receipt) daemon.Reply {
@@ -902,7 +942,7 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionEdit, err))
 	}
-	if err := cmp.Or(a.refuseBlanking(id, b), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
+	if err := cmp.Or(a.refuseBlanking(id, b), refuseEditPastFive(id, b), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
@@ -2195,7 +2235,10 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b)); err != nil {
+	waiting := waitingPRs(id, id.DMChannelID, b)
+	b.TapPRs = append(b.TapPRs, waiting...)
+	texts, crowded := b.pagesIn(id, id.DMChannelID)
+	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
 	}
 	linkInto := rootDriveQuestion(&b)
@@ -2214,16 +2257,17 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Card != nil {
 		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
 	}
-	msg, later := a.dmMessageOf(hc, id, b, blocks)
+	pages, ready := a.dmPagesOf(hc, id, b, blocks, texts)
+	msg := pages[0].msg
 	asked := slices.Clone(b.TapPRs)
-	b.TapPRs = append(b.TapPRs, msg.tapPRs...)
+	b.TapPRs = append(b.TapPRs, ready...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag)
 	}
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
 	}
-	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked)
+	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked, waiting)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2237,12 +2281,13 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if err := a.postPages(hc, sub, id, thread, ts, msg.text, later); err != nil {
+	shown, err := a.postLinkPages(hc, sub, id, under, thread, ts, pages)
+	if err != nil {
 		return fail(err.Error())
 	}
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	return a.tappedReply(hc, sub, id, thread, ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
+	return a.tappedReply(hc, sub, id, thread, ts, b, shown, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
 }
 
 func rootDriveQuestion(b *opBody) string {
@@ -2290,11 +2335,14 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, b.TapPRs); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, a.attachTapPRs(hc, sub, id, id.DMChannelID, old.thread, old.ts, taps, asked))
+	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, a.attachTapPRs(hc, sub, id, id.DMChannelID, old.thread, old.ts, taps, asked))
 }
 
-func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, b opBody, drawn tapDrawn) daemon.Reply {
+func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, b opBody, pages []string, drawn tapDrawn) daemon.Reply {
 	res := a.dmStatusReply(hc, sub.ID, id, thread, ts, b)
+	if len(pages) > 0 {
+		res["page_permalink"] = strings.Join(pages, " ")
+	}
 	if len(drawn.cards) > 0 {
 		res["card_ts"], res["card_permalink"] = drawn.named(id)
 	}
@@ -2337,7 +2385,7 @@ func (a *app) refuseClosedPost(ctx context.Context, id identity, card statusCard
 	return fail(fmt.Errorf("waiting card %q replaces %s, a card with no answer left to tap; %w", card.Waits, card.Replaces, errAskedAgain).Error()), true
 }
 
-func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string) (string, tapCards, error) {
+func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked, waiting []string) (string, tapCards, error) {
 	under := b.ThreadTS
 	if b.About != "" {
 		if b.Card != nil || b.Text == "" {
@@ -2353,9 +2401,44 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	}
 	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, asked)
 	if err != nil {
-		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", err)
+		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", tapCardsOwed(err, waiting))
 	}
 	return under, taps, nil
+}
+
+type dmPage struct {
+	msg   dmMessage
+	later [][]slack.Block
+}
+
+func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block, texts []string) ([]dmPage, []string) {
+	pages := make([]dmPage, len(texts))
+	var ready []string
+	for i, text := range texts {
+		b.Text = text
+		pages[i].msg, pages[i].later = a.dmMessageOf(hc, id, b, blocks)
+		ready = append(ready, pages[i].msg.tapPRs...)
+		b.Files, blocks = nil, nil
+	}
+	return pages, ready
+}
+
+func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, under, thread, ts string, pages []dmPage) ([]string, error) {
+	if err := a.postPages(hc, sub, id, thread, ts, pages[0].msg.text, pages[0].later); err != nil {
+		return nil, err
+	}
+	shown := make([]string, 0, len(pages)-1)
+	for _, page := range pages[1:] {
+		pageThread, pageTS, _, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, under, page.msg)
+		if err == nil {
+			err = a.postPages(hc, sub, id, pageThread, pageTS, page.msg.text, page.later)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("posted the start of this post at %s, so do not post it again, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
+		}
+		shown = append(shown, id.permalink(id.DMChannelID, pageTS, pageThread))
+	}
+	return shown, nil
 }
 
 func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
