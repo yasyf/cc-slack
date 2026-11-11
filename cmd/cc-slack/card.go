@@ -311,6 +311,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkPermissionWords(),
 		c.checkOptionRefs(),
 		c.checkPictureLines(tailnet),
+		c.checkCharts(),
 	)
 }
 
@@ -469,6 +470,30 @@ func (c statusCard) checkPictureLines(tailnet string) error {
 		}
 	}
 	return nil
+}
+
+func (c statusCard) checkCharts() error {
+	prs := c.allPRs()
+	bodies := make([]string, 0, 1+len(prs))
+	bodies = append(bodies, c.Body)
+	for _, p := range prs {
+		bodies = append(bodies, p.ShowMe)
+	}
+	refuse := func(format string, args ...any) error {
+		return fmt.Errorf("the card's ```chart draws no Slack chart, since "+format, args...)
+	}
+	var errs []error
+	for _, body := range bodies {
+		for _, piece := range bodyPieces(withoutHidden(body)) {
+			switch {
+			case piece.chartErr != nil:
+				errs = append(errs, refuse("%w", piece.chartErr))
+			case piece.chart != nil:
+				errs = append(errs, checkChart(piece.chart, refuse))
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (c statusCard) checkReplaces() error {
@@ -1336,11 +1361,7 @@ func (p cardPR) settledLine(v cardView) string {
 }
 
 func (p cardPR) section(v cardView, at, of int, images []cardImage) []slack.Block {
-	blocks := append([]slack.Block{p.head(at, of)}, sections(p.body(v))...)
-	for _, image := range p.images(images) {
-		blocks = append(blocks, image.block(v.pictures))
-	}
-	return blocks
+	return slices.Concat([]slack.Block{p.head(at, of)}, sections(p.body(v)), p.showMe(), galleries(pictureBlocks(p.images(images), v.pictures)))
 }
 
 func (p cardPR) head(at, of int) slack.Block {
@@ -1350,24 +1371,18 @@ func (p cardPR) head(at, of int) slack.Block {
 	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, p.headline(at, of), false, false), nil, slack.NewAccessory(open))
 }
 
-func (p cardPR) showMe() string {
-	var parts []string
-	for _, piece := range bodyPieces(cardWordEscapes.Replace(p.ShowMe)) {
-		switch {
-		case len(piece.table) > 1:
-			parts = append(parts, tableLines(piece.table))
-		case piece.table != nil:
-			parts = append(parts, strings.Join(piece.table[0], " · "))
-		case piece.picture != nil:
-			parts = append(parts, pictureCaption(*piece.picture))
-		default:
-			parts = append(parts, piece.text)
-		}
+func (p cardPR) showMe() []slack.Block {
+	if shown := p.showMeText(); shown != "" {
+		return slices.Concat(bodyPages(shown, cardMaxBlocks, cardMaxVisible, true, nil)...)
 	}
-	if len(parts) == 0 {
+	return nil
+}
+
+func (p cardPR) showMeText() string {
+	if strings.TrimSpace(p.ShowMe) == "" {
 		return ""
 	}
-	return "*Show me*\n" + strings.Join(parts, "\n\n")
+	return "*Show me*\n" + cardWordEscapes.Replace(p.ShowMe)
 }
 
 func (p cardPR) headline(at, of int) string {
@@ -1393,14 +1408,11 @@ func (p cardPR) body(v cardView) string {
 			lines = append(lines, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
 	}
-	if shown := p.showMe(); shown != "" {
-		lines = append(lines, shown)
-	}
 	return strings.Join(lines, "\n\n")
 }
 
 func (p cardPR) markdown(v cardView) string {
-	return strings.TrimSpace(p.headline(0, 1) + "\n" + p.body(v))
+	return strings.TrimSpace(p.headline(0, 1) + "\n" + p.body(v) + "\n\n" + p.showMeText())
 }
 
 func sections(text string) []slack.Block {
@@ -1535,7 +1547,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		visible -= runes(p.markdown(v))
 	}
 	if c.Body != "" {
-		pictures := map[string]slack.Block{}
+		pictures := map[string]*slack.ImageBlock{}
 		for _, image := range c.Images {
 			if image.Source != "" {
 				pictures[image.Source] = image.block(v.pictures)
@@ -1554,9 +1566,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 
 func (c statusCard) tail(v cardView) []slack.Block {
 	blocks := make([]slack.Block, 0, len(c.Images)+len(c.Options)+len(c.Rows)+cardMaxFacts)
-	for _, image := range c.unplacedImages() {
-		blocks = append(blocks, image.block(v.pictures))
-	}
+	blocks = append(blocks, galleries(pictureBlocks(c.unplacedImages(), v.pictures))...)
 	blocks = append(blocks, c.progress(v.now)...)
 	blocks = append(blocks, c.facts()...)
 	blocks = append(blocks, c.refs(v)...)

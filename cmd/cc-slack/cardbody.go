@@ -29,6 +29,7 @@ const (
 	slackMaxButton   = 75
 	slackMaxValue    = 2000
 	slackMaxID       = 255
+	slackMaxCarousel = 10
 	fencedTableRows  = 3
 	fencedTableCols  = 3
 )
@@ -49,9 +50,12 @@ var (
 )
 
 type bodyPiece struct {
-	text    string
-	table   [][]string
-	picture *cardImage
+	text     string
+	table    [][]string
+	picture  *cardImage
+	gallery  []*slack.ImageBlock
+	chart    *slack.DataVisualizationBlock
+	chartErr error
 }
 
 func bodyPieces(body string) []bodyPiece {
@@ -115,6 +119,11 @@ func bodyPieces(body string) []bodyPiece {
 }
 
 func fencedPieces(open string, lines []string, closing string) []bodyPiece {
+	if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(open), "```")) == "chart" {
+		source := strings.Join(lines, "\n")
+		chart, err := chartBlock(source)
+		return []bodyPiece{{text: open + "\n" + strings.Trim(source, "\n") + "\n" + closing, chart: chart, chartErr: err}}
+	}
 	var pieces []bodyPiece
 	code := func(lines []string) {
 		if kept := strings.Trim(strings.Join(lines, "\n"), "\n"); strings.TrimSpace(kept) != "" {
@@ -339,7 +348,7 @@ type bodyPage struct {
 	chars  int
 }
 
-func bodyPages(body string, firstBlocks, firstChars int, firstTable bool, pictures map[string]slack.Block) [][]slack.Block {
+func bodyPages(body string, firstBlocks, firstChars int, firstNative bool, pictures map[string]*slack.ImageBlock) [][]slack.Block {
 	page := &bodyPage{}
 	var pages [][]slack.Block
 	maxBlocks, maxChars := firstBlocks, firstChars
@@ -371,26 +380,89 @@ func bodyPages(body string, firstBlocks, firstChars int, firstTable bool, pictur
 			place(part)
 		}
 	}
-	for _, piece := range bodyPieces(body) {
-		switch {
-		case piece.picture != nil:
-			block, drawn := pictures[piece.picture.Source]
-			if !drawn {
-				add(pictureCaption(*piece.picture))
-				continue
-			}
-			put(block, runes(piece.picture.Title), maxChars)
-		case piece.table == nil:
-			add(piece.text)
-		case (firstTable || len(pages) > 0) && dataTableFits(piece.table):
-			put(tableBlock(piece.table), tableChars(piece.table), max(maxChars, cardMaxVisible))
-		case len(piece.table) > 1:
-			add(tableLines(piece.table))
-		default:
-			add(strings.Join(piece.table[0], " · "))
+	for _, piece := range galleryPieces(bodyPieces(body), pictures) {
+		if block, chars, limit := piece.block(firstNative || len(pages) > 0, maxChars); block != nil {
+			put(block, chars, limit)
+			continue
 		}
+		add(piece.words())
 	}
 	return append(pages, page.blocks)
+}
+
+func galleryPieces(pieces []bodyPiece, pictures map[string]*slack.ImageBlock) []bodyPiece {
+	var out []bodyPiece
+	var run []*slack.ImageBlock
+	show := func() {
+		for shown := range slices.Chunk(run, slackMaxCarousel) {
+			out = append(out, bodyPiece{gallery: shown})
+		}
+		run = nil
+	}
+	for _, piece := range pieces {
+		if piece.picture != nil && pictures[piece.picture.Source] != nil {
+			run = append(run, pictures[piece.picture.Source])
+			continue
+		}
+		show()
+		out = append(out, piece)
+	}
+	show()
+	return out
+}
+
+func (p bodyPiece) block(native bool, limit int) (slack.Block, int, int) {
+	switch {
+	case p.gallery != nil:
+		chars := 0
+		for _, picture := range p.gallery {
+			chars += runes(picture.AltText)
+		}
+		return gallery(p.gallery), chars, limit
+	case !native:
+		return nil, 0, 0
+	case p.chart != nil:
+		return p.chart, runes(p.chart.Title), limit
+	case p.table != nil && dataTableFits(p.table):
+		return tableBlock(p.table), tableChars(p.table), max(limit, cardMaxVisible)
+	}
+	return nil, 0, 0
+}
+
+func (p bodyPiece) words() string {
+	switch {
+	case p.picture != nil:
+		return pictureCaption(*p.picture)
+	case p.table == nil:
+		return p.text
+	case len(p.table) > 1:
+		return tableLines(p.table)
+	}
+	return strings.Join(p.table[0], " · ")
+}
+
+func gallery(pictures []*slack.ImageBlock) slack.Block {
+	if len(pictures) == 1 {
+		return pictures[0]
+	}
+	cards := make([]*slack.CardBlock, 0, len(pictures))
+	for _, picture := range pictures {
+		hero := slack.NewImageBlockElementSlackFile(picture.SlackFile, picture.AltText)
+		if picture.ImageURL != "" {
+			hero = slack.NewImageBlockElement(picture.ImageURL, picture.AltText)
+		}
+		title := slack.NewTextBlockObject(slack.PlainTextType, clipRunes(picture.AltText, slackMaxCaption), false, false)
+		cards = append(cards, slack.NewCardBlock().WithHeroImage(hero).WithTitle(title))
+	}
+	return slack.NewCarouselBlock(cards...)
+}
+
+func galleries(pictures []*slack.ImageBlock) []slack.Block {
+	var blocks []slack.Block
+	for run := range slices.Chunk(pictures, slackMaxCarousel) {
+		blocks = append(blocks, gallery(run))
+	}
+	return blocks
 }
 
 func pictureCaption(picture cardImage) string {
@@ -437,9 +509,16 @@ func checkBlocks(blocks []slack.Block) error {
 		return blockLimitError{cardMaxBlocks, "message", fmt.Sprintf("the message holds %d blocks, past Slack's %d", len(blocks), cardMaxBlocks)}
 	}
 	ids := map[string]bool{}
+	charts := 0
 	for i, b := range blocks {
 		refuse := func(format string, args ...any) error {
 			return blockLimitError{i, string(b.BlockType()), fmt.Sprintf(format, args...)}
+		}
+		if _, chart := b.(*slack.DataVisualizationBlock); chart {
+			charts++
+		}
+		if charts > slackMaxCharts {
+			return refuse("a message holds at most %d charts", slackMaxCharts)
 		}
 		if id := b.ID(); id != "" {
 			if runes(id) > slackMaxID || ids[id] {
@@ -476,6 +555,22 @@ func checkBlock(b slack.Block, refuse func(string, ...any) error) error {
 	case *slack.DataTableBlock:
 		if len(block.Rows) > cardMaxTableRows || slices.ContainsFunc(block.Rows, func(row []slack.DataTableCell) bool { return len(row) > cardMaxTableCols }) {
 			return refuse("it runs past %d rows or %d columns", cardMaxTableRows, cardMaxTableCols)
+		}
+	case *slack.DataVisualizationBlock:
+		return checkChart(block, refuse)
+	case *slack.CarouselBlock:
+		return checkCarousel(block, refuse)
+	}
+	return nil
+}
+
+func checkCarousel(c *slack.CarouselBlock, refuse func(string, ...any) error) error {
+	if n := len(c.Elements); n == 0 || n > slackMaxCarousel {
+		return refuse("it holds %d cards, not 1 to %d", n, slackMaxCarousel)
+	}
+	for _, card := range c.Elements {
+		if card.Title != nil && runes(card.Title.Text) > slackMaxCaption {
+			return refuse("a card's title is %d characters, past %d", runes(card.Title.Text), slackMaxCaption)
 		}
 	}
 	return nil
