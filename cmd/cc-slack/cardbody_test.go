@@ -78,6 +78,24 @@ func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 	}
 }
 
+func TestABodyEscapesAngleBracketsButKeepsWhatSlackReads(t *testing.T) {
+	body := "Reads `agent::of(\"<id>\")` & [the PR](https://github.com/acme/app/pull/2) for <@U123> in <#C9|ops>, as <https://x.example.com|x> said &lt;b&gt;.\n\n```go\nfunc of[T any](id string) <-chan T\n```"
+	got := strings.Join(sectionTexts(slices.Concat(bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)...)), "\n")
+	for _, want := range []string{
+		"Reads `agent::of(\"&lt;id&gt;\")` &amp; <https://github.com/acme/app/pull/2|the PR> for <@U123> in <#C9|ops>, as <https://x.example.com|x> said &lt;b&gt;.",
+		"func of[T any](id string) &lt;-chan T",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sections = %q, want %q", got, want)
+		}
+	}
+	pr := fullPR(7)
+	pr.ShowMe = "`agent::of(\"<id>\")`"
+	if shown := strings.Join(sectionTexts(pr.showMe()), "\n"); !strings.Contains(shown, "`agent::of(\"&lt;id&gt;\")`") {
+		t.Fatalf("show me = %q, want its brackets escaped once", shown)
+	}
+}
+
 func TestEveryTableInABodyDrawsAsItsOwnDataTable(t *testing.T) {
 	body := "| Who creates it | Network call per run | Who can make a database |\n|---|---|---|\n| Run's own writer | none | only the run |\n| API | one call | only the API |\n\n" +
 		"Between.\n\n| Started by | Acts as |\n|---|---|\n| a run | run:<run id> |\n| a cloud agent | env:<env id> |"
