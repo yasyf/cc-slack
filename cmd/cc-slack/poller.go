@@ -68,7 +68,8 @@ type poller struct {
 	pending map[cursorKey]uint64
 	since   map[cursorKey]string
 	streams map[string]int
-	compact map[string]bool
+	compact map[string]string
+	held    []heldAck
 }
 
 type messageNudge struct {
@@ -340,6 +341,9 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		if p.isPending(g.key) {
 			next = earliest(next, p.dueAt(g.key, c))
 		}
+	}
+	if due := p.ackHeld(ctx, db, api, id); !due.IsZero() {
+		next = earliest(next, due)
 	}
 	seq := p.replay.latest()
 	if !p.drained() {
@@ -623,6 +627,9 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 		if arrived, err = p.newToAny(ctx, db, reaching, m); err != nil {
 			return err
 		}
+	}
+	if arrived {
+		p.holdAck(ctx, db, reaching, m)
 	}
 	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates); err != nil {
 		return err

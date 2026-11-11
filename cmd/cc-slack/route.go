@@ -23,13 +23,14 @@ const (
 const (
 	eventMessage      = "slack.message"
 	eventStreamed     = "slack.message.streamed"
+	eventAcked        = "slack.message.acked"
 	eventWatchError   = "slack.watch_error"
 	eventOwnerStopped = "slack.owner_stopped"
 )
 
 func ownedType(base, agentID string) string { return base + "@" + agentID }
 
-var watchFrames = map[string]bool{eventMessage: true, eventStreamed: true, eventAction: true}
+var watchFrames = map[string]bool{eventMessage: true, eventStreamed: true, eventAcked: true, eventAction: true}
 
 func (a *app) endedWatchFrame(subjectID string, e event.Event) bool {
 	if !watchFrames[e.Type] {

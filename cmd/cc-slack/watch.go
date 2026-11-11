@@ -30,7 +30,7 @@ const (
 var cutFields = map[string]string{eventMessage: "text", eventAction: "label", eventWatchError: "error", eventOwnerStopped: "watches"}
 
 var watchedTypes = map[string]bool{
-	eventMessage: true, eventStreamed: true, eventAction: true, eventWatchError: true, eventOwnerStopped: true, agent.EventRelay: true,
+	eventMessage: true, eventStreamed: true, eventAcked: true, eventAction: true, eventWatchError: true, eventOwnerStopped: true, agent.EventRelay: true,
 }
 
 func channelEvent(typ string) bool {

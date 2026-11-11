@@ -95,7 +95,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		pending:   map[cursorKey]uint64{},
 		since:     map[cursorKey]string{},
 		streams:   map[string]int{},
-		compact:   map[string]bool{},
+		compact:   map[string]string{},
 		log:       log.New(os.Stderr, "["+binaryName+" poller] ", log.LstdFlags),
 	}
 	a := &app{
