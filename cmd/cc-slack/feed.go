@@ -462,14 +462,14 @@ func (p *poller) rereadReleases(ctx context.Context, db *sql.DB, api slackAPI, i
 func (p *poller) rereadChannel(ctx context.Context, db *sql.DB, api slackAPI, id identity, on []fedWatch, channelID string, running []string) error {
 	for _, ts := range running {
 		msgs, _, _, err := api.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{ChannelID: channelID, Timestamp: ts, Limit: 1})
-		if errorCode(err) == "thread_not_found" {
+		if err != nil {
+			if errorCode(err) != "thread_not_found" {
+				return fmt.Errorf("reread release %s/%s: %w", channelID, ts, err)
+			}
 			if err := p.feeds.release(ctx, channelID, ts, false); err != nil {
 				return err
 			}
 			continue
-		}
-		if err != nil {
-			return fmt.Errorf("reread release %s/%s: %w", channelID, ts, err)
 		}
 		r, ok := parseRelease(messageText(msgs[0]))
 		if err := p.feeds.release(ctx, channelID, ts, ok && r.running); err != nil {
