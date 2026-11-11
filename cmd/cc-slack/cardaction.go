@@ -345,6 +345,9 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 			p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 		}
 	}
+	if err == nil && res.Answered {
+		p.recordQuestionTap(ctx, id, a.ref(), k, false, a.press())
+	}
 	return err
 }
 
@@ -356,6 +359,19 @@ func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, wai
 	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": waits, "label": label, "action_ts": press.ActionTS, "source": press.Source}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", waits, label, err)
+	}
+}
+
+func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) {
+	if _, ok := p.cards.waitingPR(card.channel, card.thread, k.ID); ok || len(id.Config.PRLinks.CardCommand) == 0 {
+		return
+	}
+	answer := map[string]any{
+		"waits": k.ID, "label": k.Label, "other": k.Other, "undone": undone, "url": id.permalink(card.channel, card.ts, card.thread),
+		"action_ts": press.ActionTS, "source": press.Source,
+	}
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", k.ID, k.Label, err)
 	}
 }
 
@@ -1051,6 +1067,7 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, a cardActi
 			return fmt.Errorf("waiting ask %s is open again, but telling watch %d its answer %q was undone failed: %w", u.waits, w.ID, u.answer.Label, err)
 		}
 	}
+	p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, a.press())
 	return nil
 }
 

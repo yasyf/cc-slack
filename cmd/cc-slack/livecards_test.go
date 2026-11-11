@@ -566,6 +566,34 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 	}
 }
 
+func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "demo:j3-661440", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	picked, undone := time.Now(), time.Now().Add(time.Minute)
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Ring", Question: card.Title, Options: card.Options})),
+		ActionTS: fmt.Sprintf("%d.000100", picked.Unix()), Seq: "001800000100000-abcd0400"})
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", undone.Unix()), Seq: "001800000100000-abcd0401"})
+	answer := func(at string, undone bool) string {
+		return string(mustJSON(map[string]any{"answer": map[string]any{
+			"waits": card.Waits, "label": "Ring", "other": false, "undone": undone, "url": id.permalink(id.DMChannelID, reply.ts, reply.ts),
+			"action_ts": at, "source": "pressed the button",
+		}}))
+	}
+	want := []string{answer(fmt.Sprintf("%d.000100", picked.Unix()), false), answer(fmt.Sprintf("%d.000900", undone.Unix()), true)}
+	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %v, want his pick and then its undo, each with the card's waits id and link", got)
+	}
+}
+
 func TestUndoReopensAStrayPickForTenMinutes(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
