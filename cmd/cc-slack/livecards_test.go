@@ -30,7 +30,37 @@ import (
 const (
 	testPRURL    = "https://github.com/acme/app/pull/41"
 	testBuildURL = "https://buildkite.com/acme/deploy/builds/7"
+	fakeGHArg    = "fake-gh"
 )
+
+func fakeGHArgv(srv *httptest.Server) []string {
+	return []string{os.Args[0], fakeGHArg, srv.URL}
+}
+
+func fakeGH(url string, args []string) int {
+	req, err := http.NewRequest(http.MethodPost, url+"/graphql", os.Stdin)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	req.Header.Set("X-Ccx", strings.Join(append([]string{"GH_REPO=" + os.Getenv("GH_REPO"), "CCX_CALLER=" + os.Getenv("CCX_CALLER")}, args[:slices.Index(args, "--")]...), " "))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	_, _ = os.Stdout.Write(body)
+	var answer struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if resp.StatusCode/100 != 2 || json.Unmarshal(body, &answer) != nil || len(answer.Errors) > 0 {
+		fmt.Fprintf(os.Stderr, "gh: HTTP %d\n", resp.StatusCode)
+		return 1
+	}
+	return 0
+}
 
 type fakeRefs struct {
 	mu           sync.Mutex
@@ -75,7 +105,7 @@ func (f *fakeRefs) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	body, _ := io.ReadAll(r.Body)
-	f.queries = append(f.queries, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization")+" "+string(body))
+	f.queries = append(f.queries, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization")+r.Header.Get("X-Ccx")+" "+string(body))
 	if f.status != 0 {
 		for k, v := range f.header {
 			w.Header()[k] = v
@@ -130,7 +160,7 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 	t.Helper()
 	return &liveCards{
 		path:    t.TempDir() + "/live-cards.json",
-		client:  refClient{http: srv.Client(), githubURL: srv.URL, buildkiteURL: srv.URL, now: clock.now},
+		client:  newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, clock.now),
 		log:     log.New(io.Discard, "", 0),
 		now:     clock.now,
 		plane:   l.srv,
@@ -175,8 +205,8 @@ func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 	if len(root) != 1 || !strings.Contains(root[0], "🔄 CI running") || !strings.Contains(root[0], "🔄 build running") {
 		t.Fatalf("root edits after the first poll = %v, want PR and build state", root)
 	}
-	if q := refs.query("/graphql"); !strings.Contains(q, "Bearer ghp-test") || !strings.Contains(q, `repository(owner: \"acme\", name: \"app\")`) {
-		t.Fatalf("GitHub query = %q, want one batched query with the configured token", q)
+	if q := refs.query("/graphql"); !strings.Contains(q, "GH_REPO=acme/app CCX_CALLER=cc-slack ") || !strings.Contains(q, `repository(owner: \"acme\", name: \"app\")`) {
+		t.Fatalf("GitHub query = %q, want one batched read through ccx's gateway naming its repo and caller", q)
 	}
 	calls := refs.calls()
 	if wait := cards.tick(l.ctx); refs.calls() != calls || len(l.slack.edited()) != 1 || wait < 50*time.Second {
@@ -255,7 +285,7 @@ func TestARateLimitedCardSweepStopsThenRedrawsWhatItSkippedOnceTheLimitPasses(t 
 	}
 }
 
-func TestLiveRefsBackOffUntilTheRateLimitResets(t *testing.T) {
+func TestARefusedGitHubReadKeepsTheCardsLastStateAndBacksOff(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)
 	refs, srv := serveRefs(t)
@@ -263,29 +293,34 @@ func TestLiveRefsBackOffUntilTheRateLimitResets(t *testing.T) {
 	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
 	cards := standaloneCards(t, l, srv, clock)
 	seedLiveThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}}}, clock.now())
-	refs.limit(http.StatusForbidden, http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {fmt.Sprint(clock.now().Add(10 * time.Minute).Unix())}})
+	cards.tick(l.ctx)
+	refs.limit(http.StatusForbidden, nil)
 
-	if wait := cards.tick(l.ctx); wait < 9*time.Minute || len(l.slack.edited()) != 0 {
-		t.Fatalf("a rate-limited poll waits %s and edited %d cards, want the reset honored and no edit", wait, len(l.slack.edited()))
+	clock.advance(refPollEvery)
+	cards.tick(l.ctx)
+	clock.advance(refPollEvery)
+	if wait := cards.tick(l.ctx); wait < 2*refPollEvery || len(l.slack.edited()) != 1 {
+		t.Fatalf("a second refused poll waits %s and edited %d cards, want the backoff doubled and the card left on its last read", wait, len(l.slack.edited()))
 	}
 	calls := refs.calls()
-	clock.advance(5 * time.Minute)
+	clock.advance(refPollEvery)
 	cards.tick(l.ctx)
 	if refs.calls() != calls {
-		t.Fatalf("polled %d times inside the rate-limit window", refs.calls()-calls)
+		t.Fatalf("polled %d times inside the backoff", refs.calls()-calls)
 	}
 	refs.limit(0, nil)
-	clock.advance(6 * time.Minute)
+	refs.set(prJSON("OPEN", "SUCCESS", false), "")
+	clock.advance(refPollEvery)
 	cards.tick(l.ctx)
-	if root := editsOf(l.slack.edited(), "1800000000.000100"); len(root) != 1 || !strings.Contains(root[0], "🔄 CI running") {
-		t.Fatalf("root after the window = %v, want one redraw", root)
+	if root := editsOf(l.slack.edited(), "1800000000.000100"); len(root) != 2 || !strings.Contains(root[1], "✅ CI passed") {
+		t.Fatalf("root after the backoff = %v, want one redraw with the new state", root)
 	}
 }
 
 func TestDMStatusCardRefsGoLiveThroughTheDaemonPoller(t *testing.T) {
 	_, srv := serveRefs(t)
 	l := startDaemon(t, func(a *app) {
-		a.cards.client = refClient{http: srv.Client(), githubURL: srv.URL, buildkiteURL: srv.URL, now: time.Now}
+		a.cards.client = newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, time.Now)
 	})
 	loggedInWithRefs(t, l)
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "progress", Title: "Landing", Refs: []cardLink{{URL: testPRURL}}}})

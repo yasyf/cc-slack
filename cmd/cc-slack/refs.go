@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,12 +23,12 @@ import (
 const (
 	refPR              = "pr"
 	refBuild           = "build"
-	githubAPI          = "https://api.github.com"
 	buildkiteAPI       = "https://api.buildkite.com"
 	refTokenTTL        = 30 * time.Minute
 	refCommandTimeout  = 15 * time.Second
 	refGraphQLBatch    = 25
 	refMaxResponseSize = 4 << 20
+	refDescriptionAge  = 10 * time.Minute
 )
 
 var refNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
@@ -181,9 +184,41 @@ func (t *refToken) forget() {
 
 type refClient struct {
 	http         *http.Client
-	githubURL    string
+	gh           []string
 	buildkiteURL string
 	now          func() time.Time
+	read         *prReads
+}
+
+func newRefClient(gh []string, hc *http.Client, buildkiteURL string, now func() time.Time) refClient {
+	return refClient{http: hc, gh: gh, buildkiteURL: buildkiteURL, now: now, read: &prReads{last: map[prRead]githubPR{}}}
+}
+
+type prRead struct{ fields, ref string }
+
+type prReads struct {
+	mu   sync.Mutex
+	last map[prRead]githubPR
+}
+
+func (p *prReads) keep(fields string, found map[string]githubPR) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for k, pr := range found {
+		p.last[prRead{fields, k}] = pr
+	}
+}
+
+func (p *prReads) recall(fields string, refs []refID) map[string]githubPR {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := map[string]githubPR{}
+	for _, r := range refs {
+		if pr, ok := p.last[prRead{fields, r.key()}]; ok {
+			out[r.key()] = pr
+		}
+	}
+	return out
 }
 
 func (c refClient) do(ctx context.Context, tok *refToken, req *http.Request) ([]byte, http.Header, error) {
@@ -282,61 +317,70 @@ func (p githubPR) state() refState {
 	return s
 }
 
-func (c refClient) pullRequests(ctx context.Context, tok *refToken, refs []refID) (map[string]refState, error) {
-	out := map[string]refState{}
-	for start := 0; start < len(refs); start += refGraphQLBatch {
-		found, err := c.queryPRs(ctx, tok, refs[start:min(start+refGraphQLBatch, len(refs))])
-		for k, pr := range found {
-			out[k] = pr.state()
-		}
-		if err != nil {
-			return out, err
+func (c refClient) pullRequests(ctx context.Context, refs []refID) (map[string]refState, error) {
+	found, err := c.queryPRs(ctx, refs)
+	out := make(map[string]refState, len(found))
+	for k, pr := range found {
+		out[k] = pr.state()
+	}
+	return out, err
+}
+
+func (c refClient) queryPRs(ctx context.Context, refs []refID) (map[string]githubPR, error) {
+	return c.selectPRs(ctx, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }", 0)
+}
+
+func (c refClient) describePRs(ctx context.Context, refs []refID) (map[string]githubPR, error) {
+	return c.selectPRs(ctx, refs, "title body", refDescriptionAge)
+}
+
+func (c refClient) selectPRs(ctx context.Context, refs []refID, fields string, maxAge time.Duration) (map[string]githubPR, error) {
+	byRepo := map[string][]refID{}
+	for _, r := range refs {
+		byRepo[r.Owner+"/"+r.Repo] = append(byRepo[r.Owner+"/"+r.Repo], r)
+	}
+	out := map[string]githubPR{}
+	var errs []error
+	for _, repo := range slices.Sorted(maps.Keys(byRepo)) {
+		for batch := range slices.Chunk(byRepo[repo], refGraphQLBatch) {
+			found, err := c.readPRs(ctx, repo, batch, fields, maxAge)
+			if err != nil {
+				errs = append(errs, err)
+				found = c.read.recall(fields, batch)
+			} else {
+				c.read.keep(fields, found)
+			}
+			maps.Copy(out, found)
 		}
 	}
-	return out, nil
+	return out, errors.Join(errs...)
 }
 
-func (c refClient) queryPRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
-	return c.selectPRs(ctx, tok, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }")
-}
-
-func (c refClient) describePRs(ctx context.Context, tok *refToken, refs []refID) (map[string]githubPR, error) {
-	return c.selectPRs(ctx, tok, refs, "title body")
-}
-
-func (c refClient) selectPRs(ctx context.Context, tok *refToken, refs []refID, fields string) (map[string]githubPR, error) {
+func (c refClient) readPRs(ctx context.Context, repo string, refs []refID, fields string, maxAge time.Duration) (map[string]githubPR, error) {
 	var q strings.Builder
 	q.WriteString("query {")
 	for i, r := range refs {
 		fmt.Fprintf(&q, " p%d: repository(owner: %s, name: %s) { pullRequest(number: %d) { %s } }", i, strconv.Quote(r.Owner), strconv.Quote(r.Repo), r.Number, fields)
 	}
 	q.WriteString(" }")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.githubURL+"/graphql", bytes.NewReader(mustJSON(map[string]string{"query": q.String()})))
-	if err != nil {
-		return nil, err
+	args := slices.Clone(c.gh[1:])
+	if maxAge > 0 {
+		args = append(args, "--max-age", maxAge.String())
 	}
-	req.Header.Set("Content-Type", "application/json")
-	body, header, err := c.do(ctx, tok, req)
-	if err != nil {
-		return nil, err
-	}
+	ctx, cancel := context.WithTimeout(ctx, refCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.gh[0], append(args, "--", "api", "graphql", "--input", "-")...) //nolint:gosec // G204: argv to ccx's GitHub gateway, never a shell
+	cmd.Env = append(os.Environ(), "GH_REPO="+repo, "CCX_CALLER="+binaryName)
+	cmd.Stdin = bytes.NewReader(mustJSON(map[string]string{"query": q.String()}))
+	cmd.WaitDelay = time.Second
+	var said bytes.Buffer
+	cmd.Stderr = &said
+	answer, err := cmd.Output()
 	var res struct {
-		Data   map[string]*struct{ PullRequest *githubPR } `json:"data"`
-		Errors []struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"errors"`
+		Data map[string]*struct{ PullRequest *githubPR } `json:"data"`
 	}
-	if err := json.Unmarshal(body, &res); err != nil {
-		return nil, fmt.Errorf("decode GitHub pull requests: %w", err)
-	}
-	for _, e := range res.Errors {
-		if e.Type == "RATE_LIMITED" {
-			return nil, errRateLimited{until: c.retryAt(header)}
-		}
-	}
-	if res.Data == nil && len(res.Errors) > 0 {
-		return nil, fmt.Errorf("GitHub pull requests: %s", res.Errors[0].Message)
+	if decodeErr := json.Unmarshal(answer, &res); res.Data == nil {
+		return nil, fmt.Errorf("read %s pull requests through ccx vcs gh: %w: %s", repo, errors.Join(err, decodeErr), bytes.TrimSpace(said.Bytes()))
 	}
 	out := map[string]githubPR{}
 	for i, r := range refs {

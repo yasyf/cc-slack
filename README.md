@@ -112,7 +112,7 @@ url = "https://cards.example.com/doc-cards"
 [links]
 tailnet = "example.ts.net"
 
-# Read pull request state, and link #N to a PR in one of these repos.
+# Read pull request state through `ccx vcs gh`, and link #N to a PR in one of these repos.
 [github]
 token_command = ["gh", "auth", "token"]
 

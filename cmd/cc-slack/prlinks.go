@@ -182,10 +182,9 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 	if len(asked) == 0 {
 		return texts, nil
 	}
-	found, err := a.cards.client.queryPRs(lookup, a.cards.host(refHostGitHub, id.Config).token, asked)
+	found, err := a.cards.client.queryPRs(lookup, asked)
 	if err != nil {
-		a.poller.log.Printf("post goes out with its PR references unlinked: %v", err)
-		return texts, nil
+		a.poller.log.Printf("post links only the PR references GitHub answered before: %v", err)
 	}
 	linked := make([]string, len(texts))
 	var prs []linkedPR
@@ -905,10 +904,9 @@ func (a *app) describeCardPRs(ctx context.Context, id identity, c *statusCard) {
 	}
 	lookup, cancel := context.WithTimeout(ctx, prLookupPatience)
 	defer cancel()
-	found, err := a.cards.client.describePRs(lookup, a.cards.host(refHostGitHub, id.Config).token, refs)
+	found, err := a.cards.client.describePRs(lookup, refs)
 	if err != nil {
-		a.poller.log.Printf("card %q goes out without its PR descriptions: %v", c.Title, err)
-		return
+		a.poller.log.Printf("card %q describes only the PRs GitHub answered before: %v", c.Title, err)
 	}
 	for i, p := range prs {
 		if pr, ok := found[refs[i].key()]; ok {
