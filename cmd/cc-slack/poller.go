@@ -619,15 +619,11 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 			return err
 		}
 	}
-	acked := ""
-	if arrived {
-		acked = p.ackWhileCompacting(ctx, db, api, id, reaching, m)
-	}
-	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, acked); err != nil {
+	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates); err != nil {
 		return err
 	}
 	if rooted {
-		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates, acked); err != nil {
+		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates); err != nil {
 			return err
 		}
 	}
@@ -676,12 +672,12 @@ func (g cursorGroup) toHolder(watching []watch) []watch {
 	return []watch{relay}
 }
 
-func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates, acked string) error {
+func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates) error {
 	for _, w := range watches {
 		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		d, err := p.messageDelivery(ctx, api, id, w, m, mates, acked)
+		d, err := p.messageDelivery(ctx, api, id, w, m, mates)
 		if err != nil {
 			return err
 		}
