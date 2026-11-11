@@ -420,6 +420,15 @@ func decodeBody(hc daemon.HandlerCtx) (opBody, error) {
 	return b, err
 }
 
+func decodeRequest(hc daemon.HandlerCtx) (context.Context, opBody, error) {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return nil, b, err
+	}
+	ctx, err := withRequest(withPostWarnings(hc.Ctx), b)
+	return ctx, b, err
+}
+
 func (b *opBody) fillFromPermalink() error {
 	if b.URL == "" {
 		return nil
@@ -634,13 +643,11 @@ func (a *app) handleWhoami(hc daemon.HandlerCtx) daemon.Reply {
 
 func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 	return func(hc daemon.HandlerCtx) daemon.Reply {
-		b, err := decodeBody(hc)
+		ctx, b, err := decodeRequest(hc)
 		if err != nil {
 			return fail(err.Error())
 		}
-		if hc.Ctx, err = withRequest(withPostWarnings(hc.Ctx), b); err != nil {
-			return fail(err.Error())
-		}
+		hc.Ctx = ctx
 		extra, err := checkPost(b, hc.Env.Op, requireThread)
 		if err != nil {
 			return fail(err.Error())
@@ -2227,13 +2234,11 @@ func (a *app) handleFollows(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
-	b, err := decodeBody(hc)
+	ctx, b, err := decodeRequest(hc)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if hc.Ctx, err = withRequest(withPostWarnings(hc.Ctx), b); err != nil {
-		return fail(err.Error())
-	}
+	hc.Ctx = ctx
 	if b.Card != nil && !b.RootOnly {
 		b.Card.fill(b.Text)
 		b.Text = ""

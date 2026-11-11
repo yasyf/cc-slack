@@ -106,7 +106,7 @@ func withoutRateWait(ctx context.Context) context.Context {
 
 func newSlackClient(token, endpoint string, hc doer) slackAPI {
 	hc = retrying{hc}
-	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(requestPoster{token, workObjectPoster{token, hc}})), token, endpoint, hc}
+	return &apiClient{slack.New(token, slack.OptionAPIURL(endpoint), slack.OptionHTTPClient(requestPoster{token, endpoint, workObjectPoster{token, hc}})), token, endpoint, hc}
 }
 
 func newSlackAPI(token string) slackAPI { return newSlackClient(token, slack.APIURL, &http.Client{}) }

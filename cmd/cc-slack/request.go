@@ -84,8 +84,9 @@ func substep(ctx context.Context, step string) context.Context {
 }
 
 type requestPoster struct {
-	token string
-	next  doer
+	token    string
+	endpoint string
+	next     doer
 }
 
 func (p requestPoster) Do(req *http.Request) (*http.Response, error) {
@@ -152,9 +153,8 @@ func (p requestPoster) held(req *http.Request, form url.Values, r request, step 
 		method = methodReplies
 		query.Set("ts", thread)
 	}
-	endpoint := strings.TrimSuffix(req.URL.String(), path.Base(req.URL.Path))
 	for {
-		messages, next, err := slackMessages(req.Context(), p.next, p.token, endpoint+method, query)
+		messages, next, err := slackMessages(req.Context(), p.next, p.token, p.endpoint+method, query)
 		if err != nil {
 			return nil, fmt.Errorf("read whether Slack already holds step %s of resent request %s: %w", step, r.key, err)
 		}
