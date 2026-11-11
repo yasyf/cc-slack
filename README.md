@@ -128,6 +128,11 @@ on stdin when you answer a card whose session has ended. It prints `{"heard": tr
 reached someone, and the card closes on your pick. Anything else leaves the card open, saying your pick
 reached no one.
 
+Your pick on a question card a session holds, after it reaches that session, also goes to `card_command`
+as `{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source"}}`, and so does an Undo of
+it, with `undone` true, so the program can record your answer without the session typing it. A program that
+does not know the card exits non-zero, and the session alone keeps the answer.
+
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
 the config it was logged in with, so run `cc-slack reload` after a change.
 Reload hands the daemon the new config and keeps the bot token, socket URL,

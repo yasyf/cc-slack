@@ -206,7 +206,11 @@ thread holding a PR's answered card asks the program again, so it can draw
 the fresh card; a card is never copied into its own thread. Every other channel, a thread we posted in it included,
 gets links and no card. A tap on one of the card's options, other than Other
 or Explain more, goes to the same program as `{"answer": {"repo", "number",
-"waits", "label"}}` instead of to a session. When the program exits 0, the
+"waits", "label"}}` instead of to a session. A tap on a question card a session
+holds, Other included, goes to that session and then to the program as
+`{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source"}}`,
+and its Undo goes the same way with `undone` true, so the program records the
+answer; a program that exits non-zero leaves it with the session alone. When the program exits 0, the
 card shows the answer in place of its buttons, and so does every other open card
 offering that PR at that head: a PR card with the same `waits`, and a pick card
 whose `prs` has that one PR with the same `head` and the same answers. A tap on
