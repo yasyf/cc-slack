@@ -458,6 +458,10 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   names the event it carries, so the session gets it once: the hook skips the
   directive once the window's proven channel pushed the event, and the channel
   withholds the event once the hook delivered the directive.
+  The directive for an operator message says to act on it as operator steering.
+  A session holding the DM that posted a card naming a drive (see `drives.go`)
+  is told instead, for a DM message or one relayed to it, to ack it in one
+  sentence, then start a handler that acts on it.
   On a channel watch, every message an app posted (one with a bot id, such as
   Datadog, Sentry or Platy), root or thread reply, arrives as its first
   non-empty line, cut to 160 characters, and a mark that the whole message is
