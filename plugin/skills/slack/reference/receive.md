@@ -46,7 +46,7 @@ registration verbs are `follow --owner <agent_id>` and `unfollow`.
 
 A `<channel source="cc-slack" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
-from_claude, text, permalink}`, plus `operator: true` when the user wrote it. Monitor lines carry the same event data,
+from_claude, text, permalink}`, plus `operator: true` when the user wrote it to the bot: in your DM, mentioning the bot, or mentioning no one else in a thread this machine posted in or as a top-level message. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops a
 card's `options`, then its `question` and the thread owner's title, then the
 `permalink`, and last cuts its own words and sets `cut`. A tap's `id` is never cut.

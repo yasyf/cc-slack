@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"regexp"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -633,8 +634,12 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 	if err != nil || !route {
 		return err
 	}
+	steers, err := p.steers(ctx, db, api, id, g.key.channelID, m)
+	if err != nil {
+		return err
+	}
 	watching := slices.Concat(g.watches, g.covering)
-	if g.key.channelID != id.DMChannelID && id.fromOperator(m) {
+	if g.key.channelID != id.DMChannelID && steers {
 		watching = g.toHolder(watching)
 	}
 	rooted := len(g.sessions) > 0 && operatorRoot(id, m) && !g.held()
@@ -651,7 +656,7 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 	if arrived {
 		p.holdAck(ctx, db, reaching, m)
 	}
-	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates); err != nil {
+	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, steers); err != nil {
 		return err
 	}
 	if rooted {
@@ -704,7 +709,7 @@ func (g cursorGroup) toHolder(watching []watch) []watch {
 	return []watch{relay}
 }
 
-func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates) error {
+func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates, steers bool) error {
 	fed, err := p.feeds.fed(ctx, watches)
 	if err != nil {
 		return err
@@ -716,10 +721,10 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 		if slices.ContainsFunc(fed, func(fw fedWatch) bool { return fw.ID == w.ID }) {
 			continue
 		}
-		if !id.fromOperator(m) && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
+		if !steers && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		d, err := p.messageDelivery(ctx, api, id, w, m, mates)
+		d, err := p.messageDelivery(ctx, api, id, w, m, mates, steers)
 		if err != nil {
 			return err
 		}
@@ -781,6 +786,41 @@ func (p *poller) eyes(ctx context.Context, api slackAPI, id identity, m slack.Me
 
 func operatorRoot(id identity, m slack.Message) bool {
 	return id.fromOperator(m) && (m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp)
+}
+
+var slackMention = regexp.MustCompile(`<(?:@([UW][A-Z0-9]+)|!(?:here|channel|everyone|subteam\^[A-Z0-9]+))(?:\|[^<>]*)?>`)
+
+func (p *poller) steers(ctx context.Context, db *sql.DB, api slackAPI, id identity, channelID string, m slack.Message) (bool, error) {
+	if !id.fromOperator(m) || channelID == id.DMChannelID {
+		return id.fromOperator(m), nil
+	}
+	toPeople := false
+	for _, mention := range slackMention.FindAllStringSubmatch(m.Text, -1) {
+		if mention[1] == id.BotUserID {
+			return true, nil
+		}
+		toPeople = true
+	}
+	if toPeople || operatorRoot(id, m) {
+		return !toPeople, nil
+	}
+	return p.postedIn(ctx, db, api, id, channelID, m.ThreadTimestamp)
+}
+
+func (p *poller) postedIn(ctx context.Context, db *sql.DB, api slackAPI, id identity, channelID, threadTS string) (bool, error) {
+	read, err := p.cache.replies(ctx, api, channelID, threadTS)
+	if err != nil {
+		return false, fmt.Errorf("read %s/%s for a post of ours: %w", channelID, threadTS, err)
+	}
+	for _, m := range read.msgs {
+		if !id.botPosted(m) {
+			continue
+		}
+		if own, err := ownPost(ctx, db, channelID, m.Timestamp); err != nil || own {
+			return own, err
+		}
+	}
+	return false, nil
 }
 
 func (p *poller) routable(ctx context.Context, db *sql.DB, g cursorGroup, m slack.Message) (bool, error) {

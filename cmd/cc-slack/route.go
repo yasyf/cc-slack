@@ -118,7 +118,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates) (delivery, error) {
+func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates, steers bool) (delivery, error) {
 	thread := m.ThreadTimestamp
 	if thread == "" {
 		thread = m.Timestamp
@@ -126,7 +126,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	msg := messagePayload{
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
-		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Operator: id.fromOperator(m), Relayed: w.Relayed,
+		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Operator: steers, Relayed: w.Relayed,
 		Dashboard: typedOnDashboard(m),
 	}
 	switch {
@@ -431,7 +431,7 @@ func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int
 
 func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message, mates driveMates) error {
 	if len(sessions) == 1 {
-		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates)
+		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates, true)
 		if err != nil {
 			return err
 		}
