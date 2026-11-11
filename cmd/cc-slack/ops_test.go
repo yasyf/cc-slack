@@ -509,6 +509,33 @@ func TestAThreadShowsASharedMessageAsItsOriginalAuthorsReport(t *testing.T) {
 	}
 }
 
+func TestACardLinkedIntoAThreadReadsItsBodyOnceAndItsShowMeTable(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := statusCard{
+		Status: "needs_you", Title: "Tap the uploader fix now?", Options: []string{"Tap now", "Hold"}, Recommended: "Tap now",
+		Body: "[The fix](https://github.com/acme/app/pull/7) makes `uploader.resume` start from the highest position. I recommend tapping.\n\n*Show me*\nBefore and after one `uploader.sync`.\n\n| — | Before | After |\n|---|---|---|\n| Uploader position | 0, retries every 300 s | 32 |\n| Replica ends at | 32 | 49 |",
+	}
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, BotID: "B0CLAUDE", Text: card.text(), Blocks: slack.Blocks{BlockSet: card.replyBlocks(view())}}})
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000000.000100", BotID: "B0CLAUDE", Text: slackLink(originLink, card.Title),
+		Attachments: []slack.Attachment{{FromURL: originLink, AuthorName: "PlatClaude", Text: card.text()}},
+	}})
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	shared := res.Messages[0].Shares[0].Text
+	body := "<https://github.com/acme/app/pull/7|The fix> makes `uploader.resume` start from the highest position. I recommend tapping."
+	if strings.Count(shared, body) != 1 || strings.Count(shared, card.Title) != 1 {
+		t.Fatalf("shared card reads %q, want its title and body once each", shared)
+	}
+	if !strings.Contains(shared, "| — | Before | After |\n| --- | --- | --- |\n| Uploader position | 0, retries every 300 s | 32 |\n| Replica ends at | 32 | 49 |") {
+		t.Fatalf("shared card reads %q, want its Show me table row by row", shared)
+	}
+}
+
 func TestHistoryResolvesASharedMessage(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1663,6 +1690,22 @@ func TestMessageTextAppendsAttachmentsAndBlocks(t *testing.T) {
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, ":x: Deploy cloudrunner-next on AIG failed. <https://buildkite.com/forge/release/builds/13589|Open the job>\nNext: `tools/ci release resume nascent-brossa`", false, false), nil, nil),
 			}}},
 			":x: Deploy cloudrunner-next on AIG failed. <https://buildkite.com/forge/release/builds/13589|Open the job>\nNext: `tools/ci release resume nascent-brossa`",
+		},
+		{
+			"a card's notification text joining the title its header draws to the body its section draws",
+			slack.Msg{Text: ":raising_hand: Tap now? — The fix lands it.", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, ":raising_hand: Tap now?", true, false)),
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "The fix lands it.\n*Show me*\nBefore and after one sync.", false, false), nil, nil),
+				tableBlock([][]string{{"—", "Before", "After"}, {"Replica ends at", "32", "<https://acme.dev/49|49>"}}),
+			}}},
+			":raising_hand: Tap now?\nThe fix lands it.\n*Show me*\nBefore and after one sync.\n| — | Before | After |\n| --- | --- | --- |\n| Replica ends at | 32 | <https://acme.dev/49|49> |",
+		},
+		{
+			"a notification text keeps the piece its blocks leave out",
+			slack.Msg{Text: "Deploy failed — see the job", Blocks: slack.Blocks{BlockSet: []slack.Block{
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "see the job <https://buildkite.com/forge/release/builds/13589|13589>", false, false), nil, nil),
+			}}},
+			"Deploy failed\nsee the job <https://buildkite.com/forge/release/builds/13589|13589>",
 		},
 		{
 			"attachment fields and blocks",

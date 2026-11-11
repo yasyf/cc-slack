@@ -1415,7 +1415,8 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 }
 
 func messageText(m slack.Message) string {
-	parts := append([]string{sectionedText(m)}, blockTexts(m.Blocks)...)
+	blocks := blockTexts(m.Blocks)
+	parts := append([]string{notificationText(m, blocks)}, blocks...)
 	for _, at := range m.Attachments {
 		if ref, shared := shareRef(at); shared {
 			parts = append(parts, fmt.Sprintf("Shared from %s in <#%s>: %s", shareAuthor(at), ref.channelID, cmp.Or(at.Text, at.Fallback)))
@@ -1503,15 +1504,94 @@ func blockTexts(blocks slack.Blocks) []string {
 					button(e)
 				}
 			}
+		case *slack.DataTableBlock:
+			out = append(out, tableText(b))
+		case *slack.DataVisualizationBlock:
+			out = append(out, b.Title)
 		}
 	}
 	return out
 }
 
-func sectionedText(m slack.Message) string {
+func tableText(table *slack.DataTableBlock) string {
+	lines := make([]string, 0, len(table.Rows)+1)
+	for i, row := range table.Rows {
+		cells := make([]string, len(row))
+		for j, cell := range row {
+			cells[j] = cellText(cell)
+		}
+		lines = append(lines, "| "+strings.Join(cells, " | ")+" |")
+		if i == 0 {
+			lines = append(lines, "|"+strings.Repeat(" --- |", len(row)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func cellText(cell slack.DataTableCell) string {
+	switch c := cell.(type) {
+	case *slack.DataTableRawTextCell:
+		return c.Text
+	case *slack.DataTableRawNumberCell:
+		return cmp.Or(c.Text, strconv.FormatFloat(c.Value, 'f', -1, 64))
+	case *slack.DataTableRichTextCell:
+		var text strings.Builder
+		for _, element := range c.Elements {
+			if section, ok := element.(*slack.RichTextSection); ok {
+				for _, e := range section.Elements {
+					text.WriteString(richTextWords(e))
+				}
+			}
+		}
+		return text.String()
+	}
+	panic(fmt.Sprintf("data_table cell of type %s", cell.DataTableCellType()))
+}
+
+func richTextWords(e slack.RichTextSectionElement) string {
+	switch w := e.(type) {
+	case *slack.RichTextSectionTextElement:
+		switch {
+		case w.Style != nil && w.Style.Code:
+			return "`" + w.Text + "`"
+		case w.Style != nil && w.Style.Bold:
+			return "*" + w.Text + "*"
+		}
+		return w.Text
+	case *slack.RichTextSectionLinkElement:
+		return slackLink(w.URL, cmp.Or(w.Text, w.URL))
+	case *slack.RichTextSectionEmojiElement:
+		return ":" + w.Name + ":"
+	case *slack.RichTextSectionUserElement:
+		return "<@" + w.UserID + ">"
+	case *slack.RichTextSectionChannelElement:
+		return "<#" + w.ChannelID + ">"
+	}
+	return ""
+}
+
+func notificationText(m slack.Message, blocks []string) string {
+	full, rebuilt := sectionedText(m)
+	if rebuilt || len(blocks) == 0 {
+		return full
+	}
+	drawn := strings.Join(strings.Fields(strings.Join(blocks, "\n")), " ")
+	var lines []string
+	for line := range strings.SplitSeq(m.Text, "\n") {
+		unsaid := slices.DeleteFunc(strings.Split(line, " — "), func(piece string) bool {
+			return strings.Contains(drawn, strings.Join(strings.Fields(strings.TrimSuffix(strings.TrimSpace(piece), "…")), " "))
+		})
+		if len(unsaid) > 0 {
+			lines = append(lines, strings.Join(unsaid, " — "))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sectionedText(m slack.Message) (string, bool) {
 	prefix, short := strings.CutSuffix(m.Text, "…")
 	if !short {
-		return m.Text
+		return m.Text, false
 	}
 	var full strings.Builder
 	for _, block := range m.Blocks.BlockSet {
@@ -1520,9 +1600,9 @@ func sectionedText(m slack.Message) string {
 		}
 	}
 	if full.Len() <= len(prefix) || !strings.HasPrefix(full.String(), prefix) {
-		return m.Text
+		return m.Text, false
 	}
-	return full.String()
+	return full.String(), true
 }
 
 func (a *app) handleChannels(hc daemon.HandlerCtx) daemon.Reply {
