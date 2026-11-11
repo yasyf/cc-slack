@@ -687,6 +687,81 @@ func TestUsersMatchesHandleDisplayRealNameAndEmailIgnoringCase(t *testing.T) {
 	}
 }
 
+func TestUsersFindsAnIDOrExactEmailWhileUsersListFails(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	ada := &slack.User{ID: "U0123ABCDE", Name: "alovelace", RealName: "Ada Lovelace", Profile: slack.UserProfile{DisplayName: "Ada", Email: "ada@example.com"}}
+	l.slack.setUser(ada)
+	l.slack.setUser(&slack.User{ID: "U0GONE0001", Name: "cbabbage", RealName: "Charles Babbage", Deleted: true, Profile: slack.UserProfile{Email: "charles@example.com"}})
+	fatal := slack.SlackErrorResponse{Err: "fatal_error"}
+	users := func(query string) []userInfo {
+		t.Helper()
+		var res usersResult
+		if err := json.Unmarshal(l.do(opUsers, map[string]string{"query": query}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.Users
+	}
+	refusal := func(query string) string {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]string{"query": query})
+		_, err := invoke(l.ctx, l.deps, testSession, "/any", opUsers, raw)
+		if err == nil {
+			t.Fatalf("users %q succeeded, want a refusal", query)
+		}
+		return err.Error()
+	}
+
+	l.slack.fail("users.list", fatal)
+	got := refusal("lovelace")
+	for _, want := range []string{"Slack's users.list answered fatal_error", "users.info", "users.lookupByEmail", mcpUsers} {
+		if !strings.Contains(got, want) {
+			t.Errorf("users.list refusal = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "conversation") {
+		t.Errorf("users.list refusal = %q, want no word of reading a conversation", got)
+	}
+
+	l.slack.fail("users.list", fatal)
+	l.slack.fail("users.list", fatal)
+	want := []userInfo{{ID: "U0123ABCDE", Name: "alovelace", DisplayName: "Ada", RealName: "Ada Lovelace", Email: "ada@example.com"}}
+	if got := users("U0123ABCDE"); !slices.Equal(got, want) {
+		t.Fatalf("users by id = %+v, want %+v", got, want)
+	}
+	if got := users("ada@example.com"); !slices.Equal(got, want) {
+		t.Fatalf("users by email = %+v, want %+v", got, want)
+	}
+	for _, query := range []string{"U0NOBODY01", "nobody@example.com", "U0GONE0001", "charles@example.com"} {
+		if got := users(query); len(got) != 0 {
+			t.Fatalf("users %q = %+v, want none", query, got)
+		}
+	}
+	if n := l.slack.callCount("users.list"); n != 1 {
+		t.Fatalf("users.list calls = %d, want only the name query's", n)
+	}
+
+	l.slack.fail("users.info", fatal)
+	if got := refusal("U0123ABCDE"); !strings.Contains(got, "Slack's users.info answered fatal_error") {
+		t.Fatalf("users.info refusal = %q", got)
+	}
+	l.slack.fail("users.lookupByEmail", fatal)
+	if got := refusal("ada@example.com"); !strings.Contains(got, "Slack's users.lookupByEmail answered fatal_error") {
+		t.Fatalf("users.lookupByEmail refusal = %q", got)
+	}
+}
+
+func TestChannelsNamesConversationsListWhenItFails(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.fail("conversations.list", slack.SlackErrorResponse{Err: "fatal_error"})
+	raw, _ := json.Marshal(map[string]string{})
+	_, err := invoke(l.ctx, l.deps, testSession, "/any", opChannels, raw)
+	if err == nil || !strings.Contains(err.Error(), "Slack's conversations.list answered fatal_error") || !strings.Contains(err.Error(), mcpChannels) {
+		t.Fatalf("conversations.list refusal = %v", err)
+	}
+}
+
 func TestPostsWatchTheirThreadUnlessToldNotTo(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
