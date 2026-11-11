@@ -580,8 +580,29 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Ring", Question: card.Title, Options: card.Options})),
 		ActionTS: fmt.Sprintf("%d.000100", picked.Unix()), Seq: "001800000100000-abcd0400"})
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `answered the waiting ask "demo:j3-661440" with "Ring"`) ||
+		!strings.Contains(got, "post no record or capture of it") || strings.Contains(got, "hand it to that lane") || strings.Contains(got, `answered "Which store keeps the tally?" with "Ring" at `) {
+		t.Fatalf("directive = %q, want his answer named as the card command's one record, with no hand-off and no capture", got)
+	}
+	var tap map[string]any
+	for _, raw := range l.channelPayloads() {
+		var got map[string]any
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["type"] == eventAction && got["label"] == "Ring" {
+			tap = got
+		}
+	}
+	if _, captured := tap["capture"]; tap["recorded"] != true || captured {
+		t.Fatalf("tap payload = %v, want recorded and no capture, so no session records it again", tap)
+	}
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", undone.Unix()), Seq: "001800000100000-abcd0401"})
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "treat it as never given") || !strings.Contains(got, "post no record of it") ||
+		strings.Contains(got, "Tell the lane that asked") {
+		t.Fatalf("directive = %q, want the undo named as the card command's one record, with no hand-off", got)
+	}
 	answer := func(at string, undone bool) string {
 		return string(mustJSON(map[string]any{"answer": map[string]any{
 			"waits": card.Waits, "label": "Ring", "other": false, "undone": undone, "url": id.permalink(id.DMChannelID, reply.ts, reply.ts),
@@ -591,6 +612,27 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	want := []string{answer(fmt.Sprintf("%d.000100", picked.Unix()), false), answer(fmt.Sprintf("%d.000900", undone.Unix()), true)}
 	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
 		t.Fatalf("card command asked %v, want his pick and then its undo, each with the card's waits id and link", got)
+	}
+}
+
+func TestATapTheCardCommandRefusesStaysWithTheSessionToHandOnAndCapture(t *testing.T) {
+	refusing := filepath.Join(t.TempDir(), "card")
+	if err := os.WriteFile(refusing, []byte("#!/bin/sh\ncase \"$(cat)\" in\n*'\"answer\"'*) exit 1 ;;\nesac\necho '{\"cards\":[],\"prs\":[]}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{refusing}})
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "tally-store", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Ring", Question: card.Title, Options: card.Options})),
+		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0410"})
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "hand it to that lane now") || !strings.Contains(got, `answered "Which store keeps the tally?" with "Ring" at `) {
+		t.Fatalf("directive = %q, want the hand-off and the capture, since the card command did not take his answer", got)
 	}
 }
 

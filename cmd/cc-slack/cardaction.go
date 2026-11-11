@@ -74,6 +74,7 @@ type actionPayload struct {
 	NotesLabel  string   `json:"notes_label,omitempty"`
 	PosterEnded bool     `json:"poster_ended,omitempty"`
 	Undo        bool     `json:"undo,omitempty"`
+	Recorded    bool     `json:"recorded,omitempty"`
 	Permalink   string   `json:"permalink"`
 }
 
@@ -149,6 +150,7 @@ type waitsAnswer struct {
 	viaName   string
 	dedup     string
 	undo      string
+	press     cardPress
 	settled   bool
 	withdrawn bool
 }
@@ -253,12 +255,16 @@ func cardSource(id identity, how, posted, permalink string) string {
 	return fmt.Sprintf("%s from %s, your operator, on your status card posted %s (%s)", how, id.name(), posted, permalink)
 }
 
-func tapLine(who, permalink string, k askTap, capture string) string {
+func tapLine(who, permalink string, k askTap, capture string, recorded bool) string {
 	if k.Explain {
 		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply with `cc-present reply --block %q --body <answer>` when the card is on a cc-present board, "+
 			"otherwise with slack_dm_status text and about %q; either way the reply opens with a link back to <%s|this card>. "+
 			"Say the question in plain words and what each answer would do. The lane that asked stays stopped until they tap an answer.",
 			who, k.ID, k.ID, k.ID, permalink)
+	}
+	if k.Waits && recorded {
+		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. Your card command already posted this answer as the one record the lane that asked reads: "+
+			"post no record or capture of it.", who, k.ID, k.Label)
 	}
 	if k.Waits {
 		record := "record the capture in cc-notes"
@@ -338,15 +344,12 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 	}
 	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
-		dedup: tapKey(a), undo: undo,
+		dedup: tapKey(a), undo: undo, press: a.press(),
 	})
 	if err == nil && res.Answered && !k.Other {
 		if !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, undo) {
 			p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 		}
-	}
-	if err == nil && res.Answered {
-		p.recordQuestionTap(ctx, id, a.ref(), k, false, a.press())
 	}
 	return err
 }
@@ -362,9 +365,9 @@ func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, wai
 	}
 }
 
-func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) {
+func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) bool {
 	if _, ok := p.cards.waitingPR(card.channel, card.thread, k.ID); ok || len(id.Config.PRLinks.CardCommand) == 0 {
-		return
+		return false
 	}
 	answer := map[string]any{
 		"waits": k.ID, "label": k.Label, "other": k.Other, "undone": undone, "url": id.permalink(card.channel, card.ts, card.thread),
@@ -372,7 +375,9 @@ func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRe
 	}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", k.ID, k.Label, err)
+		return false
 	}
+	return true
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
@@ -489,7 +494,7 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 	}
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
 	capture := captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)
-	line := tapLine(who, permalink, k, capture) +
+	line := tapLine(who, permalink, k, capture, false) +
 		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
@@ -688,7 +693,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	if p.tapDrawn(a.ref(), tappedAt, err) != nil {
 		p.log.Printf("card action %s on %s: the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
-	line := tapLine(who, permalink, k, "")
+	line := tapLine(who, permalink, k, "", false)
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
@@ -928,13 +933,17 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	p.react(ctx, id, w.card, cardAnsweredReaction)
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
-	capture := captureLine(id, w.tap, w.at, w.where)
-	line := tapLine(w.source, permalink, w.tap, capture)
+	recorded := w.via == "" && p.recordQuestionTap(ctx, id, w.card, w.tap, false, w.press)
+	capture, notesLabel := "", ""
+	if !recorded {
+		capture, notesLabel = captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap)
+	}
+	line := tapLine(w.source, permalink, w.tap, capture, recorded)
 	for _, watch := range watches {
 		msg := actionPayload{
 			WatchID: watch.ID, ChannelID: w.card.channel, ThreadTS: w.card.thread, TS: w.card.ts, ActionTS: w.actionTS, Label: w.tap.Label, ID: w.tap.ID,
 			Waits: true, Other: w.other, Question: w.tap.Question, Options: w.tap.Options, Via: w.via,
-			Capture: capture, NotesLabel: slackLabel(w.tap), Permalink: permalink,
+			Capture: capture, NotesLabel: notesLabel, Recorded: recorded, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, watch, delivery{
 			base:   eventAction,
@@ -1093,12 +1102,17 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 		return err
 	}
 	who := cardSource(id, how, slackTime(u.card.ts).In(pacific).Format(cardTimeLayout), permalink)
+	recorded := p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, press)
 	line := fmt.Sprintf("%s: %s to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
 		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, why, u.waits)
+	if recorded {
+		line = fmt.Sprintf("%s: %s to the waiting ask %q, so treat it as never given. Your card command already posted the undo as the one record "+
+			"the lane that asked reads: post no record of it; the card waits for their answer again.", who, why, u.waits)
+	}
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: u.card.channel, ThreadTS: u.card.thread, TS: u.card.ts, ActionTS: press.ActionTS, Label: u.answer.Label, ID: u.waits,
-			Waits: true, Other: u.answer.Other, Question: u.question, Undo: true, Permalink: permalink,
+			Waits: true, Other: u.answer.Other, Question: u.question, Undo: true, Recorded: recorded, Permalink: permalink,
 		}
 		if err := p.deliver(ctx, db, w, delivery{
 			base:   eventAction,
@@ -1113,7 +1127,6 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 			return fmt.Errorf("waiting ask %s is open again, but telling watch %d its answer %q was undone failed: %w", u.waits, w.ID, u.answer.Label, err)
 		}
 	}
-	p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, press)
 	return nil
 }
 

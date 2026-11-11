@@ -128,10 +128,10 @@ on stdin when you answer a card whose session has ended. It prints `{"heard": tr
 reached someone, and the card closes on your pick. Anything else leaves the card open, saying your pick
 reached no one.
 
-Your pick on a question card a session holds, after it reaches that session, also goes to `card_command`
+Your pick on a question card a session holds goes to `card_command` before it reaches that session,
 as `{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source"}}`, and so does an Undo of
-it, with `undone` true, so the program can record your answer without the session typing it. A program that
-does not know the card exits non-zero, and the session alone keeps the answer.
+it, with `undone` true, so the program records your answer once and the session is told to post no record of
+it. A program that does not know the card exits non-zero, and the session alone keeps the answer.
 
 A release post in a channel a session's feed watches for releases also goes to `card_command` as
 `{"release": {"name", "line", "link"}}`, once each time its line changes, `line` being what follows
