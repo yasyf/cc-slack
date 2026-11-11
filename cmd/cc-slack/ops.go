@@ -17,8 +17,10 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -896,6 +898,7 @@ func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error
 func publish(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
 	if len(files) == 0 {
 		text, blocks = fitText(text, blocks)
+		text, blocks = freshMessageLinks(text, blocks, strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36))
 		opts := id.postOptions(text, threadTS, extra...)
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
@@ -913,6 +916,56 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 		return postImages(ctx, api, record, id, channelID, threadTS, text, blocks, files, extra...)
 	}
 	return shareFiles(ctx, api, id, channelID, threadTS, text, files)
+}
+
+var freshPosts atomic.Int64
+
+func freshMessageLinks(text string, blocks []slack.Block, post string) (string, []slack.Block) {
+	fresh := make([]slack.Block, len(blocks))
+	for i, block := range blocks {
+		switch b := block.(type) {
+		case *slack.SectionBlock:
+			section := *b
+			section.Text = freshTextObject(b.Text, post)
+			section.Fields = make([]*slack.TextBlockObject, len(b.Fields))
+			for j, field := range b.Fields {
+				section.Fields[j] = freshTextObject(field, post)
+			}
+			fresh[i] = &section
+		case *slack.ContextBlock:
+			line := *b
+			line.ContextElements.Elements = make([]slack.MixedElement, len(b.ContextElements.Elements))
+			for j, element := range b.ContextElements.Elements {
+				if t, ok := element.(*slack.TextBlockObject); ok {
+					element = freshTextObject(t, post)
+				}
+				line.ContextElements.Elements[j] = element
+			}
+			fresh[i] = &line
+		default:
+			fresh[i] = block
+		}
+	}
+	return freshLinks(text, post), fresh
+}
+
+func freshTextObject(t *slack.TextBlockObject, post string) *slack.TextBlockObject {
+	if t == nil {
+		return nil
+	}
+	fresh := *t
+	fresh.Text = freshLinks(t.Text, post)
+	return &fresh
+}
+
+func freshLinks(text, post string) string {
+	return messageLink.ReplaceAllStringFunc(text, func(link string) string {
+		joint := "?"
+		if strings.Contains(link, "?") {
+			joint = "&"
+		}
+		return link + joint + freshLinkParam + "=" + post
+	})
 }
 
 func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
