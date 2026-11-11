@@ -198,13 +198,6 @@ func waitingPRs(id identity, channelID string, b opBody) []string {
 	return prs
 }
 
-func tapCardsOwed(err error, waiting []string) error {
-	if len(waiting) == 0 {
-		return err
-	}
-	return fmt.Errorf("%w; this post says something waits on him, so each PR it links draws its tap card under it: name a PR he has nothing to tap in a post that waits on nothing", err)
-}
-
 func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) error {
 	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || len(b.TapPRs) > 0 || tapCardsRefused(id, channelID) != "" && len(linkedPRRefs(b.Text)) > 0 || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
 		return nil

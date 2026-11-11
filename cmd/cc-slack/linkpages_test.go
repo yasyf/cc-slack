@@ -117,15 +117,15 @@ func TestAPostThatWaitsOnHimDrawsTheTapCardOfEachPRItLinks(t *testing.T) {
 	}
 }
 
-func TestAPostThatWaitsOnHimIsRefusedWhenAPRItLinksDrawsNoCard(t *testing.T) {
+func TestAPostThatWaitsOnHimGoesOutLinkingAPRWhoseCardDoesNotDraw(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.refused(opDMStatus, map[string]any{"text": waitsOn41}, "so each PR it links draws its tap card under it")
-	if sent := l.slack.sentTo(testDM); len(sent) != 0 {
-		t.Fatalf("a waiting post whose PR drew no card sent %+v, want nothing", sent)
+	l.do(opDMStatus, map[string]any{"text": waitsOn41})
+	if sent := l.slack.sentTo(testDM); len(sent) != 1 || !strings.Contains(sent[0].text, tapPR41[0]) {
+		t.Fatalf("a waiting post whose PR drew no card sent %+v, want it once with the PR's link", sent)
 	}
 	l.do(opDMStatus, map[string]any{"text": "<" + tapPR41[0] + "|#41> merged at 6:40pm."})
-	if sent := l.slack.sentTo(testDM); len(sent) != 1 {
-		t.Fatalf("a post that waits on nothing sent %+v, want it alone", sent)
+	if sent := l.slack.sentTo(testDM); len(sent) != 2 {
+		t.Fatalf("a post that waits on nothing sent %+v, want it after the first", sent)
 	}
 }

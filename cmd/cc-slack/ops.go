@@ -670,8 +670,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
-		waiting := waitingPRs(id, channelID, b)
-		b.TapPRs = append(b.TapPRs, waiting...)
+		asked := slices.Clone(b.TapPRs)
+		b.TapPRs = append(b.TapPRs, waitingPRs(id, channelID, b)...)
 		texts, crowded := b.pagesIn(id, channelID)
 		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b), crowded); err != nil {
 			return fail(err.Error())
@@ -692,11 +692,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts)
-		asked := slices.Clone(b.TapPRs)
 		b.TapPRs = append(b.TapPRs, ready...)
 		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
 		if err != nil {
-			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, tapCardsOwed(err, waiting).Error()))
+			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
 		extra = append(extra, slack.MsgOptionAttachments(pages[0].previews...))
 		var res postResult
@@ -2414,8 +2413,8 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	waiting := waitingPRs(id, id.DMChannelID, b)
-	b.TapPRs = append(b.TapPRs, waiting...)
+	asked := slices.Clone(b.TapPRs)
+	b.TapPRs = append(b.TapPRs, waitingPRs(id, id.DMChannelID, b)...)
 	texts, crowded := b.pagesIn(id, id.DMChannelID)
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
@@ -2438,7 +2437,6 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	pages, ready := a.dmPagesOf(hc, id, b, blocks, texts)
 	msg := pages[0].msg
-	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, ready...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag)
@@ -2446,7 +2444,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
 	}
-	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked, waiting)
+	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2564,7 +2562,7 @@ func (a *app) refuseClosedPost(ctx context.Context, id identity, card statusCard
 	return fail(fmt.Errorf("waiting card %q replaces %s, a card with no answer left to tap; %w", card.Waits, card.Replaces, errAskedAgain).Error()), true
 }
 
-func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked, waiting []string) (string, tapCards, error) {
+func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string) (string, tapCards, error) {
 	under := b.ThreadTS
 	if b.About != "" {
 		if b.Card != nil || b.Text == "" {
@@ -2580,7 +2578,7 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	}
 	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, asked)
 	if err != nil {
-		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", tapCardsOwed(err, waiting))
+		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", err)
 	}
 	return under, taps, nil
 }
