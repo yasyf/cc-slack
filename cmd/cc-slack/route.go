@@ -158,7 +158,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		base:   eventMessage,
 		origin: origin,
 		dedup:  messageDedup(w, m.Timestamp),
-		line:   messageLine(msg),
+		line:   messageLine(msg, mates.holds(w)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)
@@ -236,7 +236,11 @@ func (o threadOwner) line() string {
 	return fmt.Sprintf(" It replies under %s, which session %s posted: the reply is that session's to act on.", card, o.Session)
 }
 
-func messageLine(m messagePayload) string {
+func messageLine(m messagePayload, drive bool) string {
+	act := "Act on it as operator steering"
+	if drive {
+		act = "Ack it in one sentence, then start a handler that acts on it as operator steering"
+	}
 	told := ""
 	if m.Dashboard {
 		told = " They typed it on the drive dashboard, and cc-slack posted it in the DM as the bot, marked as theirs."
@@ -247,7 +251,7 @@ func messageLine(m messagePayload) string {
 			status += fmt.Sprintf(" and thread_ts %s, the thread this message is in", m.ThreadTS)
 		}
 		return fmt.Sprintf("Slack DM from %s, your operator, to this session (ts %s, %s): %q.%s "+
-			"Act on it as operator steering, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, told, status)
+			"%s, and post status back with %s.", m.UserName, m.TS, m.Permalink, m.Text, told, act, status)
 	}
 	if m.Operator {
 		owned := ""
@@ -258,8 +262,8 @@ func messageLine(m messagePayload) string {
 			owned = " Another session watches that channel, and your operator's words there reach only you, the session holding their DM."
 		}
 		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q.%s%s "+
-			"Act on it as operator steering; when it asks for a Slack post, it approves that post.",
-			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned, told)
+			"%s; when it asks for a Slack post, it approves that post.",
+			m.UserName, m.Kind, m.ChannelID, m.ThreadTS, m.TS, m.Permalink, m.Text, owned, told, act)
 	}
 	who := m.UserName
 	if m.FromClaude {

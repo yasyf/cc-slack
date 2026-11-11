@@ -419,7 +419,11 @@ func TestWrittenInAnswerFromTheOtherModalAnswersTheCardOnce(t *testing.T) {
 	}
 }
 
-func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsNothing(t *testing.T) {
+func newCardLinked(blocks string, c postedCard) bool {
+	return strings.Contains(blocks, cardRewordedLine) && strings.Contains(blocks, "/p"+strings.ReplaceAll(c.ts, ".", ""))
+}
+
+func TestAReusedOpenWaitsIDWithNewWordsPostsTheCardAgainAndPointsTheOldOneAtIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -431,14 +435,16 @@ func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsNothing(t *testing.T) {
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
 	c2 := postWaiting(t, l, redrawn)
-	if c2.ts != c.ts {
-		t.Fatalf("redraw landed at %s, want the card at %s edited in place", c2.ts, c.ts)
+	sent := l.slack.sent()[posts:]
+	if c2.ts == c.ts || len(sent) != 1 || sent[0].ts != c2.ts || !strings.Contains(sent[0].blocks, "Merge #41 before the freeze?") || !strings.Contains(sent[0].blocks, cardWaitAction) {
+		t.Fatalf("new words landed at %s with posts %+v, want the new version posted once with its buttons", c2.ts, sent)
 	}
-	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") {
-		t.Fatalf("card edits %v, want the new question drawn over the old card", edits)
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 {
+		t.Fatal("the old card was left as it was")
 	}
-	if sent := l.slack.sent()[posts:]; len(sent) != 0 {
-		t.Fatalf("posts after the redraw = %+v, want none: the card is edited in place", sent)
+	if old := edits[len(edits)-1]; !strings.Contains(old, "Merge #41 before the freeze?") || strings.Contains(old, cardWaitAction) || !newCardLinked(old, c2) {
+		t.Fatalf("old card redrawn as %s, want its new words, no buttons, and a line linking the new card", old)
 	}
 	answerOnBoard(t, l, c2, "Merge")
 	raw := mustJSON(map[string]any{"card": redrawn})
@@ -447,7 +453,28 @@ func TestReusedOpenWaitsIDEditsTheCardInPlaceAndPostsNothing(t *testing.T) {
 	}
 }
 
-func TestARedrawWithdrawsTheCardsCopies(t *testing.T) {
+func TestAnInPlaceRedrawWithNewWordsEditsTheCardWhereItSitsAndPostsNothing(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, mergeCard())
+	posts := len(l.slack.sent())
+
+	redone := mergeCard()
+	redone.Body, redone.InPlace = "Being redone: the merge order changed.\nCI is green.", true
+	again := postWaiting(t, l, redone)
+
+	if again.ts != c.ts || len(l.slack.sent()) != posts {
+		t.Fatalf("an in-place redraw landed at %s with %d new posts, want the card at %s edited and nothing posted", again.ts, len(l.slack.sent())-posts, c.ts)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Being redone") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want the new words drawn where it sits with its buttons", edits)
+	}
+	if back := postWaiting(t, l, mergeCard()); back.ts == c.ts || len(l.slack.sent()) != posts+1 {
+		t.Fatalf("new words after the in-place redraw landed at %s, want the new version posted once", back.ts)
+	}
+}
+
+func TestNewWordsWithdrawTheCardsCopies(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
@@ -456,15 +483,15 @@ func TestARedrawWithdrawsTheCardsCopies(t *testing.T) {
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
 	posts := len(l.slack.sent())
-	postWaiting(t, l, redrawn)
+	c2 := postWaiting(t, l, redrawn)
 	redrawn.Title = "Merge #41 after the freeze?"
 	postWaiting(t, l, redrawn)
 
-	if len(l.slack.sent()) != posts {
-		t.Fatalf("two redraws posted %d messages, want none", len(l.slack.sent())-posts)
+	if len(l.slack.sent()) != posts+2 {
+		t.Fatalf("two rewords posted %d messages, want each new version once", len(l.slack.sent())-posts)
 	}
-	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !strings.Contains(edits[0], cardRedrawnLine) || strings.Contains(edits[0], cardCopyAction) {
-		t.Fatalf("copy edits = %v, want the copy withdrawn once to a line linking the card, with no buttons", edits)
+	if edits := editsOf(l.slack.edited(), copied.TS); len(edits) != 1 || !newCardLinked(edits[0], c2) || strings.Contains(edits[0], cardCopyAction) {
+		t.Fatalf("copy edits = %v, want the copy withdrawn once to a line linking the new card, with no buttons", edits)
 	}
 }
 
@@ -723,7 +750,7 @@ func TestAReplyAboutAWaitingCardLandsInThatCardsThread(t *testing.T) {
 	}
 }
 
-func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsNothing(t *testing.T) {
+func TestAMirroredCardLandsAtTheDMRootAndNewWordsPostItAgainInTheThreadNamed(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
@@ -734,8 +761,11 @@ func TestAMirroredCardLandsAtTheDMRootAndARedrawEditsItAndPostsNothing(t *testin
 	redrawn.Title = "Merge #41 before the freeze?"
 	again := mirroredCard(t, l, map[string]any{"card": redrawn, "thread_ts": c.thread})
 	sent := l.slack.sent()
-	if again.ts != c.ts || again.thread != c.thread || len(sent) != 1 || len(editsOf(l.slack.edited(), c.ts)) != 1 {
-		t.Fatalf("a redraw gave %+v over %+v with posts %+v: want the same message edited and nothing posted", again, c, sent)
+	if again.ts == c.ts || again.thread != c.thread || len(sent) != 2 || sent[1].ts != again.ts || sent[1].threadTS != c.thread {
+		t.Fatalf("new words gave %+v over %+v with posts %+v: want the new version posted in the thread named", again, c, sent)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) != 1 || !newCardLinked(edits[0], again) {
+		t.Fatalf("old card edits = %v, want it pointed at the new version once", edits)
 	}
 }
 
@@ -938,11 +968,14 @@ func TestNewWordsOnAnOpenBoardCardStillAskItAgain(t *testing.T) {
 	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
 
 	sent, edits := l.slack.sent(), editsOf(l.slack.edited(), c.ts)
-	if again.ts != c.ts || len(sent) != 1 || len(edits) != 1 {
-		t.Fatalf("new words on an open card gave %+v with posts %+v and edits %v, want it edited in place and nothing posted", again, sent, edits)
+	if again.ts == c.ts || len(sent) != 2 || len(edits) != 1 {
+		t.Fatalf("new words on an open card gave %+v with posts %+v and edits %v, want the new version posted and the old card edited once", again, sent, edits)
 	}
-	if !strings.Contains(edits[0], "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(edits[0], cardWaitAction) {
-		t.Fatalf("open card redrawn as %s, want the new title and its buttons", edits[0])
+	if !strings.Contains(sent[1].blocks, "Port, old tree to new: dev #41: Merge it now?") || !strings.Contains(sent[1].blocks, cardWaitAction) {
+		t.Fatalf("new version posted as %s, want the new title and its buttons", sent[1].blocks)
+	}
+	if !strings.Contains(edits[0], "Port, old tree to new: dev #41: Merge it now?") || strings.Contains(edits[0], cardWaitAction) || !newCardLinked(edits[0], again) {
+		t.Fatalf("old card redrawn as %s, want the new title, no buttons, and a line linking the new version", edits[0])
 	}
 }
 
@@ -984,23 +1017,20 @@ func TestAnOldThreadTakesNoNewPostAndACardThereStaysPut(t *testing.T) {
 	}
 }
 
-func TestAnAnswerDrawnForAnEarlierQuestionDoesNotAnswerTheRedrawnCard(t *testing.T) {
+func TestAnAnswerDrawnForAnEarlierQuestionDoesNotAnswerTheRewordedCard(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := postWaiting(t, l, mergeCard())
 	redrawn := mergeCard()
 	redrawn.Title = "Merge #41 before the freeze?"
-	postWaiting(t, l, redrawn)
+	c2 := postWaiting(t, l, redrawn)
 	stale := askTap{ID: "step-3:merge", Label: "Merge after lunch", Question: "Merge #41 now?"}
 	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
 		ActionID: cardWroteAction + "step-3:merge", Value: string(mustJSON(stale)), ActionTS: fmt.Sprintf("%d.000500", time.Now().Unix()), Seq: "001800000100000-abcd0500"})
 	if got := l.inject(agent.TopLevel); got != "" {
 		t.Fatalf("an answer to the old question steered %q", got)
 	}
-	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "this card now asks something else") {
-		t.Fatalf("card edits %v, want the card to say the answer reached no one", edits)
-	}
-	if res := answerOnBoard(t, l, c, "Hold"); !res.Answered {
+	if res := answerOnBoard(t, l, c2, "Hold"); !res.Answered {
 		t.Fatalf("the redrawn card's board answer = %+v, want it to win", res)
 	}
 }
@@ -1078,7 +1108,7 @@ func TestADriveQuestionCardPostsWithNoBoardWarning(t *testing.T) {
 	}
 }
 
-func TestADriveQuestionCardPostsAtTheDMRootWithItsLinkInTheThreadAndARedrawPostsNothing(t *testing.T) {
+func TestADriveQuestionCardWithNewWordsPostsAgainWhereHeIsAndPointsTheOldCardAtIt(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1104,15 +1134,21 @@ func TestADriveQuestionCardPostsAtTheDMRootWithItsLinkInTheThreadAndARedrawPosts
 	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || !c.linkedBy(sent[1], card.Title) {
 		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its link in that thread", thread, first, sent)
 	}
+	asked := card.Title
 	card.Title = "Merge #41 before the freeze?"
 	posts = len(l.slack.sent())
 	again := ask(card)
+	c2 := postedCard{id, again["thread_ts"], again["ts"]}
 	sent = l.slack.sent()[posts:]
-	if again["ts"] != first["ts"] || len(sent) != 0 {
-		t.Fatalf("a redraw got %v with posts %+v, want the card edited in place and nothing posted", again, sent)
+	if again["ts"] == first["ts"] || len(sent) != 2 || sent[0].ts != again["ts"] || sent[0].threadTS != "" || !strings.Contains(sent[0].blocks, cardWaitAction) || !c2.linkedBy(sent[1], card.Title) || sent[1].threadTS != thread {
+		t.Fatalf("new words got %v with posts %+v, want the new version at the DM root with its buttons and its link in thread %s", again, sent, thread)
 	}
-	if edits := editsOf(l.slack.edited(), first["ts"]); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Merge #41 before the freeze?") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
-		t.Fatalf("card edits = %v, want the new question with its buttons", edits)
+	edits := editsOf(l.slack.edited(), first["ts"])
+	if len(edits) == 0 {
+		t.Fatal("the old card was left as it was")
+	}
+	if old := edits[len(edits)-1]; !strings.Contains(old, "Merge #41 before the freeze?") || strings.Contains(old, asked) || strings.Contains(old, cardWaitAction) || !newCardLinked(old, c2) {
+		t.Fatalf("old card redrawn as %s, want its new words, no buttons, and a line linking the new card", old)
 	}
 	if edits := editsOf(l.slack.edited(), l.slack.sent()[posts-1].ts); len(edits) != 0 {
 		t.Fatalf("link edits = %v, want the card's link in thread %s left for Slack's unfurl to follow the card", edits, thread)

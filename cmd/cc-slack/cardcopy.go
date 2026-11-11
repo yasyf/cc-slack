@@ -18,7 +18,8 @@ const (
 	cardCopyBlock  = cardActionPrefix + "-copy"
 	cardCopyLead   = "Answer it here:"
 
-	cardRedrawnLine = "Redrawn in place"
+	cardRedrawnLine  = "Redrawn in place"
+	cardRewordedLine = "Asked again with new words"
 )
 
 var (
@@ -28,13 +29,17 @@ var (
 	errDrewAsText = errors.New("that message drew as text, with no card to copy")
 )
 
-func (l *liveCards) withdrawCopies(ctx context.Context, id identity, card cardRef) error {
+func (l *liveCards) withdrawCopies(ctx context.Context, id identity, card cardRef, was string) error {
 	api := l.newAPI(id.Token)
+	line := cardRedrawnLine
+	if was != card.ts {
+		line = cardRewordedLine
+	}
 	var errs []error
-	for _, copied := range l.copiesOf(card.channel, card.ts) {
+	for _, copied := range l.copiesOf(card.channel, was) {
 		post, err := messageAt(ctx, api, copied.channel, copied.thread, copied.ts)
 		if err == nil {
-			err = markCopy(ctx, api, id, card, copied, post, cardRedrawnLine, "")
+			err = markCopy(ctx, api, id, card, copied, post, line, "")
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("copy %s: %w", copied.ts, err))
