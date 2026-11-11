@@ -489,10 +489,10 @@ func TestATapOnACopyAnswersTheCardAndEveryCopyShowsTheAnswer(t *testing.T) {
 				t.Fatal(err)
 			}
 			post := lastPost(l)
-			if post.threadTS != thread || post.text != cardCopyLead || first.Permalink == "" || !strings.Contains(post.blocks, "Merge the stack?") || post.attachments != "" {
-				t.Fatalf("post = %+v, reply = %+v, want the copy in thread %s and its permalink", post, first, thread)
+			if post.threadTS != thread || post.text != cardCopyLead || !first.Posted || first.ThreadTS != thread || first.Permalink == "" || !strings.Contains(post.blocks, "Merge the stack?") || post.attachments != "" {
+				t.Fatalf("post = %+v, reply = %+v, want the copy posted in thread %s and its permalink", post, first, thread)
 			}
-			if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": link, "thread_ts": thread}).Body, &second); err != nil {
+			if err := json.Unmarshal(l.do(opCardCopy, map[string]any{"url": link, "thread_ts": postThread(t, l, "Another thread.")}).Body, &second); err != nil {
 				t.Fatal(err)
 			}
 			buttons := copiedButtonsOf(t, post)

@@ -162,7 +162,7 @@ func TestATapOnACopyThisDaemonDidNotPostRedrawsThatCopyAnswered(t *testing.T) {
 	if got := l.slack.sent()[sent:]; slices.ContainsFunc(got, func(p fakePost) bool { return strings.Contains(p.text, "did not change this message") }) {
 		t.Fatalf("posted %+v, want no warning under a copy that now shows the answer", got)
 	}
-	if !l.app.cards.hasCopy(c.id.DMChannelID, c.thread, liveCardCopy{Card: c.ts}) {
+	if l.app.cards.copyIn(c.id.DMChannelID, c.thread, c.ts) != post.ts {
 		t.Fatal("the copy is not remembered, so a later redraw of the card misses it")
 	}
 }

@@ -577,7 +577,7 @@ func (p *poller) readBack(ctx context.Context, id identity, tapped, card cardAct
 }
 
 func (p *poller) answerCopy(ctx context.Context, id identity, api slackAPI, card, copied cardRef, post slack.Message, ans askAnswer) {
-	if !p.cards.hasCopy(copied.channel, copied.thread, liveCardCopy{Card: card.ts}) {
+	if p.cards.copyIn(copied.channel, copied.thread, card.ts) == "" {
 		p.cards.rememberCopy(copied.channel, copied.thread, liveCardCopy{Card: card.ts, TS: copied.ts}, p.now())
 	}
 	line := "✓ *" + mrkdwnEscapes.Replace(clipRunes(ans.Label, cardMaxDetailLen)) + "* · answered " + clock(ans.At, p.now())

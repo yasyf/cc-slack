@@ -789,11 +789,18 @@ func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
 	return t.changedSinceAnswer(m, drawn)
 }
 
-func (l *liveCards) hasCopy(channel, thread string, copied liveCardCopy) bool {
+func (l *liveCards) copyIn(channel, thread, card string) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
-	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == copied.Card && c.Link == copied.Link })
+	if !ok {
+		return ""
+	}
+	at := slices.IndexFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == card && !c.Link })
+	if at < 0 {
+		return ""
+	}
+	return t.Copies[at].TS
 }
 
 func (l *liveCards) pickAsking(channel, pr string) (cardRef, bool) {

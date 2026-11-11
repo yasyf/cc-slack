@@ -51,6 +51,11 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 			return fail(err.Error())
 		}
 	}
+	if held := a.cards.copyIn(id.DMChannelID, b.ThreadTS, ref.ts); held != "" {
+		return fail(fmt.Sprintf("thread %s already holds this card's copy, %s, so nothing was posted; a tap on that copy answers the card. "+
+			"A post with tap_prs, a drive's question card and a post that links the card each put its copy in the post's thread, so card-copy is only for a thread with no copy",
+			b.ThreadTS, id.permalink(id.DMChannelID, held, b.ThreadTS)))
+	}
 	copied, err := a.cardCopy(hc.Ctx, id, ref, link)
 	if cards := a.cards.tapLineCards(ref.channelID, cmp.Or(ref.threadTS, ref.ts), ref.ts); errors.Is(err, errDrewAsText) && len(cards) > 0 {
 		_, links := tapDrawn{cards: cards}.named(id)
@@ -64,6 +69,7 @@ func (a *app) handleCardCopy(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionWrite, err))
 	}
 	a.cards.rememberCopy(id.DMChannelID, b.ThreadTS, liveCardCopy{Card: ref.ts, TS: res.TS}, a.now())
+	res.Posted, res.ThreadTS = true, b.ThreadTS
 	return ok(res)
 }
 

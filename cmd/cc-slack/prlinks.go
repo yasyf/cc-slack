@@ -622,7 +622,7 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 }
 
 func (a *app) copyCardInto(ctx context.Context, db *sql.DB, id identity, thread string, card cardRef) error {
-	if a.cards.hasCopy(card.channel, thread, liveCardCopy{Card: card.ts}) {
+	if a.cards.copyIn(card.channel, thread, card.ts) != "" {
 		return nil
 	}
 	link := id.permalink(card.channel, card.ts, card.thread)
