@@ -421,10 +421,7 @@ func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
 
 func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
-	var holder watch
-	if i := slices.IndexFunc(watches, func(w watch) bool { return w.Kind == kindChannel && w.ChannelID == dmChannelID }); i >= 0 {
-		holder = watches[i]
-	}
+	holder := dmHolderIn(watches, dmChannelID)
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
 		i, ok := index[key]
@@ -482,6 +479,14 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	root.root = true
 	root.sessions = sessions
 	return groups
+}
+
+func dmHolderIn(watches []watch, dmChannelID string) watch {
+	i := slices.IndexFunc(watches, func(w watch) bool { return w.Kind == kindChannel && w.ChannelID == dmChannelID })
+	if i < 0 {
+		return watch{}
+	}
+	return watches[i]
 }
 
 func dmSubscribers(watches []watch) ([]watch, map[string]watch) {
