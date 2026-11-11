@@ -974,6 +974,13 @@ const (
 	cardWithdrawnReaction = "x"
 )
 
+func unmarkWithdrawn(ctx context.Context, api slackAPI, r cardRef) error {
+	if err := api.RemoveReactionContext(ctx, cardWithdrawnReaction, slack.NewRefToMessage(r.channel, r.ts)); err != nil && errorCode(err) != "no_reaction" {
+		return err
+	}
+	return nil
+}
+
 func (p *poller) react(ctx context.Context, id identity, r cardRef, name string) {
 	if err := p.newAPI(id.Token).AddReactionContext(ctx, name, slack.NewRefToMessage(r.channel, r.ts)); err != nil && errorCode(err) != "already_reacted" {
 		p.log.Printf("card %s/%s: edited, but the %s reaction failed: %v", r.channel, r.ts, name, err)

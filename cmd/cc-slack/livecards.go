@@ -221,7 +221,15 @@ func (t *liveThread) asks(m *liveMessage) bool {
 }
 
 func (t *liveThread) retired(m *liveMessage) bool {
-	return m.ReplacedBy != "" || t.Answers[m.Card.Waits].Withdrawn
+	return m.ReplacedBy != "" || t.withdrawn(m)
+}
+
+func (t *liveThread) withdrawn(m *liveMessage) bool {
+	return m.ReplacedBy == "" && t.Answers[m.Card.Waits].Withdrawn
+}
+
+func (t *liveThread) revives(m *liveMessage, drawn statusCard) bool {
+	return t.withdrawn(m) && drawn.Waits != "" && drawn.Waits == m.Card.Waits
 }
 
 func (t *liveThread) shows(keys map[string]bool) bool {
@@ -229,7 +237,7 @@ func (t *liveThread) shows(keys map[string]bool) bool {
 }
 
 func (t *liveThread) changedSinceAnswer(m *liveMessage, drawn statusCard) string {
-	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || m.Tapped == cardNoLongerWaits {
+	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || t.withdrawn(m) || m.Tapped == cardNoLongerWaits {
 		return ""
 	}
 	return drawn.changedSince(m.Card)
@@ -757,7 +765,7 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRe
 			continue
 		}
 		for _, m := range t.PRCards {
-			if !m.cites(keys) || t.retired(m) || thread == "" && m.TS != t.Thread {
+			if !m.cites(keys) || t.retired(m) && !t.revives(m, card) || thread == "" && m.TS != t.Thread {
 				continue
 			}
 			ref := cardRef{t.Channel, t.Thread, m.TS}
@@ -779,6 +787,13 @@ func (l *liveCards) retired(card cardRef) bool {
 	defer l.mu.Unlock()
 	t, m := l.liveMessage(card.channel, card.ts)
 	return m != nil && t.retired(m)
+}
+
+func (l *liveCards) staysRetired(card cardRef, drawn statusCard) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(card.channel, card.ts)
+	return m != nil && t.retired(m) && !t.revives(m, drawn)
 }
 
 func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
@@ -1657,7 +1672,7 @@ func (l *liveCards) recardMoved(ctx context.Context, id identity, moved map[stri
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
-	for _, posted := range l.postedPRCards() {
+	for _, posted := range l.postedPRCards(true) {
 		if slices.ContainsFunc(posted.prs, func(pr refID) bool { return moved[pr.key()] }) {
 			l.recard(ctx, id, posted.card, posted.prs[0])
 		}
@@ -1673,13 +1688,13 @@ func (p postedPRCard) carries(pr refID) bool {
 	return slices.ContainsFunc(p.prs, func(r refID) bool { return r.key() == pr.key() })
 }
 
-func (l *liveCards) postedPRCards() []postedPRCard {
+func (l *liveCards) postedPRCards(withdrawn bool) []postedPRCard {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var posted []postedPRCard
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
-			if ids := m.Card.refIDs(); len(ids) > 0 && !t.retired(m) {
+			if ids := m.Card.refIDs(); len(ids) > 0 && (!t.retired(m) || withdrawn && t.withdrawn(m)) {
 				posted = append(posted, postedPRCard{cardRef{t.Channel, t.Thread, m.TS}, ids})
 			}
 		}
@@ -1750,9 +1765,14 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
-	if t.retired(m) {
+	revived := t.revives(m, drawn)
+	if t.retired(m) && !revived {
 		l.mu.Unlock()
 		return nil
+	}
+	if revived {
+		delete(t.Answers, m.Card.Waits)
+		m.Tapped = ""
 	}
 	switch {
 	case drawn.Waits == "":
@@ -1767,8 +1787,13 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 	t.Updated = now
 	w := l.write(t, m, now, false)
 	l.mu.Unlock()
-	_, err := l.flush(ctx, api, t, []cardWrite{w}, now, false)
-	return err
+	if _, err := l.flush(ctx, api, t, []cardWrite{w}, now, false); err != nil || !revived {
+		return err
+	}
+	if err := unmarkWithdrawn(ctx, api, card); err != nil {
+		l.log.Printf("PR card %s is back in place, but its withdrawn mark stays: %v", card.ts, err)
+	}
+	return nil
 }
 
 func (l *liveCards) threadCard(channel, thread string) (id, title string) {

@@ -833,6 +833,9 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		}
 		return a.poller.markOption(ctx, id, card, cardNoLongerWaits)
 	}
+	if a.cards.staysRetired(card, provided[0].Card) {
+		return nil
+	}
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
 		return err

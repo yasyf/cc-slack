@@ -665,7 +665,7 @@ func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *
 	}
 }
 
-func TestAWithdrawnPRCardSaysWhyAboveItsPRAndALateTapRecordsNothing(t *testing.T) {
+func TestAWithdrawnPRCardSaysWhyAboveItsPRAndALateTapRecordsNothingUntilItIsAskedAgainInPlace(t *testing.T) {
 	const why = "not this drive's order, returned to the lane that asked"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
@@ -719,10 +719,69 @@ func TestAWithdrawnPRCardSaysWhyAboveItsPRAndALateTapRecordsNothing(t *testing.T
 		t.Fatalf("card = %s after a second withdrawal, want it left as drawn", got[len(got)-1])
 	}
 
+	unreacted := l.slack.callCount("reactions.remove")
 	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap again", "tap_prs": tapPR41})
-	eventually(t, "a fresh card at the DM root", func() bool { return len(rootCards(prCards(l, testDM))) == 2 })
-	if fresh := rootCards(prCards(l, testDM))[1]; !strings.Contains(fresh.blocks, cardWaitAction) {
-		t.Fatalf("fresh card = %s, want its buttons", fresh.blocks)
+	assertBackInPlace(t, l, card, unreacted)
+}
+
+func TestARedrawForItsPRBringsAWithdrawnCardBackInPlaceOnlyUnderTheWaitsIDItWasWithdrawnFrom(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	l.do(opWithdrawPRCard, map[string]any{"pr": tapPR41[0], "reason": "it waits on the dashboard release first"})
+	edits := editsOf(l.slack.edited(), card.ts)
+	withdrawn := edits[len(edits)-1]
+	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
+	info := changedTapCard("")
+	info.Card.Status, info.Card.Options, info.Card.Recommended, info.Card.Waits = "info", nil, "", ""
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{info}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#41": true})
+
+	if got := editsOf(l.slack.edited(), card.ts); got[len(got)-1] != withdrawn {
+		t.Fatalf("card = %s, want it still withdrawn when drawn again with no waits id", got[len(got)-1])
+	}
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{changedTapCard("")}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unreacted := l.slack.callCount("reactions.remove")
+	var redrawn map[string]int
+	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]}).Body, &redrawn); err != nil || redrawn["redrawing"] != 1 {
+		t.Fatalf("redraw-pr-cards --pr = %v, %v; want the withdrawn card redrawn", redrawn, err)
+	}
+	assertBackInPlace(t, l, card, unreacted)
+}
+
+func assertBackInPlace(t *testing.T, l *liveDaemon, card fakePost, unreacted int) {
+	t.Helper()
+	posts := len(rootCards(prCards(l, testDM)))
+	eventually(t, "the withdrawn card back in place with its buttons", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return strings.Contains(edits[len(edits)-1], cardWaitAction)
+	})
+	edits := editsOf(l.slack.edited(), card.ts)
+	if last := edits[len(edits)-1]; strings.Contains(last, "*Withdrawn:*") {
+		t.Fatalf("card = %s, want the withdrawn line gone", last)
+	}
+	if got := rootCards(prCards(l, testDM)); len(got) != posts || len(got) != 1 {
+		t.Fatalf("PR cards at the DM root = %+v, want the one card back in place and nothing new posted", got)
+	}
+	if l.slack.callCount("reactions.remove") == unreacted {
+		t.Fatal("the card came back with its withdrawn mark")
+	}
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(card.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the card waiting on his tap again", listed.PRCards)
 	}
 }
 
