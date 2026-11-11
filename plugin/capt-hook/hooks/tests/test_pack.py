@@ -110,7 +110,7 @@ class PackTest(unittest.TestCase):
             "comms_never_asks_for_evidence": (Event.PreToolUse, False, True),
             "fixed_lines_name_the_proven_user": (Event.PreToolUse, False, True),
             "replies_read_their_thread_first": (Event.PreToolUse, False, True),
-            "full_thread_reads_are_recorded": (Event.PostToolUse, False, True),
+            "thread_reads_are_recorded": (Event.PostToolUse, False, True),
             "pickups_are_recorded": (Event.PostToolUse, False, True),
         }
         actual = {
@@ -241,7 +241,7 @@ class PackTest(unittest.TestCase):
 
     def read(self, session: Path, tool: str = TOOLS + "slack_thread", agent_id: str | None = None, **result: object) -> None:
         output = json.dumps({"channel_id": THREAD["channel_id"], "thread_ts": THREAD["thread_ts"], "messages": [], **result})
-        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(tool, event=Event.PostToolUse, tool_input=THREAD, output=output, agent_id=agent_id, session_dir=session))
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(tool, event=Event.PostToolUse, tool_input=THREAD, output=output, agent_id=agent_id, session_dir=session))
 
     def refused(self, session: Path, agent_id: str | None = None) -> bool:
         evt = mock_tool_event(TOOLS + "slack_reply", tool_input=THREAD | {"text": "On it."}, agent_id=agent_id, session_dir=session)
@@ -252,7 +252,7 @@ class PackTest(unittest.TestCase):
         evt = mock_tool_event(TOOLS + "slack_reply", tool_input=THREAD | {"text": "On it."}, session_dir=Path(self.tmp.name) / "session")
         result = self.read_guard.replies_read_their_thread_first(evt)
         self.assertEqual(result.action, Action.block)
-        self.assertIn(f"`slack_thread` with `channel_id` {THREAD['channel_id']}, `thread_ts` {THREAD['thread_ts']} and `since_ts`", result.message)
+        self.assertIn(f"`slack_thread` with `channel_id` {THREAD['channel_id']} and `thread_ts` {THREAD['thread_ts']}", result.message)
         self.assertNotIn("1000", result.message)
 
     def test_a_reply_after_a_full_read_is_allowed(self) -> None:
@@ -265,7 +265,7 @@ class PackTest(unittest.TestCase):
         self.read(session)
         slot = SessionStore(session)[self.read_guard.ThreadReads]
         reads = slot.get()
-        reads.at = {key: datetime.now(UTC) - timedelta(minutes=10, seconds=1) for key in reads.at}
+        reads.reads = {key: read.model_copy(update={"at": datetime.now(UTC) - timedelta(minutes=10, seconds=1)}) for key, read in reads.reads.items()}
         slot.set(reads)
         self.assertTrue(self.refused(session))
 
@@ -279,11 +279,26 @@ class PackTest(unittest.TestCase):
     def test_a_read_of_only_what_is_new_counts_unless_it_is_cut(self) -> None:
         since = THREAD | {"since_ts": "1790210300.000001"}
         whole = Path(self.tmp.name) / "whole"
-        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": []}), session_dir=whole))
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": []}), session_dir=whole))
         self.assertFalse(self.refused(whole))
         cut = Path(self.tmp.name) / "cut"
-        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": [], "truncated": True}), session_dir=cut))
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=since, output=json.dumps(since | {"messages": [], "truncated": True}), session_dir=cut))
         self.assertTrue(self.refused(cut))
+
+    def test_a_reply_records_its_ts_for_the_agent_that_posted_it(self) -> None:
+        session = Path(self.tmp.name) / "session"
+        posted = json.dumps(THREAD | {"ts": "1790210350.000001", "posted": True})
+        self.read_guard.own_replies_are_recorded(mock_tool_event(TOOLS + "slack_reply", event=Event.PostToolUse, tool_input=THREAD | {"text": "On it."}, output=posted, agent_id="a1", session_dir=session))
+        self.read_guard.own_replies_are_recorded(mock_tool_event(TOOLS + "slack_reply", event=Event.PostToolUse, tool_input=THREAD | {"text": "On it."}, output='{"ticket_id":"t1"}', session_dir=session))
+        self.assertEqual(list(SessionStore(session)[self.read_guard.ThreadReads].get().posted), [f"a1/{THREAD['channel_id']}/1790210350.000001"])
+
+    def test_a_truncated_read_keeps_the_whole_read_before_it(self) -> None:
+        session = Path(self.tmp.name) / "session"
+        self.read(session, messages=[{"ts": "1790210300.000001"}])
+        self.read(session, truncated=True, messages=[{"ts": "1790210400.000001"}])
+        read = SessionStore(session)[self.read_guard.ThreadReads].get().reads[f"main/{THREAD['thread_ts']}"]
+        self.assertEqual((read.through, read.gap), ("1790210300.000001", "truncated"))
+        self.assertFalse(self.refused(session))
 
     def test_a_read_clears_only_the_agent_that_read(self) -> None:
         session = Path(self.tmp.name) / "session"
@@ -294,10 +309,10 @@ class PackTest(unittest.TestCase):
     def test_the_cli_and_the_user_fallback_reads_count(self) -> None:
         cli = Path(self.tmp.name) / "cli"
         command = f"cc-slack thread --channel {THREAD['channel_id']} --thread {THREAD['thread_ts']} --since-ts 1790210300.000001"
-        self.read_guard.full_thread_reads_are_recorded(mock_tool_event(event=Event.PostToolUse, command=command, output=json.dumps({"messages": []}), session_dir=cli))
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(event=Event.PostToolUse, command=command, output=json.dumps({"messages": []}), session_dir=cli))
         self.assertFalse(self.refused(cli))
         fallback = Path(self.tmp.name) / "fallback"
-        self.read_guard.full_thread_reads_are_recorded(mock_tool_event("mcp__slack__slack_get_thread", event=Event.PostToolUse, tool_input=THREAD, output="a formatted thread", session_dir=fallback))
+        self.read_guard.thread_reads_are_recorded(mock_tool_event("mcp__slack__slack_get_thread", event=Event.PostToolUse, tool_input=THREAD, output="a formatted thread", session_dir=fallback))
         self.assertFalse(self.refused(fallback))
 
 

@@ -333,6 +333,26 @@ func TestThreadSeenSaysWhetherTheThreadsNewestMessageReachedTheAgent(t *testing.
 	}
 }
 
+func TestThreadSeenCountsTheCachedMessagesAfterARead(t *testing.T) {
+	l := startDaemon(t)
+	msgs := []slack.Message{rootMessage(testThread, "root"), rootMessage("1800000000.000300", "ship it"), rootMessage("1800000000.000400", "and this"), rootMessage("1800000000.000500", "and that")}
+	if err := l.app.cache.save(l.ctx, testChannel, testThread, threadEntry{msgs: msgs}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		since string
+		after int
+	}{{"1800000000.000300", 2}, {"1800000000.000500", 0}, {"", 0}} {
+		var res threadSeenResult
+		if err := json.Unmarshal(l.do(opThreadSeen, map[string]string{"channel_id": testChannel, "thread_ts": testThread, "since_ts": tc.since}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.After != tc.after {
+			t.Fatalf("thread-seen since %q = %+v, want %d messages after it", tc.since, res, tc.after)
+		}
+	}
+}
+
 func (l *liveDaemon) channelTexts() []string {
 	l.t.Helper()
 	var texts []string
