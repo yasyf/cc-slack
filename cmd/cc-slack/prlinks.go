@@ -184,7 +184,7 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 	}
 	found, err := a.cards.client.queryPRs(lookup, asked)
 	if err != nil {
-		a.poller.log.Printf("post links only the PR references GitHub answered before: %v", err)
+		a.poller.log.Printf("post links the PR references GitHub answered before, and each other reference naming one PR with no GitHub state: %v", err)
 	}
 	linked := make([]string, len(texts))
 	var prs []linkedPR
@@ -193,6 +193,9 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 		at := 0
 		for _, m := range mentions[i] {
 			held := slices.DeleteFunc(slices.Clone(m.candidates(holders)), func(r refID) bool { _, ok := found[r.key()]; return !ok })
+			if len(held) == 0 && err != nil {
+				held = m.candidates(holders)
+			}
 			if len(held) != 1 {
 				continue
 			}
@@ -200,9 +203,14 @@ func (a *app) linkPRs(ctx context.Context, id identity, scope string, texts ...s
 			out.WriteString(text[at:m.start])
 			out.WriteString(slackLink(cmp.Or(m.url, prURL(pr)), cmp.Or(m.label, fmt.Sprintf("#%d", pr.Number))))
 			at = m.end
-			if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == pr }) {
-				prs = append(prs, linkedPR{ref: pr, state: found[pr.key()].state()})
+			if slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref == pr }) {
+				continue
 			}
+			var state refState
+			if read, ok := found[pr.key()]; ok {
+				state = read.state()
+			}
+			prs = append(prs, linkedPR{ref: pr, state: state})
 		}
 		out.WriteString(text[at:])
 		linked[i] = out.String()
@@ -276,6 +284,11 @@ func prCardThread(id identity, channelID, postThread string) string {
 
 func (a *app) tapPRs(ctx context.Context, id identity, scope string, b opBody) []linkedPR {
 	_, prs := a.linkPRs(ctx, id, scope, strings.Join(b.TapPRs, "\n"))
+	for _, raw := range b.TapPRs {
+		if pr, _ := parseRef(raw); !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref.key() == pr.key() }) {
+			prs = append(prs, linkedPR{ref: pr})
+		}
+	}
 	return prs
 }
 
@@ -312,9 +325,6 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
 		pr, _ := parseRef(raw)
 		why, missed := t.undrawn[pr.key()]
-		if !slices.ContainsFunc(prs, func(p linkedPR) bool { return p.ref.key() == pr.key() }) {
-			why, missed = "cc-slack could not read it from GitHub", true
-		}
 		if !missed {
 			continue
 		}
@@ -455,7 +465,7 @@ func (l *liveCards) toCard(channelID, postThread string, posting *statusCard, pr
 		return nil, standing, waiting
 	}
 	for i, pr := range named {
-		if stood[i] == (cardRef{}) {
+		if stood[i] == (cardRef{}) && pr.state != (refState{}) {
 			l.refs[pr.ref.key()] = pr.state
 		}
 	}

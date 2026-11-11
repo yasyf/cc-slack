@@ -79,10 +79,12 @@ With `[github]` in the config, the daemon links every pull request the text
 names, so write `#123`, `owner/repo#123`, or the PR URL and never build the
 link yourself. Each becomes `<url|#123>`. A bare `#123` resolves against
 this session's repo, then `repos` under `[pr_links]`; a number none of them
-holds stays plain text. Code spans and text already inside `<...>` are left
+holds stays plain text. When GitHub refuses the read, a reference naming one PR
+still links, and a bare number two repos could hold stays plain. Code spans and text already inside `<...>` are left
 alone. With `card_command` set, a PR the user has to tap gets its card when the
 call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`),
-once per PR and head. In the user's DM, a post that says something waits on the
+once per PR and head; a PR GitHub does not read still goes to the card command,
+which draws its card from what it holds. In the user's DM, a post that says something waits on the
 user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
 so name a PR the user has nothing to tap in a post that waits on nothing. List a
 stack's PRs in one call: they draw one card, and an older card of any of them
@@ -98,9 +100,9 @@ picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM th
 card opens at the root in its own thread, wherever the post sits; a post lands in
 a DM thread only when its call names that thread. In a listed channel the card
 goes in the post's thread. When an open PR in `tap_prs` draws no card, the call
-fails and sends nothing, naming each PR with the reason; fix the reason, such as a PR body missing What you'll
-hate most, a login whose config sets no `card_command`, or a channel that draws no
-PR cards, then send `tap_prs` for that PR alone. Never post a PR card or add a
+fails and sends nothing, naming each PR with the reason; fix the reason, such as
+a login whose config sets no `card_command` or a channel that draws no PR cards,
+then send `tap_prs` for that PR alone. Never post a PR card or add a
 `refs` entry by hand for a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what
 it changes and where it stands, and a line that only repeats a link is dropped,

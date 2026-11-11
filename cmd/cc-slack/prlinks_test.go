@@ -458,17 +458,39 @@ func TestReplyEditAndDMStatusLinkPRs(t *testing.T) {
 	}
 }
 
-func TestPostGoesOutUnlinkedWhenGitHubFails(t *testing.T) {
+func TestAPostLinksEachReferenceNamingOnePRWhenGitHubFails(t *testing.T) {
 	l, gh := linkingDaemon(t, "acme/app#41")
 	gh.mu.Lock()
 	gh.down = true
 	gh.mu.Unlock()
 	var res postResult
-	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 is green"}).Body, &res); err != nil {
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "#41 and acme/app#41 are green"}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	if !res.Posted || lastText(l) != "#41 is green" {
-		t.Fatalf("posted=%v text=%q, want the text posted as written", res.Posted, lastText(l))
+	if want := "#41 and <https://github.com/acme/app/pull/41|#41> are green"; !res.Posted || lastText(l) != want {
+		t.Fatalf("posted=%v text=%q, want %q", res.Posted, lastText(l), want)
+	}
+}
+
+func TestATapPRGitHubDoesNotReadDrawsTheCardCommandsCard(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down bool
+	}{{"github is down", true}, {"github answers without it", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+			l, gh := cardingDaemon(t, cmd.argv)
+			gh.mu.Lock()
+			gh.down = tc.down
+			gh.mu.Unlock()
+			l.do(opDMStatus, map[string]any{"text": "acme/app#41 is green", "tap_prs": tapPR41})
+			if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
+				t.Fatalf("cards = %+v, want the card command's card at the DM root", cards)
+			}
+			if got := cmd.requests(t); !reflect.DeepEqual(got, []string{`{"prs":[{"number":41,"repo":"acme/app"}]}`}) {
+				t.Fatalf("card command asked %v", got)
+			}
+		})
 	}
 }
 
