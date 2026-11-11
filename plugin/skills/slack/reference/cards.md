@@ -151,7 +151,10 @@ the top-level session as a `slack.action` whose payload carries the `id`,
 `waits: true`, the `question`, the card's `options`, the chosen `label`, and
 `other: true` for a written-in answer, and the `capture` line, plus
 `notes_label` for a permission card and `via` for an answer given on a board.
-The top-level session
+When the `card_command` took a tapped answer before the session got it, the
+payload carries `recorded: true` and no `capture` or `notes_label`: that
+program's record already reaches the lane that asked, so the session posts no
+record or capture of it. Otherwise the top-level session
 hands the answer to the lane the id names, by `SendMessage`, and records the
 `capture` line in cc-notes as the user's answer, with the `notes_label` label
 when the payload has one; `slack-grant:<channel>/threads` grants replies in every thread of a channel. `slack-grant:<channel>/solved` passes the first post in each thread of that channel that is plain text with no question, ask or jargon, with no card, and leaves every later post in that thread to the other rules, so each fixed bug gets one solved line. A post in such a thread that asks something or carries jargon passes only on the user's own approval of it, never on the judge. Once the bot has posted in such a thread, a later post there passes on the judge only when one of the user's answers names that thread, by its id, link or a `slack-grant:<channel>/<thread>` tag. A bare `slack-grant:<channel>` answer, or any live answer naming the channel, passes nothing alone: the judge reads its words for that post, and a thread reply needs them to cover threads or replies. A Claude lane parks on its mailbox
@@ -166,7 +169,8 @@ on record, and the session gets one `slack.action` with `undo: true`, the
 reads it as an answer. Treat that answer as never given: tell the
 lane to stop or redirect what it started on it, supersede anything you
 recorded from it, such as its cc-notes answer, and wait for the next
-answer, which arrives as an ordinary tap. An Undo tapped after the 10
+answer, which arrives as an ordinary tap. With `recorded: true` the
+`card_command` already posted the undo, so post no record of it. An Undo tapped after the 10
 minutes is refused on the card and the answer stands.
 
 An Explain more tap arrives as a `slack.action` with the label `Explain
