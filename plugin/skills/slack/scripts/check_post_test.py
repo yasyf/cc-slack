@@ -46,8 +46,12 @@ class CheckPostTest(unittest.TestCase):
         )
         self.assertEqual(kinds(text), [])
 
-    def test_accepts_a_bare_slack_message_link_so_it_unfurls(self) -> None:
+    def test_flags_a_bare_slack_message_link_which_unfurls_under_words(self) -> None:
         text = "Alert: https://acme.slack.com/archives/C0123ABCDE/p1731123456789012"
+        self.assertEqual(kinds(text), [("bare-url", "https://acme.slack.com/archives/C0123ABCDE/p1731123456789012")])
+
+    def test_accepts_a_slack_message_link_under_words_that_name_it(self) -> None:
+        text = "Alert: <https://acme.slack.com/archives/C0123ABCDE/p1731123456789012|the disk alert>"
         self.assertEqual(kinds(text), [])
 
     def test_accepts_a_bare_sentry_issue_link_so_it_unfurls(self) -> None:

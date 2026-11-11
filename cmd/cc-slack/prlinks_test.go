@@ -309,6 +309,9 @@ func TestATapPostInAThreadLinksItsCardThereAndARedrawEditsTheCardAlone(t *testin
 		t.Fatalf("posts in his thread = %+v, want the card's link alone and no copy of its blocks", copies)
 	}
 	link := cardLinks(l, card)[0]
+	if raw := rawCardLinks(link.text, func(permalinkRef) bool { return true }); len(raw) != 0 {
+		t.Fatalf("the card's link in his thread = %q, want it under the card's words, never its raw URL", link.text)
+	}
 	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{movedCard()}}), 0o600); err != nil {
 		t.Fatal(err)
 	}

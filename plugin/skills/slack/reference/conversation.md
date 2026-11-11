@@ -77,9 +77,10 @@ write every post so a person can answer it, and answer each reply as it lands.
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
 - A message telling its reader something waits on them links the card. In your
-  DM with the app, put the open card's permalink from `cc-slack drive-cards` on
-  a line of its own, and Slack unfurls it into the card; the post copies
-  nothing, so the card stays one message. A PR's tap card comes from `tap_prs`. A DM line that says
+  DM with the app, link the open card's permalink from `cc-slack drive-cards`
+  under words that name it, as `<permalink|the lock card>`, and Slack draws the
+  card under the line; the post copies nothing and shows no raw URL, so the card
+  stays one message. A PR's tap card comes from `tap_prs`. A DM line that says
   something waits on you, with no open card linked, no `tap_prs`, no PR link
   and no open card in its thread, is refused before it posts. When a card was
   removed or went stale, say so in the same breath and name its replacement.

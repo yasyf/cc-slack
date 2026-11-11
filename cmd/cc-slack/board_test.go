@@ -65,8 +65,8 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 
 func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
 
-func (c postedCard) linkedBy(p fakePost) bool {
-	return p.text == c.url() && p.blocks == "" && p.unfurlLinks == "true"
+func (c postedCard) linkedBy(p fakePost, title string) bool {
+	return p.text == slackLink(c.url(), title) && p.blocks == "" && p.unfurlLinks == "true"
 }
 
 func postThread(t *testing.T, l *liveDaemon, text string) string {
@@ -1101,7 +1101,7 @@ func TestADriveQuestionCardPostsAtTheDMRootWithItsLinkInTheThreadAndARedrawPosts
 	}
 	c := postedCard{id, first["thread_ts"], first["ts"]}
 	sent := l.slack.sent()[posts:]
-	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || !c.linkedBy(sent[1]) {
+	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || !c.linkedBy(sent[1], card.Title) {
 		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its link in that thread", thread, first, sent)
 	}
 	card.Title = "Merge #41 before the freeze?"

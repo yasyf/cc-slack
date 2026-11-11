@@ -33,7 +33,8 @@ func checkPostCmd() *cobra.Command {
 		Long: `Run the plugin's bundled check-post on a post's text, read from a file or
 from stdin with -, then check that a line saying something waits on the reader
 links the open card it means, and that no link to a message in your DM with the
-app is wrapped as <url|url> where the bare link would unfurl. It prints each finding with its fix and exits 1
+app shows as a raw URL, bare or labeled with its own URL, where words naming it
+would show the words and Slack would draw the message under them. It prints each finding with its fix and exits 1
 when there is one, 0 when the text is clean, and 2 on a usage error, as the
 script does. It runs the check-post of the newest installed plugin, which a
 session's PATH may not hold.`,
@@ -61,8 +62,8 @@ session's PATH may not hold.`,
 			if said, found := waitsWithoutCard(text, dmCard); found && len(linkedPRRefs(text)) == 0 {
 				findings = append(findings, said)
 			}
-			for _, wrapped := range wrappedCardLinks(text, dmLinkAsLabel) {
-				findings = append(findings, wrapped)
+			for _, raw := range rawCardLinks(text, dmCard) {
+				findings = append(findings, raw)
 			}
 			for _, finding := range findings {
 				if _, err := fmt.Fprintln(c.OutOrStdout(), finding); err != nil {

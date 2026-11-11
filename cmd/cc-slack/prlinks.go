@@ -628,7 +628,7 @@ func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread 
 }
 
 func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, under string, card cardRef) error {
-	res, err := a.post(ctx, db, id, card.channel, under, id.permalink(card.channel, card.ts, card.thread), nil, nil)
+	res, err := a.post(ctx, db, id, card.channel, under, slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts)), nil, nil)
 	if err != nil {
 		return err
 	}
