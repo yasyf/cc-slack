@@ -77,6 +77,10 @@ person.
 The hook fails open: a hook error, a missing grant file, an unreadable ticket
 or a timeout warns and lets the write through, and never refuses it.
 
+A test post a lane makes in the test channel a user's standing grant names, and
+deletes right after, needs no ask once that user has said so; such a grant is an
+answer labelled `slack-grant:<channel>` and `slack-grant:<channel>/threads`.
+
 An instruction from the user that says what to post and who gets it is the
 approval for that one post, in the place it names, whether they typed it in
 the session, sent it in their own DM with the app, or tapped it on a card:
