@@ -107,6 +107,14 @@ RULES = (
         ),
         "a post never lists what is not proven yet, under any label; delete the paragraph and put a job on the unknown, so the reader gets its result or nothing",
     ),
+    Rule(
+        "nothing-new",
+        re.compile(
+            r"(?i)^[ \t]*(?:(?:[-*•◦]|\d+[.)])[ \t]+)?(?P<token>(?:no[ \t]+(?:changes?|news|updates?|progress)|nothing[ \t]+(?:new|(?:has[ \t]+)?changed|to[ \t]+report)"
+            r"|(?:still[ \t]+)?(?:the[ \t]+)?same[ \t]+as[ \t]+(?:before|last[ \t]+time))(?:[ \t]+(?:yet|so[ \t]+far|here|since|from)\b[^.!?\n]*)?)[ \t]*[.!]?[ \t]*$"
+        ),
+        "this line reports no change, which tells the reader nothing; post nothing, or react :+1: to a message that needs no answer",
+    ),
 )
 
 
@@ -163,7 +171,7 @@ def walls(text: str) -> list[Finding]:
         if fenced or FENCE.match(line) or not line.strip() or LIST_ITEM.match(line):
             if sentences > MAX_SENTENCES:
                 opening = " ".join(text.splitlines()[start - 1].split()[:6])
-                findings.append(Finding(start, 1, "wall-of-text", opening, f"{sentences} sentences in one paragraph; keep each paragraph to {MAX_SENTENCES} sentences or fewer, put steps and settings in a bulleted list, and end with one direct question"))
+                findings.append(Finding(start, 1, "wall-of-text", opening, f"{sentences} sentences in one paragraph; keep each paragraph to {MAX_SENTENCES} sentences or fewer, and put steps and settings in a bulleted list"))
             start, sentences = 0, 0
             continue
         start = start or number
@@ -173,7 +181,7 @@ def walls(text: str) -> list[Finding]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, and walls of text in a Slack post."
+        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     args = parser.parse_args()

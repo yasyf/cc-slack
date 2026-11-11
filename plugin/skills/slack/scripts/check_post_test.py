@@ -224,6 +224,31 @@ class CheckPostTest(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(kinds(line), [])
 
+    def test_flags_a_line_that_reports_no_change(self) -> None:
+        cases = {
+            "No change since the last update.": "No change since the last update",
+            "Nothing new.": "Nothing new",
+            "• No updates yet": "No updates yet",
+            "Nothing changed since 5:25pm.": "Nothing changed since 5:25pm",
+            "Same as before.": "Same as before",
+        }
+        for line, token in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [("nothing-new", token)])
+
+    def test_passes_a_line_that_says_what_changed(self) -> None:
+        for line in (
+            "The fix merged; the strip shows live incidents only.",
+            "No change to the API; the fix only touches the worker.",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [])
+
+    def test_a_wall_of_text_fix_asks_for_no_question_in_text(self) -> None:
+        [finding] = check_post.check("The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.")
+        self.assertEqual(finding.kind, "wall-of-text")
+        self.assertNotIn("question", finding.fix)
+
     def test_reads_through_emphasis_markers(self) -> None:
         self.assertEqual(kinds("Thanks *Andrew*, it is live."), [("plain-name", "Thanks *Andrew")])
 
