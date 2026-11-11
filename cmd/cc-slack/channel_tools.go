@@ -326,7 +326,7 @@ var (
 		},
 		{
 			name:        "slack_users",
-			description: "Find active users by handle, name or email substring, or one by user id or exact email.",
+			description: "Find active users by user id, handle, name or email substring.",
 			op:          opUsers, failure: actionUsers,
 			properties: map[string]any{"query": map[string]any{"type": "string"}},
 			required:   []string{"query"},
