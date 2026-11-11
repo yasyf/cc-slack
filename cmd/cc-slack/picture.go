@@ -156,7 +156,15 @@ func (p pictureConfig) link(key string) string {
 	return signed.URL
 }
 
-func (i cardImage) block(pictures pictureConfig) slack.Block {
+func pictureBlocks(images []cardImage, pictures pictureConfig) []*slack.ImageBlock {
+	blocks := make([]*slack.ImageBlock, 0, len(images))
+	for _, image := range images {
+		blocks = append(blocks, image.block(pictures))
+	}
+	return blocks
+}
+
+func (i cardImage) block(pictures pictureConfig) *slack.ImageBlock {
 	title := slack.NewTextBlockObject(slack.PlainTextType, i.Title, false, false)
 	switch {
 	case i.Key != "":

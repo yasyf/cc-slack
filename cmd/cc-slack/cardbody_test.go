@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,7 @@ func TestAPictureOnALineOfItsOwnDrawsWhereItSitsAndAnyOtherStaysText(t *testing.
 	queue := slack.NewImageBlock("https://bucket.example.com/queue.png", "The queue after", "", nil)
 	body := "Before the picture.\n![The queue after](/shots/queue.png)\nInline ![x](/shots/x.png) stays.\n\n" +
 		"![The board](<https://example.com/my board.png>)\n\n```\n![in a fence](/shots/f.png)\n```"
-	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, map[string]slack.Block{"/shots/queue.png": queue})[0]
+	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, map[string]*slack.ImageBlock{"/shots/queue.png": queue})[0]
 	if len(blocks) != 5 || blocks[1] != slack.Block(queue) {
 		t.Fatalf("blocks %s, want the drawn picture second, between the lines around it", blocksJSON(t, blocks))
 	}
@@ -892,8 +893,11 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *te
 	if !strings.HasPrefix(said, "Port of <https://github.com/acme/app/pull/51000|#51000>") {
 		t.Fatalf("fourth block %q, want the port line first under the PR's title", said)
 	}
-	if !strings.Contains(said, "\n\n*Refresher*\nA stale credential on disk") || !strings.HasSuffix(said, "*Show me*\nBefore: a page per reconnect. After: a page when errors keep coming for five minutes.") {
-		t.Fatalf("fourth block %q, want the refresher under the port line and Show me last", said)
+	if !strings.Contains(said, "\n\n*Refresher*\nA stale credential on disk") || strings.Contains(said, "*Show me*") {
+		t.Fatalf("fourth block %q, want the refresher under the port line and the Show me in a block of its own", said)
+	}
+	if shown := asSection(t, blocks[4]).Text.Text; shown != "*Show me*\nBefore: a page per reconnect. After: a page when errors keep coming for five minutes." {
+		t.Fatalf("fifth block %q, want the Show me under the PR's lines", shown)
 	}
 	got := blocksJSON(t, blocks)
 	for _, want := range []string{"*What you'll hate most*\\nA reconnect storm still pages once.", "*Show me*\\nBefore: a page per reconnect."} {
@@ -937,17 +941,167 @@ func TestIndentedAlignedCodeStaysACodeBlock(t *testing.T) {
 	}
 }
 
-func TestAPRCardShowsATableInItsShowMeAsLinesAndItsNotificationLeavesShowMeOut(t *testing.T) {
+func TestAPRCardDrawsEachTableInItsShowMeAsADataTableAndItsNotificationLeavesShowMeOut(t *testing.T) {
 	pr := fullPR(52919)
-	pr.ShowMe = strings.TrimPrefix(fencedTable, "*Show me*\n")
-	shown := pr.showMe()
-	for _, want := range []string{"• *table:* 1 · *team class:* Forge, shared cluster · *table GB:* 9.25 · *its database GB:* 21.01", "```\nThe 5 tables past the line (measured)\n```"} {
-		if !strings.Contains(shown, want) {
-			t.Fatalf("Show me %q, want %q in it", shown, want)
-		}
+	pr.ShowMe = strings.TrimPrefix(fencedTable, "*Show me*\n") + "\n\n| run | took |\n|---|---|\n| before | 9 min |\n| after | 2 min |"
+	blocks := pr.section(view(), 0, 1, nil)
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the PR card: %v", err)
+	}
+	drawn := tables(blocks)
+	if len(drawn) != 2 || len(drawn[0].Rows) != 4 || len(drawn[0].Rows[0]) != 6 || len(drawn[1].Rows) != 3 {
+		t.Fatalf("blocks %s, want the Show me's laid-out table and its pipe table each as a data table", blocksJSON(t, blocks))
+	}
+	if cell, ok := drawn[0].Rows[1][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "Forge, shared cluster" {
+		t.Fatalf("row 1 cell = %#v, want the team class as written", drawn[0].Rows[1][1])
+	}
+	shown := sectionText(blocks)
+	if strings.Contains(shown, "• *table:*") || !strings.Contains(shown, "*Show me*") || !strings.Contains(shown, "```\nThe 5 tables past the line (measured)\n```") {
+		t.Fatalf("sections %q, want the Show me heading and its code kept and no table drawn as lines", shown)
 	}
 	card := statusCard{Status: "needs_you", Title: "Split big tables?", Body: "Five tables are past 1.7 GB.\n" + fencedTable}
 	if got := card.text(); got != "🙋 Split big tables? — Five tables are past 1.7 GB." {
 		t.Fatalf("notification text = %q, want the title and summary without the Show me", got)
+	}
+}
+
+const (
+	barChart  = "```chart\n" + `{"$schema": "https://vega.github.io/schema/vega-lite/v5.json", "data": {"values": [{"what": "Slack posts", "count": 384}, {"what": "distinct alerts", "count": 41}]}, "mark": "bar", "encoding": {"y": {"field": "what", "type": "nominal", "title": null, "sort": null}, "x": {"field": "count", "type": "quantitative", "title": "in 24 hours"}}}` + "\n```"
+	lineChart = "```chart\n" + `{"title": "Merge time by week", "data": {"values": [{"week": "W1", "lane": "fast", "min": 9}, {"week": "W2", "lane": "fast", "min": 7}, {"week": "W1", "lane": "slow", "min": 30}, {"week": "W2", "lane": "slow", "min": 22}]}, "mark": {"type": "line", "point": true}, "encoding": {"x": {"field": "week", "type": "ordinal"}, "y": {"field": "min", "type": "quantitative"}, "color": {"field": "lane", "type": "nominal"}}}` + "\n```"
+	pieChart  = "```chart\n" + `{"data": {"values": [{"kind": "alerts", "n": 41}, {"kind": "releases", "n": 12}]}, "mark": "arc", "encoding": {"theta": {"field": "n", "type": "quantitative"}, "color": {"field": "kind", "type": "nominal"}}}` + "\n```"
+)
+
+func charts(blocks []slack.Block) []*slack.DataVisualizationBlock {
+	var found []*slack.DataVisualizationBlock
+	for _, b := range blocks {
+		if chart, ok := b.(*slack.DataVisualizationBlock); ok {
+			found = append(found, chart)
+		}
+	}
+	return found
+}
+
+func carousels(blocks []slack.Block) []*slack.CarouselBlock {
+	var found []*slack.CarouselBlock
+	for _, b := range blocks {
+		if carousel, ok := b.(*slack.CarouselBlock); ok {
+			found = append(found, carousel)
+		}
+	}
+	return found
+}
+
+func TestAChartFenceDrawsAsSlacksOwnChart(t *testing.T) {
+	blocks := bodyPages("Posts against alerts.\n"+barChart+"\n\nMerge time.\n\n"+lineChart, cardMaxBlocks, cardMaxVisible, true, nil)[0]
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the body: %v", err)
+	}
+	pie := charts(bodyPages(pieChart, cardMaxBlocks, cardMaxVisible, true, nil)[0])
+	drawn := append(charts(blocks), pie...)
+	if len(blocks) != 4 || len(drawn) != 3 || !slices.Equal(sectionTexts(blocks), []string{"Posts against alerts.", "Merge time."}) {
+		t.Fatalf("blocks %s, want each chart fence as a chart under the line above it", blocksJSON(t, blocks))
+	}
+	want := []slack.Block{
+		slack.NewDataVisualizationBlock("count by what", slack.NewDataVisualizationBarChart(
+			slack.NewDataVisualizationAxisConfig("Slack posts", "distinct alerts").WithYLabel("in 24 hours"),
+			slack.NewDataVisualizationDataSeries("in 24 hours", slack.NewDataVisualizationDataPoint("Slack posts", 384), slack.NewDataVisualizationDataPoint("distinct alerts", 41)))),
+		slack.NewDataVisualizationBlock("Merge time by week", slack.NewDataVisualizationLineChart(
+			slack.NewDataVisualizationAxisConfig("W1", "W2").WithXLabel("week").WithYLabel("min"),
+			slack.NewDataVisualizationDataSeries("fast", slack.NewDataVisualizationDataPoint("W1", 9), slack.NewDataVisualizationDataPoint("W2", 7)),
+			slack.NewDataVisualizationDataSeries("slow", slack.NewDataVisualizationDataPoint("W1", 30), slack.NewDataVisualizationDataPoint("W2", 22)))),
+		slack.NewDataVisualizationBlock("n by kind", slack.NewDataVisualizationPieChart(
+			slack.NewDataVisualizationSegment("alerts", 41), slack.NewDataVisualizationSegment("releases", 12))),
+	}
+	got := make([]slack.Block, 0, len(drawn))
+	for _, chart := range drawn {
+		got = append(got, chart)
+	}
+	if blocksJSON(t, got) != blocksJSON(t, want) {
+		t.Fatalf("charts %s, want %s: the bar's categories on the axis it names, the line's series by color, the arc as a pie", blocksJSON(t, got), blocksJSON(t, want))
+	}
+}
+
+func TestAChartSlackCannotHoldIsRefusedAndAFenceThatIsNoChartStaysCode(t *testing.T) {
+	long := strings.NewReplacer(`"Slack posts"`, `"Slack posts, each a tag today"`).Replace(barChart)
+	point := strings.Replace(barChart, `"mark": "bar"`, `"mark": "point"`, 1)
+	pr := fullPR(52919)
+	pr.ShowMe = "```chart\nnot a spec\n```"
+	for name, c := range map[string]struct {
+		card statusCard
+		want string
+	}{
+		"a label past 20":     {statusCard{Status: "info", Title: "Alerts", Body: long}, `label "Slack posts, each a tag today" is 29 characters, not 1 to 20`},
+		"a mark Slack lacks":  {statusCard{Status: "info", Title: "Alerts", Body: point}, `its mark "point" is none of bar, line, area or arc`},
+		"a PR's Show me spec": {statusCard{Status: "info", Title: "Alerts", PRs: []cardPR{pr}}, "its spec is no JSON object"},
+	} {
+		if err := c.card.check(bodyAt, false, ""); err == nil || !strings.Contains(err.Error(), "draws no Slack chart, since "+c.want) {
+			t.Errorf("%s: check = %v, want it refused naming %q", name, err, c.want)
+		}
+	}
+	if got := sectionTexts(bodyPages(point, cardMaxBlocks, cardMaxVisible, true, nil)[0]); !slices.Equal(got, []string{point}) {
+		t.Fatalf("sections %q, want the fence that is no chart kept as the code it was", got)
+	}
+	three := slices.Concat(bodyPages(barChart+"\n\n"+lineChart+"\n\n"+pieChart, cardMaxBlocks, cardMaxVisible, true, nil)...)
+	if err := checkBlocks(three); err == nil || !strings.Contains(err.Error(), "at most 2 charts") {
+		t.Fatalf("checkBlocks = %v, want a third chart in one message refused", err)
+	}
+	wide := charts(bodyPages(long, cardMaxBlocks, cardMaxVisible, true, nil)[0])
+	if err := checkBlocks([]slack.Block{wide[0]}); err == nil || !strings.Contains(err.Error(), "is 29 characters, not 1 to 20") {
+		t.Fatalf("checkBlocks = %v, want a label past Slack's 20 characters refused", err)
+	}
+}
+
+func TestPicturesInARowDrawAsOneGalleryEachTitledWithItsCaption(t *testing.T) {
+	pictures := map[string]*slack.ImageBlock{}
+	var run []string
+	for i := range 14 {
+		source, caption := fmt.Sprintf("/shots/%d.png", i+1), fmt.Sprintf("%d · option %d", i+1, i+1)
+		pictures[source] = slack.NewImageBlock("https://bucket.example.com/"+strconv.Itoa(i+1)+".png", caption, "", slack.NewTextBlockObject(slack.PlainTextType, caption, false, false))
+		if i >= 3 {
+			run = append(run, "!["+caption+"]("+source+")")
+		}
+	}
+	body := "![1 · option 1](/shots/1.png)\n\n![2 · option 2](/shots/2.png)\n\nBetween.\n\n![3 · option 3](/shots/3.png)\n\nAfter.\n\n" + strings.Join(run, "\n")
+	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, pictures)[0]
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the body: %v", err)
+	}
+	drawn := carousels(blocks)
+	if len(blocks) != 6 || len(drawn) != 2 || blocks[0] != slack.Block(drawn[0]) || blocks[2] != slack.Block(pictures["/shots/3.png"]) || blocks[4] != slack.Block(drawn[1]) || blocks[5] != slack.Block(pictures["/shots/14.png"]) {
+		t.Fatalf("blocks %s, want the first two pictures as one gallery, the lone one as its image, and the run of eleven as a gallery of ten and one image", blocksJSON(t, blocks))
+	}
+	if len(drawn[0].Elements) != 2 || len(drawn[1].Elements) != 10 {
+		t.Fatalf("galleries of %d and %d cards, want 2 and 10", len(drawn[0].Elements), len(drawn[1].Elements))
+	}
+	for i, card := range drawn[0].Elements {
+		caption := fmt.Sprintf("%d · option %d", i+1, i+1)
+		if card.Title == nil || card.Title.Text != caption || card.HeroImage == nil || *card.HeroImage.ImageURL != fmt.Sprintf("https://bucket.example.com/%d.png", i+1) {
+			t.Fatalf("card %d = %s, want picture %d titled %q", i, blocksJSON(t, []slack.Block{card}), i+1, caption)
+		}
+	}
+}
+
+func TestACardsOwnPicturesAndAPRsPicturesEachDrawAsAGallery(t *testing.T) {
+	pr := fullPR(52857)
+	pr.Pictures = []string{"/shots/before.png", "/shots/after.png"}
+	card := statusCard{Status: "needs_you", Title: "Two layouts", PRs: []cardPR{pr}, Images: []cardImage{
+		{ID: "F1", Title: "before.png"}, {ID: "F2", Title: "after.png"}, {ID: "F3", Title: "board.png"}, {ID: "F4", Title: "queue.png"},
+	}}
+	blocks, _ := card.layout(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the card: %v", err)
+	}
+	drawn := carousels(blocks)
+	if len(drawn) != 2 || slices.ContainsFunc(blocks, func(b slack.Block) bool { return b.BlockType() == slack.MBTImage }) {
+		t.Fatalf("blocks %s, want the PR's two pictures and the card's other two as two galleries and no lone image", blocksJSON(t, blocks))
+	}
+	for i, want := range [][]string{{"F1", "F2"}, {"F3", "F4"}} {
+		var files []string
+		for _, c := range drawn[i].Elements {
+			files = append(files, c.HeroImage.SlackFile.ID)
+		}
+		if !slices.Equal(files, want) {
+			t.Fatalf("gallery %d shows %v, want %v", i, files, want)
+		}
 	}
 }
