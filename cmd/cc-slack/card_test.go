@@ -239,6 +239,13 @@ func TestReplyCardOffersOptionsThenAckAndPauseUnderAQuietFooter(t *testing.T) {
 	}
 }
 
+func TestACardsNotificationTextCarriesItsWordsButNoTableRows(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Which strategy?", Body: "Usage picks none.\n| Strategy | Old parts |\n|---|---|\n| Hash by key | stay busy |\nThe split waits on your pick.\n*Show me*\n| a | b |"}
+	if got := card.text(); got != card.emoji()+" Which strategy? — Usage picks none.\nThe split waits on your pick." {
+		t.Fatalf("notification text = %q, want its words without the table's pipe rows", got)
+	}
+}
+
 func TestRootCardNamesTheDriveElseTheBranchAndCarriesNoReplyButtons(t *testing.T) {
 	at := time.Date(2026, 10, 15, 8, 33, 0, 0, time.UTC)
 	tag := cardTag{Session: "0123abcd", Repo: "app", Branch: "dev"}

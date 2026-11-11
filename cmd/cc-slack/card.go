@@ -915,7 +915,7 @@ func (c statusCard) text() string {
 	c = c.visible()
 	summary, _, _ := strings.Cut(c.Body, "*Show me*")
 	summary, _, _ = strings.Cut(summary, "```")
-	if summary = strings.TrimSpace(summary); summary == "" {
+	if summary = strings.TrimSpace(withoutTables(summary)); summary == "" {
 		return c.emoji() + " " + c.Title
 	}
 	return clipRunes(c.emoji()+" "+c.Title+" — "+mrkdwnText(summary), cardMaxSectionLen)

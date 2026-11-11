@@ -193,6 +193,12 @@ func mrkdwnText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
+func withoutTables(text string) string {
+	return strings.Join(slices.DeleteFunc(strings.Split(text, "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "|")
+	}), "\n")
+}
+
 func mrkdwnLine(line string) string {
 	line = slackEscaped(mdLink.ReplaceAllString(line, "<$2|$1>"))
 	line = mdBold.ReplaceAllString(line, "*$1*")
