@@ -46,6 +46,16 @@ class CheckPostTest(unittest.TestCase):
         )
         self.assertEqual(kinds(text), [])
 
+    def test_reads_the_words_of_each_link_as_the_reader_sees_them(self) -> None:
+        text = (
+            "<https://github.com/acme/app/pull/298|a card draws a chart fence> and "
+            "<https://github.com/acme/app/pull/299|o329 lands on the lane>; pick <https://acme.slack.com/archives/D0123/p1|option 2>."
+        )
+        self.assertEqual(
+            kinds(text),
+            [("drive-term", "fence"), ("drive-term", "o329"), ("drive-term", "lane"), ("option-reference", "option 2")],
+        )
+
     def test_flags_a_bare_slack_message_link_which_unfurls_under_words(self) -> None:
         text = "Alert: https://acme.slack.com/archives/C0123ABCDE/p1731123456789012"
         self.assertEqual(kinds(text), [("bare-url", "https://acme.slack.com/archives/C0123ABCDE/p1731123456789012")])
