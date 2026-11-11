@@ -181,12 +181,12 @@ func (f *fakeSlack) repliesOldest() []string {
 	return slices.Clone(f.oldest)
 }
 
-func (f *fakeSlack) setText(channelID, ts, text string) {
+func (f *fakeSlack) setText(ts, text string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for i, m := range f.channels[channelID] {
+	for i, m := range f.channels[testChannel] {
 		if m.Timestamp == ts {
-			f.channels[channelID][i].Text = text
+			f.channels[testChannel][i].Text = text
 		}
 	}
 }

@@ -82,7 +82,7 @@ func TestThreadReadFetchesOnlyTheDeltaAndRefreshesInFull(t *testing.T) {
 		t.Fatalf("replies oldest = %q, want a full read then a delta from the newest cached ts", got)
 	}
 
-	f.slack.setText(testChannel, firstReply, "first, edited")
+	f.slack.setText(firstReply, "first, edited")
 	f.slack.remove(testChannel, secondReply)
 	f.now = f.now.Add(cacheFullRefresh)
 	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first, edited"}) {
@@ -170,7 +170,7 @@ func TestObserveDropsAPollSupersededByARead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.slack.setText(testChannel, firstReply, "first, edited")
+	f.slack.setText(firstReply, "first, edited")
 	if err := f.cache.invalidate(f.ctx, testChannel, testThread); err != nil {
 		t.Fatal(err)
 	}

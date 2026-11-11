@@ -133,6 +133,11 @@ as `{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source
 it, with `undone` true, so the program can record your answer without the session typing it. A program that
 does not know the card exits non-zero, and the session alone keeps the answer.
 
+A release post in a channel a session's feed watches for releases also goes to `card_command` as
+`{"release": {"name", "line", "link"}}`, once each time its line changes, `line` being what follows
+`RELEASE` in the feed. A drive uses it to reopen an incident's stop the turn a release it named fails
+a step. Its output is ignored.
+
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
 the config it was logged in with, so run `cc-slack reload` after a change.
 Reload hands the daemon the new config and keeps the bot token, socket URL,
