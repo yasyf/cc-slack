@@ -135,6 +135,9 @@ type opBody struct {
 	Verdict   string   `json:"verdict"`
 	Kinds     []string `json:"kinds"`
 	Match     string   `json:"match"`
+
+	RequestKey    string `json:"request_key"`
+	RequestResend bool   `json:"request_resend"`
 	ticketSpend
 }
 
@@ -635,7 +638,9 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(err.Error())
 		}
-		hc.Ctx = withPostWarnings(hc.Ctx)
+		if hc.Ctx, err = withRequest(withPostWarnings(hc.Ctx), b); err != nil {
+			return fail(err.Error())
+		}
 		extra, err := checkPost(b, hc.Env.Op, requireThread)
 		if err != nil {
 			return fail(err.Error())
@@ -685,7 +690,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		extra = append(extra, slack.MsgOptionAttachments(pages[0].previews...))
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(hc.Ctx, api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, pages[0].text, blocks, b.Files, extra...)
+			res, err = postAs(atStep(hc.Ctx, "post"), api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, pages[0].text, blocks, b.Files, extra...)
 			return err
 		})
 		if err != nil {
@@ -744,8 +749,8 @@ func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID str
 
 func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, channelID string, b opBody, pages []linkedPage) ([]string, error) {
 	shown := make([]string, 0, len(pages))
-	for _, page := range pages {
-		res, err := a.post(hc.Ctx, hc.DB, id, channelID, b.ThreadTS, page.text, nil, nil, slack.MsgOptionAttachments(page.previews...))
+	for n, page := range pages {
+		res, err := a.post(atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1)), hc.DB, id, channelID, b.ThreadTS, page.text, nil, nil, slack.MsgOptionAttachments(page.previews...))
 		if err != nil {
 			return shown, err
 		}
@@ -2222,9 +2227,11 @@ func (a *app) handleFollows(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
-	hc.Ctx = withPostWarnings(hc.Ctx)
 	b, err := decodeBody(hc)
 	if err != nil {
+		return fail(err.Error())
+	}
+	if hc.Ctx, err = withRequest(withPostWarnings(hc.Ctx), b); err != nil {
 		return fail(err.Error())
 	}
 	if b.Card != nil && !b.RootOnly {
@@ -2271,7 +2278,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	thread, ts, posted, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, under, msg)
+	thread, ts, posted, err := a.dmStatus(atStep(hc.Ctx, "status"), hc.DB, sub, id, under, msg)
 	if errors.Is(err, errAskedAgain) {
 		return fail(err.Error())
 	}
@@ -2424,14 +2431,15 @@ func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []sl
 }
 
 func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, under, thread, ts string, pages []dmPage) ([]string, error) {
-	if err := a.postPages(hc, sub, id, thread, ts, pages[0].msg.text, pages[0].later); err != nil {
+	if err := a.postPages(atStep(hc.Ctx, "status"), hc.DB, sub, id, thread, ts, pages[0].msg.text, pages[0].later); err != nil {
 		return nil, err
 	}
 	shown := make([]string, 0, len(pages)-1)
-	for _, page := range pages[1:] {
-		pageThread, pageTS, _, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, under, page.msg)
+	for n, page := range pages[1:] {
+		ctx := atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1))
+		pageThread, pageTS, _, err := a.dmStatus(ctx, hc.DB, sub, id, under, page.msg)
 		if err == nil {
-			err = a.postPages(hc, sub, id, pageThread, pageTS, page.msg.text, page.later)
+			err = a.postPages(ctx, hc.DB, sub, id, pageThread, pageTS, page.msg.text, page.later)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("posted the start of this post at %s, so do not post it again, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
@@ -2460,9 +2468,9 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	return msg, nil
 }
 
-func (a *app) postPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts, text string, pages [][]slack.Block) error {
-	for _, page := range pages {
-		if _, _, _, err := a.dmStatus(hc.Ctx, hc.DB, sub, id, thread, dmMessage{text: text, blocks: page}); err != nil {
+func (a *app) postPages(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread, ts, text string, pages [][]slack.Block) error {
+	for n, page := range pages {
+		if _, _, _, err := a.dmStatus(substep(ctx, fmt.Sprintf("more:%d", n+1)), db, sub, id, thread, dmMessage{text: text, blocks: page}); err != nil {
 			return fmt.Errorf("posted the start of this reply at %s, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
 		}
 	}
@@ -2659,7 +2667,7 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if msg.card != nil {
 		thread, ts, posted, err := a.cardStatus(ctx, db, sub, id, under, msg)
 		if err == nil && posted && len(msg.previews) > 0 {
-			if _, err := a.post(ctx, db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
+			if _, err := a.post(substep(ctx, "previews"), db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
 				a.poller.log.Printf("previews under card %s: %v", ts, err)
 			}
 		}

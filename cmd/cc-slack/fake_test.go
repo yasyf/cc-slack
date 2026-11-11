@@ -40,6 +40,8 @@ type fakePost struct {
 	blocks      string
 	metadata    string
 	attachments string
+	request     string
+	step        string
 }
 
 const fakeEditedAt = "9999999999.000000"
@@ -307,7 +309,7 @@ func (f *fakeSlack) JoinConversationContext(_ context.Context, channelID string)
 	return &slack.Channel{}, "", nil, nil
 }
 
-func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
+func (f *fakeSlack) PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.call("chat.postMessage"); err != nil {
@@ -332,6 +334,10 @@ func (f *fakeSlack) PostMessageContext(_ context.Context, channelID string, opti
 		broadcast: values.Get("reply_broadcast") == "true", unfurlLinks: values.Get("unfurl_links"), blocks: values.Get("blocks"),
 		metadata: values.Get("metadata"), attachments: values.Get("attachments"),
 	}
+	if r, keyed := ctx.Value(requestCtxKey{}).(request); keyed {
+		p.request = r.key
+	}
+	p.step, _ = ctx.Value(stepCtxKey{}).(string)
 	f.posts = append(f.posts, p)
 	var attachments []slack.Attachment
 	if p.attachments != "" {

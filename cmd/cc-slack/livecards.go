@@ -408,7 +408,7 @@ func (l *liveCards) continueCarried(ctx context.Context, api slackAPI, channel, 
 		if err != nil {
 			return append(kept, held[min(n, len(held)):]...), err
 		}
-		_, ts, err := api.PostMessageContext(ctx, channel, id.postOptions(carriedMoreText, thread, slack.MsgOptionBlocks(page...))...)
+		_, ts, err := api.PostMessageContext(atStep(ctx, fmt.Sprintf("carried:%s:%d", thread, n+1)), channel, id.postOptions(carriedMoreText, thread, slack.MsgOptionBlocks(page...))...)
 		if err != nil {
 			return append(kept, held[min(n+1, len(held)):]...), err
 		}

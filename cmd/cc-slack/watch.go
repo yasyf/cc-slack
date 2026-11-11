@@ -70,7 +70,7 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 				subjectID string
 				port      int
 			)
-			if err := acrossRestart(awaitRestart, func(ctx context.Context) error {
+			if err := acrossRestart(restarting, awaitRestart, func(ctx context.Context) error {
 				if err := d.EnsureCurrent(ctx); err != nil {
 					return err
 				}
