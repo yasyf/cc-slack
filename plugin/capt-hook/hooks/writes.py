@@ -172,7 +172,7 @@ class Write:
     @property
     def payload(self) -> dict[str, Any]:
         text = self.channel if self.verb == "create" else self.text
-        payload = {"verb": self.verb, "text": text, "files": self.files, "broadcast": bool(self.fields.get("broadcast")), "ts": self.ts}
+        payload = {"verb": self.verb, "channel": self.channel, "thread": self.thread, "text": text, "files": self.files, "broadcast": bool(self.fields.get("broadcast")), "ts": self.ts}
         return payload | ({"blocks": self.fields["blocks"]} if self.fields.get("blocks") else {}) | ({"users": self.users} if self.users else {}) | ({"stream": True} if self.stream else {})
 
 

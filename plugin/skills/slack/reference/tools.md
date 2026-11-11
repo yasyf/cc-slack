@@ -64,8 +64,9 @@ session like any watched message. A reply from the user arrives as
 operator steering, the same as a prompt. Pass `no_watch: true`, or `--no-watch` to the CLI, only for a
 one-shot post or when an owner subagent watches the thread itself.
 The result reports `posted` and `watched` separately. A repeat of a write
-already posted under its once ticket returns that receipt with `replayed`
-set and posts nothing.
+already posted under its once ticket, the same text to the same channel and
+thread, returns that receipt with `replayed` set and posts nothing; the same
+text to another thread posts.
 
 When the config sets `[doc_cards]`, a link under its `link` prefix in
 `text` gets a Work Object card. `slack_send`, `slack_reply`, and
