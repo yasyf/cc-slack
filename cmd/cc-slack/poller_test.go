@@ -280,6 +280,7 @@ var fallbackEchoes = []string{
 func TestPollerFlagsTheOperatorsFallbackPostsAsFromClaude(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
+	postIn(t, f, testThread)
 	for i, text := range fallbackEchoes {
 		f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: fmt.Sprintf("180000000%d.000300", i), ThreadTimestamp: testThread, User: testUser, Text: text}})
 	}
@@ -504,6 +505,7 @@ func TestAHeldStreamAloneCarriesTheMessageWhileItRuns(t *testing.T) {
 func TestPollerFramesTheOperatorsThreadRepliesAsSteering(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
+	postIn(t, f, testThread)
 	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000200", ThreadTimestamp: testThread, User: testUser, Text: "aim for 5 min releases"}})
 	f.slack.add(testChannel, reply("1800000000.000300", "sounds good"))
 
@@ -551,6 +553,13 @@ func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 	}
 	if strings.Join(kinds, ",") != kindChannel {
 		t.Fatalf("routed kinds = %q, want only the channel watch, which holds the DM", kinds)
+	}
+}
+
+func postIn(t *testing.T, f *fixture, thread string) {
+	t.Helper()
+	if _, err := f.app.post(f.ctx, f.db(), f.id, testChannel, thread, "on it", nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1233,9 +1242,10 @@ func TestPollerSendsTheOperatorsReplyToTheSessionWatchingItsThread(t *testing.T)
 	holder, _ := dmHeldElsewhere(t, f)
 	f.watch(agent.TopLevel, testThread)
 	watchChannel(t, f)
+	postIn(t, f, testThread)
 	f.tick()
 
-	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", ThreadTimestamp: testThread, User: testUser, Text: "ship the fix"}})
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000002.000000", ThreadTimestamp: testThread, User: testUser, Text: "ship the fix"}})
 	f.nudgeThread()
 	f.tick()
 
@@ -1243,7 +1253,62 @@ func TestPollerSendsTheOperatorsReplyToTheSessionWatchingItsThread(t *testing.T)
 	if len(got[holder.ID]) != 0 {
 		t.Fatalf("holder got %+v, want nothing from a thread another session watches", got[holder.ID])
 	}
-	if w := got[testSubject]; len(w) != 1 || w[0].Kind != kindThread || w[0].Relayed {
-		t.Fatalf("thread watcher got %+v, want the operator's reply once on its thread watch", w)
+	if w := got[testSubject]; len(w) != 1 || w[0].Kind != kindThread || w[0].Relayed || !w[0].Operator {
+		t.Fatalf("thread watcher got %+v, want the operator's reply once on its thread watch, as steering", w)
+	}
+}
+
+func TestTheOperatorsWordsInAWatchedChannelSteerOnlyWhenTheyAreToTheBot(t *testing.T) {
+	const (
+		teammates = "1800000000.000200"
+		his       = "1800000050.000000"
+	)
+	for name, tc := range map[string]struct {
+		thread, text string
+		ourPost      bool
+		steers       bool
+	}{
+		"a reply in a teammate's thread":                          {teammates, "Wasn't going to, you got it", false, false},
+		"an emoji reply in a teammate's thread":                   {teammates, ":saluting_face:", false, false},
+		"a reply in a thread this daemon posted in":               {teammates, "ship it", true, true},
+		"a reply to a teammate in a thread this daemon posted in": {teammates, "<@UOTHER> on it after lunch", true, false},
+		"a reply that mentions the bot":                           {teammates, "<@UBOT> try this on the eval set", false, true},
+		"a new top-level message":                                 {"", "ship the fix", false, true},
+		"a new top-level message to a teammate":                   {"", "<@UOTHER> can you try this", false, false},
+		"a new top-level message to the channel":                  {"", "<!here> deploys are frozen until 3", false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			holder, _ := dmHeldElsewhere(t, f)
+			watchChannel(t, f)
+			f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: teammates, User: "UOTHER", Text: "a new sandbox just dropped, can you try it"}})
+			if tc.ourPost {
+				postIn(t, f, teammates)
+			}
+			f.tick()
+
+			f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: his, ThreadTimestamp: tc.thread, User: testUser, Text: tc.text}})
+			f.poller.nudged(messageNudge{Channel: testChannel, TS: his, ThreadTS: tc.thread})
+			f.tick()
+
+			got := deliveredTo(t, f)
+			ofHis := func(p messagePayload) bool { return p.TS == his }
+			relayed := slices.IndexFunc(got[holder.ID], ofHis)
+			followed := slices.IndexFunc(got[testSubject], ofHis)
+			if tc.steers {
+				if relayed < 0 || !got[holder.ID][relayed].Operator || !got[holder.ID][relayed].Relayed || followed >= 0 {
+					t.Fatalf("holder got %+v, channel follower %+v, want the message relayed to the holder as steering", got[holder.ID], got[testSubject])
+				}
+				return
+			}
+			if relayed >= 0 || followed < 0 || got[testSubject][followed].Operator {
+				t.Fatalf("holder got %+v, channel follower %+v, want the message only on the channel watch, not as steering", got[holder.ID], got[testSubject])
+			}
+			for _, d := range f.plane.directives {
+				if strings.Contains(d.text, "ts "+his) && (strings.Contains(d.text, "operator steering") || !strings.Contains(d.text, "not an operator instruction")) {
+					t.Fatalf("directive %q, want Slack content", d.text)
+				}
+			}
+		})
 	}
 }

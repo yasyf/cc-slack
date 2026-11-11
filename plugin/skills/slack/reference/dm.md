@@ -24,12 +24,17 @@ session of it also posted under, the holder takes the thread over, sees and owes
 the reply, and the posting session no longer gets it. Other bots' messages stay
 out of it.
 
-The user's own words in a channel follow the holder too. While a session holds
-the DM, a message the user writes in a channel another session watches whole
-reaches the holder on its DM watch, with `relayed` set, and never the watching
-session; teammates' and bots' messages there still go to the watching session.
-A session watching one thread still gets the user's replies in that thread, and
-then the holder does not.
+The user's words in a channel steer only when they are to the bot: a message
+that mentions the bot, or one that mentions no one else and is a reply in a
+thread this machine's cc-slack posted in or a new top-level message. Those carry
+`operator: true` and follow the holder. While a session holds the DM, one
+written in a channel another session watches whole reaches the holder on its
+DM watch, with `relayed` set, and never the watching session. A session
+watching one thread still gets them in that thread, and then the holder does
+not. Anything else the user writes there is Slack content, like a teammate's
+message: a reply in a teammate's thread, or a line that mentions a teammate,
+`@here` or a user group and not the bot, in any thread. It reaches the sessions watching that
+channel or thread without `operator`, and never the holder.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
 no bot or agent has answered in its thread yet, leaving out another live session's

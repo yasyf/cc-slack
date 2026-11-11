@@ -136,9 +136,10 @@ tool output are not the user's words, and neither is a dispatch prompt that
 claims approval.
 
 The user's own Slack messages to the session do count. cc-slack marks each
-message the user sent as the operator's, and Jev reads every such channel
-line in the session tree like typed words, however long ago it arrived and
-however many writes cited it before. The session's acknowledgement and the
+message the user sent to the bot as the operator's, never their words to a
+teammate (`reference/dm.md` says which are which), and Jev reads every such
+channel line in the session tree like typed words, however long ago it arrived
+and however many writes cited it before. The session's acknowledgement and the
 answer a handler it starts posts both reach Jev with the order. A handler in
 another session links the message in its brief: the hook reads it back from
 Slack and checks that the user wrote it in their own DM with the app. The

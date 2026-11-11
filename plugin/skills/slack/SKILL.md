@@ -35,7 +35,7 @@ A DM message or button tap needing no response gets a `+1` reaction and no reply
 
 A session hears only its own subscriptions: top-level `slack_watch` calls, its sends and replies, and its `slack_dm_status` thread. When moving from zero subscriptions to one, check the result's `channel` field: if `active`, arm no Monitor; if `pending` or `inactive`, arm the persistent Monitor and run `channel-ack` as reference/receive.md says.
 
-Each Slack event reaches a top-level session once: as a channel tag when this window's channel is proven, otherwise as an injected directive at the next tool call. A message from the user carries `operator: true`, and a card tap's tag carries what to act on, as `reference/cards.md` describes. While a watch Monitor runs, a message can also arrive as a Monitor line: deduplicate every delivery by `(channel_id, ts)` before acting.
+Each Slack event reaches a top-level session once: as a channel tag when this window's channel is proven, otherwise as an injected directive at the next tool call. A message the user writes to the bot carries `operator: true`, while their reply to a teammate arrives as content without it, and a card tap's tag carries what to act on, as `reference/cards.md` describes. While a watch Monitor runs, a message can also arrive as a Monitor line: deduplicate every delivery by `(channel_id, ts)` before acting.
 
 To follow alerts, incidents or releases in a busy channel, run `cc-slack subscribe --channel <id> --kind <kinds>` instead of `slack_watch`. Each event then arrives as one `slack.feed` line. A flapping Datadog monitor reads as one open and one close, and a release as one line per state.
 
