@@ -67,7 +67,6 @@ type messagePayload struct {
 	Permalink   string       `json:"permalink"`
 	ThreadCard  string       `json:"thread_card,omitempty"`
 	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
-	Acked       string       `json:"acked,omitempty"`
 	Operator    bool         `json:"operator,omitempty"`
 	Relayed     bool         `json:"relayed,omitempty"`
 	Dashboard   bool         `json:"dashboard,omitempty"`
@@ -118,7 +117,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates, acked string) (delivery, error) {
+func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates) (delivery, error) {
 	thread := m.ThreadTimestamp
 	if thread == "" {
 		thread = m.Timestamp
@@ -126,7 +125,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	msg := messagePayload{
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
-		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m), Relayed: w.Relayed,
+		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Operator: id.fromOperator(m), Relayed: w.Relayed,
 		Dashboard: typedOnDashboard(m),
 	}
 	switch {
@@ -240,9 +239,6 @@ func messageLine(m messagePayload) string {
 	told := ""
 	if m.Dashboard {
 		told = " They typed it on the drive dashboard, and cc-slack posted it in the DM as the bot, marked as theirs."
-	}
-	if m.Acked != "" {
-		told += fmt.Sprintf(" cc-slack already acked it in its thread (ts %s) while this session was compacting, so do not ack it again.", m.Acked)
 	}
 	if m.Kind == kindDM {
 		status := "slack_dm_status"
@@ -428,9 +424,9 @@ func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int
 	return endedAt.Int64, status == agent.StatusDone, nil
 }
 
-func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message, mates driveMates, acked string) error {
+func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message, mates driveMates) error {
 	if len(sessions) == 1 {
-		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates, acked)
+		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates)
 		if err != nil {
 			return err
 		}

@@ -191,7 +191,7 @@ func (l *liveDaemon) deliverOn(w watch, ts, text string) {
 	l.t.Helper()
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: w.ThreadTS, User: "UOTHER", Username: "teammate", Text: text}}
-	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestABotReplyThatRepeatsItsParentOnAThreadWatchArrivesAsItsFirstLine(t *tes
 	deliver := func(ts, thread, bot, text string) messagePayload {
 		t.Helper()
 		m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: "UDATADOG", BotID: bot, Username: "Datadog", Text: text}}
-		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -457,7 +457,7 @@ func TestEveryBotMessageOnAChannelWatchArrivesAsOneLine(t *testing.T) {
 	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindChannel, ChannelID: testChannel}
 	deliver := func(m slack.Message) messagePayload {
 		t.Helper()
-		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, "")
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
