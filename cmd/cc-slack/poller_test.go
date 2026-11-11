@@ -1229,3 +1229,66 @@ func TestARestartedSessionDoesNotTakeBackTheDMFromAnother(t *testing.T) {
 		t.Fatalf("back = %d, want the DM left with the session that holds it", back)
 	}
 }
+
+func dmHeldElsewhere(t *testing.T, f *fixture) (subject.Subject, int64) {
+	t.Helper()
+	holder := cardSessionElsewhere(t, f)
+	held, _, err := insertWatch(f.ctx, f.db(), holder.ID, agent.TopLevel, kindChannel, f.id.DMChannelID, "", testThread, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return holder, held
+}
+
+func deliveredTo(t *testing.T, f *fixture) map[string][]messagePayload {
+	t.Helper()
+	out := map[string][]messagePayload{}
+	for i, p := range payloads(t, f) {
+		sub := f.plane.events[i].SubjectID
+		out[sub] = append(out[sub], p)
+	}
+	return out
+}
+
+func TestPollerSendsTheOperatorsChannelWordsOnlyToTheSessionHoldingTheDM(t *testing.T) {
+	f := newFixture(t)
+	holder, held := dmHeldElsewhere(t, f)
+	watchChannel(t, f, testThread)
+	f.tick()
+
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", User: testUser, Text: "ship the fix"}})
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000400", User: "UOTHER", Text: "on it"}})
+	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000000.000300"})
+	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000000.000400"})
+	f.tick()
+
+	got := deliveredTo(t, f)
+	his := got[holder.ID]
+	if len(his) != 1 || his[0].TS != "1800000000.000300" || !his[0].Relayed || his[0].WatchID != held || his[0].ChannelID != testChannel {
+		t.Fatalf("holder got %+v, want the operator's message relayed on its DM watch", his)
+	}
+	follower := got[testSubject]
+	if len(follower) != 1 || follower[0].TS != "1800000000.000400" || follower[0].Relayed {
+		t.Fatalf("channel follower got %+v, want only the teammate's message", follower)
+	}
+}
+
+func TestPollerSendsTheOperatorsReplyToTheSessionWatchingItsThread(t *testing.T) {
+	f := newFixture(t)
+	holder, _ := dmHeldElsewhere(t, f)
+	f.watch(agent.TopLevel, testThread)
+	watchChannel(t, f, testThread)
+	f.tick()
+
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", ThreadTimestamp: testThread, User: testUser, Text: "ship the fix"}})
+	f.nudgeThread()
+	f.tick()
+
+	got := deliveredTo(t, f)
+	if len(got[holder.ID]) != 0 {
+		t.Fatalf("holder got %+v, want nothing from a thread another session watches", got[holder.ID])
+	}
+	if w := got[testSubject]; len(w) != 1 || w[0].Kind != kindThread || w[0].Relayed {
+		t.Fatalf("thread watcher got %+v, want the operator's reply once on its thread watch", w)
+	}
+}

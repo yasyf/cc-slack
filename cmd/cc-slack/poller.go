@@ -87,6 +87,7 @@ type watch struct {
 	ChannelID string
 	ThreadTS  string
 	PID       int
+	Relayed   bool
 }
 
 type cursorKey struct {
@@ -102,6 +103,7 @@ type cursorGroup struct {
 	sessions []watch
 	covering []watch
 	mates    driveMates
+	holder   watch
 }
 
 type cursorRow struct {
@@ -419,13 +421,17 @@ func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
 
 func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
+	var holder watch
+	if i := slices.IndexFunc(watches, func(w watch) bool { return w.Kind == kindChannel && w.ChannelID == dmChannelID }); i >= 0 {
+		holder = watches[i]
+	}
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
 		i, ok := index[key]
 		if !ok {
 			i = len(groups)
 			index[key] = i
-			groups = append(groups, cursorGroup{key: key, mates: mates})
+			groups = append(groups, cursorGroup{key: key, mates: mates, holder: holder})
 		}
 		return &groups[i]
 	}
@@ -455,8 +461,8 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	for i := range groups {
 		inThread := slices.Clone(groups[i].watches)
 		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return mates.onAnotherSessionsCard(w, inThread) })
-		if held := channels[dmChannelID]; len(held) > 0 && groups[i].key.channelID == dmChannelID && groups[i].key.threadTS != "" {
-			groups[i].watches = mates.takeOver(groups[i].watches, held[0])
+		if holder.ID != 0 && groups[i].key.channelID == dmChannelID && groups[i].key.threadTS != "" {
+			groups[i].watches = mates.takeOver(groups[i].watches, holder)
 		}
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
@@ -599,6 +605,9 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 		return err
 	}
 	watching := slices.Concat(g.watches, g.covering)
+	if g.key.channelID != id.DMChannelID && id.fromOperator(m) {
+		watching = g.toHolder(watching)
+	}
 	rooted := len(g.sessions) > 0 && operatorRoot(id, m) && !g.held()
 	reaching := watching
 	if rooted && len(g.sessions) == 1 {
@@ -650,6 +659,21 @@ func (g cursorGroup) covered() bool {
 
 func (g cursorGroup) held() bool {
 	return slices.ContainsFunc(g.watches, func(w watch) bool { return w.Kind == kindChannel })
+}
+
+func (g cursorGroup) toHolder(watching []watch) []watch {
+	if g.holder.ID == 0 {
+		return watching
+	}
+	kept := slices.DeleteFunc(slices.Clone(watching), func(w watch) bool {
+		return w.Kind == kindChannel && w.SubjectID != g.holder.SubjectID && w.PID != g.holder.PID
+	})
+	if len(kept) > 0 || len(watching) == 0 {
+		return kept
+	}
+	relay := g.holder
+	relay.ChannelID, relay.Relayed = g.key.channelID, true
+	return []watch{relay}
 }
 
 func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates, acked string) error {

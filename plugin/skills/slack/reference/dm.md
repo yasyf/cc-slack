@@ -23,6 +23,13 @@ posting session's cards name the holder's drive (`drive` on a card), or a drive 
 session of it also posted under, the holder takes the thread over, sees and owes
 the reply, and the posting session no longer gets it. Other bots' messages stay
 out of it.
+
+The user's own words in a channel follow the holder too. While a session holds
+the DM, a message the user writes in a channel another session watches whole
+reaches the holder on its DM watch, with `relayed` set, and never the watching
+session; teammates' and bots' messages there still go to the watching session.
+A session watching one thread still gets the user's replies in that thread, and
+then the holder does not.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
 no bot or agent has answered in its thread yet, leaving out another live session's

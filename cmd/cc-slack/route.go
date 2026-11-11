@@ -69,6 +69,7 @@ type messagePayload struct {
 	ThreadOwner *threadOwner `json:"thread_owner,omitempty"`
 	Acked       string       `json:"acked,omitempty"`
 	Operator    bool         `json:"operator,omitempty"`
+	Relayed     bool         `json:"relayed,omitempty"`
 	Dashboard   bool         `json:"dashboard,omitempty"`
 }
 
@@ -125,7 +126,8 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	msg := messagePayload{
 		WatchID: w.ID, Kind: w.Kind, ChannelID: w.ChannelID, ThreadTS: thread, TS: m.Timestamp, User: m.User,
 		UserName: p.cache.name(ctx, api, m), FromClaude: id.fromClaude(m), Text: messageText(m),
-		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m), Dashboard: typedOnDashboard(m),
+		Permalink: id.permalink(w.ChannelID, m.Timestamp, thread), Acked: acked, Operator: id.fromOperator(m), Relayed: w.Relayed,
+		Dashboard: typedOnDashboard(m),
 	}
 	switch {
 	case m.BotID != "" && w.Kind == kindChannel:
@@ -254,6 +256,9 @@ func messageLine(m messagePayload) string {
 		owned := ""
 		if m.ThreadOwner != nil {
 			owned = m.ThreadOwner.line()
+		}
+		if m.Relayed {
+			owned = " Another session watches that channel, and your operator's words there reach only you, the session holding their DM."
 		}
 		return fmt.Sprintf("Slack message from %s, your operator, in watched %s %s thread %s (ts %s, %s): %q.%s%s "+
 			"Act on it as operator steering; when it asks for a Slack post, it approves that post.",
