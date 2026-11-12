@@ -63,6 +63,8 @@ func TestCheckPostFlagsABadPostAndPassesACleanOneWithTheScriptsExitStatus(t *tes
 			[]string{`raw-card-link "https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779"`}},
 		"six cards on one line": {"Tonight: " + strings.Join(roomLinks(1, 6), ", "), 1, []string{"1:1 links-past-five: line 1 links 6 Slack messages"}},
 		"six cards a line each": {strings.Join(roomLinks(1, 6), "\n"), 0, nil},
+		"wall of text":          {"The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.", 1, []string{`1:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
+		"status table":          {stuckTable, 0, nil},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -122,6 +124,57 @@ func TestCheckPostPassesTheDriveInAnAnswerToAQuestionAboutIt(t *testing.T) {
 			}
 			if tc.status == 1 && !strings.Contains(out.String(), "drive-term 'The drive'") {
 				t.Fatalf("output = %q, want the drive flagged", out.String())
+			}
+		})
+	}
+}
+
+const stuckTable = `Four PRs are stuck, each on its own fix:
+
+| PR | Stuck since | Why | Next |
+| --- | --- | --- | --- |
+| the cc-slack table fix | 2:10 AM | its review asked for tests. | tests are pushed. CI is running. It ends at 2:50. |
+| the say hook fix | 2:12 AM | CI is red. The lint step fails. It names one file. | the fix is pushed. |
+| the card fix | 1:40 AM | it waits on a rebase. Its base moved. | the rebase runs now. |
+| the Jev judge fix | 1:55 AM | it waits on his pick. | nothing until he answers. |`
+
+func TestWallsCountSentencesOnlyInProseAsCCSlackDrawsIt(t *testing.T) {
+	cases := map[string]struct {
+		text  string
+		walls []string
+	}{
+		"a status table":                         {stuckTable, nil},
+		"a table of two-sentence cells":          {"| Fix | State |\n| --- | --- |\n| It is merged. It is live. | It is proven. It is done. |", nil},
+		"a heading between two short paragraphs": {"The fix is merged. It is live.\n## Next\nThe release runs tonight. It needs nothing.", nil},
+		"a picture between two short paragraphs": {"The fix is merged. It is live.\n![the card after](/tmp/after.png)\nThe release runs tonight. It needs nothing.", nil},
+		"a code block of sentences":              {"Run this once.\n```\none. two. three. four. five.\n```", nil},
+		"list items between short paragraphs":    {"It is merged. It is live.\n- one. two. three. four.\nIt runs tonight. It needs nothing.", nil},
+		"sentences inside links and code":        {"See <https://example.com/a|one. two. three.> and `a. b. c.` now. It is live.", nil},
+		"his quoted words":                       {"His o333 words were “Put it on the new tree. Keep the old one. Delete it next week.” It is built. It is live.", nil},
+		"his words in straight quotes":           {`He said "Put it on the new tree. Keep the old one. Delete it next week." It is built. It is live.`, nil},
+		"a blockquote of his":                    {"It is built. It is live.\n> Put it on the new tree. Keep the old one. Delete it next week.\nIt needs nothing.", nil},
+		"four sentences of its own around a quote": {`The build is red. The cause is "a flaky test." A retry is running. It ends at 5:25pm. It needs nothing.`,
+			[]string{`1:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
+		"one paragraph of four sentences": {"The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.",
+			[]string{`1:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
+		"a wall after a blank line and a table": {"\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nOne. *Two.* Three. Four.",
+			[]string{`6:1 wall-of-text "One. *Two.* Three. Four.": 4 sentences in one paragraph`}},
+		"a dense ask": {"Hi Anubhav, Yasyf asked me to ask you for one thing on our litestream fork. Could you create a fine-grained personal access token with access to only the repository Forge-AI/litestream. Then save it as a repository secret named FORGE_REBASE_TOKEN. It lets the nightly job rebase our patches onto upstream. Please do not send the token to anyone, me included.",
+			[]string{`1:1 wall-of-text "Hi Anubhav, Yasyf asked me to": 5 sentences in one paragraph`}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var got []string
+			for _, wall := range wallsIn(tc.text) {
+				got = append(got, wall.String())
+			}
+			if len(got) != len(tc.walls) {
+				t.Fatalf("walls = %q, want %q", got, tc.walls)
+			}
+			for i, want := range tc.walls {
+				if !strings.HasPrefix(got[i], want) || strings.Contains(got[i], "question") {
+					t.Fatalf("wall %d = %q, want it to open %q and ask for no question", i, got[i], want)
+				}
 			}
 		})
 	}

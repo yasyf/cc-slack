@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/slack-go/slack"
 )
@@ -52,6 +53,7 @@ var (
 
 type bodyPiece struct {
 	text     string
+	line     int
 	table    [][]string
 	picture  *cardImage
 	gallery  []*slack.ImageBlock
@@ -62,13 +64,21 @@ type bodyPiece struct {
 func bodyPieces(body string) []bodyPiece {
 	var pieces []bodyPiece
 	var para []string
+	number := strings.Count(body[:len(body)-len(strings.TrimLeftFunc(body, unicode.IsSpace))], "\n")
+	paraLine := 0
 	fence := make([]string, 0, 1)
 	var table [][]string
 	flushPara := func() {
 		if len(para) > 0 {
-			pieces = append(pieces, bodyPiece{text: strings.Join(para, "\n")})
+			pieces = append(pieces, bodyPiece{text: strings.Join(para, "\n"), line: paraLine})
 			para = nil
 		}
+	}
+	addPara := func(line string) {
+		if len(para) == 0 {
+			paraLine = number
+		}
+		para = append(para, line)
 	}
 	flushTable := func() {
 		if len(table) > 0 {
@@ -79,6 +89,7 @@ func bodyPieces(body string) []bodyPiece {
 	inFence := false
 	for line := range strings.SplitSeq(strings.TrimSpace(body), "\n") {
 		trimmed := strings.TrimSpace(line)
+		number++
 		switch {
 		case strings.HasPrefix(trimmed, "```") && inFence:
 			pieces = append(pieces, fencedPieces(fence[0], fence[1:], line)...)
@@ -105,10 +116,10 @@ func bodyPieces(body string) []bodyPiece {
 		case mdHeading.MatchString(trimmed):
 			flushPara()
 			flushTable()
-			para = append(para, "*"+strings.Trim(mrkdwnLine(mdHeading.FindStringSubmatch(trimmed)[1]), "*")+"*")
+			addPara("*" + strings.Trim(mrkdwnLine(mdHeading.FindStringSubmatch(trimmed)[1]), "*") + "*")
 		default:
 			flushTable()
-			para = append(para, mrkdwnLine(line))
+			addPara(mrkdwnLine(line))
 		}
 	}
 	flushPara()
