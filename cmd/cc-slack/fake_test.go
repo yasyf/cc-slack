@@ -1193,3 +1193,9 @@ func (f *fakeSlack) setUser(u *slack.User) {
 	defer f.mu.Unlock()
 	f.users[u.ID] = u
 }
+
+func (f *fakeSlack) setDM(channelID string, users ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dms[channelID] = users
+}

@@ -1157,11 +1157,14 @@ func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *test
 		t.Run(name, func(t *testing.T) {
 			l := startDaemon(t)
 			loggedIn(t, l)
+			fields := asBody(map[string]string{"channel_id": "D0THEIRDM", "thread_ts": "1800000000.000100", "text": "Fixed: the deploy runs again."})
+			place := placeOf(opReply, fields)
 			if tc.credential {
-				l.user.as(testUser).dms["D0THEIRDM"] = []string{"U0REPORTER"}
+				l.user.as(testUser).setDM("D0THEIRDM", "U0REPORTER")
+				place = map[string]string{"channel": "U0REPORTER", "thread": ""}
 			}
 			l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "channel_not_found"})
-			body := l.hooked(opReply, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": "1800000000.000100", "text": "Fixed: the deploy runs again."})
+			body := l.spending(l.tickets.mint(fakeTicket{tree: testTree, place: place, reach: reachOnce, rule: "asked-owner", fingerprint: fingerprintOf(fields)}), fields)
 			raw, _ := json.Marshal(body)
 			_, err := invoke(l.ctx, l.deps, testSession, "/any", opReply, raw)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), mcpSend) {
@@ -1606,7 +1609,7 @@ func TestDMPeerNamesThePersonADMReaches(t *testing.T) {
 	if got := outside(); !reflect.DeepEqual(got, dmPeerResult{ChannelID: "D0THEIRDM"}) {
 		t.Fatalf("dm-peer of a DM the bot cannot see, with no user credential = %+v, want no peer", got)
 	}
-	l.user.as(testUser).dms["D0THEIRDM"] = []string{"UOTHER"}
+	l.user.as(testUser).setDM("D0THEIRDM", "UOTHER")
 	if got, want := outside(), (dmPeerResult{ChannelID: "D0THEIRDM", Peer: "UOTHER", PeerName: "anubhav", PeerNames: []string{"anubhav"}}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("dm-peer of a DM the bot cannot see, read as the user = %+v, want %+v", got, want)
 	}
