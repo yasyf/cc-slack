@@ -242,7 +242,7 @@ func TestSendPastOnePageGoesOnInItsThreadAndAnEditKeepsOneMessage(t *testing.T) 
 	if len(sent) < 2 || slices.ContainsFunc(sent, func(p fakePost) bool { return p.threadTS != testThread }) {
 		t.Fatalf("sent %+v, want the reply past one page carried on in its own thread", sent)
 	}
-	var drawn []string
+	drawn := make([]string, 0, len(sent))
 	for _, p := range sent {
 		blocks := postedBlocks(t, p.blocks)
 		if len(blocks) > cardMaxPageBlock {
