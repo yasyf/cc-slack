@@ -185,6 +185,29 @@ func TestASettledPRCardLinksItsPROnce(t *testing.T) {
 	}
 }
 
+func TestACardWhosePRsAllEndedCollapsesToItsTitleAndOutcome(t *testing.T) {
+	card := statusCard{
+		Status: "needs_you", Title: "Fix: approve the chat list?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
+		PRs: []cardPR{{URL: "https://github.com/acme/app/pull/41", Surprise: "Chats load faster."}, {URL: "https://github.com/acme/app/pull/42", Surprise: "The list pages."}},
+	}
+	v := view()
+	v.refs = map[string]refState{"pr:acme/app#41": {State: "merged"}, "pr:acme/app#42": {State: "open"}}
+	if got := blocksJSON(t, card.replyBlocks(v)); !strings.Contains(got, "Chats load faster") || !strings.Contains(got, `"type":"button"`) {
+		t.Fatalf("blocks %s, want the whole card with its buttons while one PR is open", got)
+	}
+	for state, outcome := range map[string]string{"merged": "🟣 Merged", "closed": "🟣 1 merged, ⚪ 1 closed without merging"} {
+		v.refs["pr:acme/app#42"] = refState{State: state}
+		blocks := card.replyBlocks(v)
+		got := blocksJSON(t, blocks)
+		if err := checkBlocks(blocks); err != nil || len(blocks) != 3 || !strings.Contains(got, outcome) || strings.Contains(got, "Chats load faster") || strings.Contains(got, `"type":"button"`) {
+			t.Fatalf("blocks %s (%v), want the title, its PRs' lines and %q with no button", got, err, outcome)
+		}
+		if text := card.replyText(v); text != settledText(card.Title, outcome) {
+			t.Fatalf("text %q, want the title and %q", text, outcome)
+		}
+	}
+}
+
 func TestAWithdrawalNamingAnotherPostSaysReplacedAndLinksIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

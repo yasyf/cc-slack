@@ -50,6 +50,7 @@ type liveMessage struct {
 	Final    bool `json:"final,omitempty"`
 	Unfolded bool `json:"unfolded,omitempty"`
 	Edited   bool `json:"edited,omitempty"`
+	Ended    bool `json:"ended,omitempty"`
 }
 
 type liveThread struct {
@@ -1636,11 +1637,33 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		}
 		next = earliest(next, h.due)
 	}
+	maps.Copy(changed, l.collapseEnded())
 	if until := l.redrawChanged(ctx, l.newAPI(id.Token), changed, now); !until.IsZero() {
 		next = earliest(next, until)
 	}
 	l.recardMoved(ctx, id, moved)
 	return max(next.Sub(now), time.Second)
+}
+
+func (l *liveCards) collapseEnded() map[string]bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ended := map[string]bool{}
+	for _, t := range l.threads {
+		for _, m := range t.PRCards {
+			if m.Ended || m.Card.ended(l.refs) == "" {
+				continue
+			}
+			m.Ended = true
+			for _, id := range m.Card.refIDs() {
+				ended[id.key()] = true
+			}
+		}
+	}
+	if len(ended) > 0 {
+		l.save()
+	}
+	return ended
 }
 
 func (l *liveCards) redrawClosedUndos(ctx context.Context, id identity, closed []closedUndo, now time.Time) {

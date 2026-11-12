@@ -258,6 +258,35 @@ func TestARestartRedrawsNoCardWhoseRefsStayed(t *testing.T) {
 	}
 }
 
+func TestAPRCardWhosePRsEndedBeforeItsBuildCollapsesOnceAndARestartRedrawsItNoMore(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	refs, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 11, 12, 17, 0, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	const thread, ts = "1800000000.000100", "1800000000.000300"
+	card := statusCard{Status: "needs_you", Title: "Fix: approve the chat list?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits, PRs: []cardPR{{URL: testPRURL}}}
+	cards.threads[threadKey("D"+testUser, thread)] = &liveThread{Channel: "D" + testUser, Thread: thread, Updated: clock.now(), PRCards: []*liveMessage{{TS: ts, At: clock.now(), Card: card}}}
+	id, _ := parseRef(testPRURL)
+	cards.refs[id.key()] = refState{State: "merged"}
+
+	cards.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), ts); len(edits) != 1 || !strings.Contains(edits[0], "🟣 Merged") || strings.Contains(edits[0], `"type":"button"`) {
+		t.Fatalf("edits of a card whose PR merged before this build = %v, want one redraw collapsed to its title and outcome", edits)
+	}
+	restarted := standaloneCards(t, l, srv, clock)
+	restarted.path = cards.path
+	if err := restarted.load(); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(refPollEvery)
+	restarted.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), ts); len(edits) != 1 || refs.calls() != 0 {
+		t.Fatalf("after a restart the card was redrawn %d more times and GitHub read %d times, want neither", len(edits)-1, refs.calls())
+	}
+}
+
 func TestARateLimitedCardSweepStopsThenRedrawsWhatItSkippedOnceTheLimitPasses(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)

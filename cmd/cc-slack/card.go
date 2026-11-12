@@ -1501,10 +1501,11 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 }
 
 func (c statusCard) replyText(v cardView) string {
-	if v.tapped == "" {
+	line := cmp.Or(v.tapped, c.ended(v.refs))
+	if line == "" {
 		return c.text()
 	}
-	return settledText(c.visible().Title, v.tapped)
+	return settledText(c.visible().Title, line)
 }
 
 func settledText(title, line string) string {
@@ -1524,9 +1525,30 @@ func (c statusCard) outcome(v cardView) string {
 	return line
 }
 
+func (c statusCard) ended(refs map[string]refState) string {
+	states := map[string]int{}
+	for _, p := range c.PRs {
+		id, _ := parseRef(p.URL)
+		states[refs[id.key()].State]++
+	}
+	switch {
+	case len(c.PRs) == 0 || states["merged"]+states["closed"] < len(c.PRs):
+		return ""
+	case states["closed"] == 0:
+		return "🟣 Merged"
+	case states["merged"] == 0:
+		return "⚪ Closed without merging"
+	}
+	return fmt.Sprintf("🟣 %d merged, ⚪ %d closed without merging", states["merged"], states["closed"])
+}
+
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 	c = c.visible()
-	if v.tapped != "" {
+	if ended := c.ended(v.refs); v.tapped != "" || ended != "" {
+		outcome := ended
+		if v.tapped != "" {
+			outcome = c.outcome(v)
+		}
 		title := []slack.Block{header(cmp.Or(c.Title, c.emoji()))}
 		var prs []slack.Block
 		if len(c.PRs) > 0 {
@@ -1540,7 +1562,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		if v.answers[c.Waits].Withdrawn && len(prs) > 0 {
 			return slices.Concat(title, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, v.tapped)}, prs, asks), nil
 		}
-		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, c.outcome(v))}, c.undo(v)), nil
+		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, outcome)}, c.undo(v)), nil
 	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
 	var fold [][]slack.Block
