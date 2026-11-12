@@ -20,10 +20,11 @@ import (
 	"github.com/yasyf/cc-interact/subject"
 )
 
-const (
-	prLookupPatience = 5 * time.Second
-	prCardPatience   = 2 * time.Minute
-)
+const prLookupPatience = 5 * time.Second
+
+var prCardPatience = 2 * time.Minute
+
+var errCardCommandUnfinished = errors.New("the card command did not finish")
 
 var (
 	prUnscanned   = regexp.MustCompile("(?s)```.*?```|`[^`\n]+`|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
@@ -949,6 +950,9 @@ func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, 
 	var said bytes.Buffer
 	cmd.Stderr = &said
 	out, err := cmd.Output()
+	if err != nil && ctx.Err() != nil {
+		return nil, "", fmt.Errorf("%s: %w in %s: %w", command[0], errCardCommandUnfinished, prCardPatience, ctx.Err())
+	}
 	if _, ok := errors.AsType[*exec.ExitError](err); ok {
 		return nil, "", cardCommandError{command[0], err, string(bytes.TrimSpace(said.Bytes()))}
 	}

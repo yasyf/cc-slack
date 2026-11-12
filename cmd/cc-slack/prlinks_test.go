@@ -1134,6 +1134,48 @@ func TestARefusedTapSendsNoLineAndTheCardShowsWhatStandsNow(t *testing.T) {
 	}
 }
 
+func stallingCardCommand(t *testing.T, cards ...providedCard) cardCommand {
+	t.Helper()
+	dir := t.TempDir()
+	c := cardCommand{argv: []string{filepath.Join(dir, "card")}, asked: filepath.Join(dir, "asked"), resolved: filepath.Join(dir, "resolved")}
+	answer, stalled := filepath.Join(dir, "cards.json"), filepath.Join(dir, "stalled")
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": cards}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"answer\"'*) [ -e '%[1]s' ] || { : > '%[1]s'; exec sleep 5; }; echo \"$in\" >> '%[2]s'; echo '{\"ok\":true}' ;;\n*'\"numbers\"'*) echo '{\"prs\":[{\"repo\":\"acme/app\",\"number\":41}]}' ;;\n*) echo \"$in\" >> '%[2]s'; cat '%[3]s' ;;\nesac\n", stalled, c.asked, answer)
+	if err := os.WriteFile(c.argv[0], []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestATapTheCardCommandDidNotFinishStaysTakenAndIsAppliedAgain(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	cmd := stallingCardCommand(t, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	thread := cmp.Or(card.threadTS, card.ts)
+
+	tapMerge(t, l, card)
+
+	if ans, done := l.app.cards.answer(testDM, thread, testWaits); !done || ans.Label != "Merge" || !answered(l, card.ts, "Merge") {
+		t.Fatalf("answer = %+v, %v; want the Merge tap kept and shown while the card command had not finished", ans, done)
+	}
+	within(t, 10*time.Second, "the owed tap applied again", func() bool {
+		return slices.ContainsFunc(cmd.requests(t), func(ask string) bool { return strings.Contains(ask, `"label":"Merge"`) })
+	})
+	within(t, 5*time.Second, "the applied tap no longer owed", func() bool {
+		ans, done := l.app.cards.answer(testDM, thread, testWaits)
+		return done && ans.Owed == nil
+	})
+	if !answered(l, card.ts, "Merge") {
+		t.Fatalf("card edits = %v, want the Merge answer still in place of the buttons", editsOf(l.slack.edited(), card.ts))
+	}
+}
+
 func TestACardForAPRThatNoLongerWaitsGivesUpItsButtons(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "#41 no longer waits on his tap", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")

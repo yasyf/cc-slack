@@ -363,10 +363,64 @@ func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, wai
 	if !ok || len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": waits, "label": label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(card)}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
+	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": newPRAnswer(pr, waits, label, press, p.cards.heads(card))}); err != nil {
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", waits, label, err)
 	}
+}
+
+type prAnswer struct {
+	ActionTS string            `json:"action_ts"`
+	Heads    map[string]string `json:"heads"`
+	Label    string            `json:"label"`
+	Number   int               `json:"number"`
+	Repo     string            `json:"repo"`
+	Source   string            `json:"source"`
+	Waits    string            `json:"waits"`
+}
+
+func newPRAnswer(pr refID, waits, label string, press cardPress, heads map[string]string) prAnswer {
+	return prAnswer{Repo: pr.Owner + "/" + pr.Repo, Number: pr.Number, Waits: waits, Label: label, ActionTS: press.ActionTS, Source: press.Source, Heads: heads}
+}
+
+type owedTap struct {
+	Card   string    `json:"card"`
+	Row    bool      `json:"row,omitempty"`
+	Answer prAnswer  `json:"answer"`
+	Due    time.Time `json:"due"`
+}
+
+func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap owedTap) bool {
+	_, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": tap.Answer})
+	switch {
+	case err == nil:
+		p.cards.oweTap(card.channel, card.thread, tap.Answer.Waits, nil)
+		return true
+	case errors.Is(err, errCardCommandUnfinished):
+		tap.Due = p.now().Add(prCardPatience)
+		p.cards.oweTap(card.channel, card.thread, tap.Answer.Waits, &tap)
+		p.wake()
+		p.log.Printf("PR card %s: %q not applied yet, applied again at %s: %v", tap.Answer.Waits, tap.Answer.Label, tap.Due.Format(time.RFC3339), err)
+		return true
+	}
+	p.cards.release(card.channel, card.thread, tap.Answer.Waits)
+	p.log.Printf("PR card %s: %q not applied: %v", tap.Answer.Waits, tap.Answer.Label, err)
+	if tap.Row || p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" }) {
+		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), card.channel, card.thread, card.ts, p.now()); err != nil {
+			p.log.Printf("PR card %s: the card still shows %q: %v", tap.Answer.Waits, tap.Answer.Label, err)
+		}
+	}
+	if pr, ok := p.cards.prCard(card.channel, card.thread, tap.Answer.Waits); ok && !tap.Row {
+		p.recard(ctx, id, card, pr)
+	}
+	return false
+}
+
+func (p *poller) retryPRTaps(ctx context.Context, id identity) time.Time {
+	due, next := p.cards.owedTaps(p.now(), 2*prCardPatience)
+	for _, owed := range due {
+		p.taps.run(owed.card.channel+"/"+owed.card.ts, func() { p.applyPRTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) })
+	}
+	return next
 }
 
 func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) bool {
@@ -749,19 +803,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	if applied {
 		return true
 	}
-	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(c.ref)}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
-		p.cards.release(c.ref.channel, c.ref.thread, c.waits)
-		p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
-		if p.cards.markReply(c.ref.channel, c.ref.thread, c.ref.ts, func(m *liveMessage) { m.Tapped = "" }) {
-			if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), c.ref.channel, c.ref.thread, c.ref.ts, p.now()); err != nil {
-				p.log.Printf("PR card %s: the card still shows %q: %v", c.waits, label, err)
-			}
-		}
-		p.recard(ctx, id, c.ref, c.pr)
-		return false
-	}
-	return true
+	return p.applyPRTap(ctx, id, c.ref, owedTap{Card: c.ref.ts, Answer: newPRAnswer(c.pr, c.waits, label, press, p.cards.heads(c.ref))})
 }
 
 func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time, undo string) bool {
@@ -836,15 +878,7 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 	if err := p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)); err != nil {
 		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
-	press := a.press()
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(a.ref())}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
-		p.cards.release(a.Channel, a.ThreadTS, k.ID)
-		p.log.Printf("PR row %s: %q not applied: %v", k.ID, k.Label, err)
-		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now()); err != nil {
-			p.log.Printf("PR row %s: the card still shows %q: %v", k.ID, k.Label, err)
-		}
-	}
+	p.applyPRTap(ctx, id, a.ref(), owedTap{Card: a.MessageTS, Row: true, Answer: newPRAnswer(pr, k.ID, k.Label, a.press(), p.cards.heads(a.ref()))})
 	return nil
 }
 
