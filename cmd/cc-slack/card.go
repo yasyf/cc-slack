@@ -977,17 +977,22 @@ func span(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
+func mrkdwnObject(text string) *slack.TextBlockObject {
+	return slack.NewTextBlockObject(slack.MarkdownType, explicitLinks(text), false, true)
+}
+
 func mrkdwn(blockID, text string) slack.Block {
-	return slack.NewContextBlock(blockID, slack.NewTextBlockObject(slack.MarkdownType, text, false, false))
+	return slack.NewContextBlock(blockID, mrkdwnObject(text))
 }
 
 func section(blockID, text string) slack.Block {
-	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, nil, slack.SectionBlockOptionBlockID(blockID))
+	return slack.NewSectionBlock(mrkdwnObject(text), nil, nil, slack.SectionBlockOptionBlockID(blockID))
 }
 
 func bulleted(head string, lines []string) string {
 	out := head
-	for i, l := range lines {
+	for i, line := range lines {
+		l := explicitLinks(line)
 		more := fmt.Sprintf("\n+%d more", len(lines)-i)
 		if runes(out)+1+runes(l)+runes(more) > cardMaxSectionLen {
 			return out + more
@@ -1111,9 +1116,9 @@ func (c statusCard) optionRows(live bool) []slack.Block {
 			}
 			pick = slack.NewAccessory(b)
 		}
-		rows = append(rows, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, parts[0], false, false), nil, pick, slack.SectionBlockOptionBlockID(fmt.Sprintf("%s%d", cardOptionBlock, i))))
+		rows = append(rows, slack.NewSectionBlock(mrkdwnObject(parts[0]), nil, pick, slack.SectionBlockOptionBlockID(fmt.Sprintf("%s%d", cardOptionBlock, i))))
 		for _, more := range parts[1:] {
-			rows = append(rows, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, more, false, false), nil, nil))
+			rows = append(rows, slack.NewSectionBlock(mrkdwnObject(more), nil, nil))
 		}
 	}
 	return rows
@@ -1217,7 +1222,7 @@ func (c statusCard) facts() []slack.Block {
 }
 
 func cardField(label, value string) *slack.TextBlockObject {
-	return slack.NewTextBlockObject(slack.MarkdownType, "*"+mrkdwnEscapes.Replace(label)+"*\n"+value, false, false)
+	return mrkdwnObject("*" + mrkdwnEscapes.Replace(label) + "*\n" + value)
 }
 
 func refLine(target, label string, id refID, state refState, status string) string {
@@ -1315,7 +1320,7 @@ func (k cardAsk) block(v cardView) slack.Block {
 		}
 		b.Confirm = confirm
 	}
-	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, slack.NewAccessory(b), slack.SectionBlockOptionBlockID(id))
+	return slack.NewSectionBlock(mrkdwnObject(text), nil, slack.NewAccessory(b), slack.SectionBlockOptionBlockID(id))
 }
 
 func (r cardRow) blocks(v cardView) []slack.Block {
@@ -1368,7 +1373,7 @@ func (p cardPR) head(at, of int) slack.Block {
 	id, _ := parseRef(p.URL)
 	open := slack.NewButtonBlockElement(fmt.Sprintf("%sgithub-%d", cardLinkAction, id.Number), "", slack.NewTextBlockObject(slack.PlainTextType, cardOpenLabel, true, false))
 	open.URL = p.URL
-	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, p.headline(at, of), false, false), nil, slack.NewAccessory(open))
+	return slack.NewSectionBlock(mrkdwnObject(p.headline(at, of)), nil, slack.NewAccessory(open))
 }
 
 func (p cardPR) showMe() []slack.Block {
@@ -1426,7 +1431,7 @@ func sections(text string) []slack.Block {
 	parts := splitSection(text, cardMaxSectionLen)
 	blocks := make([]slack.Block, 0, len(parts))
 	for _, part := range parts {
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(mrkdwnObject(part), nil, nil))
 	}
 	return blocks
 }

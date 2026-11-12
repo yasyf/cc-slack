@@ -211,6 +211,66 @@ func TestAnAlertLinkInAChannelDoesNotUnfurl(t *testing.T) {
 	}
 }
 
+func TestSlackKeepsAFileNameOnACardOrAPostAsWrittenAndABareURLStaysALink(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	const fix = "<https://github.com/acme/app/pull/7|the fix>"
+	l.do(opDMStatus, map[string]any{"card": statusCard{
+		Status: "needs_you", Title: "Which job writes page maps?", Waits: "maps",
+		Body:    "The subcommand lives in `main.rs`; " + fix + " ships it. Its run: https://example.com/runs/1.",
+		Options: []string{"Session pass", "New CronJob"}, Recommended: "Session pass",
+		Hints: map[string]string{"New CronJob": "Builds the subcommand in `sandsql-journal`'s `main.rs`."},
+	}})
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "Fixed in `indexing.rs`, see https://example.com/runs/1."})
+	cards, posts := l.slack.sentTo(testDM), l.slack.sentTo(testChannel)
+	if len(cards) != 1 || len(posts) != 1 {
+		t.Fatalf("cards = %+v, posts = %+v, want one of each", cards, posts)
+	}
+	var blocks []any
+	if err := json.Unmarshal([]byte(cards[0].blocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	objects := mrkdwnObjectsIn(blocks)
+	drawn := make([]string, 0, len(objects))
+	for _, text := range objects {
+		if text["verbatim"] != true {
+			t.Errorf("mrkdwn %q goes out with verbatim %v, so Slack links the file names in it", text["text"], text["verbatim"])
+		}
+		said, _ := text["text"].(string)
+		drawn = append(drawn, said)
+	}
+	all := strings.Join(drawn, "\n")
+	for _, want := range []string{"lives in `main.rs`;", "`sandsql-journal`'s `main.rs`.", fix, "Its run: <https://example.com/runs/1>."} {
+		if !strings.Contains(all, want) {
+			t.Errorf("card text %q lacks %q", all, want)
+		}
+	}
+	if want := "Fixed in `indexing.rs`, see <https://example.com/runs/1>."; posts[0].text != want {
+		t.Errorf("post text = %q, want %q", posts[0].text, want)
+	}
+	if cards[0].parse != "none" || posts[0].parse != "none" {
+		t.Errorf("parse = %q on the card and %q on the post, want none on both so Slack links nothing in their text", cards[0].parse, posts[0].parse)
+	}
+}
+
+func mrkdwnObjectsIn(node any) []map[string]any {
+	var found []map[string]any
+	switch n := node.(type) {
+	case map[string]any:
+		if n["type"] == "mrkdwn" {
+			found = append(found, n)
+		}
+		for _, v := range n {
+			found = append(found, mrkdwnObjectsIn(v)...)
+		}
+	case []any:
+		for _, v := range n {
+			found = append(found, mrkdwnObjectsIn(v)...)
+		}
+	}
+	return found
+}
+
 func TestAThreadListsTheLinksSlackUnfurledApartFromSharedMessages(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

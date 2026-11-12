@@ -47,6 +47,7 @@ var (
 	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
 	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
 	slackEscapable  = regexp.MustCompile(`<(?:https?://|mailto:|[@#!])[^<>\n]*>|&(?:amp|lt|gt);|[&<>]`)
+	bareURL         = regexp.MustCompile("<[^<>\\n]*>|<https?://[^\\s<>]*|https?://[^\\s<>\"`]+")
 )
 
 type bodyPiece struct {
@@ -214,6 +215,16 @@ func mrkdwnLine(line string) string {
 	return mdBullet.ReplaceAllString(line, "$1• ")
 }
 
+func explicitLinks(text string) string {
+	return bareURL.ReplaceAllStringFunc(text, func(found string) string {
+		if strings.HasPrefix(found, "<") {
+			return found
+		}
+		link := prURLTrailing.ReplaceAllString(found, "")
+		return "<" + link + ">" + found[len(link):]
+	})
+}
+
 func slackEscaped(text string) string {
 	return slackEscapable.ReplaceAllStringFunc(text, func(found string) string {
 		if len(found) > 1 {
@@ -327,6 +338,7 @@ func tableLines(rows [][]string) string {
 }
 
 func splitSection(text string, limit int) []string {
+	text = explicitLinks(text)
 	if inner, ok := strings.CutPrefix(text, "```"); ok && runes(text) > limit {
 		parts := splitSection(strings.TrimSuffix(strings.TrimSpace(inner), "```"), limit-len("```\n\n```"))
 		for i, part := range parts {
@@ -382,7 +394,7 @@ func bodyPages(body string, firstBlocks, firstChars int, firstNative bool, pictu
 		page.chars += chars
 	}
 	place := func(part string) {
-		put(slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil), runes(part), maxChars)
+		put(slack.NewSectionBlock(mrkdwnObject(part), nil, nil), runes(part), maxChars)
 	}
 	add := func(text string) {
 		for _, part := range splitSection(text, cardMaxSectionLen) {
