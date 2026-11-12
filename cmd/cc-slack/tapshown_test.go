@@ -344,10 +344,10 @@ func TestAnUndoOnACardWhoseSessionEndedReachesWhoHeardItsAnswerForTenMinutes(t *
 	})
 }
 
-func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) {
-	for _, tc := range []struct{ name, answer string }{
-		{"the command fails", "exit 1"},
-		{"the card is no drive's", `echo "step-3:merge is no drive's question card" >&2; exit 1`},
+func TestAnAnswerTheCardCommandDidNotRecordStaysOpenAndSaysWhoMissedIt(t *testing.T) {
+	for _, tc := range []struct{ name, answer, says string }{
+		{"the command fails", "exit 1", "*Merge* was not recorded"},
+		{"the card is no drive's", `echo "{\"ok\":false,\"why\":\"step-3:merge is no drive's question card\"}"`, "*Merge* reached no one"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := cardOwnerCommand(t, tc.answer)
@@ -358,14 +358,41 @@ func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) 
 			l.tap(c.id, mergeTap(c, 2))
 
 			edits := editsOf(l.slack.edited(), c.ts)
-			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Merge* reached no one") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
-				t.Fatalf("edits = %v, want the buttons kept and that it reached no one", edits)
+			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], tc.says) || !strings.Contains(edits[len(edits)-1], cardWaitAction) || strings.Contains(edits[len(edits)-1], "recording since") {
+				t.Fatalf("edits = %v, want the buttons back and %q", edits, tc.says)
 			}
 			if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); done {
 				t.Fatal("an answer no one heard reads as answered")
 			}
 		})
 	}
+}
+
+func TestAQuestionTapTheCardCommandDidNotFinishShowsRecordingUntilItsRetryRecordsIt(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	cmd := stallingCardCommand(t)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	c := postWaiting(t, l, mergeCard())
+	endWatches(t, l, c.thread)
+
+	l.tap(c.id, mergeTap(c, 2))
+
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "⏳ *Merge* · recording since") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("edits = %v, want his tap shown as recording, with no buttons, while the card command had not finished", edits)
+	}
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != "Merge" || ans.Owed == nil {
+		t.Fatalf("answer = %+v, %v, want Merge kept and owed to the card command", ans, done)
+	}
+	within(t, 10*time.Second, "the owed tap recorded", func() bool {
+		return len(answersOf(cmd.requests(t))) == 1
+	})
+	within(t, 5*time.Second, "the card showing his recorded answer", func() bool {
+		ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge")
+		edits := editsOf(l.slack.edited(), c.ts)
+		return done && ans.Owed == nil && len(edits) > 0 && strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered")
+	})
 }
 
 func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAndOwesNothingTheCardRecorded(t *testing.T) {

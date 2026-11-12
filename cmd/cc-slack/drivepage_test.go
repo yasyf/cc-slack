@@ -48,7 +48,7 @@ func TestDriveCardsListTheDrivesOpenQuestionsUntilHeAnswers(t *testing.T) {
 }
 
 func TestATapThatNamesItsCardAsTheThreadSettlesTheCardInTheThreadThatHoldsIt(t *testing.T) {
-	command := cardOwnerCommand(t, `echo '{"heard":true}'`)
+	command := cardOwnerCommand(t, `echo '{"ok":true}'`)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 	asked := mergeCard()
 	asked.Drive = "brook"
@@ -197,7 +197,7 @@ func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
 }
 
 func TestDriveCardsDropACardAnsweredOnACopyLinkedWithoutItsThreadThatNoSessionHolds(t *testing.T) {
-	command := cardOwnerCommand(t, `echo '{"heard":true}'`)
+	command := cardOwnerCommand(t, `echo '{"ok":true}'`)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 	asked := mergeCard()
 	asked.Drive = "brook"

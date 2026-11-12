@@ -680,7 +680,7 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 }
 
-func TestATapTheCardCommandRefusesStaysWithTheSessionToHandOnAndCapture(t *testing.T) {
+func TestATapTheCardCommandRefusesOffersTheCardsAnswersAgainAndReachesNoSession(t *testing.T) {
 	refusing := filepath.Join(t.TempDir(), "card")
 	if err := os.WriteFile(refusing, []byte("#!/bin/sh\ncase \"$(cat)\" in\n*'\"answer\"'*) exit 1 ;;\nesac\necho '{\"cards\":[],\"prs\":[]}'\n"), 0o700); err != nil {
 		t.Fatal(err)
@@ -696,8 +696,14 @@ func TestATapTheCardCommandRefusesStaysWithTheSessionToHandOnAndCapture(t *testi
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
 		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Ring", Question: card.Title, Options: card.Options})),
 		ActionTS: fmt.Sprintf("%d.000100", time.Now().Unix()), Seq: "001800000100000-abcd0410"})
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, "hand it to that lane now") || !strings.Contains(got, `answered "Which store keeps the tally?" with "Ring" at `) {
-		t.Fatalf("directive = %q, want the hand-off and the capture, since the card command did not take his answer", got)
+	if got := l.inject(agent.TopLevel); got != "" {
+		t.Fatalf("directive = %q, want none, since the card command did not record his answer", got)
+	}
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Ring* was not recorded") || !strings.Contains(edits[len(edits)-1], cardWaitAction+"0:"+card.Waits) {
+		t.Fatalf("edits = %v, want the card's answers offered again, saying his tap was not recorded", edits)
+	}
+	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
+		t.Fatal("an answer the card command refused reads as answered")
 	}
 }
 
