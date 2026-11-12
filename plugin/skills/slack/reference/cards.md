@@ -52,7 +52,9 @@ tap arrives as a `slack.action` whose payload carries the ask's `id`: act on
 its `label` as operator steering, since a later card may have superseded it.
 A tap whose payload sets `poster_ended` reaches you because you hold the DM and
 the session that posted the card has ended: route it to the lane it is for. An
-Undo of that tap reaches you the same way, as the `undo: true` payload below.
+Undo of that tap reaches you the same way, as the `undo: true` payload below, and
+so does an Explain more tap, which the card answers with "An explanation follows
+in this thread" once you hold it.
 
 A card with a `group` id is one group of rows on a cc-present board.
 cc-present posts it; you never write one by hand. Posting the same `group`
@@ -186,9 +188,11 @@ more` and the question id. It answers nothing, and the lane stays
 stopped. For a card on a cc-present board, reply with
 `cc-present reply --block <question id> --body <answer>`, which answers on
 the board and under the card. Otherwise reply with `slack_dm_status` text
-and `about` set to the question id. Either way the reply opens with a link
-back to the card and lands in the card's own thread, so it stays beside the
-question. Pass `about` on any other reply
+and `about` set to the question id. Either way the reply lands in the card's
+own thread, so it stays beside the question, and calls the card this card with
+no link, since a post in a thread that links the message the thread is under
+draws that message again under the post; cc-slack writes such a link as its
+words. Pass `about` on any other reply
 about a waiting card too. A drive's question is found by its `waits` id anywhere
 in your DM, open or answered, whichever session asked it. Give the question in plain words and
 what each answer does, and keep waiting for the answer.

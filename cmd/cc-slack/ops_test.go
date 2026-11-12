@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -116,6 +117,33 @@ func TestAPostLinkingASlackMessageUnfurls(t *testing.T) {
 			l.post(opSend, map[string]string{"channel_id": testChannel, "text": tc.text})
 			if posts := l.slack.sent(); len(posts) != 1 || posts[0].unfurlLinks != tc.want {
 				t.Fatalf("posts = %+v, want one post with unfurl_links=%s", posts, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPostInAThreadWritesALinkToTheMessageItIsUnderAsItsWords(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	var parent, other postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "Which store keeps the tally?"}).Body, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testChannel, "text": "Which cache holds the runs?"}).Body, &other); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, text, want, unfurl string
+	}{
+		{"its link under words", "The design job behind <" + parent.Permalink + "|the tally question> has your question", "The design job behind the tally question has your question", "false"},
+		{"its bare link", "Answered in " + parent.Permalink + "?thread_ts=" + parent.TS, "Answered in this thread", "false"},
+		{"another message's link", "Asked beside <" + other.Permalink + "|the cache question>", "", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": parent.TS, "text": tc.text})
+			got := lastPost(l)
+			if tc.want != "" && got.text != tc.want || tc.want == "" && !strings.Contains(got.text, other.Permalink) || got.unfurlLinks != tc.unfurl {
+				t.Fatalf("posted %q with unfurl_links=%q, want %q with unfurl_links=%s", got.text, got.unfurlLinks, cmp.Or(tc.want, "the other message's link"), tc.unfurl)
 			}
 		})
 	}
