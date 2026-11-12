@@ -694,21 +694,14 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if replay != nil {
 			return a.replayedPost(hc, sub.ID, *replay)
 		}
-		blocks, err := checkMessage(b)
-		images := false
-		if err == nil {
-			images, err = allImages(b.Files)
-		}
+		blocks, render, err := postBlocks(b)
 		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, false, err.Error()))
 		}
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, images && len(blocks) == 0, len(b.Files))
-		if len(blocks) > 0 {
-			pages[0].blocks = blocks
-		}
+		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks, render, len(b.Files))
 		b.TapPRs = append(b.TapPRs, ready...)
 		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
 		if err != nil {
@@ -733,10 +726,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		if err := a.postMore(atStep(hc.Ctx, "post"), hc.DB, id, res.ChannelID, res.ThreadTS, pages[0]); err != nil {
-			return fail(fmt.Sprintf("posted %s, so do not post it again, but the rest of it failed: %v", res.Permalink, err))
-		}
-		shown, err := a.sendLinkPages(hc, sub.ID, id, res.ChannelID, b, pages[1:])
+		shown, err := a.sendLinkPages(hc, sub.ID, id, res, b, pages)
 		if err != nil {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
@@ -767,9 +757,10 @@ type linkedPage struct {
 	previews []slack.Attachment
 }
 
-func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string, render bool, files int) ([]linkedPage, []string) {
+func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string, blocks []slack.Block, render bool, files int) ([]linkedPage, []string) {
 	texts, _ = a.linkPRs(ctx, id, scope, texts...)
 	pages := make([]linkedPage, len(texts))
+	pages[0].blocks = blocks
 	var ready []string
 	for i, text := range texts {
 		var more []string
@@ -794,11 +785,14 @@ func (a *app) postMore(ctx context.Context, db *sql.DB, id identity, channelID, 
 	return nil
 }
 
-func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, channelID string, b opBody, pages []linkedPage) ([]string, error) {
-	shown := make([]string, 0, len(pages))
-	for n, page := range pages {
+func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, first postResult, b opBody, pages []linkedPage) ([]string, error) {
+	if err := a.postMore(atStep(hc.Ctx, "post"), hc.DB, id, first.ChannelID, first.ThreadTS, pages[0]); err != nil {
+		return nil, err
+	}
+	shown := make([]string, 0, len(pages)-1)
+	for n, page := range pages[1:] {
 		ctx := atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1))
-		res, err := a.post(ctx, hc.DB, id, channelID, b.ThreadTS, page.text, page.blocks, nil, slack.MsgOptionAttachments(page.previews...))
+		res, err := a.post(ctx, hc.DB, id, first.ChannelID, b.ThreadTS, page.text, page.blocks, nil, slack.MsgOptionAttachments(page.previews...))
 		if err != nil {
 			return shown, err
 		}
@@ -1033,6 +1027,14 @@ func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
 }
 
 var sayRefs = regexp.MustCompile("(?s)" + slackCode + `|\{(?:card|pr|order|record|answer|started|at):[^{}\s|]+(?:\|[^{}]+)?\}`)
+
+func postBlocks(b opBody) (blocks []slack.Block, render bool, err error) {
+	if blocks, err = checkMessage(b); err != nil || len(blocks) > 0 {
+		return blocks, false, err
+	}
+	render, err = allImages(b.Files)
+	return nil, render, err
+}
 
 func checkMessage(b opBody) ([]slack.Block, error) {
 	if len(b.Blocks) > 0 && b.Text == "" {

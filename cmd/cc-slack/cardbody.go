@@ -37,6 +37,7 @@ const (
 var (
 	mdBold          = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 	mdLink          = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\s]+)\)`)
+	mdInline        = regexp.MustCompile(slackCode + "|" + mdLink.String() + "|" + mdBold.String())
 	mdHeading       = regexp.MustCompile(`^#{1,6} +(.+?)\s*#*$`)
 	mdBullet        = regexp.MustCompile(`(?m)^([ \t]*)[-*] +`)
 	mdEndsOnHeading = regexp.MustCompile(`(?:^|\n)(?:#{1,6} +[^\n]*|\*{1,2}[^*\n]+\*{1,2})\s*$`)
@@ -211,8 +212,12 @@ func withoutTables(text string) string {
 }
 
 func mrkdwnLine(line string) string {
-	line = slackEscaped(mdLink.ReplaceAllString(line, "<$2|$1>"))
-	line = mdBold.ReplaceAllString(line, "*$1*")
+	line = slackEscaped(mdInline.ReplaceAllStringFunc(line, func(found string) string {
+		if found[0] == '`' {
+			return found
+		}
+		return mdBold.ReplaceAllString(mdLink.ReplaceAllString(found, "<$2|$1>"), "*$1*")
+	}))
 	return mdBullet.ReplaceAllString(line, "$1• ")
 }
 

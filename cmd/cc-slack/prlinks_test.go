@@ -398,7 +398,7 @@ func TestPostLinksEachPRReferenceForm(t *testing.T) {
 		{"already linked", "<https://github.com/acme/app/pull/41|the fix> in <#C1|general>", ""},
 		{"markdown link naming the pr", "[#41](https://github.com/Acme/App/pull/41) is green", "<https://github.com/Acme/App/pull/41|#41> is green"},
 		{"markdown link with words", "[the fix](https://github.com/acme/app/pull/41) is green", "<https://github.com/acme/app/pull/41|the fix> is green"},
-		{"markdown link to another site", "[#41 notes](https://example.com/doc) and acme/lib#7", "[#41 notes](<https://example.com/doc>) and <https://github.com/acme/lib/pull/7|#7>"},
+		{"markdown link to another site", "[#41 notes](https://example.com/doc) and acme/lib#7", "<https://example.com/doc|#41 notes> and <https://github.com/acme/lib/pull/7|#7>"},
 		{"code span", "run `gh pr view #41`", ""},
 		{"markdown link in a code span", "`[#41](https://github.com/acme/app/pull/41)`", ""},
 		{"code block", "```\nacme/app#41 and #7\n```", ""},
