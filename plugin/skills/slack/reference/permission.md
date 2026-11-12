@@ -70,13 +70,16 @@ says, and draws no card.
 
 A ticket covers one write and its exact retry, for seven days unless revoked;
 permission for one post does not cover the next thing in that thread or DM.
-Each later write goes to Jev again, with the same words and rules. A follow-up that carries out what they asked and a correction they
-asked for pass, as does an edit or delete of your own post. A thread post under
-a standing grant is judged against the grant's words: a reply about what was
-reported there passes, questions about that report included, and an ask about
-anything else passes only when those words name it. A rule of the user's that
-limits a place, such as one solved post per bug thread, holds back each write
-it limits. When Jev refuses, the refusal's card opens with Jev's reason on its `Why:` line.
+Each later write goes to Jev again, with the same words and rules, unless a
+standing grant names its thread: a post with no question or ask, in a thread an
+answer labelled `slack-grant:<channel>/<thread ts>` or
+`slack-grant:<channel>/threads` grants, mints its ticket at once. A follow-up
+that carries out what they asked and a correction they asked for pass, as does
+an edit or delete of your own post. An ask in a granted thread is judged
+against the grant's words: a question about what was reported there passes,
+and an ask about anything else passes only when those words name it. A rule of
+the user's that limits a place, such as one solved post per bug thread, holds
+back each write Jev judges there. When Jev refuses, the refusal's card opens with Jev's reason on its `Why:` line.
 A new ask of a person, or any post a lane or root requests that is neither
 their words nor a standing grant's, goes to them as a card first, never to the
 person.
