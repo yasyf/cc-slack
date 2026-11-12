@@ -26,6 +26,8 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == fakeGHArg {
 		os.Exit(fakeGH(os.Args[2], os.Args[3:]))
 	}
+	// A race-built child that exits 0 first sleeps GORACE's atexit_sleep_ms, 1s by default, and each fake gh call is such a child.
+	_ = os.Setenv("GORACE", strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	os.Exit(m.Run())
 }
 
