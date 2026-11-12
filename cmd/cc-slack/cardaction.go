@@ -502,10 +502,22 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 			return nil
 		}
 	}
+	answered := "✓ *" + label + "* · answered " + clock(at, p.now())
+	if err := p.tapDrawn(a.ref(), at, p.markAnswer(ctx, id, a.ref(), k.ID, answered+" · sending…")); err != nil {
+		p.log.Printf("card action %s on %s: the card shows its buttons while the tap is sent on: %v", a.ActionID, a.MessageTS, err)
+	}
 	heard, err := p.handOver(ctx, id, a, k)
 	if len(heard) == 0 {
 		if k.ID != "" {
 			p.cards.release(a.Channel, a.ThreadTS, k.ID)
+		}
+		if p.cards.markReply(a.Channel, a.ThreadTS, a.MessageTS, func(m *liveMessage) { m.Tapped = "" }) {
+			if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), a.Channel, a.ThreadTS, a.MessageTS, p.now()); err != nil {
+				p.log.Printf("card action %s on %s: it reached no one, but the card still shows %q: %v", a.ActionID, a.MessageTS, k.Label, err)
+			}
+		}
+		if err := p.cards.redrawCopies(ctx, id, a.ref()); err != nil {
+			p.log.Printf("card action %s on %s: it reached no one, but its copies still show %q: %v", a.ActionID, a.MessageTS, k.Label, err)
 		}
 		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
 	}
@@ -521,7 +533,7 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 		}
 		p.forwardAnswer(ctx, db, ended, boardAnswer{Waits: k.ID, Label: k.Label, Other: k.Other, At: at, Permalink: id.permalink(a.Channel, a.MessageTS, a.ThreadTS)})
 	}
-	if err := p.markAnswer(ctx, id, a.ref(), k.ID, "✓ *"+label+"* · answered "+clock(at, p.now())+" · sent to "+strings.Join(heard, " and ")); err != nil {
+	if err := p.markAnswer(ctx, id, a.ref(), k.ID, answered+" · sent to "+strings.Join(heard, " and ")); err != nil {
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)

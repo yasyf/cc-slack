@@ -127,9 +127,9 @@ Your pick on a question card goes to `card_command` before it reaches the sessio
 as `{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source"}}`, and so does an Undo of
 it, with `undone` true, so the program records your answer once and the session is told to post no record of
 it. A program that does not know the card exits non-zero, and the session alone keeps the answer. When that
-session has ended, the same request is how the program hears your pick and its Undo: the card closes on your
-pick with its Undo button, unless the program exits non-zero and no session holds your DM, which leaves the
-card open, saying your pick reached no one.
+session has ended, the same request is how the program hears your pick and its Undo: the card shows your pick
+the moment you tap and closes on it with its Undo button once the program answers, unless the program exits
+non-zero and no session holds your DM, which opens the card again, saying your pick reached no one.
 
 A release post in a channel a session's feed watches for releases also goes to `card_command` as
 `{"release": {"name", "line", "link"}}`, once each time its line changes, `line` being what follows

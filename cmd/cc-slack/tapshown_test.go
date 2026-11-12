@@ -344,6 +344,37 @@ func TestAnUndoOnACardWhoseSessionEndedReachesWhoHeardItsAnswerForTenMinutes(t *
 	})
 }
 
+func TestATapOnACardWhoseSessionEndedShowsItsPickBeforeTheCardCommandAnswers(t *testing.T) {
+	dir := t.TempDir()
+	command, asked, release := filepath.Join(dir, "card"), filepath.Join(dir, "asked"), filepath.Join(dir, "release")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$(cat)\" in\n*'\"answer\"'*) touch '%s'; while [ ! -e '%s' ]; do sleep 0.05; done ;;\nesac\necho '{\"cards\":[],\"prs\":[]}'\n", asked, release)
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0o600) })
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+	c := postWaiting(t, l, mergeCard())
+	endWatches(t, l, c.thread)
+
+	l.push(c.id, mergeTap(c, 2))
+	eventually(t, "the card command to get his pick", func() bool {
+		_, err := os.Stat(asked)
+		return err == nil
+	})
+
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v while the card command runs, want his pick drawn and the buttons gone before it answers", edits)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.app.poller.taps.busy.Wait()
+	if edits := editsOf(l.slack.edited(), c.ts); !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") || !strings.Contains(edits[len(edits)-1], "sent to the card's owner") {
+		t.Fatalf("card edits %v, want the final line naming the card's owner once the card command took his pick", edits)
+	}
+}
+
 func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) {
 	for _, tc := range []struct{ name, answer string }{
 		{"the command fails", "exit 1"},
