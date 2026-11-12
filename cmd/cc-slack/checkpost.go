@@ -28,6 +28,8 @@ var (
 	sentenceEnd = regexp.MustCompile(`[.!?][*_~]*(?:\s|$)`)
 	listItem    = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
 	codeSpan    = regexp.MustCompile("`[^`\n]+`")
+	quoted      = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
+	blockQuote  = regexp.MustCompile(`^\s*>`)
 )
 
 type exitStatus int
@@ -162,9 +164,9 @@ func wallsIn(text string) []fmt.Stringer {
 		}
 		start, sentences := 0, 0
 		for at, line := range append(strings.Split(piece.text, "\n"), "- ") {
-			if !listItem.MatchString(line) {
+			if !listItem.MatchString(line) && !blockQuote.MatchString(line) {
 				start = cmp.Or(start, piece.line+at)
-				sentences += len(sentenceEnd.FindAllString(codeSpan.ReplaceAllString(slackToken.ReplaceAllString(line, " "), " "), -1))
+				sentences += len(sentenceEnd.FindAllString(quoted.ReplaceAllString(codeSpan.ReplaceAllString(slackToken.ReplaceAllString(line, " "), " "), " "), -1))
 				continue
 			}
 			if sentences > paragraphSentences {
