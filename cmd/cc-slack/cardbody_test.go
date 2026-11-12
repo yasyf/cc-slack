@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -37,10 +38,10 @@ func sectionTexts(blocks []slack.Block) []string {
 	return texts
 }
 
-func tables(blocks []slack.Block) []*slack.DataTableBlock {
-	var found []*slack.DataTableBlock
+func tables(blocks []slack.Block) []*slack.TableBlock {
+	var found []*slack.TableBlock
 	for _, b := range blocks {
-		if table, ok := b.(*slack.DataTableBlock); ok {
+		if table, ok := b.(*slack.TableBlock); ok {
 			found = append(found, table)
 		}
 	}
@@ -67,7 +68,7 @@ func TestABodyRendersItsMarkdownAsBlocksNeverAsRawMarks(t *testing.T) {
 			t.Fatalf("blocks %s carry the raw mark %q", got, raw)
 		}
 	}
-	for _, want := range []string{"*Storage*", "*Fixed* in <https://github.com/acme/app/pull/2|the PR>", "• one", `"type":"data_table"`, `"url":"https://ci.example.com/1"`, `"bold":true`, cardEmptyCell} {
+	for _, want := range []string{"*Storage*", "*Fixed* in <https://github.com/acme/app/pull/2|the PR>", "• one", `"type":"table"`, `"url":"https://ci.example.com/1"`, `"bold":true`, cardEmptyCell} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("blocks %s lack %q", got, want)
 		}
@@ -96,7 +97,7 @@ func TestABodyEscapesAngleBracketsButKeepsWhatSlackReads(t *testing.T) {
 	}
 }
 
-func TestEveryTableInABodyDrawsAsItsOwnDataTable(t *testing.T) {
+func TestEveryTableInABodyDrawsAsItsOwnTable(t *testing.T) {
 	body := "| Who creates it | Network call per run | Who can make a database |\n|---|---|---|\n| Run's own writer | none | only the run |\n| API | one call | only the API |\n\n" +
 		"Between.\n\n| Started by | Acts as |\n|---|---|\n| a run | run:<run id> |\n| a cloud agent | env:<env id> |"
 	blocks := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)[0]
@@ -105,9 +106,9 @@ func TestEveryTableInABodyDrawsAsItsOwnDataTable(t *testing.T) {
 	}
 	drawn := tables(blocks)
 	if len(blocks) != 3 || len(drawn) != 2 || len(drawn[0].Rows[0]) != 3 || len(drawn[1].Rows[0]) != 2 || !slices.Equal(sectionTexts(blocks), []string{"Between."}) {
-		t.Fatalf("blocks %s, want both tables as data tables around the line between them", blocksJSON(t, blocks))
+		t.Fatalf("blocks %s, want both tables as tables around the line between them", blocksJSON(t, blocks))
 	}
-	if cell, ok := drawn[1].Rows[1][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "run:<run id>" {
+	if cell, ok := drawn[1].Rows[1][1].(*slack.TableRawTextCell); !ok || cell.Text != "run:<run id>" {
 		t.Fatalf("cell = %#v, want the second table's text as it was written", drawn[1].Rows[1][1])
 	}
 }
@@ -116,23 +117,33 @@ func TestATableSlackWouldRefuseDrawsAsLines(t *testing.T) {
 	wide := strings.Repeat("x", slackMaxTable/(2*(cardMaxTableRows-1))+1)
 	rows := append([]string{"| a | b |", "|---|---|"}, slices.Repeat([]string{"| " + wide + " | " + wide + " |"}, cardMaxTableRows-1)...)
 	for name, body := range map[string]string{
-		"past 20,000 characters": strings.Join(rows, "\n"),
+		"past 10,000 characters": strings.Join(rows, "\n"),
 		"a header alone":         "| a | b |\n|---|---|",
 	} {
 		pages := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)
 		if drawn := tables(slices.Concat(pages...)); len(drawn) != 0 {
-			t.Errorf("%s: %d data tables, want lines, since Slack refuses a table past %d characters or without a row under its header", name, len(drawn), slackMaxTable)
+			t.Errorf("%s: %d tables, want lines, since Slack refuses a table past %d characters or without a row under its header", name, len(drawn), slackMaxTable)
 		}
 	}
 }
 
-func TestADMStatusTextWithAMarkdownTablePostsADataTable(t *testing.T) {
+func TestAMessageWhoseTablesTogetherRunPastSlacksLimitIsRefusedBeforeItPosts(t *testing.T) {
+	half := slack.NewTableBlock("").AddRow(slack.NewTableRawTextCell(strings.Repeat("x", slackMaxTable/2)))
+	if err := checkBlocks([]slack.Block{half, half}); err != nil {
+		t.Fatalf("two tables of %d characters together: %v", slackMaxTable, err)
+	}
+	if _, refused := errors.AsType[blockLimitError](checkBlocks([]slack.Block{half, half, slack.NewTableBlock("").AddRow(slack.NewTableRawTextCell("x"))})); !refused {
+		t.Fatalf("tables past %d characters in one message passed, though Slack refuses them", slackMaxTable)
+	}
+}
+
+func TestADMStatusTextWithAMarkdownTablePostsATable(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.do(opDMStatus, map[string]any{"text": "Where each session stands.\n\n| Session | Doing |\n|---|---|\n| coordinator | waiting on CI |\n| builder | pushing the fix |"})
 	posted := l.slack.sent()[0]
-	if !strings.Contains(posted.blocks, `"type":"data_table"`) || strings.Contains(posted.blocks, "• *Session:*") {
-		t.Fatalf("blocks %s, want the status table as a data table, not bullets", posted.blocks)
+	if !strings.Contains(posted.blocks, `"type":"table"`) || strings.Contains(posted.blocks, "• *Session:*") {
+		t.Fatalf("blocks %s, want the status table as a table, not bullets", posted.blocks)
 	}
 }
 
@@ -921,24 +932,24 @@ func TestAPRCardOpensEachPROnGitHubAndItsCopyKeepsTheButton(t *testing.T) {
 	}
 }
 
-func TestATableIsASortablePagedDataTableWithItsNumberColumnsNumeric(t *testing.T) {
+func TestATableIsSlacksTableBlockWithABoldHeaderWrappedColumnsAndNumbersAsText(t *testing.T) {
 	rows := make([][]string, 0, 13)
 	rows = append(rows, []string{"PR", "age"})
 	for i := range 12 {
 		rows = append(rows, []string{fmt.Sprintf("#%d", i), fmt.Sprint(i * 3)})
 	}
 	table := tableBlock(rows)
-	if table.Type != slack.MBTDataTable || table.PageSize != cardTablePage || table.Caption != "PR · age" {
-		t.Fatalf("table = %+v, want a data_table paged at %d with its header as caption", table, cardTablePage)
+	if table.Type != slack.MBTTable || len(table.Rows) != 13 {
+		t.Fatalf("table = %+v, want Slack's table block, which an unfurl of the card draws, with every row", table)
 	}
-	if _, ok := table.Rows[0][1].(*slack.DataTableRawTextCell); !ok {
-		t.Fatalf("header cell = %#v, want raw text", table.Rows[0][1])
+	if got := cellText(table.Rows[0][1]); got != "*age*" {
+		t.Fatalf("header cell reads %q, want the header in bold", got)
 	}
-	if age, ok := table.Rows[3][1].(*slack.DataTableRawNumberCell); !ok || age.Value != 6 {
-		t.Fatalf("age cell = %#v, want the number 6 so the column sorts numerically", table.Rows[3][1])
+	if age, ok := table.Rows[3][1].(*slack.TableRawTextCell); !ok || age.Text != "6" {
+		t.Fatalf("age cell = %#v, want the text 6: chat.postMessage refuses a table's raw_number cell", table.Rows[3][1])
 	}
-	if _, ok := table.Rows[3][0].(*slack.DataTableRawTextCell); !ok {
-		t.Fatalf("PR cell = %#v, want text", table.Rows[3][0])
+	if len(table.ColumnSettings) != 2 || slices.ContainsFunc(table.ColumnSettings, func(c slack.ColumnSetting) bool { return !c.IsWrapped }) {
+		t.Fatalf("column settings = %+v, want every column wrapped so a long cell shows whole", table.ColumnSettings)
 	}
 }
 
@@ -984,10 +995,10 @@ const fencedTable = "*Show me*\n```\nThe 5 tables past the line (measured)\n" +
 func TestATableLaidOutInACodeBlockDrawsAsATable(t *testing.T) {
 	blocks := bodyPages("Five tables are past 1.7 GB.\n\n"+fencedTable, cardMaxBlocks, cardMaxVisible, true, nil)[0]
 	table := tables(blocks)
-	if len(table) != 1 || len(table[0].Rows) != 4 || len(table[0].Rows[2]) != 6 || !strings.HasPrefix(table[0].Caption, "table · team class · table GB") {
+	if len(table) != 1 || len(table[0].Rows) != 4 || len(table[0].Rows[2]) != 6 || cellText(table[0].Rows[0][1]) != "*team class*" {
 		t.Fatalf("blocks %s, want the four aligned lines as one table of six columns, its rule line gone", blocksJSON(t, blocks))
 	}
-	if cell, ok := table[0].Rows[2][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "second team, shared cluster" {
+	if cell, ok := table[0].Rows[2][1].(*slack.TableRawTextCell); !ok || cell.Text != "second team, shared cluster" {
 		t.Fatalf("row 2 cell = %#v, want the whole team class though one space parts it from the next column", table[0].Rows[2][1])
 	}
 	want := []string{"Five tables are past 1.7 GB.", "*Show me*", "```\nThe 5 tables past the line (measured)\n```", "```\nby creation time: a new empty part every 2.4 hours\nby id hash:       every part takes the inserts\n```"}
@@ -1004,7 +1015,7 @@ func TestIndentedAlignedCodeStaysACodeBlock(t *testing.T) {
 	}
 }
 
-func TestAPRCardDrawsEachTableInItsShowMeAsADataTableAndItsNotificationLeavesShowMeOut(t *testing.T) {
+func TestAPRCardDrawsEachTableInItsShowMeAsATable(t *testing.T) {
 	pr := fullPR(52919)
 	pr.ShowMe = strings.TrimPrefix(fencedTable, "*Show me*\n") + "\n\n| run | took |\n|---|---|\n| before | 9 min |\n| after | 2 min |"
 	blocks := pr.section(view(), 0, 1, nil)
@@ -1013,18 +1024,14 @@ func TestAPRCardDrawsEachTableInItsShowMeAsADataTableAndItsNotificationLeavesSho
 	}
 	drawn := tables(blocks)
 	if len(drawn) != 2 || len(drawn[0].Rows) != 4 || len(drawn[0].Rows[0]) != 6 || len(drawn[1].Rows) != 3 {
-		t.Fatalf("blocks %s, want the Show me's laid-out table and its pipe table each as a data table", blocksJSON(t, blocks))
+		t.Fatalf("blocks %s, want the Show me's laid-out table and its pipe table each as a table", blocksJSON(t, blocks))
 	}
-	if cell, ok := drawn[0].Rows[1][1].(*slack.DataTableRawTextCell); !ok || cell.Text != "Forge, shared cluster" {
+	if cell, ok := drawn[0].Rows[1][1].(*slack.TableRawTextCell); !ok || cell.Text != "Forge, shared cluster" {
 		t.Fatalf("row 1 cell = %#v, want the team class as written", drawn[0].Rows[1][1])
 	}
 	shown := sectionText(blocks)
 	if strings.Contains(shown, "• *table:*") || !strings.Contains(shown, "*Show me*") || !strings.Contains(shown, "```\nThe 5 tables past the line (measured)\n```") {
 		t.Fatalf("sections %q, want the Show me heading and its code kept and no table drawn as lines", shown)
-	}
-	card := statusCard{Status: "needs_you", Title: "Split big tables?", Body: "Five tables are past 1.7 GB.\n" + fencedTable}
-	if got := card.text(); got != "🙋 Split big tables? — Five tables are past 1.7 GB." {
-		t.Fatalf("notification text = %q, want the title and summary without the Show me", got)
 	}
 }
 

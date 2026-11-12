@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -19,12 +18,11 @@ const (
 	cardMaxTableRows = 100
 	cardMaxTableCols = 20
 	cardEmptyCell    = "—"
-	cardTablePage    = 10
 	slackMaxCaption  = 150
 	slackMaxHeader   = 150
 	slackMaxSection  = 3000
 	slackMaxField    = 2000
-	slackMaxTable    = 20000
+	slackMaxTable    = 10000
 	slackMaxFields   = 10
 	slackMaxActions  = 25
 	slackMaxButton   = 75
@@ -245,31 +243,21 @@ func tableCells(line string) []string {
 	return append(cells, strings.TrimSpace(cell.String()))
 }
 
-func tableBlock(rows [][]string) *slack.DataTableBlock {
+func tableBlock(rows [][]string) *slack.TableBlock {
 	columns := 0
 	for _, row := range rows {
 		columns = max(columns, len(row))
 	}
-	numbers := make([]bool, columns)
-	for i := range numbers {
-		numbers[i] = len(rows) > 1 && !slices.ContainsFunc(rows[1:], func(row []string) bool {
-			_, err := strconv.ParseFloat(cellAt(row, i), 64)
-			return err != nil
-		})
-	}
-	table := slack.NewDataTableBlock(clipRunes(strings.Join(rows[0], " · "), slackMaxCaption)).WithPageSize(min(max(len(rows)-1, 1), cardTablePage))
+	table := slack.NewTableBlock("").WithColumnSettings(slices.Repeat([]slack.ColumnSetting{{Align: slack.ColumnAlignmentLeft, IsWrapped: true}}, columns)...)
 	for at, row := range rows {
-		cells := make([]slack.DataTableCell, columns)
+		cells := make([]slack.TableCell, columns)
 		for i := range cells {
 			text := cellAt(row, i)
 			switch {
 			case text == "":
-				cells[i] = slack.NewDataTableRawTextCell(cardEmptyCell)
+				cells[i] = slack.NewTableRawTextCell(cardEmptyCell)
 			case at == 0:
-				cells[i] = slack.NewDataTableRawTextCell(text)
-			case numbers[i]:
-				value, _ := strconv.ParseFloat(text, 64)
-				cells[i] = slack.NewDataTableRawNumberCell(value).WithText(text)
+				cells[i] = slack.NewTableRichTextCell(slack.NewRichTextSection(slack.NewRichTextSectionTextElement(text, &slack.RichTextSectionTextStyle{Bold: true})))
 			default:
 				cells[i] = tableCell(text)
 			}
@@ -286,10 +274,10 @@ func cellAt(row []string, i int) string {
 	return ""
 }
 
-func tableCell(text string) slack.DataTableCell {
+func tableCell(text string) slack.TableCell {
 	found := cellToken.FindAllStringSubmatchIndex(text, -1)
 	if found == nil {
-		return slack.NewDataTableRawTextCell(text)
+		return slack.NewTableRawTextCell(text)
 	}
 	var elements []slack.RichTextSectionElement
 	plain := func(s string) {
@@ -319,7 +307,7 @@ func tableCell(text string) slack.DataTableCell {
 		}
 	}
 	plain(text[at:])
-	return slack.NewDataTableRichTextCell(slack.NewRichTextSection(elements...))
+	return slack.NewTableRichTextCell(slack.NewRichTextSection(elements...))
 }
 
 func tableLines(rows [][]string) string {
@@ -450,7 +438,7 @@ func (p bodyPiece) block(native bool, limit int) (slack.Block, int, int) {
 		return nil, 0, 0
 	case p.chart != nil:
 		return p.chart, runes(p.chart.Title), limit
-	case p.table != nil && dataTableFits(p.table):
+	case p.table != nil && tableFits(p.table):
 		return tableBlock(p.table), tableChars(p.table), max(limit, cardMaxVisible)
 	}
 	return nil, 0, 0
@@ -510,7 +498,7 @@ func tableChars(rows [][]string) int {
 	return total
 }
 
-func dataTableFits(rows [][]string) bool {
+func tableFits(rows [][]string) bool {
 	return len(rows) > 1 && len(rows) <= cardMaxTableRows && tableChars(rows) <= slackMaxTable &&
 		!slices.ContainsFunc(rows, func(row []string) bool { return len(row) > cardMaxTableCols })
 }
@@ -536,7 +524,7 @@ func checkBlocks(blocks []slack.Block) error {
 		return blockLimitError{cardMaxBlocks, "message", fmt.Sprintf("the message holds %d blocks, past Slack's %d", len(blocks), cardMaxBlocks)}
 	}
 	ids := map[string]bool{}
-	charts := 0
+	charts, tables := 0, 0
 	for i, b := range blocks {
 		refuse := func(format string, args ...any) error {
 			return blockLimitError{i, string(b.BlockType()), fmt.Sprintf(format, args...)}
@@ -546,6 +534,16 @@ func checkBlocks(blocks []slack.Block) error {
 		}
 		if charts > slackMaxCharts {
 			return refuse("a message holds at most %d charts", slackMaxCharts)
+		}
+		if table, ok := b.(*slack.TableBlock); ok {
+			for _, row := range table.Rows {
+				for _, cell := range row {
+					tables += runes(cellText(cell))
+				}
+			}
+		}
+		if tables > slackMaxTable {
+			return refuse("a message's tables hold at most %d characters", slackMaxTable)
 		}
 		if id := b.ID(); id != "" {
 			if runes(id) > slackMaxID || ids[id] {
@@ -579,8 +577,8 @@ func checkBlock(b slack.Block, refuse func(string, ...any) error) error {
 				}
 			}
 		}
-	case *slack.DataTableBlock:
-		if len(block.Rows) > cardMaxTableRows || slices.ContainsFunc(block.Rows, func(row []slack.DataTableCell) bool { return len(row) > cardMaxTableCols }) {
+	case *slack.TableBlock:
+		if len(block.Rows) > cardMaxTableRows || slices.ContainsFunc(block.Rows, func(row []slack.TableCell) bool { return len(row) > cardMaxTableCols }) {
 			return refuse("it runs past %d rows or %d columns", cardMaxTableRows, cardMaxTableCols)
 		}
 	case *slack.DataVisualizationBlock:

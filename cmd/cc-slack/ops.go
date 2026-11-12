@@ -1532,8 +1532,10 @@ func blockTexts(blocks slack.Blocks) []string {
 					button(e)
 				}
 			}
+		case *slack.TableBlock:
+			out = append(out, tableText(b.Rows, cellText))
 		case *slack.DataTableBlock:
-			out = append(out, tableText(b))
+			out = append(out, tableText(b.Rows, dataCellText))
 		case *slack.DataVisualizationBlock:
 			out = append(out, b.Title)
 		}
@@ -1541,12 +1543,12 @@ func blockTexts(blocks slack.Blocks) []string {
 	return out
 }
 
-func tableText(table *slack.DataTableBlock) string {
-	lines := append(make([]string, 0, len(table.Rows)+2), "[table block]")
-	for i, row := range table.Rows {
+func tableText[C any](rows [][]C, text func(C) string) string {
+	lines := append(make([]string, 0, len(rows)+2), "[table block]")
+	for i, row := range rows {
 		cells := make([]string, len(row))
 		for j, cell := range row {
-			cells[j] = cellText(cell)
+			cells[j] = text(cell)
 		}
 		lines = append(lines, "| "+strings.Join(cells, " | ")+" |")
 		if i == 0 {
@@ -1556,24 +1558,42 @@ func tableText(table *slack.DataTableBlock) string {
 	return strings.Join(lines, "\n")
 }
 
-func cellText(cell slack.DataTableCell) string {
+func cellText(cell slack.TableCell) string {
+	switch c := cell.(type) {
+	case nil:
+		return ""
+	case *slack.TableRawTextCell:
+		return c.Text
+	case *slack.TableRawNumberCell:
+		return cmp.Or(c.Text, strconv.FormatFloat(c.Value, 'f', -1, 64))
+	case *slack.TableRichTextCell:
+		return richCellText(c.Elements)
+	}
+	panic(fmt.Sprintf("table cell of type %s", cell.TableCellType()))
+}
+
+func dataCellText(cell slack.DataTableCell) string {
 	switch c := cell.(type) {
 	case *slack.DataTableRawTextCell:
 		return c.Text
 	case *slack.DataTableRawNumberCell:
 		return cmp.Or(c.Text, strconv.FormatFloat(c.Value, 'f', -1, 64))
 	case *slack.DataTableRichTextCell:
-		var text strings.Builder
-		for _, element := range c.Elements {
-			if section, ok := element.(*slack.RichTextSection); ok {
-				for _, e := range section.Elements {
-					text.WriteString(richTextWords(e))
-				}
-			}
-		}
-		return text.String()
+		return richCellText(c.Elements)
 	}
 	panic(fmt.Sprintf("data_table cell of type %s", cell.DataTableCellType()))
+}
+
+func richCellText(elements []slack.RichTextElement) string {
+	var text strings.Builder
+	for _, element := range elements {
+		if section, ok := element.(*slack.RichTextSection); ok {
+			for _, e := range section.Elements {
+				text.WriteString(richTextWords(e))
+			}
+		}
+	}
+	return text.String()
 }
 
 func richTextWords(e slack.RichTextSectionElement) string {
