@@ -772,12 +772,9 @@ func TestBareURLsWrappedAsLinksStillFitEachSection(t *testing.T) {
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("a card whose bare URLs each grow by their brackets: %v", err)
 	}
-	raw, err := json.Marshal(blocks)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "See https://") || !strings.Contains(string(raw), `See <https://example.com/runs/1> for it.`) {
-		t.Fatalf("want each URL sent as a <url> link: %s", raw)
+	drawn := strings.Join(blockTexts(slack.Blocks{BlockSet: blocks}), "\n")
+	if strings.Contains(drawn, "See https://") || !strings.Contains(drawn, "See <https://example.com/runs/1> for it.") {
+		t.Fatalf("want each URL sent as a <url> link: %s", drawn)
 	}
 }
 
