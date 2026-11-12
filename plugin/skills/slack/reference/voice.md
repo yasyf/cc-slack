@@ -46,7 +46,9 @@ order.
    message of the reader's, pass that message word for word with
    `--asked "<message>"`, once for each: a multi-agent term the reader used
    there, such as "the drive" in a question about the drive, then passes in
-   the answer. Then check what the script cannot detect:
+   the answer, and so does an internal id such as a run id when that message
+   names it or asks for ids, as "the session IDs" does. Then check what the
+   script cannot detect:
 
    - Would someone who only reads this thread understand every noun?
    - Is everything mentioned linked?

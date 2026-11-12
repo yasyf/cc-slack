@@ -53,7 +53,8 @@ and cc-slack sends a longer post to your DM as pages cut between lines. It
 prints each finding with its fix and exits 1 when there is one, 0 when the text
 is clean, and 2 on a usage error, as the script does. Each --asked is a message
 of the reader's the post answers, word for word, and a multi-agent term the
-reader used there, such as the drive, passes. It runs the check-post of the
+reader used there, such as the drive, passes, as does an internal id such as a
+run id when that message names it or asks for ids. It runs the check-post of the
 newest installed plugin, which a session's PATH may not hold.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {

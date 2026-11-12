@@ -17,6 +17,7 @@ EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 LEADING_THE = re.compile(r"^the\s+", re.IGNORECASE)
 NUMBER = re.compile(r"\d+")
 OWN_NUMBER = r"(?<![\w#.:/-]){}(?![\w%:/-]|[.,]\d)"
+IDS_ASKED = re.compile(r"(?<![\w'’])ids?(?![\w'’])", re.IGNORECASE)
 UNFURLING_URLS = (
     r"[\w-]+\.sentry\.io/issues/",
     r"sentry\.io/organizations/[\w-]+/issues/",
@@ -27,6 +28,10 @@ UNFURLING_URLS = (
 def his_word(token: str, asked: Sequence[str]) -> bool:
     word = re.compile(rf"(?<!\w){re.escape(LEADING_THE.sub('', token))}s?(?!\w)", re.IGNORECASE)
     return any(word.search(message) for message in asked)
+
+
+def his_ids(token: str, asked: Sequence[str]) -> bool:
+    return his_word(token, asked) or any(IDS_ASKED.search(message) for message in asked)
 
 
 def his_number(token: str, asked: Sequence[str]) -> bool:
@@ -75,6 +80,7 @@ RULES = (
         re.compile(r"\b(?:brw|run|exec|ctx)_[A-Za-z0-9]+"),
         "link the run or browser page, or describe it in the reader's terms",
         reads_labels=True,
+        passes=his_ids,
     ),
     Rule(
         "zone-label",
@@ -223,7 +229,7 @@ def main() -> int:
         "--asked",
         action="append",
         default=[],
-        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes, and so does an option number the reader typed there on its own",
+        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes, so does an option number the reader typed there on its own, and so does an internal id such as a run id when that message names it or asks for ids, as the session IDs does",
     )
     args = parser.parse_args()
     text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text()
