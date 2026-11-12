@@ -854,7 +854,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		return err
 	}
 	if changed := a.cards.changedSinceAnswer(card, provided[0].Card); changed != "" {
-		return fmt.Errorf("%s changed since he answered it (%s), so the next post naming it in tap_prs draws its new card", prURL(pr), changed)
+		return fmt.Errorf("%s changed since he answered or it withdrew its card (%s), so the next post naming it in tap_prs draws its new card", prURL(pr), changed)
 	}
 	if err := a.pictureRedrawnPRCard(ctx, id, card, &provided[0].Card); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
