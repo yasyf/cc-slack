@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1110,7 +1113,7 @@ func TestPostToAHiddenPrivateChannelRefusesWithoutAnAsk(t *testing.T) {
 	body := l.hooked(opSend, map[string]string{"channel_id": testChannel, "text": "PR is up"})
 	raw, _ := json.Marshal(body)
 	_, err := invoke(l.ctx, l.deps, testSession, "/any", opSend, raw)
-	if err == nil || !strings.Contains(err.Error(), "<#"+testChannel+"> is private") || !strings.Contains(err.Error(), errNoUserCredential.Error()) ||
+	if err == nil || !strings.Contains(err.Error(), "<#"+testChannel+"> is private") || !strings.Contains(err.Error(), errNoClientID.Error()) ||
 		strings.Contains(err.Error(), mcpSend) || strings.Contains(err.Error(), "/invite") {
 		t.Fatalf("send to a hidden private channel: %v", err)
 	}
@@ -1164,7 +1167,7 @@ func TestSelfInviteNeedsTheLoggedInUsersCredential(t *testing.T) {
 	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.refused(opSend, l.hooked(opSend, map[string]string{"channel_id": testChannel, "text": "PR is up"}),
-		"inviting it as the user failed (the Slack MCP credential is UOTHER in T1, not "+testUser+" in T1)")
+		"inviting it as the user failed (the Slack user token is UOTHER in T1, not "+testUser+" in T1)")
 	if n := user.callCount("conversations.invite"); n != 0 {
 		t.Fatalf("conversations.invite calls = %d, want none with another user's credential", n)
 	}
@@ -1180,7 +1183,7 @@ func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *test
 	}{
 		"other member read as the user": {true, "D0THEIRDM is a 1:1 DM the app cannot join, your DM with <@U0REPORTER>; " +
 			"post to them as usual with channel_id U0REPORTER, which opens the group DM of that person, you and the app"},
-		"no user credential": {false, "reading its other member as you failed (no Slack MCP credential"},
+		"no user token": {false, "reading its other member as you failed (" + errNoClientID.Error()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := startDaemon(t)
@@ -1202,88 +1205,156 @@ func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *test
 	}
 }
 
-func TestExpiredUserSessionIsReMintedFromChromeBeforeTheInvite(t *testing.T) {
+func TestExpiringUserTokenIsRenewedBeforeTheInvite(t *testing.T) {
 	l := startDaemon(t)
-	loggedIn(t, l)
-	stored := l.user.as(testUser)
-	stored.fail("auth.test", slack.SlackErrorResponse{Err: "invalid_auth"})
-	chrome := l.user.inChrome(testUser)
+	loggedInWithOAuth(t, l)
+	l.user.store(userToken{UserID: testUser, TeamID: "T1", AccessToken: storedUserToken, RefreshToken: "xoxe-1", ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	stale := l.user.grant(storedUserToken, testUser)
+	renewed := l.user.grant("xoxe.xoxp-renewed", testUser)
+	l.user.answer = oauthAccess{OK: true, oauthToken: oauthToken{AccessToken: "xoxe.xoxp-renewed", RefreshToken: "xoxe-2", ExpiresIn: 43200}}
 
 	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "method_not_supported_for_channel_type"})
-	joined := decodeChange(t, l.post(opChannelJoin, map[string]any{"channel_id": testChannel}))
-	if _, _, invites, _ := chrome.channelChanges(); joined.ChannelID != testChannel || !slices.Equal(invites[testChannel], []string{"UBOT"}) {
-		t.Fatalf("join = %+v, invites through Chrome's session %v, want the bot invited to %s", joined, invites, testChannel)
+	decodeChange(t, l.post(opChannelJoin, map[string]any{"channel_id": testChannel}))
+	if _, _, invites, _ := renewed.channelChanges(); !slices.Equal(invites[testChannel], []string{"UBOT"}) || stale.callCount("conversations.invite") != 0 {
+		t.Fatalf("invites with the renewed token %v, want the bot invited to %s with it alone", invites, testChannel)
 	}
-	if n := stored.callCount("conversations.invite"); n != 0 {
-		t.Fatalf("conversations.invite calls with the expired session = %d, want none", n)
+	want := url.Values{"client_id": {testClientID}, "grant_type": {"refresh_token"}, "refresh_token": {"xoxe-1"}}
+	if grants := l.user.sentGrants(); len(grants) != 1 || !reflect.DeepEqual(grants[0], want) {
+		t.Fatalf("grants = %v, want one refresh %v", grants, want)
 	}
-	if saved := l.user.savedCredentials(); !slices.Equal(saved, []userCredential{{Token: chromeUserToken, Cookie: chromeCookie}}) {
-		t.Fatalf("saved = %+v, want Chrome's session stored once", saved)
+	if tok, _ := l.user.stored(); tok.AccessToken != "xoxe.xoxp-renewed" || tok.RefreshToken != "xoxe-2" || tok.UserID != testUser {
+		t.Fatalf("stored = %+v, want the renewed token and its new refresh token", tok)
 	}
 }
 
-func TestExpiredUserSessionWithChromeSignedOutRefusesInOneLine(t *testing.T) {
+func TestRevokedUserTokenAsksForConsentOnce(t *testing.T) {
 	l := startDaemon(t)
-	loggedIn(t, l)
-	user := l.user.as(testUser)
-	user.fail("auth.test", slack.SlackErrorResponse{Err: "invalid_auth"})
+	loggedInWithOAuth(t, l)
+	l.user.as(testUser).fail("auth.test", slack.SlackErrorResponse{Err: "token_revoked"})
 
 	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "method_not_supported_for_channel_type"})
-	l.refused(opChannelJoin, l.hooked(opChannelJoin, map[string]any{"channel_id": testChannel}),
-		"inviting it as the user failed ("+errChromeSignedOut.Error()+")")
-	if n := user.callCount("conversations.invite"); n != 0 {
-		t.Fatalf("conversations.invite calls = %d, want none with an expired credential", n)
+	l.refused(opChannelJoin, l.hooked(opChannelJoin, map[string]any{"channel_id": testChannel}), "tap Allow on the card")
+	if _, ok := l.user.stored(); ok {
+		t.Fatal("the revoked token is still stored")
 	}
-	if saved := l.user.savedCredentials(); len(saved) != 0 {
-		t.Fatalf("saved = %+v, want nothing stored", saved)
-	}
-	if asks := l.slack.sentTo("D" + testUser); len(asks) != 0 {
-		t.Fatalf("DM posts = %+v, want the refusal to send nothing", asks)
+	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "method_not_supported_for_channel_type"})
+	l.refused(opChannelJoin, l.hooked(opChannelJoin, map[string]any{"channel_id": testChannel}), "tap Allow on the card")
+	if cards := l.slack.sentTo("D" + testUser); len(cards) != 1 {
+		t.Fatalf("DM posts = %+v, want one consent card for both refusals", cards)
 	}
 }
 
-func TestChromeSessionIsStoredOnlyOnceItPassesAuthTest(t *testing.T) {
-	for name, tc := range map[string]struct {
-		chromeUser string
-		chromeErr  string
-		want       string
-	}{
-		"signed out server-side": {chromeUser: testUser, chromeErr: "invalid_auth", want: errChromeSignedOut.Error()},
-		"another user":           {chromeUser: "UOTHER", want: "the Slack MCP credential is UOTHER in T1, not " + testUser + " in T1"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			l := startDaemon(t)
-			loggedIn(t, l)
-			l.user.as(testUser).fail("auth.test", slack.SlackErrorResponse{Err: "token_revoked"})
-			chrome := l.user.inChrome(tc.chromeUser)
-			if tc.chromeErr != "" {
-				chrome.fail("auth.test", slack.SlackErrorResponse{Err: tc.chromeErr})
-			}
-
-			l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "method_not_supported_for_channel_type"})
-			l.refused(opChannelJoin, l.hooked(opChannelJoin, map[string]any{"channel_id": testChannel}), tc.want)
-			if n := chrome.callCount("conversations.invite"); n != 0 {
-				t.Fatalf("conversations.invite calls = %d, want none", n)
-			}
-			if saved := l.user.savedCredentials(); len(saved) != 0 {
-				t.Fatalf("saved = %+v, want nothing stored", saved)
-			}
-		})
-	}
-}
-
-func TestUserSessionFailureOtherThanExpiryKeepsTheStoredSession(t *testing.T) {
+func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	l := startDaemon(t)
-	loggedIn(t, l)
+	loggedInWithOAuth(t, l)
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
+	link := consentLink(t, l)
+	if got := link.Query(); got.Get("client_id") != testClientID || got.Get("redirect_uri") != consentRedirect || got.Get("code_challenge_method") != "S256" ||
+		!strings.Contains(got.Get("user_scope"), "im:history") || got.Get("team") != "T1" {
+		t.Fatalf("consent link %s, want PlatClaude's client, the localhost redirect, S256 PKCE and im:history", link)
+	}
+
+	user := l.user.grant("xoxe.xoxp-1", testUser)
+	user.add("D0THEIRDM", slack.Message{Msg: slack.Msg{Timestamp: testThread, User: "UOTHER", Text: "can you look at the deploy?"}})
+	l.user.answer = oauthAccess{OK: true, AuthedUser: oauthToken{ID: testUser, AccessToken: "xoxe.xoxp-1", RefreshToken: "xoxe-1", ExpiresIn: 43200}}
+	l.user.answer.Team.ID = "T1"
+	if code := redirect(l, "code=c1&state="+link.Query().Get("state")); code != http.StatusOK {
+		t.Fatalf("redirect answered %d, want 200", code)
+	}
+	grant := l.user.sentGrants()[0]
+	challenge := sha256.Sum256([]byte(grant.Get("code_verifier")))
+	if grant.Get("code") != "c1" || grant.Get("redirect_uri") != consentRedirect || grant.Has("client_secret") ||
+		base64.RawURLEncoding.EncodeToString(challenge[:]) != link.Query().Get("code_challenge") {
+		t.Fatalf("grant = %v, want the code traded with the verifier behind the link's challenge and no secret", grant)
+	}
+	if edits := l.slack.edited(); len(edits) != 1 || !strings.HasPrefix(edits[0].text, "Allowed") {
+		t.Fatalf("card edits = %+v, want the card marked Allowed", edits)
+	}
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 1 || res.Messages[0].Text != "can you look at the deploy?" {
+		t.Fatalf("thread = %+v, want the DM read as the user", res)
+	}
+}
+
+func TestConsentRefusesAnotherAccountAndAForeignState(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithOAuth(t, l)
+	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
+	state := consentLink(t, l).Query().Get("state")
+
+	if code := redirect(l, "code=c1&state=forged"); code != http.StatusBadRequest || len(l.user.sentGrants()) != 0 {
+		t.Fatalf("forged state answered %d after %d grants, want 400 and no trade", code, len(l.user.sentGrants()))
+	}
+	l.user.answer = oauthAccess{OK: true, AuthedUser: oauthToken{ID: "UOTHER", AccessToken: "xoxe.xoxp-other"}}
+	l.user.answer.Team.ID = "T1"
+	if code := redirect(l, "code=c1&state="+state); code != http.StatusForbidden {
+		t.Fatalf("another account's consent answered %d, want 403", code)
+	}
+	if _, ok := l.user.stored(); ok {
+		t.Fatal("stored another account's token")
+	}
+	if edits := l.slack.edited(); len(edits) != 1 || !strings.Contains(edits[0].text, "UOTHER") {
+		t.Fatalf("card edits = %+v, want the card to name the other account", edits)
+	}
+}
+
+func TestUserTokenFailureOtherThanRevocationKeepsTheStoredToken(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithOAuth(t, l)
 	l.user.as(testUser).fail("auth.test", slack.SlackErrorResponse{Err: "account_inactive"})
-	l.user.inChrome(testUser)
 
 	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "method_not_supported_for_channel_type"})
 	l.refused(opChannelJoin, l.hooked(opChannelJoin, map[string]any{"channel_id": testChannel}),
-		"the user's Slack session credential failed auth.test: account_inactive")
-	if saved := l.user.savedCredentials(); len(saved) != 0 {
-		t.Fatalf("saved = %+v, want the stored session kept", saved)
+		"the Slack user token failed auth.test: account_inactive")
+	if _, ok := l.user.stored(); !ok {
+		t.Fatal("the stored token was dropped")
 	}
+	if cards := l.slack.sentTo("D" + testUser); len(cards) != 0 {
+		t.Fatalf("DM posts = %+v, want no consent card", cards)
+	}
+}
+
+const testClientID = "5050.9090"
+
+func loggedInWithOAuth(t *testing.T, l *liveDaemon) {
+	t.Helper()
+	l.slack.setUser(&slack.User{ID: testUser, Name: "ym", RealName: "Yasyf Mohamedali", Profile: slack.UserProfile{
+		Email: "ym@example.com", Image512: "https://avatars/ym.png", DisplayName: "yasyf",
+	}})
+	l.do(opLogin, map[string]any{
+		"token": "xoxb-test", "email": "ym@example.com", "socket_url": "ws://127.0.0.1:1/live", "repo_root": "/repo", "capt_hook_path": testCaptHook,
+		"avatar_key_id": "r2-key", "avatar_secret": "r2-secret",
+		"config": map[string]any{"oauth": map[string]string{"client_id": testClientID}},
+	})
+}
+
+func consentLink(t *testing.T, l *liveDaemon) *url.URL {
+	t.Helper()
+	cards := l.slack.sentTo("D" + testUser)
+	if len(cards) != 1 {
+		t.Fatalf("DM posts = %+v, want one consent card", cards)
+	}
+	m := regexp.MustCompile(`<(` + regexp.QuoteMeta(slackAuthorizeURL) + `\?[^|]+)\|`).FindStringSubmatch(cards[0].text)
+	if m == nil {
+		t.Fatalf("consent card %q carries no authorize link", cards[0].text)
+	}
+	link, err := url.Parse(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+func redirect(l *liveDaemon, query string) int {
+	rec := httptest.NewRecorder()
+	l.user.consent.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, consentPath+"?"+query, http.NoBody))
+	return rec.Code
 }
 
 func TestUnreactJoinsAPublicChannelAndToleratesAMissingReaction(t *testing.T) {

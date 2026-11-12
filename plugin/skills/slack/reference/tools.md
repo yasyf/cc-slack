@@ -136,20 +136,24 @@ approval. `slack_watch` joins public channels when needed and returns
 `{watch_id, joined, cursor}`; retain the watch id for cleanup. A channel
 watch delivers every new top-level message and every new reply in any of
 the channel's threads, each read once on Slack's push, so watch a channel
-instead of polling `slack_history`. To read or watch a private channel the
-bot is not in, add it there with `slack_channel_join` under the user's
-approval; never ask the user to `/invite` it.
+instead of polling `slack_history`. `slack_thread` and `slack_history` read
+a conversation the bot is not in, such as the user's DM with someone else, as
+the user. The first such read posts a consent card to the user's DM with the
+app and is refused with its link: ask the user to tap Allow on the Mac
+running cc-slack, then retry the read. To watch a private channel the bot is
+not in, add it there with `slack_channel_join` under the user's approval;
+never ask the user to `/invite` it.
 `slack_send`, `slack_reply`, `slack_edit`, `slack_delete`, `slack_react`,
 and `slack_unreact` join a public channel and retry once when the bot is
 outside it.
 
 If a private channel excludes the bot, an approved write invites the bot
-with the user's own Slack credential, the one the user-level Slack MCP
-holds, and retries; no ask. The invite carries out only the write its
+with the user's own Slack token, the one the consent card grants, and
+retries; no ask. The invite carries out only the write its
 ticket covers; reactions never invite.
 
-When that invite fails, the refusal is one line naming the cause, such as an
-expired Slack MCP credential, and cc-slack sends nothing. Report that cause
+When that invite fails, the refusal is one line naming the cause, such as
+the consent card to tap, and cc-slack sends nothing. Report that cause
 and retry the same write once it is fixed. Never ask the user to
 `/invite` the app, and never post the message through the user-level Slack
 MCP instead.

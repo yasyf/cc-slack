@@ -63,7 +63,7 @@ func (e outsideDMError) Error() string {
 func (e outsideDMError) Unwrap() error { return e.cause }
 
 func fallback(a action, err error) string {
-	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) {
+	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) || errors.As(err, new(userConsentError)) {
 		return err.Error()
 	}
 	if a == actionEdit {
@@ -116,8 +116,8 @@ func failureCode(err error) string {
 	return code
 }
 
-func threadReadFailure(err error, named, dm, thread string) string {
-	code := errorCode(err)
+func threadReadFailure(err error, named string, id identity, thread string) string {
+	code, dm := errorCode(err), id.DMChannelID
 	searched := named
 	if named == "" {
 		searched = "your DM with the app, " + dm + ", the conversation a read with no channel_id searches"
@@ -126,6 +126,9 @@ func threadReadFailure(err error, named, dm, thread string) string {
 	case "user_not_found":
 		return fmt.Sprintf("%s is not a conversation the bot can read (%s); your DM with the app is %s, which channel_id may omit", named, code, dm)
 	case "channel_not_found":
+		if id.Config.OAuth.enabled() {
+			return fmt.Sprintf("%s is not a conversation the bot or you can read (%s); your DM with the app is %s, which channel_id may omit", named, code, dm)
+		}
 		return fmt.Sprintf("%s is not a conversation the bot can read (%s); a private channel the bot is not in reads through %s, and your DM with the app is %s, which channel_id may omit", named, code, mcpThread, dm)
 	case "thread_not_found":
 		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)

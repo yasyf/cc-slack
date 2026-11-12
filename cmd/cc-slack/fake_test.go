@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -1080,102 +1081,85 @@ func (f *fakeSlack) sent() []fakePost {
 	return append([]fakePost(nil), f.posts...)
 }
 
-const (
-	storedUserToken = "xoxc-stored"
-	chromeUserToken = "xoxc-chrome"
-	chromeCookie    = "xoxd-chrome%2F1"
-)
+const storedUserToken = "xoxp-stored"
 
-type fakeUserCredential struct {
-	mu     sync.Mutex
-	stored *userCredential
-	slacks map[string]*fakeSlack
-	chrome string
-	saved  []userCredential
+type fakeUserToken struct {
+	mu      sync.Mutex
+	path    string
+	slacks  map[string]*fakeSlack
+	grants  []url.Values
+	answer  oauthAccess
+	err     error
+	consent http.Handler
 }
 
-func newFakeUserCredential() *fakeUserCredential {
-	return &fakeUserCredential{slacks: map[string]*fakeSlack{}, chrome: `{"cookies": [], "origins": []}`}
+func newFakeUserToken(t *testing.T) *fakeUserToken {
+	return &fakeUserToken{path: filepath.Join(t.TempDir(), "user-token.json"), slacks: map[string]*fakeSlack{}}
 }
 
-func (c *fakeUserCredential) session() userSession {
-	return userSession{read: c.read, save: c.save, cookiesync: c.cookiesync, api: c.api}
+func (f *fakeUserToken) session() *userSession {
+	return &userSession{path: f.path, oauth: f.oauth, api: f.api, listen: f.listen}
 }
 
-func (c *fakeUserCredential) read(context.Context) (userCredential, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.stored == nil {
-		return userCredential{}, errNoUserCredential
-	}
-	return *c.stored, nil
+func (f *fakeUserToken) oauth(_ context.Context, form url.Values) (oauthAccess, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.grants = append(f.grants, form)
+	return f.answer, f.err
 }
 
-func (c *fakeUserCredential) save(_ context.Context, cred userCredential) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.saved = append(c.saved, cred)
+func (f *fakeUserToken) api(token string) slackAPI {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.slacks[token]
+}
+
+func (f *fakeUserToken) listen(_ context.Context, h http.Handler) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.consent = h
 	return nil
 }
 
-func (c *fakeUserCredential) cookiesync(_ context.Context, bin string, args ...string) ([]byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if bin != cookiesyncBinary || !slices.Equal(args, []string{"cookies", slackWebOrigin, "--browser", "chrome", "--format", "playwright"}) {
-		return nil, fmt.Errorf("unexpected command %s %v", bin, args)
+func (f *fakeUserToken) grant(token, userID string) *fakeSlack {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := newFakeSlack()
+	s.auth = slack.AuthTestResponse{URL: "https://acme.slack.com/", TeamID: "T1", UserID: userID}
+	f.slacks[token] = s
+	return s
+}
+
+func (f *fakeUserToken) as(userID string) *fakeSlack {
+	f.store(userToken{UserID: testUser, TeamID: "T1", AccessToken: storedUserToken})
+	return f.grant(storedUserToken, userID)
+}
+
+func (f *fakeUserToken) store(tok userToken) {
+	if err := os.WriteFile(f.path, mustJSON(tok), 0o600); err != nil {
+		panic(err)
 	}
-	return []byte(c.chrome), nil
 }
 
-func (c *fakeUserCredential) api(cred userCredential) slackAPI {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.slacks[cred.Token]
-}
-
-func (c *fakeUserCredential) addSession(token, userID string) *fakeSlack {
-	f := newFakeSlack()
-	f.auth = slack.AuthTestResponse{URL: "https://acme.slack.com/", TeamID: "T1", UserID: userID}
-	c.slacks[token] = f
-	return f
-}
-
-func (c *fakeUserCredential) as(userID string) *fakeSlack {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.stored = &userCredential{Token: storedUserToken, Cookie: "xoxd-stored"}
-	return c.addSession(storedUserToken, userID)
-}
-
-func (c *fakeUserCredential) inChrome(userID string) *fakeSlack {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.chrome = chromeStorageJSON("T1", chromeUserToken, chromeCookie)
-	return c.addSession(chromeUserToken, userID)
-}
-
-func (c *fakeUserCredential) savedCredentials() []userCredential {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return slices.Clone(c.saved)
-}
-
-func chromeStorageJSON(teamID, token, cookie string) string {
-	config, err := json.Marshal(map[string]any{"teams": map[string]any{teamID: map[string]string{"token": token}}})
+func (f *fakeUserToken) stored() (userToken, bool) {
+	raw, err := os.ReadFile(f.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return userToken{}, false
+	}
+	var tok userToken
+	if err == nil {
+		err = json.Unmarshal(raw, &tok)
+	}
 	if err != nil {
 		panic(err)
 	}
-	state, err := json.Marshal(map[string]any{
-		"cookies": []map[string]string{
-			{"name": "b", "domain": slackCookieDomain, "value": "other"},
-			{"name": slackSessionCookie, "domain": slackCookieDomain, "value": cookie},
-		},
-		"origins": []map[string]any{{"origin": slackWebOrigin, "localStorage": []map[string]string{{"name": slackLocalConfig, "value": string(config)}}}},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return string(state)
+	return tok, true
+}
+
+func (f *fakeUserToken) sentGrants() []url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.grants)
 }
 
 func (f *fakeSlack) sentTo(channelID string) []fakePost {

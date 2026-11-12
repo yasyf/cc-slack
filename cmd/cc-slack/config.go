@@ -34,7 +34,12 @@ type config struct {
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
 	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
 	PRLinks     prLinksConfig  `toml:"pr_links" json:"pr_links"`
+	OAuth       oauthConfig    `toml:"oauth" json:"oauth"`
 	Permissions permissions    `toml:"permissions" json:"-"`
+}
+
+type oauthConfig struct {
+	ClientID string `toml:"client_id" json:"client_id,omitempty"`
 }
 
 type prLinksConfig struct {
@@ -101,6 +106,8 @@ type pictureConfig struct {
 func (a avatarConfig) enabled() bool { return a.Bucket != "" }
 
 func (p pictureConfig) enabled() bool { return p.Bucket != "" }
+
+func (o oauthConfig) enabled() bool { return o.ClientID != "" }
 
 func (l linksConfig) validate() error {
 	if t := l.Tailnet; t != "" && (strings.HasPrefix(t, ".") || !strings.HasSuffix(t, ".ts.net")) {

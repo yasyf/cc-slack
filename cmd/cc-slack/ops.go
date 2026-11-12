@@ -1328,11 +1328,16 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(hc.Ctx, api, id, cmp.Or(b.ChannelID, id.DMChannelID))
 	if err != nil {
-		return fail(threadReadFailure(err, b.ChannelID, id.DMChannelID, b.ThreadTS))
+		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
 	read, err := a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
+	if readAsUser(id, err) {
+		if api, err = a.userAPI(hc.Ctx, id); err == nil {
+			read, err = a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
+		}
+	}
 	if err != nil {
-		return fail(threadReadFailure(err, b.ChannelID, id.DMChannelID, b.ThreadTS))
+		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
 	msgs := read.msgs
 	if b.SinceTS != "" {
@@ -1391,6 +1396,11 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	ctx, cancel := context.WithTimeout(hc.Ctx, historyBudget)
 	defer cancel()
 	msgs, partial, err := fetchRecentTopLevel(ctx, api, channelID, limit)
+	if readAsUser(id, err) {
+		if api, err = a.userAPI(ctx, id); err == nil {
+			msgs, partial, err = fetchRecentTopLevel(ctx, api, channelID, limit)
+		}
+	}
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
@@ -2243,42 +2253,41 @@ func (a *app) inviteBot(ctx context.Context, id identity, channelID string) erro
 }
 
 func (a *app) userAPI(ctx context.Context, id identity) (slackAPI, error) {
-	cred, err := a.user.read(ctx)
-	if err != nil {
+	a.user.mu.Lock()
+	defer a.user.mu.Unlock()
+	tok, err := a.user.read()
+	switch {
+	case errors.Is(err, errNoUserToken), err == nil && (tok.UserID != id.UserID || tok.TeamID != id.TeamID):
+		return nil, a.askConsent(ctx, id)
+	case err != nil:
 		return nil, err
 	}
-	user := a.user.api(cred)
+	if tok.due(a.now()) {
+		if tok, err = a.renewUserToken(ctx, id, tok); err != nil {
+			return nil, err
+		}
+	}
+	user := a.user.api(tok.AccessToken)
 	switch err := checkUserSession(ctx, user, id); {
 	case err == nil:
 		return user, nil
-	case !staleSession(err):
-		return nil, err
-	}
-	if cred, err = chromeUserCredential(ctx, a.user.cookiesync, id.TeamID); err != nil {
-		return nil, err
-	}
-	user = a.user.api(cred)
-	switch err := checkUserSession(ctx, user, id); {
-	case err == nil:
 	case staleSession(err):
-		return nil, errChromeSignedOut
+		if err := a.user.forget(); err != nil {
+			return nil, err
+		}
+		return nil, a.askConsent(ctx, id)
 	default:
 		return nil, err
 	}
-	if err := a.user.save(ctx, cred); err != nil {
-		return nil, fmt.Errorf("save the Slack session re-minted from Chrome: %w", err)
-	}
-	a.poller.log.Printf("re-minted %s's Slack session from Chrome", id.UserID)
-	return user, nil
 }
 
 func checkUserSession(ctx context.Context, user slackAPI, id identity) error {
 	auth, err := user.AuthTestContext(ctx)
 	if err != nil {
-		return fmt.Errorf("the user's Slack session credential failed auth.test: %w", err)
+		return fmt.Errorf("the Slack user token failed auth.test: %w", err)
 	}
 	if auth.UserID != id.UserID || auth.TeamID != id.TeamID {
-		return fmt.Errorf("the Slack MCP credential is %s in %s, not %s in %s", auth.UserID, auth.TeamID, id.UserID, id.TeamID)
+		return fmt.Errorf("the Slack user token is %s in %s, not %s in %s", auth.UserID, auth.TeamID, id.UserID, id.TeamID)
 	}
 	return nil
 }

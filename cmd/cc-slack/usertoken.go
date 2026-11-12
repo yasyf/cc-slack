@@ -2,217 +2,268 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
 )
 
 const (
-	mcpTokenFile       = ".slack-mcp-tokens.json" //nolint:gosec // G101: a file name, not a credential
-	mcpKeychainService = "slack-mcp-server"
-
-	cookiesyncBinary   = "cookiesync"
-	slackWebOrigin     = "https://app.slack.com"
-	slackLocalConfig   = "localConfig_v2"
-	slackSessionCookie = "d"
-	slackCookieDomain  = ".slack.com"
+	consentPath       = "/cc-slack/oauth"
+	consentAddr       = "127.0.0.1:38427"
+	slackAuthorizeURL = "https://slack.com/oauth/v2/authorize"
+	slackOAuthAccess  = "https://slack.com/api/oauth.v2.access"
+	userTokenRenewal  = 5 * time.Minute
 )
 
 var (
-	errNoUserCredential = fmt.Errorf("no Slack MCP credential in ~/%s or the %s Keychain item", mcpTokenFile, mcpKeychainService)
-	errChromeSignedOut  = fmt.Errorf("the user's Slack session expired and Chrome is signed out of Slack: sign in at %s in Chrome, then retry", slackWebOrigin)
+	consentRedirect = "http://localhost:38427" + consentPath
+	userScopes      = []string{"channels:history", "files:read", "groups:history", "groups:read", "groups:write", "im:history", "im:read", "mpim:history", "mpim:read"}
+	errNoUserToken  = errors.New("cc-slack holds no Slack user token on this machine")
+	errNoClientID   = errors.New("the cc-slack config names no [oauth] client_id, the Slack app's client ID its consent link carries")
 )
 
-func staleSession(err error) bool {
-	return slices.Contains([]string{"invalid_auth", "token_expired", "token_revoked"}, errorCode(err))
+func userTokenPath() string { return filepath.Join(appPaths().StateDir(), "user-token.json") }
+
+type userToken struct {
+	UserID       string `json:"user_id"`
+	TeamID       string `json:"team_id"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
-type userCredential struct {
-	Token  string `json:"SLACK_TOKEN"`
-	Cookie string `json:"SLACK_COOKIE"`
+func (t userToken) due(now time.Time) bool {
+	return t.ExpiresAt != 0 && now.Add(userTokenRenewal).Unix() >= t.ExpiresAt
+}
+
+type oauthToken struct {
+	ID           string `json:"id"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+func (o oauthToken) userToken(userID, teamID string, now time.Time) userToken {
+	tok := userToken{UserID: userID, TeamID: teamID, AccessToken: o.AccessToken, RefreshToken: o.RefreshToken}
+	if o.ExpiresIn > 0 {
+		tok.ExpiresAt = now.Unix() + o.ExpiresIn
+	}
+	return tok
+}
+
+type oauthAccess struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error"`
+	Team  struct {
+		ID string `json:"id"`
+	} `json:"team"`
+	AuthedUser oauthToken `json:"authed_user"`
+	oauthToken
 }
 
 type userSession struct {
-	read       func(ctx context.Context) (userCredential, error)
-	save       func(ctx context.Context, cred userCredential) error
-	cookiesync commandRunner
-	api        func(cred userCredential) slackAPI
+	mu      sync.Mutex
+	path    string
+	oauth   func(ctx context.Context, form url.Values) (oauthAccess, error)
+	api     func(token string) slackAPI
+	listen  func(ctx context.Context, h http.Handler) error
+	serving bool
+	pending *pendingConsent
 }
 
-func mcpUserSession() userSession {
-	return userSession{read: readUserCredential, save: saveUserCredential, cookiesync: execCommand, api: cookieAPI}
+type pendingConsent struct {
+	state    string
+	verifier string
+	id       identity
+	ts       string
 }
 
-type cookieClient struct {
-	cookie string
-	http   *http.Client
+func newUserSession() *userSession {
+	client := &http.Client{Timeout: 30 * time.Second}
+	return &userSession{path: userTokenPath(), oauth: slackOAuth(client), api: newSlackAPI, listen: listenConsent}
 }
 
-func (c cookieClient) Do(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Cookie", slackSessionCookie+"="+c.cookie)
-	return c.http.Do(req) //nolint:gosec // G704: slack-go builds the request to slack.com
-}
-
-func cookieAPI(cred userCredential) slackAPI {
-	client := cookieClient{cookie: cred.Cookie, http: &http.Client{
-		Timeout:       30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}
-	return newSlackClient(cred.Token, slack.APIURL, client)
-}
-
-func readUserCredential(ctx context.Context) (userCredential, error) {
-	home, err := os.UserHomeDir()
+func listenConsent(ctx context.Context, h http.Handler) error {
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", consentAddr)
 	if err != nil {
-		return userCredential{}, err
+		return fmt.Errorf("serve the consent redirect on %s: %w", consentAddr, err)
 	}
-	var cred userCredential
-	raw, err := os.ReadFile(filepath.Join(home, mcpTokenFile))
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(raw, &cred); err != nil {
-			return userCredential{}, fmt.Errorf("read ~/%s: %w", mcpTokenFile, err)
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	return nil
+}
+
+func slackOAuth(client *http.Client) func(ctx context.Context, form url.Values) (oauthAccess, error) {
+	return func(ctx context.Context, form url.Values) (oauthAccess, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, slackOAuthAccess, strings.NewReader(form.Encode()))
+		if err != nil {
+			return oauthAccess{}, err
 		}
-	case errors.Is(err, os.ErrNotExist):
-		cred.Token, cred.Cookie = keychainSecret(ctx, "token"), keychainSecret(ctx, "cookie")
-	default:
-		return userCredential{}, err
-	}
-	if cred.Token == "" || cred.Cookie == "" {
-		return userCredential{}, errNoUserCredential
-	}
-	return cred, nil
-}
-
-func saveUserCredential(ctx context.Context, cred userCredential) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(home, mcpTokenFile)
-	raw, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		return rewriteTokenFile(path, raw, cred)
-	case errors.Is(err, os.ErrNotExist):
-		return saveKeychainSecrets(ctx, cred)
-	default:
-		return err
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := client.Do(req) //nolint:gosec // G704: a fixed slack.com URL
+		if err != nil {
+			return oauthAccess{}, fmt.Errorf("oauth.v2.access: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out oauthAccess
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return oauthAccess{}, fmt.Errorf("oauth.v2.access answered %s: %w", resp.Status, err)
+		}
+		if !out.OK {
+			return oauthAccess{}, slackCallError{method: "oauth.v2.access", err: slack.SlackErrorResponse{Err: out.Error}}
+		}
+		return out, nil
 	}
 }
 
-func rewriteTokenFile(path string, raw []byte, cred userCredential) error {
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return fmt.Errorf("read ~/%s: %w", mcpTokenFile, err)
+func (u *userSession) read() (userToken, error) {
+	raw, err := os.ReadFile(u.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return userToken{}, errNoUserToken
 	}
-	doc["SLACK_TOKEN"], doc["SLACK_COOKIE"], doc["updated_at"] = cred.Token, cred.Cookie, time.Now().UTC().Format(time.RFC3339)
-	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return err
+		return userToken{}, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), mcpTokenFile+".*.tmp")
-	if err != nil {
-		return err
+	var tok userToken
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return userToken{}, fmt.Errorf("read %s: %w", u.path, err)
 	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(out); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return tok, nil
 }
 
-func saveKeychainSecrets(ctx context.Context, cred userCredential) error {
-	oldToken := keychainSecret(ctx, "token")
-	if err := saveKeychainSecret(ctx, "token", cred.Token); err != nil {
-		return err
+func (u *userSession) save(tok userToken) error {
+	tmp := u.path + ".tmp"
+	if err := os.WriteFile(tmp, mustJSON(tok), 0o600); err != nil {
+		return fmt.Errorf("write the Slack user token: %w", err)
 	}
-	if err := saveKeychainSecret(ctx, "cookie", cred.Cookie); err != nil {
-		return errors.Join(err, saveKeychainSecret(context.WithoutCancel(ctx), "token", oldToken))
+	return os.Rename(tmp, u.path)
+}
+
+func (u *userSession) forget() error {
+	if err := os.Remove(u.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
 
-func saveKeychainSecret(ctx context.Context, account, secret string) error {
-	save := exec.CommandContext(ctx, "/usr/bin/security", "-i")
-	save.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -w %s\n", mcpKeychainService, account, strconv.Quote(secret)))
-	if out, err := save.CombinedOutput(); err != nil {
-		return fmt.Errorf("save %s in the %s Keychain item: %w: %s", account, mcpKeychainService, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+type userConsentError struct{ permalink string }
+
+func (e userConsentError) Error() string {
+	return fmt.Sprintf("cc-slack reads as you only with your one-time consent: tap Allow on the card it posted to your DM with the app (%s) on the Mac that runs cc-slack, then retry", e.permalink)
 }
 
-func keychainSecret(ctx context.Context, account string) string {
-	find := exec.CommandContext(ctx, "/usr/bin/security", "find-generic-password", "-s", mcpKeychainService, "-a", account, "-w") //nolint:gosec // G204: argv to the security binary, never a shell
-	out, err := find.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-type chromeStorageState struct {
-	Cookies []struct {
-		Name   string `json:"name"`
-		Domain string `json:"domain"`
-		Value  string `json:"value"`
-	} `json:"cookies"`
-	Origins []struct {
-		Origin       string `json:"origin"`
-		LocalStorage []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		} `json:"localStorage"`
-	} `json:"origins"`
-}
-
-func chromeUserCredential(ctx context.Context, cookiesync commandRunner, teamID string) (userCredential, error) {
-	out, err := cookiesync(ctx, cookiesyncBinary, "cookies", slackWebOrigin, "--browser", "chrome", "--format", "playwright")
-	if err != nil {
-		return userCredential{}, fmt.Errorf("the user's Slack session expired, and reading Chrome's through cookiesync failed: %w", err)
-	}
-	var state chromeStorageState
-	if err := json.Unmarshal(out, &state); err != nil {
-		return userCredential{}, fmt.Errorf("parse cookiesync's storage state: %w", err)
-	}
-	var cred userCredential
-	for _, c := range state.Cookies {
-		if c.Name == slackSessionCookie && c.Domain == slackCookieDomain {
-			cred.Cookie = c.Value
+func (a *app) renewUserToken(ctx context.Context, id identity, tok userToken) (userToken, error) {
+	got, err := a.user.oauth(ctx, url.Values{"client_id": {id.Config.OAuth.ClientID}, "grant_type": {"refresh_token"}, "refresh_token": {tok.RefreshToken}})
+	if err != nil && errorCode(err) == "invalid_refresh_token" {
+		if err := a.user.forget(); err != nil {
+			return userToken{}, err
 		}
+		return userToken{}, a.askConsent(ctx, id)
 	}
-	for _, o := range state.Origins {
-		for _, e := range o.LocalStorage {
-			if o.Origin != slackWebOrigin || e.Name != slackLocalConfig {
-				continue
-			}
-			var config struct {
-				Teams map[string]struct {
-					Token string `json:"token"`
-				} `json:"teams"`
-			}
-			if err := json.Unmarshal([]byte(e.Value), &config); err != nil {
-				return userCredential{}, fmt.Errorf("parse Slack's %s: %w", slackLocalConfig, err)
-			}
-			cred.Token = config.Teams[teamID].Token
+	if err != nil {
+		return userToken{}, fmt.Errorf("renew the Slack user token: %w", err)
+	}
+	renewed := got.userToken(id.UserID, id.TeamID, a.now())
+	if err := a.user.save(renewed); err != nil {
+		return userToken{}, err
+	}
+	return renewed, nil
+}
+
+func readAsUser(id identity, err error) bool {
+	return id.Config.OAuth.enabled() && err != nil && (errorCode(err) == "channel_not_found" || errorCode(err) == "not_in_channel")
+}
+
+func staleSession(err error) bool {
+	return errorCode(err) == "invalid_auth" || errorCode(err) == "token_expired" || errorCode(err) == "token_revoked"
+}
+
+func (a *app) askConsent(ctx context.Context, id identity) error {
+	if c := a.user.pending; c != nil {
+		return userConsentError{permalink: id.permalink(id.DMChannelID, c.ts, "")}
+	}
+	if !id.Config.OAuth.enabled() {
+		return errNoClientID
+	}
+	if !a.user.serving {
+		if err := a.user.listen(ctx, http.HandlerFunc(a.serveConsent)); err != nil {
+			return err
 		}
+		a.user.serving = true
 	}
-	if cred.Token == "" || cred.Cookie == "" {
-		return userCredential{}, errChromeSignedOut
+	c := &pendingConsent{state: randomToken(), verifier: randomToken(), id: id}
+	challenge := sha256.Sum256([]byte(c.verifier))
+	link := slackAuthorizeURL + "?" + url.Values{
+		"client_id":             {id.Config.OAuth.ClientID},
+		"user_scope":            {strings.Join(userScopes, ",")},
+		"redirect_uri":          {consentRedirect},
+		"state":                 {c.state},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
+		"code_challenge_method": {"S256"},
+		"team":                  {id.TeamID},
+	}.Encode()
+	text := fmt.Sprintf("*cc-slack needs your one-time consent to act in Slack as you*\nIt reads conversations the app is not in, such as your DMs, "+
+		"and invites the app to private channels you are in. Open this link on the Mac that runs cc-slack, since Slack hands your answer to it at localhost: "+
+		"<%s|Allow cc-slack>", link)
+	_, ts, err := a.newAPI(id.Token).PostMessageContext(ctx, id.DMChannelID, id.postOptions(text, "")...)
+	if err != nil {
+		return fmt.Errorf("post the consent card: %w", err)
 	}
-	return cred, nil
+	c.ts = ts
+	a.user.pending = c
+	return userConsentError{permalink: id.permalink(id.DMChannelID, ts, "")}
+}
+
+func randomToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func (a *app) serveConsent(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	a.user.mu.Lock()
+	defer a.user.mu.Unlock()
+	c := a.user.pending
+	if r.URL.Path != consentPath || c == nil || q.Get("state") != c.state {
+		http.Error(w, "cc-slack holds no consent for this link; retry the read for a fresh one", http.StatusBadRequest)
+		return
+	}
+	a.user.pending = nil
+	outcome, status := a.finishConsent(r.Context(), c, q)
+	if _, _, _, err := a.newAPI(c.id.Token).UpdateMessageContext(r.Context(), c.id.DMChannelID, c.ts, c.id.postOptions(outcome, "")...); err != nil {
+		a.poller.log.Printf("edit the consent card %s: %v", c.ts, err)
+	}
+	http.Error(w, outcome, status)
+}
+
+func (a *app) finishConsent(ctx context.Context, c *pendingConsent, q url.Values) (string, int) {
+	if e := q.Get("error"); e != "" {
+		return fmt.Sprintf("Not allowed: Slack answered %s, so cc-slack still cannot read as you", e), http.StatusForbidden
+	}
+	got, err := a.user.oauth(ctx, url.Values{"client_id": {c.id.Config.OAuth.ClientID}, "code": {q.Get("code")}, "code_verifier": {c.verifier}, "redirect_uri": {consentRedirect}})
+	if err != nil {
+		return fmt.Sprintf("Not allowed: trading Slack's code for a token failed (%v)", err), http.StatusBadGateway
+	}
+	if got.AuthedUser.ID != c.id.UserID || got.Team.ID != c.id.TeamID {
+		return fmt.Sprintf("Not allowed: this consent is %s in %s, not %s in %s", got.AuthedUser.ID, got.Team.ID, c.id.UserID, c.id.TeamID), http.StatusForbidden
+	}
+	if err := a.user.save(got.AuthedUser.userToken(c.id.UserID, c.id.TeamID, a.now())); err != nil {
+		return fmt.Sprintf("Not allowed: saving the token failed (%v)", err), http.StatusInternalServerError
+	}
+	a.poller.log.Printf("%s allowed cc-slack to read Slack as them", c.id.UserID)
+	return "Allowed: cc-slack now reads Slack as you on this Mac. You can close this tab.", http.StatusOK
 }
