@@ -69,7 +69,6 @@ const (
 	cardMaxTitleLen   = 140
 	cardMaxBodyLen    = 40000
 	cardMaxFieldLen   = 2000
-	cardMaxPRs        = 10
 	cardMaxPRRows     = 8
 	cardGroupChrome   = 3
 	cardMaxNameLen    = 80
@@ -395,9 +394,6 @@ func (c statusCard) checkHeading(rootOnly bool) error {
 }
 
 func (c statusCard) checkPRs() error {
-	if len(c.PRs) > cardMaxPRs {
-		return fmt.Errorf("card carries %d PRs, at most %d", len(c.PRs), cardMaxPRs)
-	}
 	for _, p := range c.PRs {
 		if err := p.check(); err != nil {
 			return err
@@ -1389,6 +1385,10 @@ func (p cardPR) showMeText() string {
 }
 
 func (p cardPR) headline(at, of int) string {
+	return p.named(at, of, "\n")
+}
+
+func (p cardPR) named(at, of int, between string) string {
 	id, _ := parseRef(p.URL)
 	place := ""
 	if of > 1 {
@@ -1396,7 +1396,7 @@ func (p cardPR) headline(at, of int) string {
 	}
 	link := slackLink(p.URL, fmt.Sprintf("%s PR %d", id.Repo, id.Number))
 	if lead := strings.TrimSuffix(place+plainMrkdwn(p.Title), " · "); lead != "" {
-		return "*" + lead + "*\n" + link
+		return "*" + lead + "*" + between + link
 	}
 	return link
 }
@@ -1545,7 +1545,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 			for _, p := range c.PRs {
 				lines = append(lines, p.settledLine(v))
 			}
-			prs = []slack.Block{section("card-prs", strings.Join(lines, "\n"))}
+			prs = sections(strings.Join(lines, "\n"))
 		}
 		asks := askBlocks(openAsks(c.Asks, v.answers, v.now), v)
 		if v.answers[c.Waits].Withdrawn && len(prs) > 0 {
@@ -1554,17 +1554,14 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		return slices.Concat(title, prs, asks, []slack.Block{mrkdwn(cardTappedBlock+cardActionsBlock, outcome)}, c.undo(v)), nil
 	}
 	lead := []slack.Block{header(c.emoji() + " " + c.Title)}
-	var fold [][]slack.Block
+	tail := c.tail(v)
+	room := cardMaxBlocks - len(lead) - len(tail) - 1
+	if c.Body != "" {
+		room--
+	}
+	prs, fold := c.prSections(v, room)
 	for _, p := range c.allPRs() {
 		fold = append(fold, p.folded()...)
-	}
-	tail := c.tail(v)
-	visible := cardMaxVisible
-	var prs []slack.Block
-	for i, p := range c.PRs {
-		prs = append(prs, slack.NewDividerBlock())
-		prs = append(prs, p.section(v, i, len(c.PRs), c.Images)...)
-		visible -= runes(p.markdown(v))
 	}
 	if c.Body != "" {
 		pictures := map[string]*slack.ImageBlock{}
@@ -1573,7 +1570,7 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 				pictures[image.Source] = image.block(v.pictures)
 			}
 		}
-		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(prs)-len(tail)-1, max(visible, 0), true, pictures)
+		body := bodyPages(c.Body, cardMaxBlocks-len(lead)-len(prs)-len(tail)-1, cardMaxVisible, true, pictures)
 		lead = append(lead, body[0]...)
 		fold = append(body[1:], fold...)
 	}
@@ -1582,6 +1579,41 @@ func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
 		tail = slices.Insert(tail, len(tail)-1, slack.Block(slack.NewActionBlock(cardFoldBlock, button(cardFoldAction, cardExplainLabel))))
 	}
 	return append(lead, tail...), fold
+}
+
+func (c statusCard) prSections(v cardView, room int) ([]slack.Block, [][]slack.Block) {
+	drawn := make([][]slack.Block, len(c.PRs))
+	for i, p := range c.PRs {
+		drawn[i] = append([]slack.Block{slack.NewDividerBlock()}, p.section(v, i, len(c.PRs), c.Images)...)
+	}
+	var shown []slack.Block
+	at := 0
+	for ; at < len(drawn) && len(shown)+len(drawn[at])+len(c.unshown(at+1)) <= room; at++ {
+		shown = append(shown, drawn[at]...)
+	}
+	if at == len(drawn) {
+		return shown, nil
+	}
+	var pages [][]slack.Block
+	for _, pr := range drawn[at:] {
+		if len(pages) == 0 || len(pages[len(pages)-1])+len(pr) > cardMaxPageBlock {
+			pages = append(pages, pr[1:])
+			continue
+		}
+		pages[len(pages)-1] = append(pages[len(pages)-1], pr...)
+	}
+	return append(shown, c.unshown(at)...), pages
+}
+
+func (c statusCard) unshown(from int) []slack.Block {
+	if from == len(c.PRs) {
+		return nil
+	}
+	lines := []string{"*In full under " + cardExplainLabel + "*"}
+	for i, p := range c.PRs[from:] {
+		lines = append(lines, "• "+p.named(from+i, len(c.PRs), " · "))
+	}
+	return append([]slack.Block{slack.NewDividerBlock()}, sections(strings.Join(lines, "\n"))...)
 }
 
 func (c statusCard) tail(v cardView) []slack.Block {
