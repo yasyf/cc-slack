@@ -96,7 +96,13 @@ preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--jso
 
 [buildkite]
 token_env = "BUILDKITE_TOKEN"
+
+[oauth]
+client_id = "1234567890.1234567890"
 ```
+
+`[oauth] client_id` is the client ID of the Slack app the bot token belongs to;
+the daemon reads as the engineer only with it, as User token below describes.
 
 `[pictures]` names a private S3-compatible bucket for the pictures on cards.
 The daemon uploads each picture under `cc-slack/pictures/<team>/<sha256>` with
@@ -345,32 +351,51 @@ changes join a public channel and retry once on `not_in_channel` or
 
 If the join fails with `channel_not_found` or `method_not_supported_for_channel_type`
 during a ticketed write, which is any op above but `react` and `unreact`, the daemon
-invites the bot as the engineer and retries once. It reads the engineer's Slack session
-credential from the user-level Slack MCP's store, `SLACK_TOKEN` and `SLACK_COOKIE` in
-`~/.slack-mcp-tokens.json` or the `slack-mcp-server` Keychain item's `token` and
-`cookie`. `auth.test` must name the logged-in user and team before
-`conversations.invite` adds the bot user; the engineer must already be in the channel.
-The invite only carries out the write its ticket already covers.
-
-When `auth.test` answers `invalid_auth`, `token_expired`, or `token_revoked`, the daemon
-re-mints the credential from Chrome's Slack session the way the Slack MCP's own setup
-does. It runs `cookiesync cookies https://app.slack.com --browser chrome`, which may
-ask for one Touch ID tap, and takes the `.slack.com` `d` cookie plus the team's token
-from `localConfig_v2` in `app.slack.com`'s local storage. Once that credential passes
-`auth.test` as the logged-in user and team, the daemon writes it back to the store it
-read from. In the token file it sets `SLACK_TOKEN`, `SLACK_COOKIE`, and `updated_at` and
-keeps the other fields; the Keychain item it updates through `security -i` on stdin. It logs
-`re-minted <user>'s Slack session from Chrome` and invites once with it. A Chrome
-session that is missing or also fails `auth.test` stores nothing.
+invites the bot as the engineer and retries once with the engineer's Slack user token
+below. `auth.test` must name the logged-in user and team before `conversations.invite`
+adds the bot user; the engineer must already be in the channel. The invite only carries
+out the write its ticket already covers.
 
 When the invite fails, the refusal is one line naming the private channel and
-the cause. When Chrome is signed out of Slack too, the cause names that and the step:
-sign in at `https://app.slack.com` in Chrome, then retry. A reaction, which
+the cause, such as the consent card to tap. A reaction, which
 never invites, is refused with a pointer to `channel-join`. The daemon sends
 nothing to Slack and names no fallback tool, and it hands back any spent ticket
 so it covers the retry.
 
 Every op and tool also accepts a Slack permalink as `url`.
+
+## User token
+
+With `[oauth] client_id` set, `thread` and `history` read a conversation the bot is not
+in, such as the engineer's 1:1 DM with someone else, as the engineer: on `channel_not_found` or `not_in_channel` they
+read it again with the engineer's user token, and so does every call that reads the
+conversation's messages, files, and names. The invite above and `dm-peer` use the same
+token. It comes from the Slack app whose client ID `[oauth] client_id` names, through OAuth
+with PKCE (RFC 8252's loopback redirect for a native app), so no client secret exists
+anywhere: the app's manifest turns on `pkce_enabled`, lists the redirect
+`http://localhost:38427/cc-slack/oauth`, and grants the user scopes `channels:history`,
+`files:read`, `groups:history`, `groups:read`, `groups:write`, `im:history`, `im:read`,
+`mpim:history`, and `mpim:read`.
+
+When a call needs the token and `user-token.json` in the state directory holds none for
+the logged-in user, the daemon serves `127.0.0.1:38427` and posts one consent card to the
+engineer's DM with the app: a link to `oauth/v2/authorize` with those scopes, a random
+`state`, and the S256 challenge of a random verifier. The call is refused with the card's
+permalink, and every call until the tap points to the same card. The tap, on the Mac
+running cc-slack, lands on the loopback redirect; the daemon checks `state`, trades the
+code and verifier through `oauth.v2.access`, keeps the token only when `authed_user` and
+`team` name the logged-in user and team, writes it to `user-token.json` with mode 0600,
+and edits the card to say `Allowed` or why not. A denied or mismatched consent clears the
+card, so the next call posts a fresh one.
+
+A token Slack issues with `expires_in`, a rotating one that lives 12 hours, is renewed
+by the next call within 5 minutes of `expires_at` with `grant_type=refresh_token` and no
+secret, storing the new access and refresh tokens. A refresh token Slack answers with
+`invalid_refresh_token`, such as one unused for the 30 days a PKCE app's refresh tokens
+last, deletes the file and posts the card again, as does a token `auth.test` answers with
+`invalid_auth`, `token_expired`, or `token_revoked`. Any other `auth.test` failure keeps the file and names the cause.
+Without `[oauth] client_id`, reads stay the bot's, and an invite or `dm-peer` lookup
+that needs the token is refused naming that key.
 
 ## Channel route
 
