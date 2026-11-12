@@ -714,7 +714,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return err
 		})
 		if err != nil {
-			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
+			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, a.outsideDM(hc.Ctx, id, channelID, err)))
 		}
 		res.Posted = true
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
@@ -2163,6 +2163,26 @@ func (a *app) writeAndRetry(ctx context.Context, api slackAPI, id identity, chan
 	}
 	a.poller.log.Printf("invited the bot to %s as %s to write there", channelID, id.UserID)
 	return call()
+}
+
+func (a *app) outsideDM(ctx context.Context, id identity, channelID string, err error) error {
+	if !strings.HasPrefix(channelID, "D") || errorCode(err) != "channel_not_found" {
+		return err
+	}
+	peer, lookupErr := a.dmPeerAsUser(ctx, id, channelID)
+	return outsideDMError{channelID: channelID, peer: peer, lookupErr: lookupErr, cause: err}
+}
+
+func (a *app) dmPeerAsUser(ctx context.Context, id identity, channelID string) (string, error) {
+	user, err := a.userAPI(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	info, err := user.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: channelID})
+	if err != nil {
+		return "", fmt.Errorf("conversations.info: %w", err)
+	}
+	return info.User, nil
 }
 
 func (a *app) inviteBot(ctx context.Context, id identity, channelID string) error {

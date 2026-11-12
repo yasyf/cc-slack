@@ -404,8 +404,8 @@ type messageFlags struct {
 
 func (f *messageFlags) bind(c *cobra.Command) {
 	f.sessionFlags.bind(c)
-	c.Flags().StringVar(&f.channelID, "channel", "", "Slack channel id, or a user id for the bot's DM with that user")
-	c.Flags().StringVar(&f.user, "user", "", "Slack user id for the bot's DM with that user, in place of --channel")
+	c.Flags().StringVar(&f.channelID, "channel", "", "Slack channel id, or a user id: yours for your DM with the app, anyone else's for the group DM of that person, you and the app")
+	c.Flags().StringVar(&f.user, "user", "", "Slack user id, in place of --channel: yours for your DM with the app, anyone else's for the group DM of that person, you and the app")
 	c.MarkFlagsMutuallyExclusive("channel", "user")
 	c.Flags().StringVar(&f.threadTS, "thread", "", "thread parent ts")
 	c.Flags().StringVar(&f.url, "url", "", "Slack permalink (fills channel, ts, and thread)")
@@ -688,7 +688,7 @@ func historyCmd(d cmd.Deps) *cobra.Command {
 		},
 	}
 	f.bind(c)
-	c.Flags().StringVar(&channelID, "channel", "", "Slack channel id, or a user id for the bot's DM with that user")
+	c.Flags().StringVar(&channelID, "channel", "", "Slack channel id, or a user id: yours for your DM with the app, anyone else's for the group DM of that person, you and the app")
 	c.Flags().StringVar(&url, "url", "", "Slack channel or message permalink (fills channel)")
 	c.Flags().BoolVar(&raw, "raw", false, "print JSON with each message as Slack sends it, with its blocks, attachments and metadata")
 	c.Flags().IntVar(&limit, "limit", defaultHistoryLimit, "most recent top-level messages to print")

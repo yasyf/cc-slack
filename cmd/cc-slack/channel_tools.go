@@ -96,7 +96,7 @@ type toolSpec struct {
 
 var (
 	urlProp       = map[string]any{"type": "string", "description": "permalink; fills channel_id, ts, thread_ts"}
-	channelProp   = map[string]any{"type": "string", "description": "channel id, or user id for a DM"}
+	channelProp   = map[string]any{"type": "string", "description": "channel id, or a user id: yours for your DM with the app, anyone else's for the group DM of that person, you and the app"}
 	threadProp    = map[string]any{"type": "string", "description": "ts of the thread's parent"}
 	textProp      = map[string]any{"type": "string", "description": "Slack mrkdwn"}
 	broadcastProp = map[string]any{"type": "boolean", "description": "also post the reply to the channel"}

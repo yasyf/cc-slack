@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Post, reply, or react in Slack through cc-slack with the user's permission; read or watch threads, take DM steering, and work sessions opened from the "Open in Claude" Slack shortcut. Send updates to the user's DM as top-level messages and the Slack MCP fallback for reads or personal 1:1 DMs the bot cannot reach.
+description: Post, reply, or react in Slack through cc-slack with the user's permission; read or watch threads, take DM steering, and work sessions opened from the "Open in Claude" Slack shortcut. Send updates to the user's DM as top-level messages, reach someone whose 1:1 DM with the user the bot cannot join in the group DM of that person, the user and the app, and use the Slack MCP fallback for reads the bot cannot make.
 ---
 
 # Work in Slack

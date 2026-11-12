@@ -44,8 +44,26 @@ func (e slackCallError) Error() string { return e.method + ": " + e.err.Error() 
 
 func (e slackCallError) Unwrap() error { return e.err }
 
+type outsideDMError struct {
+	channelID string
+	peer      string
+	lookupErr error
+	cause     error
+}
+
+func (e outsideDMError) Error() string {
+	head := fmt.Sprintf("cc-slack can't post here (%s): %s is a 1:1 DM the app cannot join", errorCode(e.cause), e.channelID)
+	if e.lookupErr != nil {
+		return fmt.Sprintf("%s, and reading its other member as you failed (%v); post to that person as usual with channel_id set to their user id, "+
+			"which opens the group DM of that person, you and the app", head, e.lookupErr)
+	}
+	return fmt.Sprintf("%s, your DM with <@%s>; post to them as usual with channel_id %s, which opens the group DM of that person, you and the app", head, e.peer, e.peer)
+}
+
+func (e outsideDMError) Unwrap() error { return e.cause }
+
 func fallback(a action, err error) string {
-	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) {
+	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) {
 		return err.Error()
 	}
 	if a == actionEdit {

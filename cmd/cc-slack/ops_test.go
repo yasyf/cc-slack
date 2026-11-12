@@ -1145,6 +1145,32 @@ func TestSelfInviteNeedsTheLoggedInUsersCredential(t *testing.T) {
 	}
 }
 
+func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *testing.T) {
+	for name, tc := range map[string]struct {
+		credential bool
+		want       string
+	}{
+		"other member read as the user": {true, "D0THEIRDM is a 1:1 DM the app cannot join, your DM with <@U0REPORTER>; " +
+			"post to them as usual with channel_id U0REPORTER, which opens the group DM of that person, you and the app"},
+		"no user credential": {false, "reading its other member as you failed (no Slack MCP credential"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			if tc.credential {
+				l.user.as(testUser).dms["D0THEIRDM"] = []string{"U0REPORTER"}
+			}
+			l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "channel_not_found"})
+			body := l.hooked(opReply, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": "1800000000.000100", "text": "Fixed: the deploy runs again."})
+			raw, _ := json.Marshal(body)
+			_, err := invoke(l.ctx, l.deps, testSession, "/any", opReply, raw)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), mcpSend) {
+				t.Fatalf("reply in D0THEIRDM = %v, want the group DM route %q and no %s", err, tc.want, mcpSend)
+			}
+		})
+	}
+}
+
 func TestExpiredUserSessionIsReMintedFromChromeBeforeTheInvite(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
