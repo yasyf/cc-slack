@@ -187,7 +187,8 @@ the board and under the card. Otherwise reply with `slack_dm_status` text
 and `about` set to the question id. Either way the reply opens with a link
 back to the card and lands in the card's own thread, so it stays beside the
 question. Pass `about` on any other reply
-about a waiting card too. Give the question in plain words and
+about a waiting card too. A drive's question is found by its `waits` id anywhere
+in your DM, open or answered, whichever session asked it. Give the question in plain words and
 what each answer does, and keep waiting for the answer.
 
 A card about a pull request lists it in `refs`. The card links each one as

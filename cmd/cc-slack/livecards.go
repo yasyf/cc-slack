@@ -1161,15 +1161,19 @@ func (l *liveCards) answerDelivered(channel, thread, askID string) {
 	}
 }
 
-func (l *liveCards) waiting(channel, waits string, at func(thread, ts string) bool) (string, liveMessage, bool) {
+func (l *liveCards) threadAbout(channel string, threads []string, waits string) (string, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	card := statusCard{Waits: waits}
 	for _, t := range l.threads {
-		if m := t.Waiting[waits]; t.Channel == channel && m != nil && at(t.Thread, m.TS) {
-			return t.Thread, *m, true
+		if m := t.Waiting[waits]; t.Channel == channel && m != nil && m.Card.driveQuestion() {
+			card.Drive = m.Card.Drive
 		}
 	}
-	return "", liveMessage{}, false
+	if t := l.holding(channel, threads, card); t != nil {
+		return t.Thread, true
+	}
+	return "", false
 }
 
 func (l *liveCards) waitingAt(channel, thread, ts string) (string, liveMessage, bool) {

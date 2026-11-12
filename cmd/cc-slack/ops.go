@@ -3167,7 +3167,7 @@ func (a *app) cardThread(ctx context.Context, subjectID string, id identity, wai
 	if err != nil {
 		return "", err
 	}
-	thread, _, found := a.cards.waiting(id.DMChannelID, waits, func(thread, _ string) bool { return slices.Contains(threads, thread) })
+	thread, found := a.cards.threadAbout(id.DMChannelID, threads, waits)
 	if !found {
 		return "", fmt.Errorf("no waiting card %q in your DM to reply under", waits)
 	}

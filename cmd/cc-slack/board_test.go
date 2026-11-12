@@ -1313,6 +1313,41 @@ func TestTwoOpenCopiesUnderOneWaitsIDLeaveOneAskingCardAfterARedraw(t *testing.T
 	}
 }
 
+func TestAReplyAboutADriveQuestionFromAnotherSessionLandsInItsThreadAnsweredOrNot(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := mergeCard()
+	card.Drive, card.Waits = "demo", "demo:j1-7"
+	_, ask := handlerSession(t, l, 1)
+	asked := ask(card, postThread(t, l, "About the bucket copy."))
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := postedCard{id, asked["thread_ts"], asked["ts"]}
+	for _, reply := range []struct {
+		n        int
+		text     string
+		answered bool
+	}{{2, "It copies on the new tree only.", false}, {3, "Done: it copies on the new tree only.", true}} {
+		n, text := reply.n, reply.text
+		if reply.answered {
+			l.do(opCardAnswer, map[string]any{"waits": card.Waits, "url": c.url(), "label": "Hold", "via": "http://127.0.0.1:7000/p/asks--ab12"})
+		}
+		handlerSession(t, l, n)
+		d := l.deps
+		d.ClaudePID = func() int { return testPID + n }
+		raw := mustJSON(map[string]any{"text": text, "about": card.Waits})
+		if _, err := invoke(l.ctx, d, fmt.Sprintf("handler-%d", n), "/any/cwd", opDMStatus, raw); err != nil {
+			t.Fatalf("handler %d's reply about %s: %v", n, card.Waits, err)
+		}
+		if sent := l.slack.sent(); sent[len(sent)-1].threadTS != c.thread || !strings.HasPrefix(sent[len(sent)-1].text, text) {
+			t.Fatalf("handler %d's reply = %+v, want it in card %s's thread %s", n, sent[len(sent)-1], c.ts, c.thread)
+		}
+	}
+}
+
 func TestTwoDriveQuestionsNamingAThreadOutsideTheDMPostEachCardOnce(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
