@@ -391,7 +391,7 @@ func shortText(text string) string {
 
 func textBlocks(text string) []slack.Block {
 	var blocks []slack.Block
-	for rest := []rune(text); len(rest) > 0; {
+	for rest := []rune(explicitLinks(text)); len(rest) > 0; {
 		n := min(len(rest), maxBlockChars)
 		for i := n - 1; n < len(rest) && i > 0; i-- {
 			if rest[i] == '\n' {
@@ -399,7 +399,7 @@ func textBlocks(text string) []slack.Block {
 				break
 			}
 		}
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, string(rest[:n]), false, false), nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(mrkdwnObject(string(rest[:n])), nil, nil))
 		rest = rest[n:]
 	}
 	return blocks

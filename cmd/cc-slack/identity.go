@@ -72,7 +72,7 @@ func checkAgent(name string) error {
 
 func (id identity) postOptions(text, threadTS string, extra ...slack.MsgOption) []slack.MsgOption {
 	opts := []slack.MsgOption{
-		slack.MsgOptionText(text, false),
+		textOption(text),
 		slack.MsgOptionUsername(id.username()),
 		slack.MsgOptionIconURL(id.AvatarURL),
 		slack.MsgOptionDisableLinkUnfurl(),
@@ -81,6 +81,10 @@ func (id identity) postOptions(text, threadTS string, extra ...slack.MsgOption) 
 		opts = append(opts, slack.MsgOptionTS(threadTS))
 	}
 	return append(opts, extra...)
+}
+
+func textOption(text string) slack.MsgOption {
+	return slack.MsgOptionCompose(slack.MsgOptionText(explicitLinks(text), false), slack.MsgOptionParse(false))
 }
 
 func (id identity) permalink(channelID, ts, threadTS string) string {

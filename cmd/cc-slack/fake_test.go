@@ -43,6 +43,7 @@ type fakePost struct {
 	attachments string
 	request     string
 	step        string
+	parse       string
 }
 
 const fakeEditedAt = "9999999999.000000"
@@ -55,6 +56,7 @@ type fakeEdit struct {
 	metadata    string
 	attachments string
 	unfurlLinks string
+	parse       string
 }
 
 type fakeSlack struct {
@@ -336,7 +338,7 @@ func (f *fakeSlack) PostMessageContext(ctx context.Context, channelID string, op
 		channelID: channelID, threadTS: thread, text: values.Get("text"),
 		username: values.Get("username"), iconURL: values.Get("icon_url"), ts: ts,
 		broadcast: values.Get("reply_broadcast") == "true", unfurlLinks: values.Get("unfurl_links"), blocks: values.Get("blocks"),
-		metadata: values.Get("metadata"), attachments: values.Get("attachments"),
+		metadata: values.Get("metadata"), attachments: values.Get("attachments"), parse: values.Get("parse"),
 	}
 	if r, keyed := ctx.Value(requestCtxKey{}).(request); keyed {
 		p.request = r.key
@@ -472,7 +474,7 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 	if err := f.checkPicturesShared(channelID, values); err != nil {
 		return "", "", "", err
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments"), unfurlLinks: values.Get("unfurl_links")})
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments"), unfurlLinks: values.Get("unfurl_links"), parse: values.Get("parse")})
 	var blocks slack.Blocks
 	if values.Get("blocks") != "" {
 		if err := json.Unmarshal([]byte(values.Get("blocks")), &blocks); err != nil {

@@ -1265,7 +1265,7 @@ func changeMessage(ctx context.Context, api slackAPI, channelID, ts, text string
 		return err
 	}
 	text, blocks = fitText(text, blocks)
-	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, append([]slack.MsgOption{slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...)}, extra...)...)
+	_, _, _, err := api.UpdateMessageContext(ctx, channelID, ts, append([]slack.MsgOption{textOption(text), slack.MsgOptionBlocks(blocks...)}, extra...)...)
 	return err
 }
 

@@ -156,7 +156,7 @@ func carriedCard(card []slack.Block, ref permalinkRef) slack.Block {
 		}
 	}
 	text := strings.TrimSpace(title + "\n" + cmp.Or(detail, note))
-	row := slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, clipRunes(text, cardMaxSectionLen), false, false), nil, nil, slack.SectionBlockOptionBlockID(cardCopyBlock+"-"+ref.ts))
+	row := slack.NewSectionBlock(mrkdwnObject(clipRunes(text, cardMaxSectionLen)), nil, nil, slack.SectionBlockOptionBlockID(cardCopyBlock+"-"+ref.ts))
 	if answer != nil {
 		row.Accessory = slack.NewAccessory(answer)
 	}
@@ -263,6 +263,6 @@ func markCopy(ctx context.Context, api slackAPI, id identity, card, copied cardR
 	if undo != "" {
 		blocks = append(blocks, slack.NewActionBlock(cardCopyBlock+"-undo", button(cardCopyAction+card.ts+":"+cardUndoAction+undo, cardUndoLabel)))
 	}
-	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, slack.MsgOptionText(post.Text, false), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...))
+	_, _, _, err := api.UpdateMessageContext(ctx, copied.channel, copied.ts, textOption(post.Text), slack.MsgOptionBlocks(blocks...), slack.MsgOptionAttachments([]slack.Attachment{}...))
 	return err
 }

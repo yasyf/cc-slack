@@ -765,6 +765,22 @@ func TestABodyThatLinkingGrowsPastASectionStillPosts(t *testing.T) {
 	}
 }
 
+func TestBareURLsWrappedAsLinksStillFitEachSection(t *testing.T) {
+	said := strings.Repeat("See https://example.com/runs/1 for it. ", 200)
+	card := statusCard{Status: "needs_you", Title: "Which run?", Body: said, Options: []string{"This one", "That one"}, Recommended: "This one", Waits: "w", Hints: map[string]string{"That one": said}}
+	blocks := card.replyBlocks(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("a card whose bare URLs each grow by their brackets: %v", err)
+	}
+	raw, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "See https://") || !strings.Contains(string(raw), `See <https://example.com/runs/1> for it.`) {
+		t.Fatalf("want each URL sent as a <url> link: %s", raw)
+	}
+}
+
 func TestABlockSlackWouldRefuseIsNamedBeforeItPosts(t *testing.T) {
 	long := strings.Repeat("a", slackMaxSection+1)
 	section := func(text string) slack.Block {
