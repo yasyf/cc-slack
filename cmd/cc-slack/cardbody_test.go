@@ -1022,10 +1022,6 @@ func TestAPRCardDrawsEachTableInItsShowMeAsADataTableAndItsNotificationLeavesSho
 	if strings.Contains(shown, "• *table:*") || !strings.Contains(shown, "*Show me*") || !strings.Contains(shown, "```\nThe 5 tables past the line (measured)\n```") {
 		t.Fatalf("sections %q, want the Show me heading and its code kept and no table drawn as lines", shown)
 	}
-	card := statusCard{Status: "needs_you", Title: "Split big tables?", Body: "Five tables are past 1.7 GB.\n" + fencedTable}
-	if got := card.text(); got != "🙋 Split big tables? — Five tables are past 1.7 GB." {
-		t.Fatalf("notification text = %q, want the title and summary without the Show me", got)
-	}
 }
 
 const (

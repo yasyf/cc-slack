@@ -234,15 +234,20 @@ func TestReplyCardOffersOptionsThenAckAndPauseUnderAQuietFooter(t *testing.T) {
 			t.Fatalf("reply card %s lacks %q", got, part)
 		}
 	}
-	if card.text() != "🚨 Origin errors are the PCI scanner — Monitor fix is green." {
+	if card.text() != "🚨 Origin errors are the PCI scanner" {
 		t.Fatalf("notification text = %q", card.text())
 	}
 }
 
-func TestACardsNotificationTextCarriesItsWordsButNoTableRows(t *testing.T) {
+func TestACardsNotificationTextIsItsTitleAloneSoAnUnfurlDrawsTheBodyOnce(t *testing.T) {
 	card := statusCard{Status: "needs_you", Title: "Which strategy?", Body: "Usage picks none.\n| Strategy | Old parts |\n|---|---|\n| Hash by key | stay busy |\nThe split waits on your pick.\n*Show me*\n| a | b |"}
-	if got := card.text(); got != card.emoji()+" Which strategy? — Usage picks none.\nThe split waits on your pick." {
-		t.Fatalf("notification text = %q, want its words without the table's pipe rows", got)
+	if got := card.text(); got != card.emoji()+" Which strategy?" {
+		t.Fatalf("notification text = %q, want the title alone: Slack draws a linked card's text beside its blocks, so a body there draws twice", got)
+	}
+	tapped := view()
+	tapped.tapped = "✓ *Hash by key* · 5:05pm"
+	if got := card.replyText(tapped); got != "Which strategy?" {
+		t.Fatalf("settled notification text = %q, want the title alone, not the outcome its block draws", got)
 	}
 }
 
@@ -285,7 +290,7 @@ func TestDMStatusCardsEachLandAtTheDMRootWithTheirOwnThread(t *testing.T) {
 	if !strings.Contains(sent[0].blocks, cardAckAction) {
 		t.Fatalf("card %s, want its buttons on the message", sent[0].blocks)
 	}
-	if sent[0].text != "🙋 Merge the stack? — Two PRs are green." {
+	if sent[0].text != "🙋 Merge the stack?" {
 		t.Fatalf("notification text = %q", sent[0].text)
 	}
 	if err := json.Unmarshal(l.do(opDMStatus, cardBody("Landed")).Body, &second); err != nil {

@@ -1435,7 +1435,7 @@ func settledMessage(blocks []slack.Block, line string) (string, []slack.Block) {
 			}
 		}
 	}
-	return settledText(title, line), append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, line))
+	return title, append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, line))
 }
 
 func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {

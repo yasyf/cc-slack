@@ -40,8 +40,8 @@ func TestASettledCardDrawsOnlyItsTitleAndOutcome(t *testing.T) {
 	if got := blocksJSON(t, blocks[1:]); !strings.Contains(got, line) {
 		t.Fatalf("second block %s, want the outcome", got)
 	}
-	if got := card.replyText(v); got != card.Title+" — "+line {
-		t.Fatalf("text = %q, want the title and the outcome", got)
+	if got := card.replyText(v); got != card.Title {
+		t.Fatalf("text = %q, want the title alone", got)
 	}
 	if again := blocksJSON(t, card.replyBlocks(v)); again != blocksJSON(t, blocks) {
 		t.Fatalf("a second draw = %s, want the same card", again)
@@ -132,7 +132,7 @@ func TestACardOutsideTheLiveStoreCollapsesOnce(t *testing.T) {
 	if got := blocksJSON(t, settled); len(settled) != 2 || strings.Contains(got, "raising_hand") || strings.Contains(got, "Why:") || strings.Contains(got, cardWaitAction) {
 		t.Fatalf("settled = %s, want the bare title and the outcome", got)
 	}
-	if text != "Post it? — ✓ *No* · 5:05pm" {
+	if text != "Post it?" {
 		t.Fatalf("text = %q", text)
 	}
 	if _, twice := settledMessage(settled, "✓ *Yes* · 5:06pm"); twice != nil {
@@ -202,8 +202,8 @@ func TestACardWhosePRsAllEndedCollapsesToItsTitleAndOutcome(t *testing.T) {
 		if err := checkBlocks(blocks); err != nil || len(blocks) != 3 || !strings.Contains(got, outcome) || strings.Contains(got, "Chats load faster") || strings.Contains(got, `"type":"button"`) {
 			t.Fatalf("blocks %s (%v), want the title, its PRs' lines and %q with no button", got, err, outcome)
 		}
-		if text := card.replyText(v); text != settledText(card.Title, outcome) {
-			t.Fatalf("text %q, want the title and %q", text, outcome)
+		if text := card.replyText(v); text != card.Title {
+			t.Fatalf("text %q, want the title alone, since its block draws %q", text, outcome)
 		}
 	}
 }

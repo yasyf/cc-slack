@@ -914,13 +914,7 @@ func (p cardPR) visible() cardPR {
 }
 
 func (c statusCard) text() string {
-	c = c.visible()
-	summary, _, _ := strings.Cut(c.Body, "*Show me*")
-	summary, _, _ = strings.Cut(summary, "```")
-	if summary = strings.TrimSpace(withoutTables(summary)); summary == "" {
-		return c.emoji() + " " + c.Title
-	}
-	return clipRunes(c.emoji()+" "+c.Title+" — "+mrkdwnText(summary), cardMaxSectionLen)
+	return c.emoji() + " " + withoutHidden(c.Title)
 }
 
 func gitCardTag(ctx context.Context, session, dir string) cardTag {
@@ -1501,15 +1495,10 @@ func (c statusCard) replyBlocks(v cardView) []slack.Block {
 }
 
 func (c statusCard) replyText(v cardView) string {
-	line := cmp.Or(v.tapped, c.ended(v.refs))
-	if line == "" {
+	if cmp.Or(v.tapped, c.ended(v.refs)) == "" {
 		return c.text()
 	}
-	return settledText(c.visible().Title, line)
-}
-
-func settledText(title, line string) string {
-	return clipRunes(title+" — "+line, cardMaxSectionLen)
+	return withoutHidden(c.Title)
 }
 
 func (c statusCard) outcome(v cardView) string {
