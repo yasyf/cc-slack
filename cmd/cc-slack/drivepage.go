@@ -46,10 +46,22 @@ type drivePRCard struct {
 	Card  statusCard `json:"card"`
 }
 
+type driveClosedCard struct {
+	Waits      string     `json:"waits"`
+	Title      string     `json:"title"`
+	PRs        []string   `json:"prs"`
+	Asked      time.Time  `json:"asked"`
+	URL        string     `json:"url"`
+	Answer     *askAnswer `json:"answer"`
+	Tapped     string     `json:"tapped"`
+	ReplacedBy string     `json:"replaced_by"`
+}
+
 type driveCardsResult struct {
-	TeamURL   string          `json:"team_url"`
-	Questions []driveQuestion `json:"questions"`
-	PRCards   []drivePRCard   `json:"pr_cards"`
+	TeamURL   string            `json:"team_url"`
+	Questions []driveQuestion   `json:"questions"`
+	PRCards   []drivePRCard     `json:"pr_cards"`
+	Closed    []driveClosedCard `json:"closed"`
 }
 
 type canvasResult struct {
@@ -59,38 +71,57 @@ type canvasResult struct {
 	Replaced string `json:"replaced,omitempty"`
 }
 
-// openDriveCards lists the waiting cards that name drive and are still unanswered and unreplaced, and every PR card still waiting
-// on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink.
-func (l *liveCards) openDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
+// listDriveCards lists the waiting cards that name drive and are still unanswered and unreplaced, and every PR card still waiting
+// on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink; closed holds every other
+// such card the store keeps, each with the answer, tap line or replacing card that closed it.
+func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	res := driveCardsResult{Questions: []driveQuestion{}, PRCards: []drivePRCard{}}
-	prCard := func(t *liveThread, m *liveMessage) drivePRCard {
+	res := driveCardsResult{Questions: []driveQuestion{}, PRCards: []drivePRCard{}, Closed: []driveClosedCard{}}
+	prURLs := func(m *liveMessage) []string {
 		listed := m.Card.allPRs()
 		prs := make([]string, 0, len(listed))
 		for _, pr := range listed {
 			prs = append(prs, pr.URL)
 		}
-		return drivePRCard{prs, m.At, link(t.Channel, m.TS, t.Thread), m.Card}
+		return prs
+	}
+	closed := func(t *liveThread, m *liveMessage) driveClosedCard {
+		c := driveClosedCard{Waits: m.Card.Waits, Title: m.Card.Title, PRs: prURLs(m), Asked: m.At, URL: link(t.Channel, m.TS, t.Thread), Tapped: m.Tapped}
+		if ans, answered := t.Answers[m.Card.Waits]; answered {
+			c.Answer = &ans
+		}
+		if m.ReplacedBy != "" {
+			by, _ := l.storedCard(t.Channel, m.ReplacedBy)
+			c.ReplacedBy = link(t.Channel, m.ReplacedBy, by.thread)
+		}
+		return c
 	}
 	for _, t := range l.threads {
 		for _, m := range t.Waiting {
 			switch {
+			case m.Card.Drive != drive && (m.Card.Drive != "" || len(m.Card.allPRs()) == 0):
 			case !t.open(m):
+				res.Closed = append(res.Closed, closed(t, m))
 			case m.Card.Drive == drive:
 				res.Questions = append(res.Questions, driveQuestion{m.Card.Title, m.Card.Options, m.Card.Recommended, m.At, link(t.Channel, m.TS, t.Thread), m.Card})
-			case m.Card.Drive == "" && len(m.Card.allPRs()) > 0:
-				res.PRCards = append(res.PRCards, prCard(t, m))
+			default:
+				res.PRCards = append(res.PRCards, drivePRCard{prURLs(m), m.At, link(t.Channel, m.TS, t.Thread), m.Card})
 			}
 		}
 		for _, m := range t.PRCards {
-			if t.asks(m) {
-				res.PRCards = append(res.PRCards, prCard(t, m))
+			switch {
+			case m.Card.Waits == "":
+			case t.open(m):
+				res.PRCards = append(res.PRCards, drivePRCard{prURLs(m), m.At, link(t.Channel, m.TS, t.Thread), m.Card})
+			default:
+				res.Closed = append(res.Closed, closed(t, m))
 			}
 		}
 	}
 	slices.SortFunc(res.Questions, func(a, b driveQuestion) int { return a.Asked.Compare(b.Asked) })
 	slices.SortFunc(res.PRCards, func(a, b drivePRCard) int { return a.Asked.Compare(b.Asked) })
+	slices.SortFunc(res.Closed, func(a, b driveClosedCard) int { return a.Asked.Compare(b.Asked) })
 	return res
 }
 
@@ -106,7 +137,7 @@ func (a *app) handleDriveCards(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	listed := a.cards.openDriveCards(b.Name, id.permalink)
+	listed := a.cards.listDriveCards(b.Name, id.permalink)
 	listed.TeamURL = id.TeamURL
 	return ok(listed)
 }
@@ -232,7 +263,7 @@ func driveCardsCmd(d cmd.Deps) *cobra.Command {
 	var drive string
 	c := &cobra.Command{
 		Use:   "drive-cards",
-		Short: "Print the open question cards that name a drive and the PR cards still waiting on a tap, from stored state",
+		Short: "Print the open question cards that name a drive and the PR cards still waiting on a tap, and every closed one with what closed it, from stored state",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runOp(c, d, f, opDriveCards, map[string]any{"name": drive})
