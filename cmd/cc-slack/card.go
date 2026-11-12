@@ -1370,7 +1370,11 @@ func (p cardPR) settledLine(v cardView) string {
 }
 
 func (p cardPR) section(v cardView, at, of int, images []cardImage) []slack.Block {
-	return slices.Concat([]slack.Block{p.head(at, of)}, sections(p.body(v)), p.showMe(), galleries(pictureBlocks(p.images(images), v.pictures)))
+	blocks := slices.Concat([]slack.Block{p.head(at, of)}, sections(p.body(v)), p.showMe())
+	for _, picture := range pictureBlocks(p.images(images), v.pictures) {
+		blocks = append(blocks, picture)
+	}
+	return blocks
 }
 
 func (p cardPR) head(at, of int) slack.Block {

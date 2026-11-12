@@ -1144,7 +1144,7 @@ func TestPicturesInARowDrawAsOneGalleryEachTitledWithItsCaption(t *testing.T) {
 	}
 }
 
-func TestACardsOwnPicturesAndAPRsPicturesEachDrawAsAGallery(t *testing.T) {
+func TestAPRsPicturesEachDrawFullWidthAndTheCardsOtherPicturesAsAGallery(t *testing.T) {
 	pr := fullPR(52857)
 	pr.Pictures = []string{"/shots/before.png", "/shots/after.png"}
 	card := statusCard{Status: "needs_you", Title: "Two layouts", PRs: []cardPR{pr}, Images: []cardImage{
@@ -1154,17 +1154,20 @@ func TestACardsOwnPicturesAndAPRsPicturesEachDrawAsAGallery(t *testing.T) {
 	if err := checkBlocks(blocks); err != nil {
 		t.Fatalf("Slack would refuse the card: %v", err)
 	}
-	drawn := carousels(blocks)
-	if len(drawn) != 2 || slices.ContainsFunc(blocks, func(b slack.Block) bool { return b.BlockType() == slack.MBTImage }) {
-		t.Fatalf("blocks %s, want the PR's two pictures and the card's other two as two galleries and no lone image", blocksJSON(t, blocks))
+	var images, gallery []string
+	for _, b := range blocks {
+		if image, ok := b.(*slack.ImageBlock); ok {
+			images = append(images, image.SlackFile.ID)
+		}
 	}
-	for i, want := range [][]string{{"F1", "F2"}, {"F3", "F4"}} {
-		var files []string
-		for _, c := range drawn[i].Elements {
-			files = append(files, c.HeroImage.SlackFile.ID)
-		}
-		if !slices.Equal(files, want) {
-			t.Fatalf("gallery %d shows %v, want %v", i, files, want)
-		}
+	drawn := carousels(blocks)
+	if len(drawn) != 1 || !slices.Equal(images, []string{"F1", "F2"}) {
+		t.Fatalf("blocks %s, want the PR's two pictures as full-width images and the card's other two as one gallery", blocksJSON(t, blocks))
+	}
+	for _, c := range drawn[0].Elements {
+		gallery = append(gallery, c.HeroImage.SlackFile.ID)
+	}
+	if !slices.Equal(gallery, []string{"F3", "F4"}) {
+		t.Fatalf("gallery shows %v, want the card's own F3 and F4", gallery)
 	}
 }
