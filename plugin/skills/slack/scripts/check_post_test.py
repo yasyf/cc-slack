@@ -198,9 +198,20 @@ class CheckPostTest(unittest.TestCase):
         )
         self.assertEqual(kinds(text), [])
 
-    def test_reads_no_identifier_or_sentence_inside_code(self) -> None:
-        text = "Run `export AWS_PROFILE=dev. Then retry. Then wait. Then go.` once.\n```\none. two. three. four. five.\n```"
+    def test_reads_no_identifier_number_or_sentence_inside_code(self) -> None:
+        text = (
+            "Run `export AWS_PROFILE=dev. Then retry. Then wait. Then go.` once.\n```\none. two. three. four. five.\n```\n"
+            "The worker died on `RangeError: memory value #830225 out of bounds`, as in `PR 4031`.\n"
+            "```\ndeploy #1399 failed: FORGE_REBASE_TOKEN unset\n```"
+        )
         self.assertEqual(kinds(text), [])
+
+    def test_still_flags_a_bare_number_beside_code(self) -> None:
+        text = "The worker died on `RangeError: memory value out of bounds` after #830225 and build 1399.\n```echo hi```\nSee #4031."
+        self.assertEqual(
+            kinds(text),
+            [("bare-number", "#830225"), ("bare-number", "build 1399"), ("bare-number", "#4031")],
+        )
 
     def test_flags_an_option_named_by_number_or_position(self) -> None:
         text = (
