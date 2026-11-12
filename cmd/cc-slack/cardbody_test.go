@@ -288,6 +288,47 @@ func TestAPRCardStopsAtItsFirstScreen(t *testing.T) {
 	}
 }
 
+func TestAStackCardOfAnySizeNamesEveryPRAndDrawsWhatPassesOneMessageUnderExplainMore(t *testing.T) {
+	prs := make([]cardPR, 45)
+	for i := range prs {
+		prs[i] = fullPR(100 + i)
+	}
+	eli := "The orders table moves to a new one without a pause."
+	card := statusCard{
+		Status: "needs_you", Title: "New: the orders table moves", Body: eli,
+		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge:acme:app:100-144", PRs: prs,
+	}
+	if err := card.check(bodyAt, false, ""); err != nil {
+		t.Fatalf("a 45-PR stack card refused: %v", err)
+	}
+	blocks, fold := card.layout(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the card: %v", err)
+	}
+	shown, folded := blocksJSON(t, blocks), blocksJSON(t, slices.Concat(fold...))
+	for _, p := range prs {
+		if !strings.Contains(shown, p.URL) {
+			t.Errorf("the card does not name %s: it names every PR it lands", p.URL)
+		}
+	}
+	if !strings.Contains(shown, eli) || !strings.Contains(shown, "In full under "+cardExplainLabel) || !strings.Contains(shown, cardExplainAction) {
+		t.Fatalf("card %s, want it to open with the stack's summary and send the PRs past one message to Explain more", shown)
+	}
+	if got := strings.Count(shown, prs[0].Refresher) + strings.Count(folded, prs[0].Refresher); got != len(prs) {
+		t.Fatalf("%d PR sections across the card and Explain more, want each of the %d once", got, len(prs))
+	}
+	for i, page := range fold {
+		if err := checkBlocks(page); err != nil {
+			t.Fatalf("Slack would refuse Explain more page %d: %v", i+1, err)
+		}
+	}
+	v := view()
+	v.tapped = "✓ *Approve* · answered"
+	if err := checkBlocks(card.replyBlocks(v)); err != nil {
+		t.Fatalf("Slack would refuse the card once answered: %v", err)
+	}
+}
+
 func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
