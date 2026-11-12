@@ -30,7 +30,7 @@ from captain_hook.types import And, Or
 from captain_hook.util import reqenv
 
 from .common import BIN, check_post
-from .writes import Write, capture, cli_calls, pending, permalink, permissions
+from .writes import DRIVE_SAY, Write, capture, cli_calls, pending, permalink, permissions
 
 CC_SLACK = str(BIN)
 GATE = "slack_writes_need_permission"
@@ -1232,6 +1232,8 @@ on(
             case(**said(f"respond to this asap {DANA_URL}")) >> ALLOW,
             case(**said(f"respond to this asap {DANA_URL}.", "status?", "and the release?")) >> ALLOW,
             case(**said(f"respond to this asap {DANA_URL}", agent_id="a-lane")) >> Rewrite(ticket_agent="a-lane"),
+            case(tool=DRIVE_SAY, **said(f"respond to this asap {DANA_URL}")) >> ALLOW,
+            case(tool=DRIVE_SAY, transcript=LINKED_LONG_AGO_BY_OTHERS) >> DENY,
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[0], id="digest")) >> ALLOW,
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[1], id="digest")) >> DENY,
             case(transcript=LINKED_LONG_AGO) >> ALLOW,
@@ -1400,6 +1402,8 @@ on(
             case(DANA | {"ts": "1791900000.000500", "tasks": [{"id": "1", "status": "complete", "title": "Reading the thread"}]}, tool="slack_stream") >> Allow(),
             case(DANA | {"recipient": "U0DANA00001", "plan": "Looking at this", "tasks": [{"id": "1", "status": "in_progress", "title": "Reading the thread"}]}, tool="slack_stream") >> DENY,
             case({"text": "status"}, tool="slack_dm_status") >> Allow(),
+            case({"text": "status", "thread_ts": DANA_THREAD}, tool=DRIVE_SAY) >> Allow(),
+            case(DANA | {"text": DANA_TEXT, "dry_run": True}, tool=DRIVE_SAY) >> Allow(),
             case({"query": "release"}, tool="mcp__slack__slack_search_messages") >> Allow(),
             case({"ticket_id": "0123456789ab"}, tool="slack_revoke") >> Allow(),
             case(commands=NOT_DM | {f"{CC_SLACK} dm-peer": "cc-slack can't reach the daemon"}) >> ALLOW,
