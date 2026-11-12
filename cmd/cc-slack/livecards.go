@@ -244,7 +244,7 @@ func (t *liveThread) shows(keys map[string]bool) bool {
 }
 
 func (t *liveThread) changedSinceAnswer(m *liveMessage, drawn statusCard) string {
-	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || t.withdrawn(m) || m.Tapped == cardNoLongerWaits {
+	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || m.Tapped == cardNoLongerWaits {
 		return ""
 	}
 	return drawn.changedSince(m.Card)

@@ -803,6 +803,35 @@ func TestARedrawForItsPRBringsAWithdrawnCardBackInPlaceOnlyUnderTheWaitsIDItWasW
 	assertBackInPlace(t, l, card, unreacted)
 }
 
+func TestAWithdrawnPRCardDrawnAgainSayingWhatChangedAsksOnAFreshCardAndMarksTheWithdrawnOneReplaced(t *testing.T) {
+	const reworked = "Reworked to your words: topology moves to the session meta table"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	old := rootCards(awaitPRCards(t, l, testDM))[0]
+	l.do(opWithdrawPRCard, map[string]any{"pr": tapPR41[0], "reason": "Being reworked to your words"})
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{changedTapCard(reworked)}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 was reworked and waits on your tap", "tap_prs": tapPR41})
+	eventually(t, "a fresh card at the DM root", func() bool { return len(rootCards(prCards(l, testDM))) == 2 })
+	fresh := rootCards(prCards(l, testDM))[1]
+	if !strings.Contains(fresh.blocks, cardWaitAction) || !strings.Contains(shown(t, fresh), reworked) {
+		t.Fatalf("fresh card blocks = %s, want its buttons and the line saying what changed", fresh.blocks)
+	}
+	eventually(t, "the withdrawn card marked replaced", func() bool {
+		edits := editsOf(l.slack.edited(), old.ts)
+		return strings.Contains(edits[len(edits)-1], "*Replaced:* "+reworked)
+	})
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the fresh card alone waiting", listed.PRCards)
+	}
+}
+
 func assertBackInPlace(t *testing.T, l *liveDaemon, card fakePost, unreacted int) {
 	t.Helper()
 	posts := len(rootCards(prCards(l, testDM)))
