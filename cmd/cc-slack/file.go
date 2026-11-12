@@ -4,10 +4,14 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 
@@ -38,7 +42,7 @@ func attachedFile(ctx context.Context, api slackAPI, f *slack.File) messageFile 
 		out.Path = path
 		return out
 	}
-	if err := saveFile(ctx, api, f, path); err != nil {
+	if _, err := saveFile(ctx, api, f, path); err != nil {
 		out.PathError = fallback(actionFile, err)
 		return out
 	}
@@ -68,39 +72,63 @@ func (a *app) handleFile(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionFile, err))
 	}
 	path := cmp.Or(b.Out, filePath(f))
-	if err := saveFile(hc.Ctx, api, f, path); err != nil {
+	size, err := saveFile(hc.Ctx, api, f, path)
+	if err != nil {
 		a.poller.log.Printf("file %s: download: %v", b.FileID, err)
 		return fail(fallback(actionFile, err))
 	}
-	return ok(fileResult{FileID: f.ID, Name: f.Name, Mimetype: f.Mimetype, Size: f.Size, Path: path})
+	return ok(fileResult{FileID: f.ID, Name: f.Name, Mimetype: f.Mimetype, Size: size, Path: path})
 }
 
-func saveFile(ctx context.Context, api slackAPI, f *slack.File, path string) error {
+func saveFile(ctx context.Context, api slackAPI, f *slack.File, path string) (int, error) {
 	if f.URLPrivateDownload == "" {
-		return fmt.Errorf("%s has no download url", f.ID)
+		return 0, fmt.Errorf("%s has no download url", f.ID)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".download-*")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := api.GetFileContext(ctx, f.URLPrivateDownload, tmp); err != nil {
 		_ = tmp.Close()
-		return err
+		return 0, err
 	}
 	info, err := tmp.Stat()
 	if err != nil {
 		_ = tmp.Close()
-		return err
+		return 0, err
 	}
 	if err := tmp.Close(); err != nil {
+		return 0, err
+	}
+	return int(info.Size()), os.Rename(tmp.Name(), path)
+}
+
+// GetFileContext downloads the file itself because slack-go follows Slack's redirect of a download the bot cannot read to the workspace's sign-in page and saves that page as the file.
+func (c *apiClient) GetFileContext(ctx context.Context, downloadURL string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, http.NoBody)
+	if err != nil {
 		return err
 	}
-	if info.Size() != int64(f.Size) {
-		return fmt.Errorf("slack served %d bytes for %s, which has %d, so the bot cannot read it", info.Size(), f.ID, f.Size)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: the request goes to the Slack download url files.info names
+	if err != nil {
+		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.Request.URL.Host != req.URL.Host {
+		return fmt.Errorf("slack redirected the download to %s, so the bot cannot read it", resp.Request.URL.Host)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return &slack.RateLimitedError{RetryAfter: time.Duration(retry) * time.Second}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return slack.StatusCodeError{Code: resp.StatusCode, Status: resp.Status}
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
 }
