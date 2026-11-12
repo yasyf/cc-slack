@@ -199,7 +199,6 @@ class CheckPostTest(unittest.TestCase):
         self.assertEqual(
             kinds(text),
             [
-                ("wall-of-text", "Hi Anubhav, Yasyf asked me to"),
                 ("plain-name", "Hi Anubhav"),
                 ("bare-identifier", "FORGE_REBASE_TOKEN"),
             ],
@@ -249,6 +248,27 @@ class CheckPostTest(unittest.TestCase):
                 ("option-reference", "first option"),
             ],
         )
+
+    def test_passes_an_option_number_the_reader_typed_on_its_own(self) -> None:
+        ack = "Checking whether option 1 on that card is the new-tree-only one, and the answer comes in this thread."
+        for asked in (["sot hat was asnwet 1 right"], ["1 and then if we kepe getting false rejects move to 3"]):
+            with self.subTest(asked=asked):
+                self.assertEqual(check_post.check(ack, asked), [])
+        self.assertEqual(
+            [(finding.kind, finding.token) for finding in check_post.check("Options 1 and 3 both hold.", ["1 and then move to 3"])], []
+        )
+
+    def test_still_flags_an_option_number_the_reader_never_typed_alone(self) -> None:
+        cases = (
+            ("Checking whether option 1 on that card is the new-tree-only one.", []),
+            ("Checking whether option 2 on that card is the new-tree-only one.", ["sot hat was asnwet 1 right"]),
+            ("Checking whether option 1 on that card is the new-tree-only one.", ["is #1 or v1 or 1.5 or 10 or 1% done"]),
+            ("Options 1 and 3 both hold.", ["go with 1"]),
+            ("Pick the first option.", ["1"]),
+        )
+        for text, asked in cases:
+            with self.subTest(text=text, asked=asked):
+                self.assertEqual([finding.kind for finding in check_post.check(text, asked)], ["option-reference"])
 
     def test_ignores_counts_steps_versions_and_linked_numbers(self) -> None:
         text = (
@@ -306,11 +326,6 @@ class CheckPostTest(unittest.TestCase):
         ):
             with self.subTest(line=line):
                 self.assertEqual(kinds(line), [])
-
-    def test_a_wall_of_text_fix_asks_for_no_question_in_text(self) -> None:
-        [finding] = check_post.check("The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.")
-        self.assertEqual(finding.kind, "wall-of-text")
-        self.assertNotIn("question", finding.fix)
 
     def test_reads_through_emphasis_markers(self) -> None:
         self.assertEqual(kinds("Thanks *Andrew*, it is live."), [("plain-name", "Thanks *Andrew")])

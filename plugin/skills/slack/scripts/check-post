@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,15 +14,24 @@ NESTED_LINK = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|[^<>]*?(?=\s*<)")
 NESTED_FIX = "a link's words cannot hold another link or mention, and Slack draws both broken; end this link's words, then put the inner one after it"
 CODE_SPAN = re.compile(r"`[^`\n]+`")
 EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
-SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
-LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
 LEADING_THE = re.compile(r"^the\s+", re.IGNORECASE)
-MAX_SENTENCES = 3
+NUMBER = re.compile(r"\d+")
+OWN_NUMBER = r"(?<![\w#.:/-]){}(?![\w%:/-]|[.,]\d)"
 UNFURLING_URLS = (
     r"[\w-]+\.sentry\.io/issues/",
     r"sentry\.io/organizations/[\w-]+/issues/",
     r"app\.datadoghq\.com/(?:monitors|incidents|event)/",
 )
+
+
+def his_word(token: str, asked: Sequence[str]) -> bool:
+    word = re.compile(rf"(?<!\w){re.escape(LEADING_THE.sub('', token))}s?(?!\w)", re.IGNORECASE)
+    return any(word.search(message) for message in asked)
+
+
+def his_number(token: str, asked: Sequence[str]) -> bool:
+    numbers = NUMBER.findall(token)
+    return bool(numbers) and all(any(re.search(OWN_NUMBER.format(number), message) for message in asked) for number in numbers)
 
 
 @dataclass(frozen=True)
@@ -32,7 +41,7 @@ class Rule:
     fix: str
     reads_code: bool = True
     reads_labels: bool = False
-    passes_his_words: bool = False
+    passes: Callable[[str, Sequence[str]], bool] | None = None
 
 
 RULES = (
@@ -59,7 +68,7 @@ RULES = (
         "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
         reads_code=False,
         reads_labels=True,
-        passes_his_words=True,
+        passes=his_word,
     ),
     Rule(
         "internal-id",
@@ -106,6 +115,7 @@ RULES = (
         "a card draws its recommended option first and renumbers the rest; name the option in its own words, never by number or position",
         reads_code=False,
         reads_labels=True,
+        passes=his_number,
     ),
     Rule(
         "bare-identifier",
@@ -172,7 +182,7 @@ def plain(line: str, labels: bool = False) -> str:
 
 
 def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
-    findings = walls(text) + nested_links(text)
+    findings = nested_links(text)
     for number, (line, fenced) in enumerate(fenced_lines(text), start=1):
         masked = {labels: plain(line, labels) for labels in (False, True)}
         for rule in RULES:
@@ -182,29 +192,9 @@ def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
             read = masked[rule.reads_labels]
             for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read)):
                 token = line[match.start(span) : match.end(span)]
-                if not (rule.passes_his_words and his_word(token, asked)):
+                if not (rule.passes and rule.passes(token, asked)):
                     findings.append(Finding(number, match.start(span) + 1, rule.kind, token, rule.fix))
     return sorted(findings, key=lambda finding: (finding.line, finding.column))
-
-
-def his_word(token: str, asked: Sequence[str]) -> bool:
-    word = re.compile(rf"(?<!\w){re.escape(LEADING_THE.sub('', token))}s?(?!\w)", re.IGNORECASE)
-    return any(word.search(message) for message in asked)
-
-
-def walls(text: str) -> list[Finding]:
-    findings = []
-    start, sentences = 0, 0
-    for number, (line, fenced) in enumerate([*fenced_lines(text), ("", False)], start=1):
-        if fenced or not line.strip() or LIST_ITEM.match(line):
-            if sentences > MAX_SENTENCES:
-                opening = " ".join(text.splitlines()[start - 1].split()[:6])
-                findings.append(Finding(start, 1, "wall-of-text", opening, f"{sentences} sentences in one paragraph; keep each paragraph to {MAX_SENTENCES} sentences or fewer, and put steps and settings in a bulleted list"))
-            start, sentences = 0, 0
-            continue
-        start = start or number
-        sentences += len(SENTENCE_END.findall(mask_code(plain(line))))
-    return findings
 
 
 def nested_links(text: str) -> list[Finding]:
@@ -226,14 +216,14 @@ def fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, links nested in another link's words, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post, reading the words of each link as the reader sees them."
+        description="Flag internal ids, raw shas, unlinked references, links nested in another link's words, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, and lines reporting no change in a Slack post, reading the words of each link as the reader sees them."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     parser.add_argument(
         "--asked",
         action="append",
         default=[],
-        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes",
+        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes, and so does an option number the reader typed there on its own",
     )
     args = parser.parse_args()
     text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text()

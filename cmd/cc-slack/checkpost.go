@@ -22,6 +22,14 @@ var checkPostScript = filepath.Join("skills", "slack", "scripts", "check-post")
 
 var releaseDir = regexp.MustCompile(`^\d+(\.\d+)*$`)
 
+const paragraphSentences = 3
+
+var (
+	sentenceEnd = regexp.MustCompile(`[.!?][*_~]*(?:\s|$)`)
+	listItem    = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
+	codeSpan    = regexp.MustCompile("`[^`\n]+`")
+)
+
 type exitStatus int
 
 func (s exitStatus) Error() string { return "exit status " + strconv.Itoa(int(s)) }
@@ -32,7 +40,9 @@ func checkPostCmd() *cobra.Command {
 		Use:   "check-post <file|->",
 		Short: "Check a Slack post's text with the plugin's check-post before sending it",
 		Long: `Run the plugin's bundled check-post on a post's text, read from a file or
-from stdin with -, then check that a line saying something waits on the reader
+from stdin with -, then check that no paragraph of prose, as cc-slack draws the
+post, holds more than three sentences, where a table, heading, picture, chart or
+code block is never prose, that a line saying something waits on the reader
 links the open card it means, and that no link to a message in your DM with the
 app shows as a raw URL, bare or labeled with its own URL, where words naming it
 would show the words and Slack would draw the message under them, and that no
@@ -77,6 +87,7 @@ newest installed plugin, which a session's PATH may not hold.`,
 			if crowded, found := crowdedLineIn(text); found {
 				findings = append(findings, crowded)
 			}
+			findings = append(findings, wallsIn(text)...)
 			for _, finding := range findings {
 				if _, err := fmt.Fprintln(c.OutOrStdout(), finding); err != nil {
 					return err
@@ -130,4 +141,38 @@ func pluginRoot() (string, error) {
 		return "", fmt.Errorf("no %s plugin version under %s is in use", channelPlugin.Name, versions)
 	}
 	return filepath.Join(versions, newest), nil
+}
+
+type wallOfText struct {
+	line      int
+	opening   string
+	sentences int
+}
+
+func (w wallOfText) String() string {
+	return fmt.Sprintf("%d:1 wall-of-text %q: %d sentences in one paragraph; keep each paragraph to %d sentences or fewer, and put steps and settings in a bulleted list", w.line, w.opening, w.sentences, paragraphSentences)
+}
+
+func wallsIn(text string) []fmt.Stringer {
+	lines := strings.Split(text, "\n")
+	var walls []fmt.Stringer
+	for _, piece := range bodyPieces(text) {
+		if piece.table != nil || piece.picture != nil || strings.HasPrefix(piece.text, "```") {
+			continue
+		}
+		start, sentences := 0, 0
+		for at, line := range append(strings.Split(piece.text, "\n"), "- ") {
+			if !listItem.MatchString(line) {
+				start = cmp.Or(start, piece.line+at)
+				sentences += len(sentenceEnd.FindAllString(codeSpan.ReplaceAllString(slackToken.ReplaceAllString(line, " "), " "), -1))
+				continue
+			}
+			if sentences > paragraphSentences {
+				opening := strings.Fields(lines[start-1])
+				walls = append(walls, wallOfText{start, strings.Join(opening[:min(len(opening), 6)], " "), sentences})
+			}
+			start, sentences = 0, 0
+		}
+	}
+	return walls
 }
