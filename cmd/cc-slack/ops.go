@@ -2836,14 +2836,19 @@ func (a *app) handleCardReopen(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.URL == "" || b.Via == "" {
-		return fail("card-reopen needs url, the card's permalink, and via, the permalink of the reply its answer was taken from")
+	if b.URL == "" {
+		return fail("card-reopen needs url, the card's permalink")
 	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if err := a.poller.reopenReply(hc.Ctx, id, b.URL, b.Via); err != nil {
+	if b.Via == "" {
+		err = a.poller.reopenAnswer(hc.Ctx, id, b.URL)
+	} else {
+		err = a.poller.reopenReply(hc.Ctx, id, b.URL, b.Via)
+	}
+	if err != nil {
 		return fail(err.Error())
 	}
 	return ok(map[string]bool{"reopened": true})

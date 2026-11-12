@@ -128,6 +128,8 @@ something, answer it in that thread and leave the card waiting. A card
 closed on their words that answered nothing waits again after
 `cc-slack card-reopen --card <its permalink> --reply <their reply's permalink>`,
 which refuses unless the card shows that reply's words as its answer.
+Without `--reply` it takes back a button answer while the card shows Undo,
+as a tap on Undo does; a drive dashboard's Undo calls it.
 
 A card that reuses the `waits` id of a card still waiting, with the same
 words, edits that one card in place and posts nothing, and each copy that

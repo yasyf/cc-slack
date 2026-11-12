@@ -818,6 +818,60 @@ func TestCardReopenUndoesAnAnswerTakenFromHisReplyInTheCardsThread(t *testing.T)
 	}
 }
 
+func TestCardReopenTakesBackADashboardAnswerWhileItsUndoShows(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Drive: "demo", Waits: "demo:j3-661443", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	var posted map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card}).Body, &posted); err != nil {
+		t.Fatal(err)
+	}
+	thread := posted["ts"]
+	cardURL := id.permalink(id.DMChannelID, thread, thread)
+	lastEdit := func() string {
+		edits := editsOf(l.slack.edited(), thread)
+		if len(edits) == 0 {
+			t.Fatal("the card was never redrawn")
+		}
+		return edits[len(edits)-1]
+	}
+	l.refused(opCardReopen, map[string]any{"url": cardURL}, "shows no answer to take back")
+
+	var said cardAnswerResult
+	if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"url": cardURL, "label": "Ring", "via": "http://studio:41330/", "surface": surfaceDashboard}).Body, &said); err != nil {
+		t.Fatal(err)
+	}
+	if want := said.At.Add(cardUndoWindow); !said.UndoUntil.Equal(want) {
+		t.Fatalf("undo_until = %v, want the ten minutes after the answer, %v", said.UndoUntil, want)
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, cardUndoAction) {
+		t.Fatalf("card %s, want Undo under the dashboard's answer", drawn)
+	}
+
+	l.do(opCardReopen, map[string]any{"url": cardURL})
+	if _, done := l.app.cards.answer(id.DMChannelID, thread, card.Waits); done {
+		t.Fatal("card-reopen left the card answered")
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, cardWaitAction) || strings.Contains(drawn, cardUndoAction) {
+		t.Fatalf("card %s, want its options offered again and no Undo", drawn)
+	}
+	eventually(t, "the card command to record the undo", func() bool { return len(answersOf(cmd.requests(t))) == 1 })
+	var recorded struct {
+		Answer map[string]any `json:"answer"`
+	}
+	if err := json.Unmarshal([]byte(answersOf(cmd.requests(t))[0]), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if got := recorded.Answer; got["label"] != "Ring" || got["undone"] != true || got["source"] != "took the answer back off Slack" {
+		t.Fatalf("card command asked %v, want Ring recorded as undone", got)
+	}
+	l.refused(opCardReopen, map[string]any{"url": cardURL}, "shows no answer to take back")
+}
+
 func TestUndoReopensAStrayPickForTenMinutes(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
