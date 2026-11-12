@@ -909,7 +909,8 @@ func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error
 func publish(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
 	if len(files) == 0 {
 		text, blocks = fitText(text, blocks)
-		text, blocks = freshMessageLinks(text, blocks, strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36))
+		post := strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36)
+		text, blocks = eachText(text, blocks, func(t string) string { return freshLinks(threadParentAsWords(t, channelID, threadTS), post) })
 		opts := id.postOptions(text, threadTS, extra...)
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
@@ -931,42 +932,59 @@ func publish(ctx context.Context, api slackAPI, record func(channelID, ts string
 
 var freshPosts atomic.Int64
 
-func freshMessageLinks(text string, blocks []slack.Block, post string) (string, []slack.Block) {
-	fresh := make([]slack.Block, len(blocks))
+func eachText(text string, blocks []slack.Block, rewrite func(string) string) (string, []slack.Block) {
+	rewritten := make([]slack.Block, len(blocks))
 	for i, block := range blocks {
 		switch b := block.(type) {
 		case *slack.SectionBlock:
 			section := *b
-			section.Text = freshTextObject(b.Text, post)
+			section.Text = rewriteTextObject(b.Text, rewrite)
 			section.Fields = make([]*slack.TextBlockObject, len(b.Fields))
 			for j, field := range b.Fields {
-				section.Fields[j] = freshTextObject(field, post)
+				section.Fields[j] = rewriteTextObject(field, rewrite)
 			}
-			fresh[i] = &section
+			rewritten[i] = &section
 		case *slack.ContextBlock:
 			line := *b
 			line.ContextElements.Elements = make([]slack.MixedElement, len(b.ContextElements.Elements))
 			for j, element := range b.ContextElements.Elements {
 				if t, ok := element.(*slack.TextBlockObject); ok {
-					element = freshTextObject(t, post)
+					element = rewriteTextObject(t, rewrite)
 				}
 				line.ContextElements.Elements[j] = element
 			}
-			fresh[i] = &line
+			rewritten[i] = &line
 		default:
-			fresh[i] = block
+			rewritten[i] = block
 		}
 	}
-	return freshLinks(text, post), fresh
+	return rewrite(text), rewritten
 }
 
-func freshTextObject(t *slack.TextBlockObject, post string) *slack.TextBlockObject {
+func rewriteTextObject(t *slack.TextBlockObject, rewrite func(string) string) *slack.TextBlockObject {
 	if t == nil {
 		return nil
 	}
-	fresh := *t
-	fresh.Text = freshLinks(t.Text, post)
-	return &fresh
+	rewritten := *t
+	rewritten.Text = rewrite(t.Text)
+	return &rewritten
+}
+
+func threadParentAsWords(text, channelID, threadTS string) string {
+	if threadTS == "" {
+		return text
+	}
+	parent := func(link string) bool {
+		ref, err := parsePermalink(link)
+		return err == nil && ref.channelID == channelID && ref.ts == threadTS
+	}
+	return messageLinkMarkup.ReplaceAllStringFunc(text, func(markup string) string {
+		found := messageLinkMarkup.FindStringSubmatch(markup)
+		if !parent(cmp.Or(found[1], markup)) {
+			return markup
+		}
+		return cmp.Or(strings.TrimSpace(found[2]), threadParentWords)
+	})
 }
 
 func freshLinks(text, post string) string {
@@ -1023,11 +1041,12 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
+		text, blocks := eachText(texts[0], blocks, func(t string) string { return threadParentAsWords(t, channelID, b.messageThread()) })
 		return a.cards.editByHand(channelID, b.TS, func() error {
-			if linksTo(texts[0], blocks, messageLink) {
-				return changeMessage(ctx, api, channelID, b.TS, texts[0], blocks, slack.MsgOptionEnableLinkUnfurl())
+			if linksTo(text, blocks, messageLink) {
+				return changeMessage(ctx, api, channelID, b.TS, text, blocks, slack.MsgOptionEnableLinkUnfurl())
 			}
-			return updateMessage(ctx, api, channelID, b.TS, texts[0], blocks)
+			return updateMessage(ctx, api, channelID, b.TS, text, blocks)
 		})
 	})
 }

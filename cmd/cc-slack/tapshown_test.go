@@ -432,3 +432,37 @@ func TestATapReplayedAfterItsAnswerWasRecordedButNotDeliveredIsDeliveredThen(t *
 		t.Fatalf("answer = %+v, %v, want it on record and delivered", ans, done)
 	}
 }
+
+func explainTap(c postedCard, card statusCard) cardActionPush {
+	return cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardExplainAction + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: cardExplainLabel, Question: card.Title})),
+		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0140"}
+}
+
+func TestAnExplainMoreOnACardWhoseSessionEndedReachesTheSessionHoldingTheDM(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "demo:j3-661440", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	c := postWaiting(t, l, card)
+	endWatches(t, l, c.thread)
+	if _, _, err := insertWatch(l.ctx, l.srv.DB(), l.subID, agent.TopLevel, kindChannel, c.id.DMChannelID, "", "1700000000.000000", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	l.tap(c.id, explainTap(c, card))
+
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `explain the waiting ask "demo:j3-661440" more`) || !strings.Contains(got, "the session holding the DM") {
+		t.Fatalf("holder heard %q, want the ask to explain the card, sent to it as the session holding the DM", got)
+	}
+	edits := editsOf(l.slack.edited(), c.ts)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "You asked for more") || strings.Contains(edits[len(edits)-1], "reached no one") ||
+		!strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("edits = %v, want the card saying an explanation follows, still offering its answers", edits)
+	}
+	if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, card.Waits); done {
+		t.Fatal("Explain more answered the card")
+	}
+	if got := answersOf(cmd.requests(t)); len(got) != 0 {
+		t.Fatalf("card command asked %v, want no answer, since Explain more answers nothing", got)
+	}
+}

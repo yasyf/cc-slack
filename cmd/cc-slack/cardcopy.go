@@ -21,12 +21,14 @@ const (
 	cardRedrawnLine  = "Redrawn in place"
 	cardRewordedLine = "Asked again with new words"
 
-	freshLinkParam = "post"
+	freshLinkParam    = "post"
+	threadParentWords = "this thread"
 )
 
 var (
-	messageLink = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
-	alertLink   = regexp.MustCompile(`https://[\w.-]*(?:sentry\.io/\S*?issues|datadoghq\.com/monitors)/\d+`)
+	messageLink       = regexp.MustCompile(`https://[\w.-]+/archives/[A-Z0-9]+/p\d{16}(?:\?[^\s|>)]*)?`)
+	messageLinkMarkup = regexp.MustCompile(`<(` + messageLink.String() + `)(?:\|([^<>]*))?>|` + messageLink.String())
+	alertLink         = regexp.MustCompile(`https://[\w.-]*(?:sentry\.io/\S*?issues|datadoghq\.com/monitors)/\d+`)
 
 	errDrewAsText = errors.New("that message drew as text, with no card to copy")
 )

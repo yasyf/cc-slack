@@ -567,8 +567,9 @@ func TestWaitingCardTapCarriesTheQuestionAndAnswersOnce(t *testing.T) {
 		ActionID: cardExplainAction + "step-3:merge", Value: string(mustJSON(askTap{ID: card.Waits, Label: cardExplainLabel, Question: card.Title})),
 		ActionTS: fmt.Sprintf("%d.000050", time.Now().Unix()), Seq: "001800000100000-abcd0125"}
 	l.tap(id, push)
-	if got := l.inject(agent.TopLevel); !strings.Contains(got, `explain the waiting ask "step-3:merge" more`) || !strings.Contains(got, "stays stopped") {
-		t.Fatalf("directive = %q, want an explain request that keeps the lane stopped", got)
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, `explain the waiting ask "step-3:merge" more`) || !strings.Contains(got, "stays stopped") ||
+		strings.Contains(got, "the session holding the DM") || strings.Contains(got, "|this card>") {
+		t.Fatalf("directive = %q, want an explain request to the card's own session alone that keeps the lane stopped and links no card into its own thread", got)
 	}
 	edits := l.slack.edited()
 	if len(edits) == 0 || edits[0].ts != reply.ts || !strings.Contains(edits[0].blocks, "You asked for more") || !strings.Contains(edits[0].blocks, cardWaitAction) {

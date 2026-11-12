@@ -246,12 +246,13 @@ func cardSource(id identity, how, posted, permalink string) string {
 	return fmt.Sprintf("%s from %s, your operator, on your status card posted %s (%s)", how, id.name(), posted, permalink)
 }
 
-func tapLine(who, permalink string, k askTap, capture string, recorded bool) string {
+func tapLine(who string, k askTap, capture string, recorded bool) string {
 	if k.Explain {
 		return fmt.Sprintf("%s: they asked you to explain the waiting ask %q more. Reply with `cc-present reply --block %q --body <answer>` when the card is on a cc-present board, "+
-			"otherwise with slack_dm_status text and about %q; either way the reply opens with a link back to <%s|this card>. "+
+			"otherwise with slack_dm_status text and about %q; either way the reply lands in the card's own thread, so it calls the card this card and never links it, "+
+			"since a link there draws the card again under the reply. "+
 			"Say the question in plain words and what each answer would do. The lane that asked stays stopped until they tap an answer.",
-			who, k.ID, k.ID, k.ID, permalink)
+			who, k.ID, k.ID, k.ID)
 	}
 	if k.Waits && recorded {
 		return fmt.Sprintf("%s: they answered the waiting ask %q with %q. Your card command already posted this answer as the one record the lane that asked reads: "+
@@ -399,7 +400,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	if err == nil {
 		err = p.takeTap(ctx, id, card, k)
 	}
-	if errors.Is(err, errNoStatusSession) && !k.Explain && !k.Undo {
+	if errors.Is(err, errNoStatusSession) && !k.Undo {
 		err = p.handOn(ctx, id, card, k, at)
 	}
 	if why, dropped := droppedBecause(err); dropped {
@@ -423,6 +424,15 @@ func tapKey(a cardActionPush) string {
 }
 
 func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) error {
+	if k.Explain {
+		switch held, err := p.tellHolder(ctx, id, a, k, id.permalink(a.Channel, a.MessageTS, a.ThreadTS)); {
+		case err != nil:
+			return err
+		case !held:
+			return fmt.Errorf("%w, and no session holds this DM", errNoStatusSession)
+		}
+		return p.tapDrawn(a.ref(), at, p.markHint(ctx, id, a.ref(), askedForMore(at, p.now())))
+	}
 	label := mrkdwnEscapes.Replace(k.Label)
 	undo := ""
 	if k.ID != "" {
@@ -498,7 +508,7 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 	}
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
 	capture := captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)
-	line := tapLine(who, permalink, k, capture, false) +
+	line := tapLine(who, k, capture, false) +
 		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
@@ -671,7 +681,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	}
 	switch {
 	case k.Explain:
-		err = p.markHint(ctx, id, a.ref(), "🔎 *You asked for more at "+clock(tappedAt, p.now())+".* An explanation follows in this thread.")
+		err = p.markHint(ctx, id, a.ref(), askedForMore(tappedAt, p.now()))
 	case k.ID != "":
 		err = p.markAsk(ctx, id, a, k)
 	default:
@@ -680,7 +690,7 @@ func (p *poller) applyTap(ctx context.Context, id identity, a cardActionPush, k 
 	if p.tapDrawn(a.ref(), tappedAt, err) != nil {
 		p.log.Printf("card action %s on %s: the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
-	line := tapLine(who, permalink, k, "", false)
+	line := tapLine(who, k, "", false)
 	for _, w := range watches {
 		msg := actionPayload{
 			WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
@@ -921,7 +931,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	p.react(ctx, id, w.card, cardAnsweredReaction)
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
 	capture, notesLabel, recorded := p.recordAnswer(ctx, id, w)
-	line := tapLine(w.source, permalink, w.tap, capture, recorded)
+	line := tapLine(w.source, w.tap, capture, recorded)
 	for _, watch := range watches {
 		msg := actionPayload{
 			WatchID: watch.ID, ChannelID: w.card.channel, ThreadTS: w.card.thread, TS: w.card.ts, ActionTS: w.actionTS, Label: w.tap.Label, ID: w.tap.ID,
@@ -1295,6 +1305,10 @@ func (p *poller) markAnswer(ctx context.Context, id identity, r cardRef, askID, 
 		p.cards.answerDrawn(r.channel, r.thread, askID)
 	}
 	return err
+}
+
+func askedForMore(at, now time.Time) string {
+	return "🔎 *You asked for more at " + clock(at, now) + ".* An explanation follows in this thread."
 }
 
 func (p *poller) markHint(ctx context.Context, id identity, r cardRef, line string) error {
