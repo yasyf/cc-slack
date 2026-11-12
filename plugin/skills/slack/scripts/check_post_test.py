@@ -162,6 +162,20 @@ class CheckPostTest(unittest.TestCase):
             [("drive-term", "The drive"), ("drive-term", "lane")],
         )
 
+    def test_passes_an_internal_id_the_message_it_answers_asks_for_or_names(self) -> None:
+        run = "run_01hzx3k8m2q4r6t8v0w2y4a6c8"
+        row = f"| First run, died 3:55 AM | <https://app.datadoghq.com/logs?query={run}|{run}> | ctx_9f2 |"
+        for asked in (
+            ["can you summarize all our findings, the session IDs, the patterns, the fixes we are considering, etc to <@U2>"],
+            ["which run id did the retry get?"],
+            [f"what happened to {run} and ctx_9f2?"],
+        ):
+            with self.subTest(asked=asked):
+                self.assertEqual(check_post.check(row, asked), [])
+        for asked in ([], ["can you summarize all our findings and the patterns"], ["did the idle runs recover? I'd like to know"]):
+            with self.subTest(asked=asked):
+                self.assertEqual([(finding.kind, finding.token) for finding in check_post.check(row, asked)], [("internal-id", run), ("internal-id", "ctx_9f2")])
+
     def test_ignores_letters_inside_words_and_names(self) -> None:
         text = "I asked Walker about the U.S. region, C++ builds, Q&A notes, and a T-shirt; S3 and E2E are fine."
         self.assertEqual(kinds(text), [])
