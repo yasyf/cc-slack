@@ -31,6 +31,7 @@ const (
 	slackMaxCarousel = 10
 	fencedTableRows  = 3
 	fencedTableCols  = 3
+	slackCode        = "```.*?```|`[^`\n]+`"
 )
 
 var (
@@ -47,7 +48,7 @@ var (
 	htmlSummary     = regexp.MustCompile(`(?is)<summary>(.*?)</summary>`)
 	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
 	slackEscapable  = regexp.MustCompile(`<(?:https?://|mailto:|[@#!])[^<>\n]*>|&(?:amp|lt|gt);|[&<>]`)
-	bareURL         = regexp.MustCompile("<[^<>\\n]*>|<https?://[^\\s<>]*|https?://[^\\s<>\"`]+")
+	bareURL         = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\\n]*>|<https?://[^\\s<>]*|https?://[^\\s<>\"`]+")
 )
 
 type bodyPiece struct {
@@ -217,7 +218,7 @@ func mrkdwnLine(line string) string {
 
 func explicitLinks(text string) string {
 	return bareURL.ReplaceAllStringFunc(text, func(found string) string {
-		if strings.HasPrefix(found, "<") {
+		if found[0] == '<' || found[0] == '`' {
 			return found
 		}
 		link := prURLTrailing.ReplaceAllString(found, "")

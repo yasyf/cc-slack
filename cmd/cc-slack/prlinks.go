@@ -27,7 +27,7 @@ var prCardPatience = 2 * time.Minute
 var errCardCommandUnfinished = errors.New("the card command did not finish")
 
 var (
-	prUnscanned   = regexp.MustCompile("(?s)```.*?```|`[^`\n]+`|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
+	prUnscanned   = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
 	prMentioned   = regexp.MustCompile(`(^|[^A-Za-z0-9_.&#/-])(?:([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100}))?#([0-9]{1,9})\b`)
 	prURLTrailing = regexp.MustCompile(`[.,;:!?)\]'"]+$`)
 	githubRemote  = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
