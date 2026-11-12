@@ -851,6 +851,22 @@ func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
 	return t.changedSinceAnswer(m, drawn)
 }
 
+func (l *liveCards) heads(card cardRef) map[string]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	heads := map[string]string{}
+	_, m := l.liveMessage(card.channel, card.ts)
+	if m == nil {
+		return heads
+	}
+	for _, p := range m.Card.allPRs() {
+		if id, ok := parseRef(p.URL); ok && p.Head != "" {
+			heads[fmt.Sprintf("%s/%s#%d", id.Owner, id.Repo, id.Number)] = p.Head
+		}
+	}
+	return heads
+}
+
 func (l *liveCards) linkCopy(copied cardRef) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

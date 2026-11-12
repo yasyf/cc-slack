@@ -361,7 +361,7 @@ func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, wai
 	if !ok || len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": waits, "label": label, "action_ts": press.ActionTS, "source": press.Source}
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": waits, "label": label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(card)}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", waits, label, err)
 	}
@@ -738,7 +738,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	if applied {
 		return true
 	}
-	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label, "action_ts": press.ActionTS, "source": press.Source}
+	answer := map[string]any{"repo": c.pr.Owner + "/" + c.pr.Repo, "number": c.pr.Number, "waits": c.waits, "label": label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(c.ref)}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(c.ref.channel, c.ref.thread, c.waits)
 		p.log.Printf("PR card %s: %q not applied: %v", c.waits, label, err)
@@ -826,7 +826,7 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
 	press := a.press()
-	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label, "action_ts": press.ActionTS, "source": press.Source}
+	answer := map[string]any{"repo": pr.Owner + "/" + pr.Repo, "number": pr.Number, "waits": k.ID, "label": k.Label, "action_ts": press.ActionTS, "source": press.Source, "heads": p.cards.heads(a.ref())}
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
 		p.cards.release(a.Channel, a.ThreadTS, k.ID)
 		p.log.Printf("PR row %s: %q not applied: %v", k.ID, k.Label, err)

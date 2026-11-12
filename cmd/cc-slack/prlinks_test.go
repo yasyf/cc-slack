@@ -1016,8 +1016,8 @@ func TestPRCardsOnlyInTheDMAndListedChannels(t *testing.T) {
 	}
 }
 
-func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
-	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+func TestMergeOnAPRCardGoesToTheCardCommandWithTheHeadEachPRWasShownAt(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, headRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
 	card := awaitPRCards(t, l, testDM)[0]
@@ -1029,7 +1029,7 @@ func TestMergeOnAPRCardGoesToTheCardCommand(t *testing.T) {
 	l.tap(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: card.ts, ThreadTS: cmp.Or(card.threadTS, card.ts),
 		ActionID: cardWaitAction + "0:" + testWaits, Value: string(mustJSON(askTap{ID: testWaits, Label: "Merge", Question: "Merge #41 at e718a74?", Options: []string{"Merge", "Hold"}})),
 		ActionTS: pressed, Seq: "001800000100000-abcd0300"})
-	want := `{"answer":{"action_ts":"` + pressed + `","label":"Merge","number":41,"repo":"acme/app","source":"pressed the button","waits":"merge:41:e718a74"}}`
+	want := `{"answer":{"action_ts":"` + pressed + `","heads":{"acme/app#41":"e718a74"},"label":"Merge","number":41,"repo":"acme/app","source":"pressed the button","waits":"merge:41:e718a74"}}`
 	if got := cmd.requests(t); len(got) != 2 || got[1] != want {
 		t.Fatalf("card command asked %v, want the Merge answer last", got)
 	}
@@ -1052,7 +1052,7 @@ func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
 	if err := json.Unmarshal(l.do(opCardAnswer, answer).Body, &res); err != nil || !res.Answered {
 		t.Fatalf("card-answer = %+v, %v; want the PR card answered", res, err)
 	}
-	want := `{"answer":{"action_ts":"","label":"Merge","number":41,"repo":"acme/app","source":"answered on http://studio:41330/","waits":"merge:41:e718a74"}}`
+	want := `{"answer":{"action_ts":"","heads":{},"label":"Merge","number":41,"repo":"acme/app","source":"answered on http://studio:41330/","waits":"merge:41:e718a74"}}`
 	if got := cmd.requests(t); len(got) != 2 || got[1] != want {
 		t.Fatalf("card command asked %v, want the Merge answer last", got)
 	}
