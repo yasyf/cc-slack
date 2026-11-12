@@ -53,9 +53,12 @@ it subscribes.
 
 ## Fall back when the bot cannot act
 
-Use the matching tool below for reads the bot cannot make or writes in a
-personal 1:1 DM it cannot join. A private-channel write the bot cannot
-invite itself to waits for the user's invite.
+Use the matching tool below for reads the bot cannot make. A write in the
+user's 1:1 DM with someone else, which the bot cannot join, goes to the
+group DM of that person, the user and the app: post it as usual with
+`channel_id` set to that person's user id, which the refusal names, and
+cc-slack opens that group DM with `conversations.open`. A private-channel
+write the bot cannot invite itself to waits for the user's invite.
 If the user declines, leave the write unsent. Prefix every MCP post with
 `_(<Firstname>'s Claude)_` and quote that exact text in the approval question.
 
@@ -66,6 +69,6 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 | Channel history read fails | `mcp__slack__slack_conversations_history` |
 | Reaction fails | `mcp__slack__slack_add_reaction` |
 | Private channel excludes the bot and the self-invite failed | Report the cause the refusal names, then retry the same write once it is fixed; never ask the user to `/invite` the app |
-| Personal 1:1 DM excludes the bot | Use the matching Slack MCP tool above |
+| Personal 1:1 DM excludes the bot | Post as usual to the person's user id, which the refusal names; never the Slack MCP |
 | No identity | Run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" login` and `whoami` |
 | The daemon runs a newer build and its executable is unreadable | Run `/mcp` and reconnect cc-slack, or start a new session |
