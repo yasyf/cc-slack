@@ -1164,6 +1164,50 @@ func (l *liveCards) answerDrawn(channel, thread, askID string) {
 	}
 }
 
+func (l *liveCards) oweTap(channel, thread, askID string, tap *owedTap) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return
+	}
+	if ans, done := t.Answers[askID]; done && (ans.Owed != nil || tap != nil) {
+		ans.Owed = tap
+		t.Answers[askID] = ans
+		l.save()
+	}
+}
+
+type dueTap struct {
+	card cardRef
+	tap  owedTap
+}
+
+func (l *liveCards) owedTaps(now time.Time, running time.Duration) ([]dueTap, time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var (
+		due  []dueTap
+		next time.Time
+	)
+	for _, t := range l.threads {
+		for _, ans := range t.Answers {
+			switch {
+			case ans.Owed == nil:
+			case ans.Owed.Due.After(now):
+				next = earliest(next, ans.Owed.Due)
+			default:
+				due = append(due, dueTap{cardRef{t.Channel, t.Thread, ans.Owed.Card}, *ans.Owed})
+				ans.Owed.Due = now.Add(running)
+			}
+		}
+	}
+	if len(due) > 0 {
+		l.save()
+	}
+	return due, next
+}
+
 func (l *liveCards) answerDelivered(channel, thread, askID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

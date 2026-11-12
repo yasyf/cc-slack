@@ -359,6 +359,9 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if due := p.ackHeld(ctx, db, api, id); !due.IsZero() {
 		next = earliest(next, due)
 	}
+	if due := p.retryPRTaps(ctx, id); !due.IsZero() {
+		next = earliest(next, due)
+	}
 	due, err := p.feedTick(ctx, db, api, id, watches)
 	if err != nil {
 		return time.Time{}, err
