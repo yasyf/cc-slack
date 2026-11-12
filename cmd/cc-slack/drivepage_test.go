@@ -82,6 +82,43 @@ func TestACardAskedAgainUnderANewIDTakesTheOneItSupersedesOffTheOpenList(t *test
 	}
 }
 
+func TestDriveCardsKeepEveryClosedCardWithWhatClosedIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	answered := mergeCard()
+	answered.Drive = "brook"
+	a := postWaiting(t, l, answered)
+	answerOnBoard(t, l, a, "Hold")
+	withdrawn := mergeCard()
+	withdrawn.Drive, withdrawn.Waits, withdrawn.Title = "brook", "step-4:cache", "Grow the cache disk?"
+	w := postWaiting(t, l, withdrawn)
+	l.do(opCardAnswer, map[string]any{"waits": withdrawn.Waits, "url": w.url(), "label": "his order replaced it", "withdrawn": true, "via": w.url()})
+	replaced := mergeCard()
+	replaced.Drive, replaced.Waits, replaced.Title = "brook", "step-5:deploy", "Deploy before the freeze?"
+	r := postWaiting(t, l, replaced)
+	again := mergeCard()
+	again.Drive, again.Waits, again.Title, again.Supersedes = "brook", "step-5:deploy-again", "Deploy #41 before the freeze?", []string{r.url()}
+	fresh := postWaiting(t, l, again)
+
+	listed := driveCards(t, l, "brook")
+	byWaits := map[string]driveClosedCard{}
+	for _, c := range listed.Closed {
+		byWaits[c.Waits] = c
+	}
+	if c := byWaits[answered.Waits]; c.URL != a.url() || c.Answer == nil || c.Answer.Label != "Hold" || c.Answer.Withdrawn || c.ReplacedBy != "" {
+		t.Fatalf("answered card = %+v, want his Hold on it", c)
+	}
+	if c := byWaits[withdrawn.Waits]; c.URL != w.url() || c.Answer == nil || !c.Answer.Withdrawn || c.Answer.Label != "his order replaced it" || c.Title != withdrawn.Title {
+		t.Fatalf("withdrawn card = %+v, want it withdrawn with its reason", c)
+	}
+	if c := byWaits[replaced.Waits]; c.URL != r.url() || c.ReplacedBy != fresh.url() || c.Answer != nil {
+		t.Fatalf("replaced card = %+v, want it pointing at %s", c, fresh.url())
+	}
+	if len(listed.Closed) != 3 || len(listed.Questions) != 1 || listed.Questions[0].URL != fresh.url() {
+		t.Fatalf("closed = %+v, questions = %+v, want three closed cards and the one asking again open", listed.Closed, listed.Questions)
+	}
+}
+
 func TestAFollowUpAskedUnderTheOpenCardsIDLeavesOneCardOpen(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
