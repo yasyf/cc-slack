@@ -216,8 +216,16 @@ class Conversation:
     def linked_in(self, text: str, replies: frozenset[str]) -> bool:
         if not self.linkable:
             return False
-        links = [permalink(url.rstrip(".,;:!?")) for url in SLACK_URL.findall(PASTED.sub(" ", text))]
-        return any(channel == self.channel and (self.channel_wide or thread == self.thread or ts in replies or ts == self.ts) for channel, thread, ts in links if ts)
+        return any(channel == self.channel and (self.channel_wide or thread == self.thread or ts in replies or ts == self.ts) for channel, thread, ts in slack_links(text) if ts)
+
+    def dms_linked_in(self, text: str) -> set[str]:
+        if not self.linkable or not self.peer or self.thread:
+            return set()
+        return {channel for channel, _, ts in slack_links(text) if ts and channel.startswith("D") and channel != self.channel}
+
+
+def slack_links(text: str) -> list[tuple[str, str, str]]:
+    return [permalink(url.rstrip(".,;:!?")) for url in SLACK_URL.findall(PASTED.sub(" ", text))]
 
 
 class ChannelRead(dict[str, Any]):
@@ -299,7 +307,7 @@ class Linked:
     def matches(self, text: str, ctx: Context) -> bool:
         conv = conversation_of(ctx)
         replies = frozenset(message.ts for message in thread_of(ctx).messages if message.ts != conv.thread)
-        return conv.linked_in(text, replies)
+        return conv.linked_in(text, replies) or any(cc_slack("dm-peer", "--channel", dm).get("peer") == conv.peer for dm in conv.dms_linked_in(text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,6 +917,10 @@ PRIYA_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": PRIYA_USER, "pee
 PRIYA_BY_USER = NOT_DM | {f"{CC_SLACK} dm-peer": (1, "dm-peer needs channel_id (or a Slack url)"), f"{CC_SLACK} dm-peer --channel {PRIYA_USER}": PRIYA_DM[f"{CC_SLACK} dm-peer"]}
 SAM_USER = "U0SAMOK0001"
 SAM_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": SAM_USER, "peer_name": "Sam Okafor", "peer_names": ["Sam Okafor", "sam.okafor"]})}
+HIS_DM_WITH_PRIYA = "D0PRIYADM01"
+PRIYA_REPORTED = f"respond to this asap https://acme.slack.com/archives/{HIS_DM_WITH_PRIYA}/p1791900000000400"
+PRIYA_FIXED = {"channel_id": PRIYA_USER, "text": "Hey Priya, the fix is live: https://github.com/acme/app/pull/36126"}
+PRIYA_GROUP_DM = PRIYA_BY_USER | {f"{CC_SLACK} dm-peer --channel {HIS_DM_WITH_PRIYA}": PRIYA_DM[f"{CC_SLACK} dm-peer"]}
 NONE = "none"
 JEV_NONE = {"permits": LabelAnswer(NONE, {NONE: 1.0}, 0.9)}
 LLM_SILENT = {"error": TimeoutError("the llm judge timed out")}
@@ -1234,6 +1246,8 @@ on(
             case(**said(f"respond to this asap {DANA_URL}", agent_id="a-lane")) >> Rewrite(ticket_agent="a-lane"),
             case(tool=DRIVE_SAY, **said(f"respond to this asap {DANA_URL}")) >> ALLOW,
             case(tool=DRIVE_SAY, transcript=LINKED_LONG_AGO_BY_OTHERS) >> DENY,
+            case(PRIYA_FIXED, tool=DRIVE_SAY, **said(PRIYA_REPORTED), commands=PRIYA_GROUP_DM) >> ALLOW,
+            case(PRIYA_FIXED, tool=DRIVE_SAY, **said(PRIYA_REPORTED), commands=PRIYA_GROUP_DM | {f"{CC_SLACK} dm-peer --channel {HIS_DM_WITH_PRIYA}": SAM_DM[f"{CC_SLACK} dm-peer"]}) >> DENY,
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[0], id="digest")) >> ALLOW,
             case(DIGEST, tool="slack_send", transcript=LANE_BRIEF, root_transcript=owner_answered(DIGEST_ASKED, DIGEST_OPTIONS, DIGEST_OPTIONS[1], id="digest")) >> DENY,
             case(transcript=LINKED_LONG_AGO) >> ALLOW,
