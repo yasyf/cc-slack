@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,7 +14,6 @@ CODE_SPAN = re.compile(r"`[^`\n]+`")
 EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*•◦]|\d+[.)])\s")
-FENCE = re.compile(r"^\s*```")
 LEADING_THE = re.compile(r"^the\s+", re.IGNORECASE)
 MAX_SENTENCES = 3
 UNFURLING_URLS = (
@@ -82,6 +81,7 @@ RULES = (
         "bare-number",
         re.compile(r"(?<![\w&])#\d+\b|\b(?:PR|pull|build|deploy|release)\s+#?\d{3,}\b(?!\.\d)", re.IGNORECASE),
         "link it under words saying what it is, as <url|the fix that adds the update button>",
+        reads_code=False,
     ),
     Rule(
         "bare-url",
@@ -169,9 +169,11 @@ def plain(line: str, labels: bool = False) -> str:
 
 def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
     findings = walls(text)
-    for number, line in enumerate(text.splitlines(), start=1):
+    for number, (line, fenced) in enumerate(fenced_lines(text), start=1):
         masked = {labels: plain(line, labels) for labels in (False, True)}
         for rule in RULES:
+            if fenced and not rule.reads_code:
+                continue
             span = "token" if "token" in rule.pattern.groupindex else 0
             read = masked[rule.reads_labels]
             for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read)):
@@ -188,11 +190,9 @@ def his_word(token: str, asked: Sequence[str]) -> bool:
 
 def walls(text: str) -> list[Finding]:
     findings = []
-    start, sentences, fenced = 0, 0, False
-    for number, line in enumerate([*text.splitlines(), ""], start=1):
-        if FENCE.match(line):
-            fenced = not fenced
-        if fenced or FENCE.match(line) or not line.strip() or LIST_ITEM.match(line):
+    start, sentences = 0, 0
+    for number, (line, fenced) in enumerate([*fenced_lines(text), ("", False)], start=1):
+        if fenced or not line.strip() or LIST_ITEM.match(line):
             if sentences > MAX_SENTENCES:
                 opening = " ".join(text.splitlines()[start - 1].split()[:6])
                 findings.append(Finding(start, 1, "wall-of-text", opening, f"{sentences} sentences in one paragraph; keep each paragraph to {MAX_SENTENCES} sentences or fewer, and put steps and settings in a bulleted list"))
@@ -201,6 +201,14 @@ def walls(text: str) -> list[Finding]:
         start = start or number
         sentences += len(SENTENCE_END.findall(mask_code(plain(line))))
     return findings
+
+
+def fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
+    fenced = False
+    for line in text.splitlines():
+        fences = line.count("```")
+        yield line, fenced or fences > 0
+        fenced ^= fences % 2 == 1
 
 
 def main() -> int:
