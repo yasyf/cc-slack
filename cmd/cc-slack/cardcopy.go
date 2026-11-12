@@ -105,7 +105,7 @@ func copiedCard(card []slack.Block, ref permalinkRef) ([]slack.Block, int) {
 		case *slack.ActionBlock:
 			answered, linked := copiedButtons(b, ref)
 			buttons, links = append(buttons, answered...), append(links, linked...)
-		case *slack.ContextBlock, *slack.DataTableBlock:
+		case *slack.ContextBlock, *slack.TableBlock:
 			blocks = append(blocks, block)
 		}
 	}
