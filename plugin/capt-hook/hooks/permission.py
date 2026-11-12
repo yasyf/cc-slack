@@ -47,6 +47,7 @@ UNFINISHED = "{gate}: the check did not finish ({cause}), so this write goes ahe
 GRANT_LABEL = "slack-grant:"
 EVERY_THREAD = "/threads"
 SOLVED = "/solved"
+SOLVED_EVERYWHERE = f"{GRANT_LABEL}solved"
 SOLVED_LINE = "solved-line"
 ASKS = re.compile(r"\?|\b(?:please|pls|could you|can you|would you|let (?:me|us) know|try (?:it )?again|retry|confirm)\b", re.I)
 REVOKE_LABEL = "slack-revoke:"
@@ -463,9 +464,11 @@ class NotRevoked(CustomTicketCondition):
 
 
 def solved_grants(ctx: Context) -> list[dict[str, Any]]:
+    if not ctx.place["thread"]:
+        return []
     channel = ctx.place["channel"]
-    grant = f"{GRANT_LABEL}{channel}{SOLVED}"
-    return [answer for answer in live_answers(ctx, channel) if grant in answer.get("tags", ())] if ctx.place["thread"] else []
+    labels = {f"{GRANT_LABEL}{channel}{SOLVED}", SOLVED_EVERYWHERE}
+    return [answer for term in (channel, SOLVED_EVERYWHERE) for answer in live_answers(ctx, term) if labels & set(answer.get("tags", ()))]
 
 
 def plain(text: str) -> bool:
@@ -965,6 +968,8 @@ SOLVED_GRANT = LABELED_GRANT | {
     "body": "No: every bug can have one solved post that is simple, with no asks and no jargon",
     "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}{SOLVED}"],
 }
+EVERY_BUG_GRANT = SOLVED_GRANT | {"id": "e5e5e5e5e5e5e5e5", "tags": ["scope:durable", SOLVED_EVERYWHERE]}
+PETS_THREAD = DANA | {"channel_id": PETS}
 SOLVED_TEXT = "This is fixed in version 0.162.3623. Your existing chats open again, with their drafts intact."
 KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
@@ -1342,6 +1347,11 @@ on(
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT | {"tags": ["scope:durable", f"slack-grant:{PETS}{SOLVED}"]}) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT, THREAD_REVOKED) | thread_read(DANA_OPENED)) >> DENY,
+            case(PETS_THREAD | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(EVERY_BUG_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
+            case(PETS_THREAD | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(EVERY_BUG_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED)) >> DENY,
+            case(PETS_THREAD | {"text": f"{SOLVED_TEXT} Does it work for you now?"}, **said("status?"), commands=ruled(EVERY_BUG_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(PETS_THREAD | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(EVERY_BUG_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(TOP_LEVEL | {"channel_id": PETS, "text": SOLVED_TEXT}, tool="slack_send", **said("status?"), commands=ruled(EVERY_BUG_GRANT)) >> DENY,
             case(TOP_LEVEL | {"text": SOLVED_TEXT}, tool="slack_send", **said("status?"), commands=ruled(SOLVED_GRANT)) >> DENY,
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
