@@ -25,7 +25,7 @@ var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: statusClosed}
 
 type app struct {
 	newAPI    func(token string) slackAPI
-	user      userSession
+	user      *userSession
 	cache     *readCache
 	owed      *owedReplies
 	replay    *replayCursor
@@ -103,7 +103,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 	}
 	a := &app{
 		newAPI:    newAPI,
-		user:      mcpUserSession(),
+		user:      newUserSession(),
 		cache:     cache,
 		owed:      owed,
 		replay:    replay,

@@ -30,7 +30,7 @@ type liveDaemon struct {
 	app     *app
 	slack   *fakeSlack
 	tickets *fakeCaptHook
-	user    *fakeUserCredential
+	user    *fakeUserToken
 	deps    cmd.Deps
 	port    int
 	subID   string
@@ -83,7 +83,7 @@ func launchDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	a.claudeCwd = projectWith(t, true)
 	a.avatar = agentAvatar
 	a.shortcuts.avatar = agentAvatar
-	user := newFakeUserCredential()
+	user := newFakeUserToken(t)
 	a.user = user.session()
 	for _, f := range setup {
 		f(a)
