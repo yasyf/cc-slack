@@ -867,6 +867,8 @@ func (c statusCard) merged(next statusCard) statusCard {
 
 func (c statusCard) emoji() string { return cardStatuses[c.Status] }
 
+func (c statusCard) driveQuestion() bool { return c.Drive != "" && c.Waits != "" }
+
 func withoutHidden(text string) string {
 	if !strings.Contains(text, "<!--") {
 		return text

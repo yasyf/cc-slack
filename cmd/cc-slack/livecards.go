@@ -662,14 +662,51 @@ func (l *liveCards) draft(channel, thread string) *liveThread {
 	return &liveThread{Channel: channel, Thread: thread}
 }
 
+type heldCard struct {
+	thread *liveThread
+	card   *liveMessage
+}
+
 func (l *liveCards) holding(channel string, threads []string, card statusCard) *liveThread {
+	prior, _ := l.holders(channel, threads, card)
+	return prior
+}
+
+func (l *liveCards) holders(channel string, threads []string, card statusCard) (*liveThread, []heldCard) {
 	if card.Waits == "" && card.Group == "" && card.Key == "" {
-		return nil
+		return nil, nil
 	}
-	return l.sessionThread(channel, threads, func(t *liveThread) bool {
+	holds := func(t *liveThread) bool {
 		_, answered := t.Answers[card.Waits]
 		return t.kept(card) != nil || (card.Waits != "" && answered)
-	})
+	}
+	if !card.driveQuestion() {
+		return l.sessionThread(channel, threads, holds), nil
+	}
+	var held []*liveThread
+	for _, t := range l.threads {
+		if t.Channel == channel && holds(t) {
+			held = append(held, t)
+		}
+	}
+	if len(held) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(held, func(a, b *liveThread) int { return cmp.Compare(b.heldAt(card.Waits), a.heldAt(card.Waits)) })
+	var older []heldCard
+	for _, t := range held[1:] {
+		if m := t.Waiting[card.Waits]; m != nil && t.asks(m) {
+			older = append(older, heldCard{t, m})
+		}
+	}
+	return held[0], older
+}
+
+func (t *liveThread) heldAt(waits string) string {
+	if m := t.Waiting[waits]; m != nil {
+		return m.TS
+	}
+	return t.Thread
 }
 
 func (l *liveCards) reword(channel string, threads []string, card statusCard) (cardRef, bool) {

@@ -1196,6 +1196,123 @@ func TestADriveQuestionCardWithNewWordsPostsAgainWhereHeIsAndPointsTheOldCardAtI
 	}
 }
 
+func handlerSession(t *testing.T, l *liveDaemon, n int) (string, func(statusCard, string) map[string]string) {
+	t.Helper()
+	d := l.deps
+	d.ClaudePID = func() int { return testPID + n }
+	session := fmt.Sprintf("handler-%d", n)
+	started, err := invoke(l.ctx, d, session, "/any/cwd", opSessionStart, mustJSON(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.SubjectID == "" || started.SubjectID == l.subID {
+		t.Fatalf("handler %s started as subject %q, want a subject of its own beside %q", session, started.SubjectID, l.subID)
+	}
+	return started.SubjectID, func(card statusCard, thread string) map[string]string {
+		t.Helper()
+		reply, err := invoke(l.ctx, d, session, "/any/cwd", opDMStatus, mustJSON(map[string]any{"card": card, "thread_ts": thread}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res map[string]string
+		if err := json.Unmarshal(reply.Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+}
+
+func TestADriveQuestionCardRedrawnFromAnotherSessionReplacesTheCardItsWaitsIDHolds(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	thread := postThread(t, l, "About the restate loop.")
+	card := mergeCard()
+	card.Drive, card.Waits = "durable-agents", "durable-agents:j1500-669535"
+	_, ask := handlerSession(t, l, 1)
+	first := ask(card, thread)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := postedCard{id, first["thread_ts"], first["ts"]}
+	redrawer, redraw := handlerSession(t, l, 2)
+	if threads, err := l.app.poller.threads.sessionThreads(l.ctx, id.DMChannelID, redrawer); err != nil || slices.Contains(threads, c.thread) {
+		t.Fatalf("the redrawing handler's threads = %v (%v), want none holding card %s", threads, err, c.ts)
+	}
+	posts, edits := len(l.slack.sent()), len(editsOf(l.slack.edited(), c.ts))
+	if same := redraw(card, thread); same["ts"] != c.ts || len(l.slack.sent()) != posts || len(editsOf(l.slack.edited(), c.ts)) == edits {
+		t.Fatalf("the same card from another handler got %v with %d new posts, want card %s edited in place and nothing posted", same, len(l.slack.sent())-posts, c.ts)
+	}
+	card.Title, card.InPlace = "Merge #41 once CI is green?", true
+	if drawn := redraw(card, thread); drawn["ts"] != c.ts || len(l.slack.sent()) != posts {
+		t.Fatalf("an in_place redraw from another handler got %v with %d new posts, want card %s edited in place and nothing posted", drawn, len(l.slack.sent())-posts, c.ts)
+	}
+	if edited := editsOf(l.slack.edited(), c.ts); !strings.Contains(edited[len(edited)-1], card.Title) || !strings.Contains(edited[len(edited)-1], cardWaitAction) {
+		t.Fatalf("in_place redraw drew card %s as %s, want its new words and its buttons", c.ts, edited[len(edited)-1])
+	}
+	card.Title, card.InPlace = "Merge #41 before the freeze?", false
+	_, reword := handlerSession(t, l, 3)
+	again := reword(card, thread)
+	c2 := postedCard{id, again["thread_ts"], again["ts"]}
+	sent := l.slack.sent()[posts:]
+	if again["ts"] == c.ts || len(sent) != 2 || sent[0].ts != c2.ts || sent[0].threadTS != "" || !strings.Contains(sent[0].blocks, cardWaitAction) || !c2.linkedBy(sent[1], card.Title) || sent[1].threadTS != thread {
+		t.Fatalf("new words from a third handler got %v with posts %+v, want the new version at the DM root with its buttons and its link in thread %s", again, sent, thread)
+	}
+	if edited := editsOf(l.slack.edited(), c.ts); strings.Contains(edited[len(edited)-1], cardWaitAction) || !strings.Contains(edited[len(edited)-1], card.Title) || !newCardLinked(edited[len(edited)-1], c2) {
+		t.Fatalf("old card redrawn as %s, want its new words, no buttons, and a line linking the new card", edited[len(edited)-1])
+	}
+}
+
+func TestTwoOpenCopiesUnderOneWaitsIDLeaveOneAskingCardAfterARedraw(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	thread := postThread(t, l, "About the restate loop.")
+	const waits = "durable-agents:j1500-669535"
+	card := mergeCard()
+	card.Drive, card.Waits = "durable-agents", waits
+	_, ask := handlerSession(t, l, 1)
+	first := ask(card, thread)
+	card.Title, card.Waits = "Merge #41 before the freeze?", waits+"0"
+	_, askAgain := handlerSession(t, l, 2)
+	second := askAgain(card, thread)
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, c2 := postedCard{id, first["thread_ts"], first["ts"]}, postedCard{id, second["thread_ts"], second["ts"]}
+	l.app.cards.mu.Lock()
+	held := l.app.cards.threads[threadKey(id.DMChannelID, c2.thread)]
+	m := held.Waiting[card.Waits]
+	delete(held.Waiting, card.Waits)
+	card.Waits, m.Card.Waits, held.Reply.Card.Waits = waits, waits, waits
+	held.Waiting[waits] = m
+	l.app.cards.mu.Unlock()
+	asking := func() []string {
+		open := l.app.cards.askingCards(id.DMChannelID)
+		ts := make([]string, 0, len(open))
+		for _, c := range open {
+			ts = append(ts, c.ref.ts)
+		}
+		return slices.Compact(slices.Sorted(slices.Values(ts)))
+	}
+	if open := asking(); !slices.Equal(open, []string{c.ts, c2.ts}) {
+		t.Fatalf("seeded asking cards = %v, want both copies %s and %s open under %s", open, c.ts, c2.ts, waits)
+	}
+	posts := len(l.slack.sent())
+	_, redraw := handlerSession(t, l, 3)
+	if drawn := redraw(card, thread); drawn["ts"] != c2.ts || len(l.slack.sent()) != posts {
+		t.Fatalf("redraw got %v with %d new posts, want the newest copy %s edited in place and nothing posted", drawn, len(l.slack.sent())-posts, c2.ts)
+	}
+	if open := asking(); !slices.Equal(open, []string{c2.ts}) {
+		t.Fatalf("asking cards after the redraw = %v, want only %s", open, c2.ts)
+	}
+	if edited := editsOf(l.slack.edited(), c.ts); len(edited) == 0 || strings.Contains(edited[len(edited)-1], cardWaitAction) || !strings.Contains(edited[len(edited)-1], card.Title) || !newCardLinked(edited[len(edited)-1], c2) {
+		t.Fatalf("older copy %s edits = %v, want it drawn with the kept card's words, no buttons, and a line linking %s", c.ts, edited, c2.ts)
+	}
+}
+
 func TestTwoDriveQuestionsNamingAThreadOutsideTheDMPostEachCardOnce(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
