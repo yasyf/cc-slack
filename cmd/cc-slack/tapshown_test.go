@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -214,21 +212,19 @@ func TestTapShowsReadsTheMessageSlackHolds(t *testing.T) {
 	}
 }
 
-func cardOwnerCommand(t *testing.T, answer string) (string, string) {
+func cardOwnerCommand(t *testing.T, answer string) string {
 	t.Helper()
-	dir := t.TempDir()
-	asked := filepath.Join(dir, "asked")
-	command := filepath.Join(dir, "lr")
-	script := "#!/bin/sh\ncat >> " + asked + "\n" + answer + "\n"
+	command := filepath.Join(t.TempDir(), "lr")
+	script := "#!/bin/sh\ncat >/dev/null\n" + answer + "\n"
 	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return command, asked
+	return command
 }
 
-func TestAnAnswerNoSessionHoldsGoesToTheCardsOwnerAndClosesTheCardAndItsCopy(t *testing.T) {
-	command, asked := cardOwnerCommand(t, `echo '{"heard":true}'`)
-	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+func TestAnAnswerNoSessionHoldsGoesToTheCardsOwnerAsHisAnswerAndClosesTheCardAndItsCopyWithAnUndo(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
 	c := postWaiting(t, l, mergeCard())
 	legacyCopy(t, l, c.url(), c.thread)
 	post := lastPost(l)
@@ -244,40 +240,117 @@ func TestAnAnswerNoSessionHoldsGoesToTheCardsOwnerAndClosesTheCardAndItsCopy(t *
 	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: post.ts, ThreadTS: c.thread,
 		ActionID: buttons[at].ActionID, Value: buttons[at].Value, ActionTS: "1800000100.000000", Seq: "001800000100000-abcd0124"})
 
-	raw, err := os.ReadFile(asked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var told struct {
-		Unheard unheardAnswer `json:"unheard"`
-	}
-	for asks := json.NewDecoder(bytes.NewReader(raw)); told.Unheard.Card == ""; {
-		if err := asks.Decode(&told); err != nil {
-			t.Fatalf("asked %s: %v", raw, err)
-		}
-	}
-	if told.Unheard.Card != "step-3:merge" || told.Unheard.Label != "Merge" || told.Unheard.Permalink != c.url() || told.Unheard.Key == "" {
-		t.Fatalf("told %+v, want the card, his pick, its link and a key", told.Unheard)
+	want := []string{string(mustJSON(map[string]any{"answer": map[string]any{
+		"waits": "step-3:merge", "label": "Merge", "other": false, "undone": false, "url": c.url(), "action_ts": "1800000100.000000", "source": "pressed the button",
+	}}))}
+	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %v, want his pick as the card's answer, as a tap on a card whose session is live sends it", got)
 	}
 	for _, ts := range []string{c.ts, post.ts} {
 		edits := editsOf(l.slack.edited(), ts)
-		if len(edits) == 0 || !strings.Contains(edits[0], "*Merge*") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
-			t.Fatalf("message %s edits = %v, want the pick at once and then no button left", ts, edits)
+		if len(edits) == 0 || !strings.Contains(edits[0], "*Merge*") || strings.Contains(edits[len(edits)-1], cardWaitAction) || !strings.Contains(edits[len(edits)-1], cardUndoAction) {
+			t.Fatalf("message %s edits = %v, want the pick at once, then no button left but Undo", ts, edits)
 		}
 	}
-	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != "Merge" {
-		t.Fatalf("answer = %+v, %v, want his pick on record", ans, done)
+	ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge")
+	if !done || ans.Label != "Merge" || ans.Tap == "" || ans.UndoUntil.Sub(ans.At) != cardUndoWindow {
+		t.Fatalf("answer = %+v, %v, want his pick on record, undoable for %s", ans, done, cardUndoWindow)
 	}
+}
+
+func TestAnUndoOnACardWhoseSessionEndedReachesWhoHeardItsAnswerForTenMinutes(t *testing.T) {
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "demo:j3-661440", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	picked := time.Now()
+	pick := func(l *liveDaemon, c postedCard, n int, at time.Time, seq string) {
+		l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+			ActionID: fmt.Sprintf("%s%d:%s", cardWaitAction, n, card.Waits), Value: string(mustJSON(askTap{ID: card.Waits, Label: card.Options[n], Question: card.Title, Options: card.Options})),
+			ActionTS: fmt.Sprintf("%d.%06d", at.Unix(), n), Seq: seq})
+	}
+	undo := func(l *liveDaemon, c postedCard, at time.Time, seq string) {
+		l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+			ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", at.Unix()), Seq: seq})
+	}
+	lastEdit := func(l *liveDaemon, c postedCard) string {
+		edits := editsOf(l.slack.edited(), c.ts)
+		if len(edits) == 0 {
+			t.Fatal("the card was never redrawn")
+		}
+		return edits[len(edits)-1]
+	}
+	undoneThenLate := func(t *testing.T, l *liveDaemon, c postedCard) {
+		t.Helper()
+		if drawn := lastEdit(l, c); !strings.Contains(drawn, "✓ *Ring* · answered") || !strings.Contains(drawn, cardUndoAction+card.Waits) {
+			t.Fatalf("card %s, want the pick marked with an Undo button beside it", drawn)
+		}
+		undo(l, c, picked.Add(time.Minute), "001800000100000-abcd1611")
+		if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, card.Waits); done {
+			t.Fatal("the undone answer is still on record")
+		}
+		if drawn := lastEdit(l, c); !strings.Contains(drawn, cardWaitAction+"0:"+card.Waits) || strings.Contains(drawn, "✓ *") || strings.Contains(drawn, cardUndoAction) {
+			t.Fatalf("card %s, want its buttons back with no answer and no Undo", drawn)
+		}
+		repicked := picked.Add(2 * time.Minute)
+		pick(l, c, 1, repicked, "001800000100000-abcd1612")
+		undo(l, c, repicked.Add(11*time.Minute), "001800000100000-abcd1613")
+		if ans, _ := l.app.cards.answer(c.id.DMChannelID, c.thread, card.Waits); ans.Label != "Table" {
+			t.Fatalf("answer = %+v, want the new pick to stand", ans)
+		}
+		if drawn := lastEdit(l, c); !strings.Contains(drawn, "had passed") || strings.Contains(drawn, cardUndoAction) {
+			t.Fatalf("card %s, want the late Undo refused on the card and its button gone", drawn)
+		}
+	}
+
+	t.Run("the card's owner", func(t *testing.T) {
+		cmd := fakeCardCommand(t, nil)
+		l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+		c := postWaiting(t, l, card)
+		endWatches(t, l, c.thread)
+
+		pick(l, c, 0, picked, "001800000100000-abcd1610")
+		undoneThenLate(t, l, c)
+
+		answer := func(label, at string, undone bool) string {
+			return string(mustJSON(map[string]any{"answer": map[string]any{
+				"waits": card.Waits, "label": label, "other": false, "undone": undone, "url": c.url(), "action_ts": at, "source": "pressed the button",
+			}}))
+		}
+		want := []string{
+			answer("Ring", fmt.Sprintf("%d.000000", picked.Unix()), false),
+			answer("Ring", fmt.Sprintf("%d.000900", picked.Add(time.Minute).Unix()), true),
+			answer("Table", fmt.Sprintf("%d.000001", picked.Add(2*time.Minute).Unix()), false),
+		}
+		if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+			t.Fatalf("card command asked %v, want his pick, its undo and his new pick, and nothing for the late Undo", got)
+		}
+	})
+
+	t.Run("the session holding the DM", func(t *testing.T) {
+		l := startDaemon(t)
+		loggedIn(t, l)
+		c := postWaiting(t, l, card)
+		endWatches(t, l, c.thread)
+		if _, _, err := insertWatch(l.ctx, l.srv.DB(), l.subID, agent.TopLevel, kindChannel, c.id.DMChannelID, "", "1700000000.000000", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+
+		pick(l, c, 0, picked, "001800000100000-abcd1610")
+		if got := l.inject(agent.TopLevel); !strings.Contains(got, `with "Ring"`) {
+			t.Fatalf("holder heard %q, want his pick", got)
+		}
+		undoneThenLate(t, l, c)
+		if got := l.inject(agent.TopLevel); !strings.Contains(got, `undid their answer "Ring"`) || !strings.Contains(got, "treat it as never given") || strings.Contains(got, `undid their answer "Table"`) {
+			t.Fatalf("holder heard %q, want the undo of his first pick as an answer never given, and nothing for the late Undo", got)
+		}
+	})
 }
 
 func TestAnAnswerItsOwnerDidNotHearStaysOpenAndSaysItReachedNoOne(t *testing.T) {
 	for _, tc := range []struct{ name, answer string }{
 		{"the command fails", "exit 1"},
-		{"the command predates the answer", `echo '[]'`},
-		{"the command does not say it was heard", `echo '{}'`},
+		{"the card is no drive's", `echo "step-3:merge is no drive's question card" >&2; exit 1`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command, _ := cardOwnerCommand(t, tc.answer)
+			command := cardOwnerCommand(t, tc.answer)
 			l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
 			c := postWaiting(t, l, mergeCard())
 			endWatches(t, l, c.thread)
