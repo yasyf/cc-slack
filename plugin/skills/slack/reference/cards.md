@@ -139,6 +139,11 @@ and each older copy reads that line too, so only the new card asks. The reply's
 `ts` and `permalink` name the new card. A card with `in_place` set is the
 same question drawn again, so it is edited where it sits and posts nothing
 even when its words change; each older copy then reads Redrawn in place.
+A drive's question finds the card its `waits` id holds anywhere in your DM,
+whichever session posted it, so a redraw from a later handler replaces that
+card the same way. When two cards wait under one drive `waits` id, the
+redraw keeps the newest and each older one reads Asked again with new words,
+linking it.
 `text` that repeats the
 card's `body` is dropped, so the body reads once. A redraw is always this
 `slack_dm_status` call with the card: `slack_edit` with only text refuses a
