@@ -158,11 +158,12 @@ func hostName() string {
 }
 
 type cardAnswerResult struct {
-	Answered bool      `json:"answered"`
-	Already  bool      `json:"already_answered,omitempty"`
-	Label    string    `json:"label"`
-	Other    bool      `json:"other,omitempty"`
-	At       time.Time `json:"at"`
+	Answered  bool      `json:"answered"`
+	Already   bool      `json:"already_answered,omitempty"`
+	Label     string    `json:"label"`
+	Other     bool      `json:"other,omitempty"`
+	At        time.Time `json:"at"`
+	UndoUntil time.Time `json:"undo_until,omitzero"`
 }
 
 func (k askTap) expired(now time.Time) bool {
@@ -1017,8 +1018,29 @@ func (p *poller) undoTap(ctx context.Context, id identity, a cardActionPush, k a
 		p.cards.redrawClosedUndos(ctx, id, p.cards.closeUndos(at), p.now())
 		return errUndoClosed
 	}
+	return p.undoAnswer(ctx, id, a.ref(), ans, a.press(), "Slack tap")
+}
+
+func (p *poller) reopenAnswer(ctx context.Context, id identity, card string) error {
+	link, err := parsePermalink(card)
+	if err != nil {
+		return err
+	}
+	ref, ok := p.cards.cardAt(link.channelID, link.ts)
+	if !ok || ref.channel != id.DMChannelID {
+		return fmt.Errorf("no card at %s in your DM", card)
+	}
+	waits := p.cards.undoing(ref)
+	if waits == "" {
+		return fmt.Errorf("card %s shows no answer to take back: %w", card, errUndoClosed)
+	}
+	ans, _ := p.cards.answer(ref.channel, ref.thread, waits)
+	return p.undoAnswer(ctx, id, ref, ans, cardPress{formatTS(p.now()), "took the answer back off Slack"}, "Undo")
+}
+
+func (p *poller) undoAnswer(ctx context.Context, id identity, card cardRef, ans askAnswer, press cardPress, how string) error {
 	db := p.plane.DB()
-	listeners, err := p.cardListeners(ctx, db, a.Channel, a.ThreadTS)
+	listeners, err := p.cardListeners(ctx, db, card.channel, card.thread)
 	if err != nil {
 		return err
 	}
@@ -1026,8 +1048,8 @@ func (p *poller) undoTap(ctx context.Context, id identity, a cardActionPush, k a
 		return errNoStatusSession
 	}
 	var errs []error
-	for _, u := range p.cards.undo(a.Channel, ans.Tap) {
-		if err := p.reopen(ctx, id, db, a.press(), u, "Slack tap", fmt.Sprintf("they undid their answer %q", u.answer.Label)); err != nil {
+	for _, u := range p.cards.undo(card.channel, ans.Tap) {
+		if err := p.reopen(ctx, id, db, press, u, how, fmt.Sprintf("they undid their answer %q", u.answer.Label)); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -1163,6 +1185,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		settled:   settled,
 		withdrawn: withdrawn,
 	}
+	answer.undo = p.dashboardUndoKey(id, answer, from)
 	res, err := p.answerWaits(ctx, id, answer)
 	if errors.Is(err, errNoStatusSession) {
 		answer.settled = true
@@ -1170,11 +1193,26 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	}
 	if err == nil && res.Answered && !other && !withdrawn {
 		answered := cardRef{id.DMChannelID, thread, m.TS}
-		if !p.answerCopies(ctx, id, answered, label, false, at, "") {
+		if !p.answerCopies(ctx, id, answered, label, false, at, answer.undo) {
 			p.recordPRTap(ctx, id, answered, waits, label, cardPress{"", "answered " + via})
 		}
+		res.UndoUntil = answer.undoUntil()
 	}
 	return res, err
+}
+
+func (p *poller) dashboardUndoKey(id identity, a waitsAnswer, from string) string {
+	if from != surfaceDashboard || a.other || a.withdrawn || !p.undoable(id, a.card, a.tap) {
+		return ""
+	}
+	return a.dedup
+}
+
+func (w waitsAnswer) undoUntil() time.Time {
+	if w.undo == "" {
+		return time.Time{}
+	}
+	return w.at.Add(cardUndoWindow)
 }
 
 func (p *poller) withdrawPRCards(ctx context.Context, id identity, pr refID, reason string) ([]string, error) {
