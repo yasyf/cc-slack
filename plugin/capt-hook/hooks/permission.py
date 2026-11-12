@@ -50,6 +50,7 @@ SOLVED = "/solved"
 SOLVED_EVERYWHERE = f"{GRANT_LABEL}solved"
 SOLVED_LINE = "solved-line"
 ASKS = re.compile(r"\?|\b(?:please|pls|could you|can you|would you|let (?:me|us) know|try (?:it )?again|retry|confirm)\b", re.I)
+BARE_URL = re.compile(r"https?://\S+")
 REVOKE_LABEL = "slack-revoke:"
 NO_STORE = "open git repository"
 SCOPE = "recorded-scope"
@@ -431,6 +432,22 @@ class StandingGrant(CustomTicketCondition):
         return [ruling_evidence(found.answer)] if found.answer is not None and found.grants else None
 
 
+def asks(text: str) -> bool:
+    return bool(ASKS.search(BARE_URL.sub(" ", check_post().plain(text, labels=True))))
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadGrant(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        if not ctx.place["thread"]:
+            return None
+        write = pending(live(ctx))[0]
+        found = standing_of(ctx)
+        if found.answer is None or not found.grants or write.verb != "post" or write.fields.get("blocks") or asks(write.text):
+            return None
+        return [ruling_evidence(found.answer)]
+
+
 @dataclass(frozen=True, slots=True)
 class UnjudgedGrant(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
@@ -707,6 +724,7 @@ SLACK = Tickets(
     Reach.ONCE,
     rules=(
         Rule("standing-grant", And(TopLevel(), UnjudgedGrant())),
+        Rule("thread-grant", ThreadGrant()),
         Rule("user-linked", Unspent(UserSaid(Linked()))),
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
@@ -1141,6 +1159,38 @@ ASKED_TEXT = "did the fix for her bug ship?"
 HIS_QUESTION = {"ts": ASKED_TS, "user": "U0OWNER0001", "user_name": "Wren", "text": ASKED_TEXT, "from_user": True}
 ASKED_ID = f"operator:{FOLLOWERS}/{ASKED_TS}"
 SHIPPED = DANA | {"text": "It shipped this morning, and her chats open again."}
+ALERTS = "C0ALERTS001"
+ROLLOUT_THREAD = "1794512248.483749"
+CLONE_THREAD = "1794411410.710549"
+ALERT_GRANT = LABELED_GRANT | {
+    "id": "ea3c504ea3c504ea",
+    "title": "May the drive reply in any alert thread it handles without a per-alert ask?",
+    "body": 'Owner, verbatim: "Yes: reply in any alert thread (Recommended)"',
+    "tags": ["incident", "scope:durable", f"slack-grant:{ALERTS}", f"slack-grant:{ALERTS}{EVERY_THREAD}"],
+}
+ALERT_OPENED = {"ts": ROLLOUT_THREAD, "user": "U0MONITOR01", "user_name": "Datadog", "from_bot": True, "text": "[Triggered] search wake requests return 404 on api"}
+ROLLOUT_BRIEF = "Handler for the search incident: post the rollout line in the incident's alert thread, linking the release card he picked."
+ROLLOUT_LINE = {
+    "channel_id": ALERTS,
+    "thread_ts": ROLLOUT_THREAD,
+    "order": "o773",
+    "text": (
+        "*search at <https://github.com/acme/app/commit/9b6130cd9d39a9ef703c4be2a3fb5562cbcd136c|9b6130c> is going to the three production clusters, dry run first,"
+        f" as picked on <https://acme.slack.com/archives/{OWNER_DM}/p1794514403927269|the release card>.* The search-wake 404s end once it is live;"
+        f" <https://acme.slack.com/archives/{OWNER_DM}/p1794514810641409?thread_ts=1794514403.927269&cid={OWNER_DM}|details here>."
+    ),
+}
+CLONE_CARD = {
+    "card": {
+        "title": "Should a clone copy the write-ahead log along with the database file, so it never waits for a checkpoint?",
+        "body": "Every option keeps your pick that the clone helper holds the checkpoint lock during each copy.\nRecommended: copy the log too.",
+        "options": ["Copy the log with the file", "Wait for the checkpoint, no budget", "Snapshot before trim, keep 15 s"],
+        "recommended": "Copy the log with the file",
+    },
+    "channel_id": ALERTS,
+    "thread_ts": CLONE_THREAD,
+}
+ALERT_THREADS = ruled(ALERT_GRANT) | thread_read(ALERT_OPENED)
 
 
 def order_url(ts: str = ORDER_TS) -> str:
@@ -1477,6 +1527,14 @@ on(
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(EVERY_THREAD_GRANT)) >> DENY,
             case(DANA | {"thread_ts": "1791866612.381629", "text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(THREAD_GRANT)) >> DENY,
+            case(ROLLOUT_LINE, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> ALLOW,
+            case(CLONE_CARD, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> ALLOW,
+            case(ROLLOUT_LINE | {"text": "The rollout is live: https://acme.slack.com/archives/C0ALERTS001/p1794514810641409?thread_ts=1794512248.483749"}, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> ALLOW,
+            case(ROLLOUT_LINE | {"text": "Could you confirm the search release is live for you?"}, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> DENY,
+            case(ROLLOUT_LINE | {"text": "The rollout is live, <https://acme.slack.com/archives/C0ALERTS001/p1794514810641409|please retry your search>."}, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> DENY,
+            case(ROLLOUT_LINE | {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "Does search work for you now?"}}]}, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> DENY,
+            case(ROLLOUT_LINE | {"channel_id": PETS}, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ALERT_THREADS) >> DENY,
+            case(ROLLOUT_LINE, tool=DRIVE_SAY, **said(ROLLOUT_BRIEF), commands=ruled(ALERT_GRANT, ALERT_GRANT | {"id": "ea3c504ea3c504eb", "updated_at": "2026-11-12T21:00:00Z", "tags": [f"slack-revoke:{ALERTS}/{ROLLOUT_THREAD}"]}) | thread_read(ALERT_OPENED)) >> DENY,
             case(
                 LANDED,
                 tool="slack_send",
