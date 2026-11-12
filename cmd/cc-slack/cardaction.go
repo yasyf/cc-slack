@@ -141,6 +141,7 @@ type waitsAnswer struct {
 	dedup     string
 	undo      string
 	press     cardPress
+	records   bool
 	settled   bool
 	withdrawn bool
 }
@@ -150,6 +151,7 @@ var (
 	errCardMoved       = errors.New("the card was redrawn with another question after this answer was drawn")
 	errUndoClosed      = errors.New("the ten minutes to undo this answer had passed")
 	errNoStoredCard    = errors.New("no stored card")
+	errTapNotRecorded  = errors.New("the card command did not record it, so the card offers its answers again")
 )
 
 func hostName() string {
@@ -348,7 +350,7 @@ func (p *poller) tapWaits(ctx context.Context, id identity, a cardActionPush, k 
 	}
 	res, err := p.answerWaits(ctx, id, waitsAnswer{
 		card: a.ref(), tap: k, other: k.Other, at: at, actionTS: a.ActionTS, source: who, where: "Slack card " + permalink,
-		dedup: tapKey(a), undo: undo, press: a.press(),
+		dedup: tapKey(a), undo: undo, press: a.press(), records: true,
 	})
 	if err == nil && res.Answered && !k.Other {
 		if !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, undo) {
@@ -383,11 +385,33 @@ func newPRAnswer(pr refID, waits, label string, press cardPress, heads map[strin
 }
 
 type owedTap struct {
-	Card   string    `json:"card"`
-	Row    bool      `json:"row,omitempty"`
-	Answer prAnswer  `json:"answer"`
-	Due    time.Time `json:"due"`
+	Card     string          `json:"card"`
+	Row      bool            `json:"row,omitempty"`
+	Answer   prAnswer        `json:"answer"`
+	Question *questionAnswer `json:"question,omitempty"`
+	Line     string          `json:"line,omitempty"`
+	Due      time.Time       `json:"due"`
 }
+
+type questionAnswer struct {
+	ActionTS  string    `json:"action_ts"`
+	Label     string    `json:"label"`
+	Other     bool      `json:"other"`
+	Source    string    `json:"source"`
+	UndoUntil time.Time `json:"undo_until,omitzero"`
+	Undone    bool      `json:"undone"`
+	URL       string    `json:"url"`
+	Waits     string    `json:"waits"`
+}
+
+type tapRecord int
+
+const (
+	tapUnrecorded tapRecord = iota
+	tapRecording
+	tapRecorded
+	tapRefused
+)
 
 func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap owedTap) bool {
 	_, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": tap.Answer})
@@ -415,27 +439,117 @@ func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap 
 	return false
 }
 
-func (p *poller) retryPRTaps(ctx context.Context, id identity) time.Time {
+func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 	due, next := p.cards.owedTaps(p.now(), 2*prCardPatience)
 	for _, owed := range due {
-		p.taps.run(owed.card.channel+"/"+owed.card.ts, func() { p.applyPRTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) })
+		p.taps.run(owed.card.channel+"/"+owed.card.ts, func() {
+			if owed.tap.Question == nil {
+				p.applyPRTap(context.WithoutCancel(ctx), id, owed.card, owed.tap)
+				return
+			}
+			if p.applyQuestionTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) == tapUnrecorded {
+				p.refuseTap(context.WithoutCancel(ctx), id, owed.card, owed.tap.Question.Waits, owed.tap.Question.Label, errors.New("the card command no longer takes it"))
+			}
+		})
 	}
 	return next
 }
 
-func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) bool {
-	if _, ok := p.cards.waitingPR(card.channel, card.thread, k.ID); ok || len(id.Config.PRLinks.CardCommand) == 0 {
-		return false
+func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) (tapRecord, error) {
+	if !p.recordsQuestions(id, card, k.ID) {
+		return tapUnrecorded, nil
 	}
-	answer := map[string]any{
-		"waits": k.ID, "label": k.Label, "other": k.Other, "undone": undone, "url": id.permalink(card.channel, card.ts, card.thread),
-		"action_ts": press.ActionTS, "source": press.Source,
+	return p.runQuestionTap(ctx, id, newQuestionAnswer(id, card, k, undone, press))
+}
+
+func (p *poller) recordsQuestions(id identity, card cardRef, askID string) bool {
+	_, pr := p.cards.waitingPR(card.channel, card.thread, askID)
+	return !pr && len(id.Config.PRLinks.CardCommand) > 0
+}
+
+func newQuestionAnswer(id identity, card cardRef, k askTap, undone bool, press cardPress) questionAnswer {
+	return questionAnswer{
+		Waits: k.ID, Label: k.Label, Other: k.Other, Undone: undone, URL: id.permalink(card.channel, card.ts, card.thread),
+		ActionTS: press.ActionTS, Source: press.Source,
 	}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer}); err != nil {
-		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", k.ID, k.Label, err)
-		return false
+}
+
+func (p *poller) runQuestionTap(ctx context.Context, id identity, answer questionAnswer) (tapRecord, error) {
+	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer})
+	if errors.Is(err, errCardCommandUnfinished) {
+		return tapRecording, err
 	}
-	return true
+	if err != nil {
+		return tapRefused, err
+	}
+	var said struct {
+		OK  bool   `json:"ok"`
+		Why string `json:"why"`
+	}
+	if err := json.Unmarshal(out, &said); err != nil {
+		return tapRefused, fmt.Errorf("the card command's reply %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	if !said.OK {
+		return tapUnrecorded, errors.New(said.Why)
+	}
+	return tapRecorded, nil
+}
+
+func (p *poller) recordTap(ctx context.Context, id identity, card cardRef, k askTap, press cardPress, at, undoUntil time.Time, answered string) tapRecord {
+	if !p.recordsQuestions(id, card, k.ID) {
+		return tapUnrecorded
+	}
+	answer := newQuestionAnswer(id, card, k, false, press)
+	answer.UndoUntil = undoUntil
+	recording := "⏳ *" + mrkdwnEscapes.Replace(clipRunes(k.Label, cardMaxDetailLen)) + "* · recording since " + clock(at, p.now())
+	if err := p.tapDrawn(card, at, p.markAnswer(ctx, id, card, k.ID, recording)); err != nil {
+		p.log.Printf("waiting card %s: %q is being recorded, but the card still shows its buttons: %v", k.ID, k.Label, err)
+	}
+	return p.applyQuestionTap(ctx, id, card, owedTap{Card: card.ts, Question: &answer, Line: answered})
+}
+
+func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef, tap owedTap) tapRecord {
+	answer := *tap.Question
+	rec, err := p.runQuestionTap(ctx, id, answer)
+	switch rec {
+	case tapRecorded:
+		p.cards.oweTap(card.channel, card.thread, answer.Waits, nil)
+		if err := p.markAnswer(ctx, id, card, answer.Waits, tap.Line); err != nil {
+			p.log.Printf("waiting card %s: %q is recorded, but the card still shows it recording: %v", answer.Waits, answer.Label, err)
+		}
+		p.react(ctx, id, card, cardAnsweredReaction)
+		p.cards.answerDelivered(card.channel, card.thread, answer.Waits)
+	case tapRecording:
+		tap.Due = p.now().Add(prCardPatience)
+		p.cards.oweTap(card.channel, card.thread, answer.Waits, &tap)
+		p.wake()
+		p.log.Printf("waiting card %s: %q not recorded yet, recorded again at %s: %v", answer.Waits, answer.Label, tap.Due.Format(time.RFC3339), err)
+	case tapRefused:
+		p.refuseTap(ctx, id, card, answer.Waits, answer.Label, err)
+	case tapUnrecorded:
+		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command does not record it: %v", answer.Waits, answer.Label, err)
+	}
+	return rec
+}
+
+func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, askID string) {
+	if !p.recordsQuestions(id, card, askID) || !p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" }) {
+		return
+	}
+	if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), card.channel, card.thread, card.ts, p.now()); err != nil {
+		p.log.Printf("card %s/%s: its answers are offered again, but the card does not show them: %v", card.thread, card.ts, err)
+	}
+}
+
+func (p *poller) refuseTap(ctx context.Context, id identity, card cardRef, askID, label string, why error) {
+	p.cards.release(card.channel, card.thread, askID)
+	p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" })
+	p.log.Printf("waiting card %s: %q not recorded, so the card offers its answers again: %v", askID, label, why)
+	line := "⚠️ *" + mrkdwnEscapes.Replace(clipRunes(label, cardMaxDetailLen)) + "* was not recorded: " +
+		mrkdwnEscapes.Replace(clipRunes(why.Error(), cardMaxReasonLen)) + ". Tap again, or reply here to say it."
+	if err := p.markHint(ctx, id, card, line); err != nil {
+		p.log.Printf("waiting card %s: its answers are offered again, but the card does not show it: %v", askID, err)
+	}
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
@@ -460,6 +574,10 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	if why, dropped := droppedBecause(err); dropped {
 		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
 		p.noteTap(ctx, id, a.ref(), card.ref(), at, "⚠️ *"+mrkdwnEscapes.Replace(k.Label)+"* reached no one: "+why+" Reply in this thread to say it.")
+		err = nil
+	}
+	if errors.Is(err, errTapNotRecorded) {
+		p.log.Printf("card action %s on %s/%s: %v", a.ActionID, a.Channel, a.ThreadTS, err)
 		err = nil
 	}
 	p.readBack(ctx, id, a, card, k, err)
@@ -502,17 +620,9 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 			return nil
 		}
 	}
-	heard, err := p.handOver(ctx, id, a, k)
-	if len(heard) == 0 {
-		if k.ID != "" {
-			p.cards.release(a.Channel, a.ThreadTS, k.ID)
-		}
-		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
+	if err := p.handOver(ctx, id, a, k, "✓ *"+label+"* · answered "+clock(at, p.now())); err != nil {
+		return err
 	}
-	if err != nil {
-		p.log.Printf("card action %s on %s: sent to %s, but not to every listener: %v", a.ActionID, a.MessageTS, strings.Join(heard, " and "), err)
-	}
-	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
 	if k.ID != "" {
 		db := p.plane.DB()
 		ended, err := p.threadPosters(ctx, a.Channel, a.ThreadTS)
@@ -521,37 +631,29 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 		}
 		p.forwardAnswer(ctx, db, ended, boardAnswer{Waits: k.ID, Label: k.Label, Other: k.Other, At: at, Permalink: id.permalink(a.Channel, a.MessageTS, a.ThreadTS)})
 	}
-	if err := p.markAnswer(ctx, id, a.ref(), k.ID, "✓ *"+label+"* · answered "+clock(at, p.now())+" · sent to "+strings.Join(heard, " and ")); err != nil {
-		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
-	}
-	p.react(ctx, id, a.ref(), cardAnsweredReaction)
 	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, undo) {
 		p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 	}
 	return nil
 }
 
-func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap) ([]string, error) {
-	var heard []string
-	var errs []error
-	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
-	switch held, err := p.tellHolder(ctx, id, a, k, permalink); {
-	case err != nil:
-		errs = append(errs, fmt.Errorf("the session holding this DM: %w", err))
-	case held:
-		heard = append(heard, "the session holding this DM")
-	}
-	if k.ID != "" && len(id.Config.PRLinks.CardCommand) > 0 {
-		if p.recordQuestionTap(ctx, id, a.ref(), k, false, a.press()) {
-			heard = append(heard, "the card's owner")
-		} else {
-			errs = append(errs, errors.New("the card's owner: the card command did not take the answer"))
+func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap, answered string) error {
+	held, err := p.tellHolder(ctx, id, a, k, id.permalink(a.Channel, a.MessageTS, a.ThreadTS))
+	if err != nil || !held {
+		if k.ID != "" {
+			p.cards.release(a.Channel, a.ThreadTS, k.ID)
 		}
+		if err == nil {
+			err = errors.New("no session holds this DM and the card command did not record it")
+		}
+		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
 	}
-	if len(heard) == 0 && len(errs) == 0 {
-		errs = append(errs, errors.New("no session holds this DM and no card command is set"))
+	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
+	if err := p.markAnswer(ctx, id, a.ref(), k.ID, answered+" · sent to the session holding this DM"); err != nil {
+		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
-	return heard, errors.Join(errs...)
+	p.react(ctx, id, a.ref(), cardAnsweredReaction)
+	return nil
 }
 
 func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, k askTap, permalink string) (bool, error) {
@@ -943,15 +1045,6 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		p.answerSuperseded(ctx, id, w)
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
 	}
-	db := p.plane.DB()
-	watches, err := p.dmWatches(ctx, db, w.card.channel, w.card.thread)
-	if err == nil && len(watches) == 0 {
-		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
-	}
-	if err != nil {
-		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
-		return cardAnswerResult{}, err
-	}
 	answer := "✓ *" + mrkdwnEscapes.Replace(w.tap.Label) + "* · answered "
 	if w.other {
 		answer = "✓ *Other:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · answered "
@@ -959,12 +1052,46 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	if w.via != "" {
 		answer += "on " + slackLink(w.via, w.viaName) + " "
 	}
-	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, answer+clock(w.at, p.now()))); err != nil {
-		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
+	answered := answer + clock(w.at, p.now())
+	rec := tapUnrecorded
+	if w.records {
+		undoUntil := time.Time{}
+		if w.via != "" {
+			undoUntil = w.undoUntil()
+		}
+		rec = p.recordTap(ctx, id, w.card, w.tap, w.press, w.at, undoUntil, answered)
 	}
-	p.react(ctx, id, w.card, cardAnsweredReaction)
+	switch rec {
+	case tapRecording:
+		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+	case tapRefused:
+		return cardAnswerResult{}, fmt.Errorf("waiting ask %s: %q: %w", w.tap.ID, w.tap.Label, errTapNotRecorded)
+	}
+	db := p.plane.DB()
+	watches, err := p.dmWatches(ctx, db, w.card.channel, w.card.thread)
+	if err == nil && len(watches) == 0 && rec == tapUnrecorded {
+		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
+	}
+	if err != nil && rec == tapUnrecorded {
+		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+		p.redrawOffer(ctx, id, w.card, w.tap.ID)
+		return cardAnswerResult{}, err
+	}
+	if err != nil {
+		p.log.Printf("waiting ask %s: recorded, but its posting session is not told: %v", w.tap.ID, err)
+	}
+	if rec == tapUnrecorded {
+		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, answered)); err != nil {
+			p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
+		}
+		p.react(ctx, id, w.card, cardAnsweredReaction)
+	}
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
-	capture, notesLabel, recorded := p.recordAnswer(ctx, id, w)
+	recorded := rec == tapRecorded
+	capture, notesLabel := "", ""
+	if !recorded {
+		capture, notesLabel = captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap)
+	}
 	line := tapLine(w.source, w.tap, capture, recorded)
 	for _, watch := range watches {
 		msg := actionPayload{
@@ -991,13 +1118,6 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	p.answerSuperseded(ctx, id, w)
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
-}
-
-func (p *poller) recordAnswer(ctx context.Context, id identity, w waitsAnswer) (capture, notesLabel string, recorded bool) {
-	if w.via == "" && p.recordQuestionTap(ctx, id, w.card, w.tap, false, w.press) {
-		return "", "", true
-	}
-	return captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap), false
 }
 
 const (
@@ -1157,7 +1277,11 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 		return err
 	}
 	who := cardSource(id, how, slackTime(u.card.ts).In(pacific).Format(cardTimeLayout), permalink)
-	recorded := p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, press)
+	rec, err := p.recordQuestionTap(ctx, id, u.card, askTap{ID: u.waits, Label: u.answer.Label, Other: u.answer.Other}, true, press)
+	if err != nil {
+		p.log.Printf("waiting card %s: the undo of %q stays with the sessions alone, since the card command did not take it: %v", u.waits, u.answer.Label, err)
+	}
+	recorded := rec == tapRecorded
 	line := fmt.Sprintf("%s: %s to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
 		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, why, u.waits)
 	if recorded {
@@ -1226,6 +1350,8 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		via:       via,
 		viaName:   name,
 		dedup:     fmt.Sprintf("slack-answer:%s:%s:%s", id.DMChannelID, thread, waits),
+		press:     cardPress{formatTS(at), "answered on " + name},
+		records:   true,
 		settled:   settled,
 		withdrawn: withdrawn,
 	}

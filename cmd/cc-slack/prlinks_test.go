@@ -146,7 +146,7 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 	if err := os.WriteFile(holders, mustJSON(map[string]any{"prs": held}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo \"$in\" >> '%s'; cat '%s' ;;\n*) echo \"$in\" >> '%s'; cat '%s' ;;\nesac\n", c.resolved, holders, c.asked, answer)
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo \"$in\" >> '%[1]s'; cat '%[2]s' ;;\n'{\"answer\":'*) echo \"$in\" >> '%[3]s'; echo '{\"ok\":true}' ;;\n*) echo \"$in\" >> '%[3]s'; cat '%[4]s' ;;\nesac\n", c.resolved, holders, c.asked, answer)
 	if err := os.WriteFile(c.argv[0], []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
