@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1449,7 +1450,11 @@ func TestSendAndEditOfTextPastTheTextLimitStayOneMessage(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 
-	text := strings.Repeat("• *What's risky:* a batch line with a <https://github.com/acme/app/pull/42829|PR link>\n", 60)
+	var lines strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&lines, "• *What's risky %d:* a batch line with a <https://github.com/acme/app/pull/42829|PR link>\n", i+1)
+	}
+	text := lines.String()
 	l.post(opSend, map[string]any{"channel_id": testChannel, "text": text})
 	posts := l.slack.sent()
 	if len(posts) != 1 || len([]rune(posts[0].text)) > maxTextChars {
@@ -1459,7 +1464,7 @@ func TestSendAndEditOfTextPastTheTextLimitStayOneMessage(t *testing.T) {
 	if err := json.Unmarshal([]byte(posts[0].blocks), &blocks); err != nil {
 		t.Fatal(err)
 	}
-	if got := messageText(slack.Message{Msg: slack.Msg{Text: posts[0].text, Blocks: blocks}}); got != text {
+	if got := messageText(slack.Message{Msg: slack.Msg{Text: posts[0].text, Blocks: blocks}}); got != strings.TrimSpace(text) {
 		t.Fatalf("read back %d runes, want the whole %d-rune text", len([]rune(got)), len([]rune(text)))
 	}
 

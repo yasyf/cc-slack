@@ -147,6 +147,130 @@ func TestADMStatusTextWithAMarkdownTablePostsATable(t *testing.T) {
 	}
 }
 
+func postedBlocks(t *testing.T, raw string) []slack.Block {
+	t.Helper()
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(raw), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	return blocks.BlockSet
+}
+
+func incidentDraft(fixes ...string) string {
+	why := make([]string, 0, 14)
+	for i := range 14 {
+		why = append(why, fmt.Sprintf("• Reason %d: the runner reads values 500 ids at a time, and the reader connections keep the planner statistics they opened with, so each read scans.", i+1))
+	}
+	questions := make([]string, 0, 6)
+	for i := range 6 {
+		questions = append(questions, fmt.Sprintf("• Question %d: when the values outgrow the host, spill to local disk (recommended), refuse past three quarters of memory, or spill into the journal, which needs a packer redesign.", i+1))
+	}
+	return strings.Join([]string{
+		"*Summary for the team: why two report runs crashed this morning, and the fixes being built.* It started with the <https://example.com/alerts/1|crash count alert> at 3:56 AM.",
+		"*What happened*\n• Two runs died at 3:55 AM when one journal read passed the runner's 30 s deadline.\n• Each retry restores the parent's journal and must upload all of it within 10 s, so it never restarts.",
+		"| Run | Run id | Journal |\n|---|---|---|\n| First run, died 3:55 AM | <https://example.com/logs?query=run_1&live=false|run_1> | jrnl-1 |\n| Second run, died 3:55 AM | <https://example.com/logs?query=run_2&live=false|run_2> | jrnl-2 |",
+		"*Why the reads were slow*\n" + strings.Join(why, "\n"),
+		"*Fixes for the crashes, both open*\n• " + fixes[0] + ": an upload ends only when it stops making progress.\n• " + fixes[1] + ": each read seeks its ids.",
+		"*Design questions not answered yet*\n" + strings.Join(questions, "\n"),
+		"*Still unmeasured:* bytes per in-memory row and the largest child's peak memory.",
+	}, "\n\n")
+}
+
+func TestSendDrawsADraftsTableAsATableAndKeepsEachListWhole(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": incidentDraft("{pr:12|Progress-timed uploads}", "{pr:13|Seek each id}")}), "{pr:12|Progress-timed uploads} is the drive's say syntax, which only say turns into a link")
+	if sent := l.slack.sent(); len(sent) != 0 {
+		t.Fatalf("sent %+v, want the draft holding say syntax refused before it posts", sent)
+	}
+
+	draft := incidentDraft("<https://github.com/acme/app/pull/12|Progress-timed uploads>", "<https://github.com/acme/app/pull/13|Seek each id>")
+	if runes(draft) <= cardMaxSectionLen {
+		t.Fatalf("draft is %d characters, want it past one section so the old cut falls inside it", runes(draft))
+	}
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": draft})
+	sent := l.slack.sent()
+	if len(sent) != 1 || runes(sent[0].text) > cardMaxSectionLen || strings.Contains(sent[0].text, "| Run |") {
+		t.Fatalf("sent %d posts, text %d characters, want one post whose notification text leaves the table out", len(sent), runes(sent[0].text))
+	}
+	blocks := postedBlocks(t, sent[0].blocks)
+	if found := tables(blocks); len(found) != 1 || len(found[0].Rows) != 3 {
+		t.Fatalf("blocks %s, want the run table drawn as one table of a header and two rows", sent[0].blocks)
+	}
+	sections := sectionTexts(blocks)
+	for _, para := range strings.Split(draft, "\n\n") {
+		if strings.HasPrefix(para, "|") {
+			continue
+		}
+		if !slices.ContainsFunc(sections, func(s string) bool { return strings.Contains(s, para) }) {
+			t.Fatalf("no section holds %q whole; sections %q", para, sections)
+		}
+	}
+	if slices.ContainsFunc(sections, func(s string) bool { return strings.Contains(s, "|---") }) {
+		t.Fatalf("sections %q, want no raw table pipes", sections)
+	}
+}
+
+func TestSendReplyAndEditRefuseTheDrivesSaySyntaxOutsideCode(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	for _, token := range []string{"{pr:54900}", "{card:w-3f2a|the card}", "{order:o785}", "{record:678975}"} {
+		text := "Landed " + token + " this morning."
+		l.refused(opSend, l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": text}), token+" is the drive's say syntax")
+		l.refused(opReply, l.hooked(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": text}), "post it through say")
+		l.refused(opEdit, map[string]any{"channel_id": testChannel, "ts": testThread, "text": text}, "post it through say")
+	}
+	if sent, edits := l.slack.sent(), l.slack.edited(); len(sent) != 0 || len(edits) != 0 {
+		t.Fatalf("sent %+v, edited %+v, want every say token refused before Slack", sent, edits)
+	}
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": "say links a PR as `{pr:12|words}`, and an id like {run} stays as written"})
+	if sent := l.slack.sent(); len(sent) != 1 {
+		t.Fatalf("sent %d posts, want a say token in a code span and other braces posted", len(sent))
+	}
+}
+
+func TestSendPastOnePageGoesOnInItsThreadAndAnEditKeepsOneMessage(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	paras := make([]string, 0, 40)
+	for i := range 40 {
+		paras = append(paras, fmt.Sprintf("Paragraph %d: %s", i+1, strings.TrimSpace(strings.Repeat("the journal grew past what the upload could carry. ", 5))))
+	}
+	text := strings.Join(paras, "\n\n")
+	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": text})
+	sent := l.slack.sent()
+	if len(sent) < 2 || slices.ContainsFunc(sent, func(p fakePost) bool { return p.threadTS != testThread }) {
+		t.Fatalf("sent %+v, want the reply past one page carried on in its own thread", sent)
+	}
+	var drawn []string
+	for _, p := range sent {
+		blocks := postedBlocks(t, p.blocks)
+		if len(blocks) > cardMaxPageBlock {
+			t.Fatalf("a page holds %d blocks, want at most %d", len(blocks), cardMaxPageBlock)
+		}
+		drawn = append(drawn, sectionTexts(blocks)...)
+	}
+	if got, want := strings.Fields(strings.Join(drawn, " ")), strings.Fields(text); !slices.Equal(got, want) {
+		t.Fatalf("pages read back %d words, want all %d in order", len(got), len(want))
+	}
+
+	l.post(opEdit, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "ts": sent[0].ts, "text": "Where each run stands.\n\n| Run | State |\n|---|---|\n| run_1 | died |\n| run_2 | retrying |"})
+	edits := l.slack.edited()
+	if len(edits) != 1 || !strings.Contains(edits[0].blocks, `"type":"table"`) || strings.Contains(edits[0].text, "| run_1 |") {
+		t.Fatalf("edits %+v, want one chat.update drawing the table as a table block", edits)
+	}
+}
+
+func TestATextSharedBesideAFileThatIsNotAnImageStaysAsWritten(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	text := "The runs:\n\n| Run | State |\n|---|---|\n| run_1 | died |"
+	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": text, "files": []string{writeFile(t, "notes.md", "# runs\n")}})
+	if sent := l.slack.sent(); len(sent) != 1 || sent[0].text != text {
+		t.Fatalf("sent %+v, want the share to carry the text as written, since a file share takes plain text only", sent)
+	}
+}
+
 func TestAPictureOnALineOfItsOwnDrawsWhereItSitsAndAnyOtherStaysText(t *testing.T) {
 	queue := slack.NewImageBlock("https://bucket.example.com/queue.png", "The queue after", "", nil)
 	body := "Before the picture.\n![The queue after](/shots/queue.png)\nInline ![x](/shots/x.png) stays.\n\n" +

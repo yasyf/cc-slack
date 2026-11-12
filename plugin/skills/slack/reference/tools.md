@@ -109,6 +109,14 @@ it changes and where it stands, and a line that only repeats a link is dropped,
 so name each PR once and never draw its state yourself. With `[buildkite]` set, a build link
 there shows its state and message the same way.
 
+A `text` with no `blocks` that holds markdown, such as a `|` table, `**bold**` or
+a `[words](url)` link, or runs past 3,000 characters, is drawn in `send`,
+`reply` and `edit` the way `dm-status` draws it: each table becomes a Slack
+table block, and what one message cannot hold goes on as replies in its
+thread, or, for an edit, is refused. The drive's `say` syntax, such as
+`{pr:123|words}` or `{card:<id>}`, is refused in every cc-slack text, since
+only `say` turns it into a link: post through `say`, or write `<url|words>`.
+
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
 `send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
 every file is a PNG, JPEG, GIF, or WebP image, the images appear under the text in

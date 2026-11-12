@@ -418,6 +418,13 @@ func bodyPages(body string, firstBlocks, firstChars int, firstNative bool, pictu
 	return append(pages, page.blocks)
 }
 
+func textPages(text string, firstBlocks int) (string, [][]slack.Block) {
+	if !mdMarks.MatchString(text) && runes(text) <= cardMaxSectionLen {
+		return text, [][]slack.Block{nil}
+	}
+	return clipRunes(mrkdwnText(withoutTables(text)), cardMaxSectionLen), bodyPages(text, firstBlocks, cardMaxVisible, true, nil)
+}
+
 func galleryPieces(pieces []bodyPiece, pictures map[string]*slack.ImageBlock) []bodyPiece {
 	var out []bodyPiece
 	var run []*slack.ImageBlock
