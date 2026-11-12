@@ -1596,6 +1596,20 @@ func TestDMPeerNamesThePersonADMReaches(t *testing.T) {
 	if !reflect.DeepEqual(private, dmPeerResult{ChannelID: "CPRIVATE"}) {
 		t.Fatalf("dm-peer of a channel the bot cannot see = %+v, want no peer", private)
 	}
+
+	outside := func() (got dmPeerResult) {
+		if err := json.Unmarshal(l.do(opDMPeer, map[string]string{"channel_id": "D0THEIRDM"}).Body, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := outside(); !reflect.DeepEqual(got, dmPeerResult{ChannelID: "D0THEIRDM"}) {
+		t.Fatalf("dm-peer of a DM the bot cannot see, with no user credential = %+v, want no peer", got)
+	}
+	l.user.as(testUser).dms["D0THEIRDM"] = []string{"UOTHER"}
+	if got, want := outside(), (dmPeerResult{ChannelID: "D0THEIRDM", Peer: "UOTHER", PeerName: "anubhav", PeerNames: []string{"anubhav"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("dm-peer of a DM the bot cannot see, read as the user = %+v, want %+v", got, want)
+	}
 }
 
 func TestADMWriteSpendsAgainstThePersonItReaches(t *testing.T) {

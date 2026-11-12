@@ -2055,10 +2055,17 @@ func (a *app) dmPeer(ctx context.Context, api slackAPI, id identity, channelID s
 		return peer, nil
 	}
 	peer, err := lookupDMPeer(ctx, api, id, channelID)
-	if err == nil {
-		a.peers.Store(key, peer)
+	if err != nil {
+		return "", err
 	}
-	return peer, err
+	if peer == "" && strings.HasPrefix(channelID, "D") {
+		if peer, err = a.dmPeerAsUser(ctx, id, channelID); err != nil {
+			a.poller.log.Printf("%s is a DM the app cannot see, and reading its other member as %s failed, so its peer stays unknown: %v", channelID, id.UserID, err)
+			return "", nil
+		}
+	}
+	a.peers.Store(key, peer)
+	return peer, nil
 }
 
 func lookupDMPeer(ctx context.Context, api slackAPI, id identity, channelID string) (string, error) {
