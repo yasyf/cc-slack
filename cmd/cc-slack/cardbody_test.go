@@ -126,6 +126,16 @@ func TestATableSlackWouldRefuseDrawsAsLines(t *testing.T) {
 	}
 }
 
+func TestADMStatusTextWithAMarkdownTablePostsADataTable(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.do(opDMStatus, map[string]any{"text": "Where each session stands.\n\n| Session | Doing |\n|---|---|\n| coordinator | waiting on CI |\n| builder | pushing the fix |"})
+	posted := l.slack.sent()[0]
+	if !strings.Contains(posted.blocks, `"type":"data_table"`) || strings.Contains(posted.blocks, "• *Session:*") {
+		t.Fatalf("blocks %s, want the status table as a data table, not bullets", posted.blocks)
+	}
+}
+
 func TestAPictureOnALineOfItsOwnDrawsWhereItSitsAndAnyOtherStaysText(t *testing.T) {
 	queue := slack.NewImageBlock("https://bucket.example.com/queue.png", "The queue after", "", nil)
 	body := "Before the picture.\n![The queue after](/shots/queue.png)\nInline ![x](/shots/x.png) stays.\n\n" +

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +60,6 @@ func TestFileRefusesWhatIsNotADownloadableFile(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	out := filepath.Join(t.TempDir(), "shot.png")
-	l.slack.serveFile(shot, []byte("<!DOCTYPE html><html>sign in</html>"))
 	l.slack.fail("files.info", slack.SlackErrorResponse{Err: "file_not_found"})
 	for _, c := range []struct {
 		name string
@@ -67,7 +70,6 @@ func TestFileRefusesWhatIsNotADownloadableFile(t *testing.T) {
 		{"channel id", map[string]any{"file_id": "C1"}, "Slack file id"},
 		{"relative out", map[string]any{"file_id": "F1", "out": "shot.png"}, "absolute out path"},
 		{"unknown file", map[string]any{"file_id": "F404", "out": out}, "can't download this file (file_not_found)"},
-		{"login page served", map[string]any{"file_id": "F1", "out": out}, "cannot read it"},
 	} {
 		raw, _ := json.Marshal(c.body)
 		if _, err := invoke(l.ctx, l.deps, testSession, "/any", opFile, raw); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -76,5 +78,39 @@ func TestFileRefusesWhatIsNotADownloadableFile(t *testing.T) {
 	}
 	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused download left %s: %v", out, err)
+	}
+}
+
+func TestFileDownloadsACanvasAsItsHTML(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	canvas := slack.File{ID: "F2", Name: "durable-agents: where it stands", Mimetype: "application/vnd.slack-docs", URLPrivateDownload: "https://files.slack.com/files-pri/T1-F2/download/canvas", Size: 33315}
+	html := `<div class="quip-canvas-content"><h1>durable-agents: where it stands</h1></div>`
+	l.slack.serveFile(canvas, []byte(html))
+
+	out := filepath.Join(t.TempDir(), "canvas.html")
+	var res fileResult
+	if err := json.Unmarshal(l.do(opFile, map[string]any{"file_id": "F2", "out": out}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(out); err != nil || string(got) != html || res.Path != out || res.Size != len(html) {
+		t.Fatalf("downloaded %q to %s as %d bytes, %v, want the canvas's HTML at its own size, though files.info counts %d bytes of its stored document", got, res.Path, res.Size, err, canvas.Size)
+	}
+}
+
+func TestGetFileRefusesSlacksRedirectToItsSignInPage(t *testing.T) {
+	signIn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "<!DOCTYPE html><html>sign in</html>")
+	}))
+	t.Cleanup(signIn.Close)
+	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, signIn.URL+"/?redir=%2Ffiles-pri%2FT1-F2%2Fdownload%2Fcanvas", http.StatusFound)
+	}))
+	t.Cleanup(files.Close)
+
+	var saved strings.Builder
+	err := newSlackClient("xoxb-test", files.URL+"/", files.Client()).GetFileContext(context.Background(), files.URL+"/files-pri/T1-F2/download/canvas", &saved)
+	if err == nil || !strings.Contains(err.Error(), "cannot read it") || saved.Len() != 0 {
+		t.Fatalf("GetFileContext = %v and saved %q, want the sign-in page refused and nothing saved", err, saved.String())
 	}
 }
