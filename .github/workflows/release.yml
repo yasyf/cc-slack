@@ -10,7 +10,12 @@ permissions:
 
 jobs:
   release:
-    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@154dfcdd78e6c70b31d97779c047b16f8186cb69
+    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@48bd52dbd3669f32199fd54ec0fc7e519da67154
+    secrets: inherit
+
+  notarize:
+    needs: release
+    uses: yasyf/homebrew-tap/.github/workflows/notarize-release.yml@48bd52dbd3669f32199fd54ec0fc7e519da67154
     secrets: inherit
 
   descriptor:

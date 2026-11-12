@@ -45,7 +45,8 @@ archives:
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
-# Sign + notarize every darwin binary with our Apple Developer ID. The shared release
+# Sign every darwin binary with our Apple Developer ID; release.yml's notarize job notarizes
+# them once the release publishes, so Apple's wait never holds it. The shared release
 # workflow rejects missing MACOS_* secrets before goreleaser runs, and this unconditional
 # setting keeps direct goreleaser releases fail-closed too.
 # goreleaser's built-in quill signer is pure Go and runs on the linux runner (no macOS runner).
@@ -60,24 +61,12 @@ notarize:
       sign:
         certificate: "{{ .Env.MACOS_SIGN_P12 }}"
         password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-      notarize:
-        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
-        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
-        key: "{{ .Env.MACOS_NOTARY_KEY }}"
-        wait: true
-        timeout: 20m
     - enabled: true
       ids:
         - cc-slack-darwin-amd64
       sign:
         certificate: "{{ .Env.MACOS_SIGN_P12 }}"
         password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-      notarize:
-        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
-        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
-        key: "{{ .Env.MACOS_NOTARY_KEY }}"
-        wait: true
-        timeout: 20m
 
 checksum:
   name_template: checksums.txt
