@@ -29,7 +29,7 @@ var (
 	listItem    = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
 	codeSpan    = regexp.MustCompile("`[^`\n]+`")
 	quoted      = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
-	blockQuote  = regexp.MustCompile(`^\s*>`)
+	blockQuote  = regexp.MustCompile(`^\s*&gt;`)
 )
 
 type exitStatus int
