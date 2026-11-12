@@ -128,16 +128,6 @@ type cardRef struct {
 	channel, thread, ts string
 }
 
-type unheardAnswer struct {
-	Card      string    `json:"card"`
-	Label     string    `json:"label"`
-	Question  string    `json:"question,omitempty"`
-	Other     bool      `json:"other,omitempty"`
-	Permalink string    `json:"permalink"`
-	At        time.Time `json:"at"`
-	Key       string    `json:"key"`
-}
-
 type waitsAnswer struct {
 	card      cardRef
 	tap       askTap
@@ -312,6 +302,18 @@ func (p *poller) dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS 
 	return dmSubscriptions(ctx, db, channelID, bound[threadTS])
 }
 
+func (p *poller) cardListeners(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
+	watches, err := p.dmWatches(ctx, db, channelID, threadTS)
+	if err != nil || len(watches) > 0 {
+		return watches, err
+	}
+	w, held, err := dmHolderWatch(ctx, db, channelID)
+	if err != nil || !held {
+		return nil, err
+	}
+	return []watch{w}, nil
+}
+
 func (p *poller) threadPosters(ctx context.Context, channelID, threadTS string) ([]watch, error) {
 	bound, err := p.threads.bound(ctx, channelID, []string{threadTS})
 	if err != nil {
@@ -421,8 +423,12 @@ func tapKey(a cardActionPush) string {
 
 func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) error {
 	label := mrkdwnEscapes.Replace(k.Label)
+	undo := ""
 	if k.ID != "" {
-		won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Other: k.Other, Undelivered: tapKey(a)})
+		if p.undoable(id, a.ref(), k) {
+			undo = tapKey(a)
+		}
+		won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, waitsAnswer{card: a.ref(), tap: k, other: k.Other, at: at, dedup: tapKey(a), undo: undo}.recorded(p.now()))
 		if err != nil {
 			return err
 		}
@@ -431,7 +437,7 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 			return nil
 		}
 	}
-	heard, err := p.handOver(ctx, id, a, k, at)
+	heard, err := p.handOver(ctx, id, a, k)
 	if len(heard) == 0 {
 		if k.ID != "" {
 			p.cards.release(a.Channel, a.ThreadTS, k.ID)
@@ -454,13 +460,13 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)
-	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, "") {
+	if k.ID != "" && !k.Other && !p.answerCopies(ctx, id, a.ref(), k.Label, false, at, undo) {
 		p.recordPRTap(ctx, id, a.ref(), k.ID, k.Label, a.press())
 	}
 	return nil
 }
 
-func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) ([]string, error) {
+func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap) ([]string, error) {
 	var heard []string
 	var errs []error
 	permalink := id.permalink(a.Channel, a.MessageTS, a.ThreadTS)
@@ -471,13 +477,10 @@ func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k 
 		heard = append(heard, "the session holding this DM")
 	}
 	if k.ID != "" && len(id.Config.PRLinks.CardCommand) > 0 {
-		err := tellCardOwner(ctx, id.Config.PRLinks.CardCommand, unheardAnswer{
-			Card: k.ID, Label: k.Label, Question: k.Question, Other: k.Other, Permalink: permalink, At: at, Key: tapKey(a),
-		})
-		if err != nil {
-			errs = append(errs, fmt.Errorf("the card's owner: %w", err))
-		} else {
+		if p.recordQuestionTap(ctx, id, a.ref(), k, false, a.press()) {
 			heard = append(heard, "the card's owner")
+		} else {
+			errs = append(errs, errors.New("the card's owner: the card command did not take the answer"))
 		}
 	}
 	if len(heard) == 0 && len(errs) == 0 {
@@ -519,23 +522,6 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 		return true, nil
 	}
 	return true, p.owed.owe(ctx, owedReply{ThreadTS: a.ThreadTS, TS: a.ActionTS, Text: "Tapped " + k.Label + " on " + cmp.Or(k.Question, "a card"), Permalink: permalink})
-}
-
-func tellCardOwner(ctx context.Context, command []string, answer unheardAnswer) error {
-	out, err := runCardCommand(ctx, command, map[string]any{"unheard": answer})
-	if err != nil {
-		return err
-	}
-	var told struct {
-		Heard bool `json:"heard"`
-	}
-	if err := json.Unmarshal(out, &told); err != nil {
-		return fmt.Errorf("%s answered %q: %w", command[0], clip(string(out)), err)
-	}
-	if !told.Heard {
-		return fmt.Errorf("%s did not say the card's owner heard it", command[0])
-	}
-	return nil
 }
 
 func droppedBecause(err error) (string, bool) {
@@ -1032,11 +1018,11 @@ func (p *poller) undoTap(ctx context.Context, id identity, a cardActionPush, k a
 		return errUndoClosed
 	}
 	db := p.plane.DB()
-	watches, err := p.dmWatches(ctx, db, a.Channel, a.ThreadTS)
+	listeners, err := p.cardListeners(ctx, db, a.Channel, a.ThreadTS)
 	if err != nil {
 		return err
 	}
-	if len(watches) == 0 {
+	if len(listeners) == 0 && len(id.Config.PRLinks.CardCommand) == 0 {
 		return errNoStatusSession
 	}
 	var errs []error
@@ -1100,7 +1086,7 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 	}
 	permalink := id.permalink(u.card.channel, u.card.ts, u.card.thread)
 	p.noteSuperseded(ctx, id, u.supersedes, askedAgain(u.question, permalink))
-	watches, err := p.dmWatches(ctx, db, u.card.channel, u.card.thread)
+	watches, err := p.cardListeners(ctx, db, u.card.channel, u.card.thread)
 	if err != nil {
 		return err
 	}

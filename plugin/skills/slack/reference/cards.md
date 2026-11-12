@@ -51,7 +51,8 @@ guards the tap with a dialog, and a tap after `expires_at` is dropped. The
 tap arrives as a `slack.action` whose payload carries the ask's `id`: act on
 its `label` as operator steering, since a later card may have superseded it.
 A tap whose payload sets `poster_ended` reaches you because you hold the DM and
-the session that posted the card has ended: route it to the lane it is for.
+the session that posted the card has ended: route it to the lane it is for. An
+Undo of that tap reaches you the same way, as the `undo: true` payload below.
 
 A card with a `group` id is one group of rows on a cc-present board.
 cc-present posts it; you never write one by hand. Posting the same `group`
