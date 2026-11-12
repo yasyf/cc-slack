@@ -198,7 +198,11 @@ def cli_calls(evt: ToolHookEvent) -> list[tuple[Call, Write]]:
 def pending(evt: ToolHookEvent) -> list[Write]:
     tool, raw = (evt.tool_name or "").rsplit("__", 1)[-1], evt.input.raw
     if evt.tool_name == DRIVE_SAY:
-        return [Write("post", dict(raw), daemon=True)] if raw.get("channel_id") and not raw.get("dry_run") else []
+        if raw.get("dry_run"):
+            return []
+        if raw.get("edit"):
+            return [Write("edit", {"url": raw["edit"], "text": raw.get("text")}, daemon=True)]
+        return [Write("post", dict(raw), daemon=True)] if raw.get("channel_id") else []
     if tool == "slack_stream":
         return [] if raw.get("ts") else [Write("post", dict(raw), daemon=True, stream=True)]
     if tool in TOOL_VERBS:

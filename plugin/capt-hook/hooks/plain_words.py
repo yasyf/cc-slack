@@ -18,10 +18,11 @@ PLAIN_WORDS = {
     "ulid": "ULIDs",
     "bare-number": "unlinked numbers",
     "bare-url": "bare URLs",
+    "nested-link": "links inside another link's words",
     "option-reference": "options named by number",
 }
 PLAIN_WORDS_WARNING = "Slack readers outside this session cannot decode {found}; write the next post from the facts."
-LINK_KINDS = frozenset({"bare-number", "bare-url"})
+LINK_KINDS = frozenset({"bare-number", "bare-url", "nested-link"})
 LINK_WARNING = "Slack readers cannot follow {found}; link them as <url|label> in the next post."
 BLOCK_STRUCTURE = frozenset({"type", "block_id", "action_id", "style", "value", "id"})
 P = "mcp__plugin_cc-slack_cc-slack__"
@@ -75,6 +76,9 @@ class WritesSlack:
         ),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=PLAIN | {"blocks": CARD_BLOCKS}): Allow(),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=THREAD | {"text": "Fixed in #31364, see https://example.com/run"}): Warn(pattern="cannot follow unlinked numbers, bare URLs"),
+        Input(env=ENABLED, tool=P + "slack_edit", tool_input=THREAD | {"ts": "1790210144.444180", "text": "<https://example.com/build/1|The build carrying <https://example.com/pull/2|the fix>> failed."}): Warn(
+            pattern="cannot follow links inside another link's words;"
+        ),
         Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text '{PLAIN['text']}'"): Allow(),
         Input(env=ENABLED, command=f"slack-post send --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms;"),
         Input(env=ENABLED, tool=P + "slack_dm_status", tool_input={"text": "D is queued behind the walker"}): Allow(),
