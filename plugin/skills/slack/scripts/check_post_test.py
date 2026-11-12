@@ -84,6 +84,25 @@ class CheckPostTest(unittest.TestCase):
         text = "Fix: https://github.com/acme/app/pull/27801 for https://acme.sentry.io/issues/4512345678/"
         self.assertEqual(kinds(text), [("bare-url", "https://github.com/acme/app/pull/27801")])
 
+    def test_flags_a_link_or_mention_inside_another_links_words_as_nested_never_as_a_bare_url(self) -> None:
+        release = (
+            "<https://buildkite.com/acme/release/builds/14765|The release carrying "
+            "<https://github.com/acme/app/pull/54651|the fix that makes the view route return the read's real error>> "
+            "is failing on its `runtime-api-next` image build."
+        )
+        mention = "<https://github.com/acme/app/pull/27801|the fix <@U0123ABCDE> asked for> merged."
+        self.assertEqual(kinds(release), [("nested-link", "<https://buildkite.com/acme/release/builds/14765|The release carrying")])
+        self.assertEqual(kinds(mention), [("nested-link", "<https://github.com/acme/app/pull/27801|the fix")])
+
+    def test_accepts_the_inner_link_or_mention_put_after_the_links_words(self) -> None:
+        release = (
+            "<https://buildkite.com/acme/release/builds/14765|Release 14765>, carrying "
+            "<https://github.com/acme/app/pull/54651|the fix that makes the view route return the read's real error>, "
+            "is failing on its `runtime-api-next` image build."
+        )
+        self.assertEqual(kinds(release), [])
+        self.assertEqual(kinds("<@U0123ABCDE> asked for <https://github.com/acme/app/pull/27801|the fix>, which merged."), [])
+
     def test_ignores_ordinary_words_and_versions(self) -> None:
         text = "app 0.162.9 deployed 3 services to R2 storage; the facade and 1,000+ pods are fine; L4 balancer."
         self.assertEqual(kinds(text), [])

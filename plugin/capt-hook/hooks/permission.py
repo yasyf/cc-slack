@@ -913,6 +913,7 @@ NOT_DM = {
 }
 OWN_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": "U0OWNER0001", "peer_name": "Wren", "own": True})}
 OWN_DM_EDIT = {"channel_id": "D0OWNDM0001", "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}
+SAY_EDIT_URL = f"https://acme.slack.com/archives/{FOLLOWERS}/p{BOT_ANSWERED['ts'].replace('.', '')}?thread_ts={DANA_THREAD}&cid={FOLLOWERS}"
 PRIYA_DM = NOT_DM | {f"{CC_SLACK} dm-peer": json.dumps({"peer": PRIYA_USER, "peer_name": "priya"})}
 PRIYA_BY_USER = NOT_DM | {f"{CC_SLACK} dm-peer": (1, "dm-peer needs channel_id (or a Slack url)"), f"{CC_SLACK} dm-peer --channel {PRIYA_USER}": PRIYA_DM[f"{CC_SLACK} dm-peer"]}
 SAM_USER = "U0SAMOK0001"
@@ -1402,6 +1403,9 @@ on(
             case({"channel_id": OWN_DM_EDIT["channel_id"], "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
             case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED | {"from_claude": False})) >> Block(pattern="Edit the bot's message to this"),
             case(OWN_DM_EDIT, tool="slack_edit", commands=PRIYA_DM | thread_read(BOT_ANSWERED)) >> Block(pattern="Edit the bot's message to this"),
+            case({"edit": SAY_EDIT_URL, "text": "fix is out, edited"}, tool=DRIVE_SAY, tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
+            case({"edit": SAY_EDIT_URL, "text": "edited"}, tool=DRIVE_SAY, commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
+            case({"edit": f"https://acme.slack.com/archives/{OWN_DM_EDIT['channel_id']}/p{BOT_ANSWERED['ts'].replace('.', '')}", "text": OWN_DM_EDIT["text"]}, tool=DRIVE_SAY, commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
             case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
             case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True, system_message="goes ahead unchecked"),

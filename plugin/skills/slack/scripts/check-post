@@ -10,6 +10,8 @@ from pathlib import Path
 
 SLACK_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
 LINK_LABEL = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|([^<>]*)>")
+NESTED_LINK = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|[^<>]*?(?=\s*<)")
+NESTED_FIX = "a link's words cannot hold another link or mention, and Slack draws both broken; end this link's words, then put the inner one after it"
 CODE_SPAN = re.compile(r"`[^`\n]+`")
 EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
@@ -144,7 +146,9 @@ class Finding:
 
 
 def mask_slack_tokens(line: str, labels: bool = False) -> str:
-    return SLACK_TOKEN.sub(lambda match: masked_token(match.group(), labels), line)
+    while (masked := SLACK_TOKEN.sub(lambda match: masked_token(match.group(), labels), line)) != line:
+        line = masked
+    return line
 
 
 def masked_token(token: str, labels: bool) -> str:
@@ -168,7 +172,7 @@ def plain(line: str, labels: bool = False) -> str:
 
 
 def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
-    findings = walls(text)
+    findings = walls(text) + nested_links(text)
     for number, (line, fenced) in enumerate(fenced_lines(text), start=1):
         masked = {labels: plain(line, labels) for labels in (False, True)}
         for rule in RULES:
@@ -203,6 +207,15 @@ def walls(text: str) -> list[Finding]:
     return findings
 
 
+def nested_links(text: str) -> list[Finding]:
+    return [
+        Finding(number, match.start() + 1, "nested-link", line[match.start() : match.end()], NESTED_FIX)
+        for number, (line, fenced) in enumerate(fenced_lines(text), start=1)
+        if not fenced
+        for match in NESTED_LINK.finditer(mask_code(line))
+    ]
+
+
 def fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
     fenced = False
     for line in text.splitlines():
@@ -213,7 +226,7 @@ def fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post, reading the words of each link as the reader sees them."
+        description="Flag internal ids, raw shas, unlinked references, links nested in another link's words, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, and walls of text in a Slack post, reading the words of each link as the reader sees them."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     parser.add_argument(
