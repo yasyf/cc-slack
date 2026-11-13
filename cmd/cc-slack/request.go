@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,7 +43,8 @@ func keyedBodies(body json.RawMessage, now time.Time) (json.RawMessage, json.Raw
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return nil, nil, err
 	}
-	if _, keyed := fields[requestKeyField]; !keyed {
+	_, keyed := fields[requestKeyField]
+	if !keyed {
 		fields[requestKeyField] = mustJSON(newRequestKey(now))
 	}
 	first, err := json.Marshal(fields)
@@ -51,7 +53,44 @@ func keyedBodies(body json.RawMessage, now time.Time) (json.RawMessage, json.Raw
 	}
 	fields["request_resend"] = json.RawMessage("true")
 	again, err := json.Marshal(fields)
+	if keyed {
+		return again, again, err
+	}
 	return first, again, err
+}
+
+type requestTurns struct {
+	mu    sync.Mutex
+	turns map[string]*requestTurn
+}
+
+type requestTurn struct {
+	mu      sync.Mutex
+	callers int
+}
+
+func (t *requestTurns) take(key string) func() {
+	t.mu.Lock()
+	if t.turns == nil {
+		t.turns = map[string]*requestTurn{}
+	}
+	turn := t.turns[key]
+	if turn == nil {
+		turn = &requestTurn{}
+		t.turns[key] = turn
+	}
+	turn.callers++
+	t.mu.Unlock()
+	turn.mu.Lock()
+	return func() {
+		turn.mu.Unlock()
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		turn.callers--
+		if turn.callers == 0 {
+			delete(t.turns, key)
+		}
+	}
 }
 
 func withRequest(ctx context.Context, b opBody) (context.Context, error) {

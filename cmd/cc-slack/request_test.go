@@ -260,6 +260,15 @@ func TestKeyedBodiesKeepOneKeyAcrossTheResend(t *testing.T) {
 	if b := read(handed); b.RequestKey != sent.RequestKey || !b.RequestResend {
 		t.Fatalf("a body handed to a newer build = %+v, want its key and resend kept", b)
 	}
+	callers, callersAgain, err := keyedBodies(json.RawMessage(`{"channel_id":"C1","text":"deploy is out","request_key":"1794595135624-mydrive.697167"}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []opBody{read(callers), read(callersAgain)} {
+		if b.RequestKey != "1794595135624-mydrive.697167" || !b.RequestResend {
+			t.Fatalf("a body under its caller's key = %+v, want that key kept and Slack read for it on the first call too, since an earlier call may have posted it", b)
+		}
+	}
 	if _, err := withRequest(context.Background(), opBody{RequestKey: "not-a-key"}); err == nil {
 		t.Fatal("a request key with no mint time was taken, want it refused")
 	}
@@ -307,6 +316,70 @@ func TestASendWhoseAnswerWasLostIsResentAndPostsOnce(t *testing.T) {
 	}
 	if !later.Replayed || later.TS != held[0].TS || wire.postCount() != 1 {
 		t.Fatalf("a later call under the same ticket = %+v, want the receipt replayed and no second post", later)
+	}
+}
+
+type gatedPosts struct {
+	slackAPI
+	open <-chan struct{}
+}
+
+func (g gatedPosts) PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
+	<-g.open
+	return g.slackAPI.PostMessageContext(ctx, channelID, options...)
+}
+
+func TestTwoCallsUnderOneCallersKeyAtOncePostOnceAndBothAnswerThatPost(t *testing.T) {
+	wire := newWireSlack(t)
+	open := make(chan struct{})
+	var daemonApp *app
+	l := startDaemon(t, func(a *app) {
+		daemonApp = a
+		fake := a.newAPI
+		a.newAPI = func(token string) slackAPI { return postsOnTheWire{fake(token), gatedPosts{wire.api(), open}} }
+	})
+	loggedIn(t, l)
+	key := newRequestKey(time.Now())
+	body := l.hooked(opSend, map[string]any{"channel_id": testChannel, "text": "deploy is out"})
+	body["request_key"] = key
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		reply daemon.Reply
+		err   error
+	}
+	answers := make(chan answer, 2)
+	for range 2 {
+		go func() {
+			reply, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opSend, raw)
+			answers <- answer{reply, err}
+		}()
+	}
+	eventually(t, "both calls to hold or wait on the key's turn", func() bool {
+		daemonApp.requests.mu.Lock()
+		defer daemonApp.requests.mu.Unlock()
+		turn := daemonApp.requests.turns[key]
+		return turn != nil && turn.callers == 2
+	})
+	close(open)
+	posted := make([]string, 0, 2)
+	for range 2 {
+		got := <-answers
+		var res postResult
+		if got.err != nil || json.Unmarshal(got.reply.Body, &res) != nil {
+			t.Fatalf("a call under the key = %s, %v; want it answered", got.reply.Body, got.err)
+		}
+		posted = append(posted, res.TS)
+	}
+	if held := wire.messages(); len(held) != 1 || posted[0] != held[0].TS || posted[1] != held[0].TS {
+		t.Fatalf("calls answered %v with Slack holding %+v, want one post both calls answer", posted, held)
+	}
+	daemonApp.requests.mu.Lock()
+	defer daemonApp.requests.mu.Unlock()
+	if len(daemonApp.requests.turns) != 0 {
+		t.Fatalf("turns left after both calls = %v, want none kept for a key no call holds", daemonApp.requests.turns)
 	}
 }
 
