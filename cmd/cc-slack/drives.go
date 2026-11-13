@@ -2,101 +2,40 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"maps"
-	"slices"
 )
 
-type driveMates map[string]string
-
-func (l *liveCards) threadDrives(channel string) map[string][]string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	drives := map[string][]string{}
-	for _, t := range l.threads {
-		if t.Channel != channel {
-			continue
-		}
-		for _, m := range append(t.messages(), t.Root) {
-			if m != nil && m.Card.Drive != "" {
-				drives[t.Thread] = append(drives[t.Thread], m.Card.Drive)
-			}
-		}
-	}
-	return drives
+type driveMates struct {
+	drives map[string]string
+	holder string
 }
 
-func loadDriveMates(ctx context.Context, threads *dmThreads, cards *liveCards, dmChannelID string) (driveMates, error) {
-	drives := cards.threadDrives(dmChannelID)
-	if len(drives) == 0 {
-		return nil, nil
-	}
-	bound, err := threads.bound(ctx, dmChannelID, slices.Collect(maps.Keys(drives)))
-	if err != nil {
-		return nil, fmt.Errorf("load the DM's posting sessions: %w", err)
-	}
-	parent := map[string]string{}
-	find := func(x string) string {
-		root := x
-		for parent[root] != "" {
-			root = parent[root]
-		}
-		for x != root {
-			x, parent[x] = parent[x], root
-		}
-		return root
-	}
-	var subjects []string
-	for _, thread := range slices.Sorted(maps.Keys(bound)) {
-		for _, subjectID := range bound[thread] {
-			for _, drive := range drives[thread] {
-				if a, b := find(subjectID), find("drive:"+drive); a != b {
-					parent[a] = b
-				}
-				subjects = append(subjects, subjectID)
-			}
-		}
-	}
-	mates := driveMates{}
-	for _, subjectID := range subjects {
-		mates[subjectID] = find(subjectID)
-	}
-	return mates, nil
+func loadDriveMates(ctx context.Context, threads *dmThreads, holder string, subjectIDs []string) (driveMates, error) {
+	drives, err := threads.drives(ctx, append([]string{holder}, subjectIDs...))
+	return driveMates{drives: drives, holder: holder}, err
 }
 
 func (d driveMates) holds(w watch) bool {
-	_, carded := d[w.SubjectID]
-	return carded && (w.Kind == kindDM || w.Relayed)
+	_, drive := d.drives[w.SubjectID]
+	return drive && w.SubjectID == d.holder && (w.Kind == kindDM || w.Relayed)
 }
 
 func (d driveMates) same(a, b string) bool {
-	family, ok := d[a]
-	return ok && family == d[b]
+	drive, ok := d.drives[a]
+	return ok && drive == d.drives[b]
 }
 
-func (d driveMates) onAnotherSessionsCard(w watch, inThread []watch) bool {
-	carded := false
+func (d driveMates) leaves(w watch, inThread []watch) bool {
+	posted, foreign := false, false
 	for _, o := range inThread {
-		if o.Kind != kindDM {
-			continue
+		switch {
+		case o.Kind != kindDM:
+		case o.SubjectID == w.SubjectID || o.PID == w.PID:
+			posted = true
+		case !d.same(o.SubjectID, w.SubjectID):
+			foreign = true
+		case w.SubjectID == d.holder:
+			return true
 		}
-		if o.SubjectID == w.SubjectID || o.PID == w.PID {
-			return false
-		}
-		carded = carded || !d.same(o.SubjectID, w.SubjectID)
 	}
-	return carded
-}
-
-func (d driveMates) takeOver(inThread []watch, holder watch) []watch {
-	kept := slices.DeleteFunc(slices.Clone(inThread), func(w watch) bool {
-		return w.Kind == kindDM && w.SubjectID != holder.SubjectID && w.PID != holder.PID && d.same(w.SubjectID, holder.SubjectID)
-	})
-	if len(kept) == len(inThread) || d.onAnotherSessionsCard(holder, kept) {
-		return inThread
-	}
-	if slices.ContainsFunc(kept, func(o watch) bool { return o.SubjectID == holder.SubjectID && o.Owner == holder.Owner }) {
-		return kept
-	}
-	return append(kept, holder)
+	return foreign && !posted
 }

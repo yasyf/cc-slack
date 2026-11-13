@@ -192,7 +192,7 @@ func (l *liveDaemon) deliverOn(w watch, ts, text string) {
 	l.t.Helper()
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 	m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: w.ThreadTS, User: "UOTHER", Username: "teammate", Text: text}}
-	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, false)
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, driveMates{}, false)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestADMDirectiveNamesTheThreadItsMessageIsIn(t *testing.T) {
 	}
 }
 
-func TestADMHolderCardedOnADriveIsToldToAckThenStartAHandler(t *testing.T) {
+func TestOnlyTheDMHolderOfADriveIsToldToAckThenStartAHandler(t *testing.T) {
 	l := startDaemon(t)
 	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, DMChannelID: "D" + testUser}
 	w := watch{ID: 1, Kind: kindDM, ChannelID: id.DMChannelID, SubjectID: l.subID, Owner: agent.TopLevel}
@@ -318,8 +318,9 @@ func TestADMHolderCardedOnADriveIsToldToAckThenStartAHandler(t *testing.T) {
 		mates     driveMates
 		said, not string
 	}{
-		"a DM holder with no drive card": {nil, "Act on it as operator steering", "start a handler"},
-		"a DM holder on a drive's card":  {driveMates{l.subID: "drive:brook"}, "Ack it in one sentence, then start a handler", "Act on it"},
+		"a DM holder on no drive":         {driveMates{holder: l.subID}, "Act on it as operator steering", "start a handler"},
+		"a DM holder on a drive":          {driveMates{drives: map[string]string{l.subID: "brook"}, holder: l.subID}, "Ack it in one sentence, then start a handler", "Act on it"},
+		"a handler of the holder's drive": {driveMates{drives: map[string]string{l.subID: "brook", "holder": "brook"}, holder: "holder"}, "Act on it as operator steering", "start a handler"},
 	} {
 		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, want.mates, true)
 		if err != nil {
@@ -460,7 +461,7 @@ func TestABotReplyThatRepeatsItsParentOnAThreadWatchArrivesAsItsFirstLine(t *tes
 	deliver := func(ts, thread, bot, text string) messagePayload {
 		t.Helper()
 		m := slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: "UDATADOG", BotID: bot, Username: "Datadog", Text: text}}
-		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, false)
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, driveMates{}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -500,7 +501,7 @@ func TestEveryBotMessageOnAChannelWatchArrivesAsOneLine(t *testing.T) {
 	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindChannel, ChannelID: testChannel}
 	deliver := func(m slack.Message) messagePayload {
 		t.Helper()
-		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, false)
+		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, driveMates{}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
