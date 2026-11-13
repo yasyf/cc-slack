@@ -483,7 +483,7 @@ func TestSendReplyReactAndThread(t *testing.T) {
 	}
 
 	var thread struct {
-		Messages []threadMessage `json:"messages"`
+		Messages []readMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": sent.Permalink}).Body, &thread); err != nil {
 		t.Fatal(err)
@@ -525,10 +525,10 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	if err := json.Unmarshal(l.do(opHistory, map[string]any{"channel_id": testChannel, "limit": 2}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	want := []historyMessage{
+	want := []readMessage{
 		{TS: "1800000000.000300", User: testUser, UserName: "yasyf", FromUser: true, Text: "newest", Permalink: "https://acme.slack.com/archives/C1/p1800000000000300"},
 		{
-			TS: "1800000000.000200", UserName: "yasyf", FromClaude: true, Text: "PR is up\nsecond line",
+			TS: "1800000000.000200", UserName: "yasyf", FromClaude: true, FromBot: true, Text: "PR is up\nsecond line",
 			Permalink: "https://acme.slack.com/archives/C1/p1800000000000200", ReplyCount: 2, LatestReply: "1800000000.000400",
 			Files: []messageFile{chartFile()},
 		},
@@ -1717,8 +1717,8 @@ func TestOwnerTargetResolvesToTheBotIM(t *testing.T) {
 	}
 	l.do(opReact, map[string]string{"channel_id": testUser, "ts": sent.TS, "name": "eyes"})
 	var thread struct {
-		ChannelID string          `json:"channel_id"`
-		Messages  []threadMessage `json:"messages"`
+		ChannelID string        `json:"channel_id"`
+		Messages  []readMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testUser, "thread_ts": sent.TS}).Body, &thread); err != nil {
 		t.Fatal(err)
@@ -1749,8 +1749,8 @@ func TestPersonTargetsResolveToAGroupDMWithTheOwner(t *testing.T) {
 	}
 	l.do(opReact, map[string]string{"channel_id": "UOTHER", "ts": sent.TS, "name": "eyes"})
 	var thread struct {
-		ChannelID string          `json:"channel_id"`
-		Messages  []threadMessage `json:"messages"`
+		ChannelID string        `json:"channel_id"`
+		Messages  []readMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": "UOTHER", "thread_ts": sent.TS}).Body, &thread); err != nil {
 		t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,7 +19,7 @@ import (
 )
 
 const (
-	toolListCeiling     = 14500
+	toolListCeiling     = 14550
 	instructionsCeiling = 1550
 )
 
@@ -91,6 +92,57 @@ func TestStandingContextStaysUnderItsCeiling(t *testing.T) {
 	}
 	if len(instructions) > instructionsCeiling {
 		t.Errorf("instructions are %d bytes, over their %d-byte ceiling; move guidance to a tool result or the slack skill", len(instructions), instructionsCeiling)
+	}
+}
+
+func TestBothReadToolsShowAQuestionCardsButtonsAndItsBlocksRaw(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := postWaiting(t, l, statusCard{
+		Status: "needs_you", Title: "Which store keeps the tally?", Waits: "w1", Options: []string{"Ring", "Table"}, Recommended: "Ring",
+		Hints: map[string]string{"Ring": "A ring buffer in the daemon's memory.", "Table": "A SQLite table beside the read cache."},
+	})
+	tools, _, _, err := channelTools(l.deps, testSession, "/any/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type rawBlock struct {
+		BlockID   string `json:"block_id"`
+		Accessory struct {
+			ActionID string `json:"action_id"`
+			Style    string `json:"style"`
+		} `json:"accessory"`
+	}
+	for name, args := range map[string]map[string]any{
+		"slack_thread":  {"channel_id": card.id.DMChannelID, "thread_ts": card.ts, "raw": true},
+		"slack_history": {"channel_id": card.id.DMChannelID, "raw": true},
+	} {
+		at := slices.IndexFunc(tools, func(tool channel.Tool) bool { return tool.Name == name })
+		out, failed := tools[at].Handler(l.ctx, mustJSON(args), func(string) {})
+		var read struct {
+			Messages []readMessage `json:"messages"`
+		}
+		if err := json.Unmarshal([]byte(out), &read); failed || err != nil {
+			t.Fatalf("%s = %s, %v", name, out, err)
+		}
+		i := slices.IndexFunc(read.Messages, func(m readMessage) bool { return m.TS == card.ts })
+		if i < 0 {
+			t.Fatalf("%s reads %+v, want the card %s", name, read.Messages, card.ts)
+		}
+		m := read.Messages[i]
+		if want := []string{cardPickLabel, cardPickLabel, cardOtherLabel, cardExplainLabel}; !slices.Equal(m.Buttons, want) {
+			t.Errorf("%s buttons = %v, want %v", name, m.Buttons, want)
+		}
+		var raw struct {
+			Blocks []rawBlock `json:"blocks"`
+		}
+		if err := json.Unmarshal(m.Raw, &raw); err != nil {
+			t.Fatalf("%s raw = %s: %v", name, m.Raw, err)
+		}
+		ring := slices.IndexFunc(raw.Blocks, func(b rawBlock) bool { return b.BlockID == cardOptionBlock+"0" })
+		if ring < 0 || raw.Blocks[ring].Accessory.ActionID != cardWaitAction+"0:w1" || raw.Blocks[ring].Accessory.Style != "primary" {
+			t.Errorf("%s raw blocks = %+v, want %s0 holding Ring's primary Pick", name, raw.Blocks, cardOptionBlock)
+		}
 	}
 }
 

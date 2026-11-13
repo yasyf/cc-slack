@@ -140,7 +140,7 @@ func (f *fakeSlack) DocCardsContext(_ context.Context, serviceURL, channelID, te
 	return f.cards, nil
 }
 
-func (f *fakeSlack) RawMessages(_ context.Context, _, _, _ string) (map[string]json.RawMessage, error) {
+func (f *fakeSlack) RawMessages(_ context.Context, _, _, _, _ string) (map[string]json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	found := map[string]json.RawMessage{}
