@@ -53,13 +53,14 @@ var (
 )
 
 type bodyPiece struct {
-	text     string
-	line     int
-	table    [][]string
-	picture  *cardImage
-	gallery  []*slack.ImageBlock
-	chart    *slack.DataVisualizationBlock
-	chartErr error
+	text      string
+	line      int
+	table     [][]string
+	continued bool
+	picture   *cardImage
+	gallery   []*slack.ImageBlock
+	chart     *slack.DataVisualizationBlock
+	chartErr  error
 }
 
 func bodyPieces(body string) []bodyPiece {
@@ -413,8 +414,11 @@ func bodyPages(body string, firstBlocks, firstChars int, firstNative bool, pictu
 			place(part)
 		}
 	}
-	for _, piece := range galleryPieces(bodyPieces(body), pictures) {
+	for _, piece := range galleryPieces(tableParts(bodyPieces(body)), pictures) {
 		if block, chars, limit := piece.block(firstNative || len(pages) > 0, maxChars); block != nil {
+			if piece.continued {
+				turn()
+			}
 			put(block, chars, limit)
 			continue
 		}
@@ -428,6 +432,27 @@ func textPages(text string, firstBlocks int) (string, [][]slack.Block) {
 		return text, [][]slack.Block{nil}
 	}
 	return clipRunes(mrkdwnText(withoutTables(text)), cardMaxSectionLen), bodyPages(text, firstBlocks, cardMaxVisible, true, nil)
+}
+
+func tableParts(pieces []bodyPiece) []bodyPiece {
+	var out []bodyPiece
+	for _, piece := range pieces {
+		if piece.table == nil || tableFits(piece.table) {
+			out = append(out, piece)
+			continue
+		}
+		head := piece.table[0]
+		part := bodyPiece{table: [][]string{head}}
+		for _, row := range piece.table[1:] {
+			if len(part.table) > 1 && (len(part.table) == cardMaxTableRows || tableChars(part.table)+tableChars([][]string{row}) > cardMaxVisible) {
+				out = append(out, part)
+				part = bodyPiece{table: [][]string{head}, continued: true}
+			}
+			part.table = append(part.table, row)
+		}
+		out = append(out, part)
+	}
+	return out
 }
 
 func galleryPieces(pieces []bodyPiece, pictures map[string]*slack.ImageBlock) []bodyPiece {

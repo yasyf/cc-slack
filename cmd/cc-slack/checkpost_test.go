@@ -61,10 +61,11 @@ func TestCheckPostFlagsABadPostAndPassesACleanOneWithTheScriptsExitStatus(t *tes
 			[]string{`raw-card-link "https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779"`}},
 		"card link as its own label": {"The Hima fix waits on your pick: <https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779|acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779>", 1,
 			[]string{`raw-card-link "https://acme.slack.com/archives/D0C4HQWPLCC/p1794277125284779"`}},
-		"six cards on one line": {"Tonight: " + strings.Join(roomLinks(1, 6), ", "), 1, []string{"1:1 links-past-five: line 1 links 6 Slack messages"}},
-		"six cards a line each": {strings.Join(roomLinks(1, 6), "\n"), 0, nil},
-		"wall of text":          {"The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.", 1, []string{`1:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
-		"status table":          {stuckTable, 0, nil},
+		"six cards on one line":    {"Tonight: " + strings.Join(roomLinks(1, 6), ", "), 1, []string{"1:1 links-past-five: line 1 links 6 Slack messages"}},
+		"six cards a line each":    {strings.Join(roomLinks(1, 6), "\n"), 0, nil},
+		"six cards in a table row": {"| When | Cards |\n|---|---|\n| tonight | " + strings.Join(roomLinks(1, 6), " ") + " |", 0, nil},
+		"wall of text":             {"The build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.", 1, []string{`1:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
+		"status table":             {stuckTable, 0, nil},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

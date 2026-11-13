@@ -24,6 +24,7 @@ func (c crowdedLine) String() string {
 }
 
 func drawnLinks(text string) map[string]bool {
+	text = withoutTables(text)
 	links := map[string]bool{}
 	for _, link := range append(messageLink.FindAllString(text, -1), alertLink.FindAllString(text, -1)...) {
 		links[link] = true

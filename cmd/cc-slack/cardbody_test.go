@@ -113,16 +113,43 @@ func TestEveryTableInABodyDrawsAsItsOwnTable(t *testing.T) {
 	}
 }
 
-func TestATableSlackWouldRefuseDrawsAsLines(t *testing.T) {
+func TestAHeaderAloneDrawsAsALine(t *testing.T) {
+	pages := bodyPages("| a | b |\n|---|---|", cardMaxBlocks, cardMaxVisible, true, nil)
+	if drawn := tables(slices.Concat(pages...)); len(drawn) != 0 {
+		t.Fatalf("%d tables, want a line, since Slack refuses a table without a row under its header", len(drawn))
+	}
+}
+
+func TestATablePastSlacksLimitsGoesOnInMessagesThatEachRepeatItsHeader(t *testing.T) {
 	wide := strings.Repeat("x", slackMaxTable/(2*(cardMaxTableRows-1))+1)
-	rows := append([]string{"| a | b |", "|---|---|"}, slices.Repeat([]string{"| " + wide + " | " + wide + " |"}, cardMaxTableRows-1)...)
-	for name, body := range map[string]string{
-		"past 10,000 characters": strings.Join(rows, "\n"),
-		"a header alone":         "| a | b |\n|---|---|",
+	for name, tc := range map[string]struct {
+		row         string
+		rows, parts int
+	}{
+		"past 10,000 characters": {"| " + wide + " | " + wide + " |", cardMaxTableRows - 1, 2},
+		"past 100 rows":          {"| a1 | b1 |", 2 * cardMaxTableRows, 3},
 	} {
-		pages := bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil)
-		if drawn := tables(slices.Concat(pages...)); len(drawn) != 0 {
-			t.Errorf("%s: %d tables, want lines, since Slack refuses a table past %d characters or without a row under its header", name, len(drawn), slackMaxTable)
+		body := strings.Join(append([]string{"Where each run stands.", "", "| a | b |", "|---|---|"}, slices.Repeat([]string{tc.row}, tc.rows)...), "\n")
+		rows := 0
+		var parts []*slack.TableBlock
+		for n, page := range bodyPages(body, cardMaxBlocks, cardMaxVisible, true, nil) {
+			if err := checkBlocks(page); err != nil {
+				t.Fatalf("%s: Slack would refuse page %d: %v", name, n+1, err)
+			}
+			drawn := tables(page)
+			if len(drawn) > 1 {
+				t.Fatalf("%s: page %d holds %d tables, want each part in a message of its own", name, n+1, len(drawn))
+			}
+			parts = append(parts, drawn...)
+		}
+		for n, part := range parts {
+			if head := []string{cellText(part.Rows[0][0]), cellText(part.Rows[0][1])}; !slices.Equal(head, []string{"*a*", "*b*"}) {
+				t.Fatalf("%s: part %d opens with %q, want the table's header", name, n+1, head)
+			}
+			rows += len(part.Rows) - 1
+		}
+		if len(parts) != tc.parts || rows != tc.rows {
+			t.Fatalf("%s: %d parts holding %d rows, want %d parts holding all %d", name, len(parts), rows, tc.parts, tc.rows)
 		}
 	}
 }

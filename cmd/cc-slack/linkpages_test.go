@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -60,6 +61,54 @@ func TestLinkPagesCutsBeforeTheSixthLink(t *testing.T) {
 	crowded := "see " + strings.Join(roomLinks(1, 6), " ")
 	if _, err := linkPages(crowded); err == nil || err.Error() != (crowdedLine{1, 6}).refusal() {
 		t.Fatalf("linkPages of one line with six links = %v, want it refused naming line 1", err)
+	}
+}
+
+func TestTableRowsNeverCountTowardTheFivePreviews(t *testing.T) {
+	t.Parallel()
+	text := strings.Join([]string{"Tonight's cards:", "", "| When | Cards |", "|---|---|", "| tonight | " + strings.Join(roomLinks(1, 6), " ") + " |", "| tomorrow | " + strings.Join(roomLinks(7, 9), " ") + " |"}, "\n")
+	if pages, err := linkPages(text); err != nil || !slices.Equal(pages, []string{text}) {
+		t.Fatalf("linkPages = %q, %v; want the post whole, since Slack previews no link in a table cell", pages, err)
+	}
+	if err := refuseEditPastFive(identity{DMChannelID: testDM}, opBody{ChannelID: testDM, Text: text}); err != nil {
+		t.Fatalf("an edit whose table links nine cards: %v, want it let through", err)
+	}
+}
+
+func TestALongStatusTableOfCardLinksPostsAsOneMessageThatKeepsItsHeader(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	text, err := os.ReadFile("testdata/long-status-table.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := startDaemon(t)
+	loggedIn(t, l)
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": string(text), "thread_ts": hisThread}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	sent := l.slack.sentTo(testDM)
+	if len(sent) != 1 || res["page_permalink"] != "" {
+		t.Fatalf("posts = %+v, dm-status = %v, want the 24-row table of 36 card links as one message", sent, res)
+	}
+	blocks := postedBlocks(t, sent[0].blocks)
+	drawn := tables(blocks)
+	if err := checkBlocks(blocks); err != nil || len(drawn) != 1 || len(drawn[0].Rows) != 25 {
+		t.Fatalf("blocks %s, %v; want one table of its header and 24 rows that Slack takes", sent[0].blocks, err)
+	}
+	header := make([]string, 0, len(drawn[0].Rows[0]))
+	for _, cell := range drawn[0].Rows[0] {
+		header = append(header, cellText(cell))
+	}
+	if !slices.Equal(header, []string{"*Order*", "*State*", "*Your open question*"}) {
+		t.Fatalf("header = %q, want the table's own header", header)
+	}
+	if rows := slices.DeleteFunc(sectionTexts(blocks), func(s string) bool { return !strings.Contains(s, " · ") }); len(rows) > 0 {
+		t.Fatalf("sections %q, want no row drawn as text, where Slack previews its links", rows)
+	}
+	l.do(opEdit, map[string]any{"channel_id": testDM, "thread_ts": hisThread, "ts": sent[0].ts, "text": string(text)})
+	if edits := l.slack.edited(); len(edits) != 1 || len(tables(postedBlocks(t, edits[0].blocks))) != 1 {
+		t.Fatalf("edits = %+v, want one chat.update drawing the table", edits)
 	}
 }
 
