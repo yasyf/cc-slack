@@ -82,7 +82,7 @@ write every post so a person can answer it, and answer each reply as it lands.
 - A message telling its reader something waits on them links the card. In your
   DM with the app, link the open card's permalink from `cc-slack drive-cards`
   under words that name it, as `<permalink|the lock card>`, and Slack draws the
-  card under the line; the post copies nothing and shows no raw URL, so the card
+  card under the line the first time its thread links it; the post copies nothing and shows no raw URL, so the card
   stays one message. A PR's tap card comes from `tap_prs`, or from linking the
   PR's URL in a DM post that says something waits on you. A DM line that says
   something waits on you, with no open card linked, no PR linked or in `tap_prs`

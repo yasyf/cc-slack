@@ -170,16 +170,20 @@ MCP instead.
 session's top-level watches still active. For a top-level watch, omit
 `owner`; an owner subagent supplies its own agent id.
 
-A post or edit that links a Slack message shows Slack's own preview of it, so
-refer to a card by its permalink, from `cc-slack drive-cards`, under words that
-name it, as `<permalink|the lock card>`: the line reads as words, and Slack
-draws the card under it. A bare permalink shows the raw URL above the card, and
-Slack never previews a link whose label is its own URL; either is refused, as
-is a copy of its blocks or its title repeated without the link. Slack skips the
-preview of a link it unfurled in the same thread a moment earlier, and of every
-link after a message's fifth, so such a link shows only its words. A post to
-your DM with no `blocks` that links more than five Slack messages, Sentry issues
-and Datadog monitors goes out as pages, each cut at the last blank line before
+A post or edit draws a Slack message it links only when that message is an open
+card the post's thread has not shown yet, so refer to a card by its permalink,
+from `cc-slack drive-cards`, under words that name it, as
+`<permalink|the lock card>`: the line reads as words, and Slack draws the card
+under it the first time the thread links it. A later link to it in that thread,
+and every link to any other Slack message, your own messages included, stays
+plain words. A post linking both a card that draws and a link that stays plain
+goes out plain, and the card follows as its own reply in the post's thread. A
+bare permalink shows the raw URL above the card, and Slack never previews a link
+whose label is its own URL; either is refused, as is a copy of its blocks or its
+title repeated without the link. Slack skips the preview of every link after a
+message's fifth, so such a link shows only its words. A post to your DM with no
+`blocks` that links more than five cards that draw, Sentry issues and Datadog
+monitors goes out as pages, each cut at the last blank line before
 the line holding its sixth link, or at that line's start, so every card draws;
 the pages go where the post goes, and the result's `page_permalink` names each
 page after the first. A link in a table row counts toward none of the five,

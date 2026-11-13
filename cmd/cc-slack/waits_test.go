@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -106,12 +107,21 @@ func TestAPostThatCopiesACardIsRefusedAndItsLinkIsNot(t *testing.T) {
 	}
 }
 
-func TestAnEditThatLinksAMessageUnfurlsIt(t *testing.T) {
+func TestAnEditDrawsAnOpenCardItsThreadHasNotShown(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "now see https://example.slack.com/archives/C1/p1793818357021259"})
-	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "see https://example.com/a"})
-	if edits := l.slack.edited(); len(edits) != 2 || edits[0].unfurlLinks != "true" || edits[1].unfurlLinks == "true" {
-		t.Fatalf("edits = %+v, want the one linking a message to unfurl it and the other left alone", edits)
+	card := postWaiting(t, l, mergeCard())
+	link := "<" + card.url() + "|the merge card>"
+	var first postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]string{"channel_id": testChannel, "text": "first: " + link}).Body, &first); err != nil {
+		t.Fatal(err)
+	}
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "now see " + link})
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "text": "now see " + link + ", still"})
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000200", "text": "see https://example.slack.com/archives/C1/p1793818357021259"})
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": "1800000000.000300", "thread_ts": first.TS, "text": "edited: " + link})
+	edits := l.slack.edited()
+	if len(edits) != 4 || edits[0].unfurlLinks != "true" || edits[1].unfurlLinks != "true" || edits[2].unfurlLinks == "true" || edits[3].unfurlLinks == "true" {
+		t.Fatalf("edits = %+v, want the card drawn by the message that links it each time it is edited, and plain in a thread that shows it and under a link to another message", edits)
 	}
 }

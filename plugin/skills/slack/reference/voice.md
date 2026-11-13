@@ -19,7 +19,8 @@ order.
    `term_` handle, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
    and build or PR numbers, bare URLs other than a Sentry issue or Datadog
    monitor, incident, or event link, which stay bare so Slack unfurls them,
-   a Slack message link included, which unfurls under words that name it,
+   a Slack message link included, which draws an open card under words that
+   name it once a thread,
    one-letter codenames such as "D", but not a letter naming an option such as
    "Direction B", multi-agent terms such as lane, desk, walker, parity, and
    fence, and order and job ids such as o308, but never inside a function,

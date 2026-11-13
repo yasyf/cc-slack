@@ -678,7 +678,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		asked := slices.Clone(b.TapPRs)
 		b.TapPRs = append(b.TapPRs, waitingPRs(id, channelID, b)...)
-		texts, crowded := b.pagesIn(id, channelID)
+		texts, crowded := b.pagesIn(id, channelID, a.cards.drawsIn(channelID, b.ThreadTS, ""))
 		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b), crowded); err != nil {
 			return fail(err.Error())
 		}
@@ -703,10 +703,11 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
-		extra = append(extra, slack.MsgOptionAttachments(pages[0].previews...))
+		draw := a.linkDraw(id, channelID, b.ThreadTS, pages[0].text, pages[0].blocks, b.Files)
+		text, blocks, extra := draw.marked(pages[0].text, pages[0].blocks, append(extra, slack.MsgOptionAttachments(pages[0].previews...)))
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(atStep(hc.Ctx, "post"), api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, pages[0].text, pages[0].blocks, b.Files, extra...)
+			res, err = postAs(atStep(hc.Ctx, "post"), api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, text, blocks, b.Files, extra...)
 			return err
 		})
 		if err != nil {
@@ -715,6 +716,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		res.Posted = true
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
 		a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
+		a.drewLinks(hc.Ctx, hc.DB, id, draw, res)
 		res.TicketID = ticket.ID
 		r := receipt{TicketID: ticket.ID, ChannelID: res.ChannelID, TS: res.TS, Permalink: res.Permalink}
 		if ticket.once() {
@@ -858,6 +860,17 @@ func (a *app) watchPostThread(ctx context.Context, db *sql.DB, subjectID, channe
 }
 
 func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (postResult, error) {
+	d := a.linkDraw(id, channelID, threadTS, text, blocks, files)
+	text, blocks, extra = d.marked(text, blocks, extra)
+	res, err := a.send(ctx, db, id, channelID, threadTS, text, blocks, files, extra...)
+	if err != nil {
+		return res, err
+	}
+	a.drewLinks(ctx, db, id, d, res)
+	return res, nil
+}
+
+func (a *app) send(ctx context.Context, db *sql.DB, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (postResult, error) {
 	blocks = fitHeaders(blocks)
 	if err := checkBlocks(blocks); err != nil {
 		return postResult{}, err
@@ -930,14 +943,10 @@ func ownPost(ctx context.Context, db *sql.DB, channelID, ts string) (bool, error
 func publish(ctx context.Context, api slackAPI, record func(channelID, ts string), id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (string, string, error) {
 	if len(files) == 0 {
 		text, blocks = fitText(text, blocks)
-		post := strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36)
-		text, blocks = eachText(text, blocks, func(t string) string { return freshLinks(threadParentAsWords(t, channelID, threadTS), post) })
+		text, blocks = eachText(text, blocks, func(t string) string { return threadParentAsWords(t, channelID, threadTS) })
 		opts := id.postOptions(text, threadTS, extra...)
 		if len(blocks) > 0 {
 			opts = append(opts, slack.MsgOptionBlocks(blocks...))
-		}
-		if linksTo(text, blocks, messageLink) || (channelID == id.DMChannelID && linksTo(text, blocks, alertLink)) {
-			opts = append(opts, slack.MsgOptionEnableLinkUnfurl())
 		}
 		return api.PostMessageContext(ctx, channelID, opts...)
 	}
@@ -1008,16 +1017,6 @@ func threadParentAsWords(text, channelID, threadTS string) string {
 	})
 }
 
-func freshLinks(text, post string) string {
-	return messageLink.ReplaceAllStringFunc(text, func(link string) string {
-		joint := "?"
-		if strings.Contains(link, "?") {
-			joint = "&"
-		}
-		return link + joint + freshLinkParam + "=" + post
-	})
-}
-
 func linksTo(text string, blocks []slack.Block, link *regexp.Regexp) bool {
 	return link.MatchString(text) || slices.ContainsFunc(blockTexts(slack.Blocks{BlockSet: blocks}), link.MatchString)
 }
@@ -1072,10 +1071,10 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionEdit, err))
 	}
-	if err := cmp.Or(a.refuseBlanking(id, b), refuseEditPastFive(id, b), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
+	if err := cmp.Or(a.refuseBlanking(id, b), refuseEditPastFive(id, b, a.cards.drawsIn(id.DMChannelID, cmp.Or(b.messageThread(), b.TS), b.TS)), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
-	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID string) error {
+	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID, thread string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 		text, blocks := texts[0], blocks
 		if len(blocks) == 0 {
@@ -1083,13 +1082,26 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 			text, pages = textPages(text, cardMaxBlocks)
 			blocks = slices.Concat(pages...)
 		}
-		text, blocks = eachText(text, blocks, func(t string) string { return threadParentAsWords(t, channelID, b.messageThread()) })
-		return a.cards.editByHand(channelID, b.TS, func() error {
-			if linksTo(text, blocks, messageLink) {
-				return changeMessage(ctx, api, channelID, b.TS, text, blocks, slack.MsgOptionEnableLinkUnfurl())
+		key := cmp.Or(thread, b.TS)
+		a.cards.mu.Lock()
+		draw := a.cards.linkDrawIn(channelID, key, b.TS, text, blocks, false)
+		a.cards.mu.Unlock()
+		if !draw.inline {
+			draw.cards = nil
+		}
+		text, blocks, extra := draw.marked(text, blocks, nil)
+		text, blocks = eachText(text, blocks, func(t string) string { return threadParentAsWords(t, channelID, thread) })
+		err := a.cards.editByHand(channelID, b.TS, func() error {
+			if draw.inline {
+				return changeMessage(ctx, api, channelID, b.TS, text, blocks, extra...)
 			}
 			return updateMessage(ctx, api, channelID, b.TS, text, blocks)
 		})
+		if err != nil {
+			return err
+		}
+		a.cards.drew(channelID, key, b.TS, draw.cards, a.now())
+		return nil
 	})
 }
 
@@ -1101,7 +1113,7 @@ func (a *app) handleDelete(hc daemon.HandlerCtx) daemon.Reply {
 	if b.ChannelID == "" || b.TS == "" || b.Text != "" || len(b.Blocks) > 0 {
 		return fail("delete needs channel_id and ts (or a Slack url), and no text or blocks")
 	}
-	return a.changeOwnMessage(hc, b, approveDelete, actionDelete, func(ctx context.Context, api slackAPI, _ identity, channelID string) error {
+	return a.changeOwnMessage(hc, b, approveDelete, actionDelete, func(ctx context.Context, api slackAPI, _ identity, channelID, _ string) error {
 		if _, _, err := api.DeleteMessageContext(ctx, channelID, b.TS); err != nil {
 			return err
 		}
@@ -1109,7 +1121,7 @@ func (a *app) handleDelete(hc daemon.HandlerCtx) daemon.Reply {
 	})
 }
 
-func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act action, change func(context.Context, slackAPI, identity, string) error) daemon.Reply {
+func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act action, change func(ctx context.Context, api slackAPI, id identity, channelID, thread string) error) daemon.Reply {
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(fallback(act, err))
@@ -1135,7 +1147,7 @@ func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act 
 		return fail(err.Error())
 	}
 	err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() error {
-		return change(hc.Ctx, api, id, channelID)
+		return change(hc.Ctx, api, id, channelID, thread)
 	})
 	if err != nil {
 		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, act, err))
@@ -2546,7 +2558,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, waitingPRs(id, id.DMChannelID, b)...)
-	texts, crowded := b.pagesIn(id, id.DMChannelID)
+	texts, crowded := b.pagesIn(id, id.DMChannelID, a.cards.drawsIn(id.DMChannelID, b.ThreadTS, ""))
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
 	}
@@ -3204,7 +3216,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.post(ctx, db, id, id.DMChannelID, t.Thread, text, blocks, nil, entities...)
+		res, err = a.postCard(ctx, db, id, t, text, blocks, entities...)
 		return err
 	}); err != nil {
 		return nil, err
@@ -3221,7 +3233,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
 		text, blocks := t.rootMessage(now, cards.canvas())
-		res, err := a.post(ctx, db, id, id.DMChannelID, "", text, blocks, nil, msg.card.entities()...)
+		res, err := a.postCard(ctx, db, id, t, text, blocks, msg.card.entities()...)
 		if err != nil {
 			return "", false, err
 		}

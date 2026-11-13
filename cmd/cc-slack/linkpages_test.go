@@ -52,14 +52,14 @@ func TestLinkPagesCutsBeforeTheSixthLink(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := linkPages(tc.text)
+			got, err := linkPages(tc.text, everyLinkDraws)
 			if err != nil || !slices.Equal(got, tc.want) {
 				t.Fatalf("linkPages = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
 	crowded := "see " + strings.Join(roomLinks(1, 6), " ")
-	if _, err := linkPages(crowded); err == nil || err.Error() != (crowdedLine{1, 6}).refusal() {
+	if _, err := linkPages(crowded, everyLinkDraws); err == nil || err.Error() != (crowdedLine{1, 6}).refusal() {
 		t.Fatalf("linkPages of one line with six links = %v, want it refused naming line 1", err)
 	}
 }
@@ -67,10 +67,10 @@ func TestLinkPagesCutsBeforeTheSixthLink(t *testing.T) {
 func TestTableRowsNeverCountTowardTheFivePreviews(t *testing.T) {
 	t.Parallel()
 	text := strings.Join([]string{"Tonight's cards:", "", "| When | Cards |", "|---|---|", "| tonight | " + strings.Join(roomLinks(1, 6), " ") + " |", "| tomorrow | " + strings.Join(roomLinks(7, 9), " ") + " |"}, "\n")
-	if pages, err := linkPages(text); err != nil || !slices.Equal(pages, []string{text}) {
+	if pages, err := linkPages(text, everyLinkDraws); err != nil || !slices.Equal(pages, []string{text}) {
 		t.Fatalf("linkPages = %q, %v; want the post whole, since Slack previews no link in a table cell", pages, err)
 	}
-	if err := refuseEditPastFive(identity{DMChannelID: testDM}, opBody{ChannelID: testDM, Text: text}); err != nil {
+	if err := refuseEditPastFive(identity{DMChannelID: testDM}, opBody{ChannelID: testDM, Text: text}, everyLinkDraws); err != nil {
 		t.Fatalf("an edit whose table links nine cards: %v, want it let through", err)
 	}
 }
@@ -112,11 +112,24 @@ func TestALongStatusTableOfCardLinksPostsAsOneMessageThatKeepsItsHeader(t *testi
 	}
 }
 
+func everyLinkDraws(permalinkRef) bool { return true }
+
+func openCardLinks(t *testing.T, l *liveDaemon, n int) []string {
+	t.Helper()
+	links := make([]string, n)
+	for i := range links {
+		card := postWaiting(t, l, statusCard{Status: "needs_you", Title: fmt.Sprintf("Take route %d?", i+1), Body: "CI is green.", Options: []string{"Take it", "Hold"}, Recommended: "Hold", Waits: fmt.Sprintf("route-%d", i+1)})
+		links[i] = "<" + card.url() + fmt.Sprintf("|card %d>", i+1)
+	}
+	return links
+}
+
 func TestADMPostPastFiveLinksGoesOutAsPagesThatEachDrawTheirCards(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	l := startDaemon(t)
 	loggedIn(t, l)
-	text := strings.Join(slices.Concat([]string{"Tonight's cards:"}, roomLinks(1, 3), []string{""}, roomLinks(4, 7)), "\n")
+	cards := openCardLinks(t, l, 7)
+	text := strings.Join(slices.Concat([]string{"Tonight's cards:"}, cards[:3], []string{""}, cards[3:]), "\n")
 	for _, thread := range []string{"", hisThread} {
 		posts := len(l.slack.sentTo(testDM))
 		var res map[string]string
@@ -131,7 +144,7 @@ func TestADMPostPastFiveLinksGoesOutAsPagesThatEachDrawTheirCards(t *testing.T) 
 			if page.unfurlLinks != "true" || thread != "" && page.threadTS != thread || thread == "" && page.threadTS != "" {
 				t.Fatalf("thread %q: page %d = %+v, want it unfurled where the post goes", thread, i+1, page)
 			}
-			if links := len(drawnLinks(page.text)); links > slackMaxPreviews {
+			if links := len(drawnLinks(page.text, everyLinkDraws)); links > slackMaxPreviews {
 				t.Fatalf("thread %q: page %d links %d messages, want at most five", thread, i+1, links)
 			}
 		}
@@ -147,10 +160,11 @@ func TestADMPostPastFiveLinksGoesOutAsPagesThatEachDrawTheirCards(t *testing.T) 
 func TestALineOrAnEditPastFiveLinksIsRefusedAndSendsNothing(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	posts := len(l.slack.sent())
-	l.refused(opDMStatus, map[string]any{"text": "Tonight: " + strings.Join(roomLinks(1, 6), ", ")}, "line 1 links 6 Slack messages")
-	l.refused(opEdit, map[string]any{"channel_id": testDM, "ts": "1800000000.000100", "text": strings.Join(roomLinks(1, 6), "\n")}, errEditPastFive.Error())
-	if sent, edits := l.slack.sent()[posts:], l.slack.edited(); len(sent) != 0 || len(edits) != 0 {
+	cards := openCardLinks(t, l, 6)
+	posts, edited := len(l.slack.sent()), len(l.slack.edited())
+	l.refused(opDMStatus, map[string]any{"text": "Tonight: " + strings.Join(cards, ", ")}, "line 1 links 6 Slack messages")
+	l.refused(opEdit, map[string]any{"channel_id": testDM, "ts": "1800000000.000100", "text": strings.Join(cards, "\n")}, errEditPastFive.Error())
+	if sent, edits := l.slack.sent()[posts:], l.slack.edited()[edited:]; len(sent) != 0 || len(edits) != 0 {
 		t.Fatalf("refused posts sent %+v and edited %+v, want nothing", sent, edits)
 	}
 }
