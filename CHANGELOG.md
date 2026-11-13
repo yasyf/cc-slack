@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- A release post no longer goes to `card_command` as `{"release": {"name", "line", "link"}}`; the feed's `RELEASE` line is all a release post sends. A drive reopened an incident's stop from that line, which counts failed targets and never names the failed component: on Nov 13 it reopened one for a Desktop app notarize failure no incident target waits on, then reopened nothing when api failed in the same release nine minutes later. You picked: "Delete the automatic stop reopen".
 - `card-copy` is gone, its op and its CLI verb: link the card's permalink under words that name it instead. A copy posted before still follows its card, and loses its buttons when the card is redrawn.
 
 ### Fixed
