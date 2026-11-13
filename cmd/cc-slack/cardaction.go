@@ -93,34 +93,35 @@ type askTap struct {
 }
 
 type tapQueue struct {
-	mu     sync.Mutex
-	queued map[string][]func()
-	busy   sync.WaitGroup
+	mu   sync.Mutex
+	last map[string]chan struct{}
+	busy sync.WaitGroup
 }
 
-func (q *tapQueue) run(card string, tap func()) {
+type tapTurnKey struct{}
+
+func (q *tapQueue) run(ctx context.Context, card string, tap func(context.Context)) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-	if taps, ok := q.queued[card]; ok {
-		q.queued[card] = append(taps, tap)
-		return
-	}
-	q.queued[card] = []func(){tap}
-	q.busy.Go(func() { q.drain(card) })
+	before, done := q.last[card], make(chan struct{})
+	q.last[card] = done
+	q.mu.Unlock()
+	q.busy.Go(func() {
+		tap(context.WithValue(ctx, tapTurnKey{}, before))
+		if before != nil {
+			<-before
+		}
+		q.mu.Lock()
+		if q.last[card] == done {
+			delete(q.last, card)
+		}
+		q.mu.Unlock()
+		close(done)
+	})
 }
 
-func (q *tapQueue) drain(card string) {
-	for {
-		q.mu.Lock()
-		taps := q.queued[card]
-		if len(taps) == 0 {
-			delete(q.queued, card)
-			q.mu.Unlock()
-			return
-		}
-		q.queued[card] = taps[1:]
-		q.mu.Unlock()
-		taps[0]()
+func inTurn(ctx context.Context) {
+	if before, _ := ctx.Value(tapTurnKey{}).(chan struct{}); before != nil {
+		<-before
 	}
 }
 
@@ -363,6 +364,7 @@ func (p *poller) recordPRTap(ctx context.Context, id identity, card cardRef, wai
 	if !ok || len(id.Config.PRLinks.CardCommand) == 0 {
 		return
 	}
+	inTurn(ctx)
 	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": newPRAnswer(pr, waits, label, press, p.cards.heads(card))}); err != nil {
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command did not take it: %v", waits, label, err)
 	}
@@ -409,9 +411,11 @@ const (
 	tapRecording
 	tapRecorded
 	tapRefused
+	tapUndone
 )
 
 func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap owedTap) bool {
+	inTurn(ctx)
 	_, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": tap.Answer})
 	switch {
 	case err == nil:
@@ -440,14 +444,14 @@ func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap 
 func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 	due, next := p.cards.owedTaps(p.now(), 2*prCardPatience)
 	for _, owed := range due {
-		p.taps.run(owed.card.channel+"/"+owed.card.ts, func() {
+		p.taps.run(context.WithoutCancel(ctx), owed.card.channel+"/"+owed.card.ts, func(ctx context.Context) {
 			if owed.tap.Question == nil {
-				p.applyPRTap(context.WithoutCancel(ctx), id, owed.card, owed.tap)
+				p.applyPRTap(ctx, id, owed.card, owed.tap)
 				return
 			}
-			if q := owed.tap.Question; p.applyQuestionTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) == tapUnrecorded {
+			if q := owed.tap.Question; p.applyQuestionTap(ctx, id, owed.card, owed.tap) == tapUnrecorded {
 				tapped := cardActionPush{Channel: owed.card.channel, ThreadTS: owed.card.thread, MessageTS: owed.card.ts, ActionTS: q.ActionTS}
-				if err := p.handOver(context.WithoutCancel(ctx), id, tapped, askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Waits: true}, owed.tap.Line); err != nil {
+				if err := p.handOver(ctx, id, tapped, askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Waits: true}, owed.tap.Line); err != nil {
 					p.log.Printf("waiting card %s: %q is with no session: %v", q.Waits, q.Label, err)
 				}
 			}
@@ -476,6 +480,7 @@ func newQuestionAnswer(id identity, card cardRef, k askTap, undone bool, press c
 }
 
 func (p *poller) runQuestionTap(ctx context.Context, id identity, answer questionAnswer) (tapRecord, error) {
+	inTurn(ctx)
 	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer})
 	if errors.Is(err, errCardCommandUnfinished) {
 		return tapRecording, err
@@ -514,6 +519,13 @@ func (p *poller) recordTap(ctx context.Context, id identity, card cardRef, k ask
 func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef, tap owedTap) tapRecord {
 	answer := *tap.Question
 	rec, err := p.runQuestionTap(ctx, id, answer)
+	if !p.cards.stillAnswered(card, answer) {
+		p.log.Printf("waiting card %s: %q was undone before the card command took it, so the card is drawn from the answer it holds now", answer.Waits, answer.Label)
+		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), card.channel, card.thread, card.ts, p.now()); err != nil {
+			p.log.Printf("waiting card %s: its redraw after the undone %q failed: %v", answer.Waits, answer.Label, err)
+		}
+		return tapUndone
+	}
 	switch rec {
 	case tapRecorded:
 		p.cards.oweTap(card.channel, card.thread, answer.Waits, nil)
@@ -1031,6 +1043,9 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	answered := w.answeredLine(p.now())
 	rec := p.recordWaits(ctx, id, w, answered)
+	if rec == tapUndone {
+		return cardAnswerResult{Label: w.tap.Label, Other: w.other, At: w.at}, nil
+	}
 	if rec == tapRecording || rec == tapRefused {
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
 	}
@@ -1238,9 +1253,12 @@ func (p *poller) reopenAnswer(ctx context.Context, id identity, card string) err
 }
 
 func (p *poller) undoAnswer(ctx context.Context, id identity, card cardRef, ans askAnswer, press cardPress, how string) error {
+	undone := p.redrawUndone(ctx, id, p.cards.undo(card.channel, ans.Tap), press)
+	inTurn(ctx)
+	undone = append(undone, p.redrawUndone(ctx, id, p.cards.undo(card.channel, ans.Tap), press)...)
 	db := p.plane.DB()
 	var errs []error
-	for _, u := range p.cards.undo(card.channel, ans.Tap) {
+	for _, u := range undone {
 		if err := p.reopen(ctx, id, db, press, u, how, fmt.Sprintf("they undid their answer %q", u.answer.Label)); err != nil {
 			errs = append(errs, err)
 		}
@@ -1275,14 +1293,15 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 		return fmt.Errorf("%s is no reply of %s's in the thread of card %s", reply, id.name(), card)
 	}
 	words := strings.TrimSpace(msgs[at].Text)
-	undone := p.cards.undoReply(ref, words)
+	press := cardPress{replyLink.ts, "wrote in the card's thread"}
+	undone := p.redrawUndone(ctx, id, p.cards.undoReply(ref, words), press)
 	if len(undone) == 0 {
 		return fmt.Errorf("card %s is not answered with the words of %s, %q", card, reply, words)
 	}
 	db := p.plane.DB()
 	var errs []error
 	for _, u := range undone {
-		if err := p.reopen(ctx, id, db, cardPress{replyLink.ts, "wrote in the card's thread"}, u, "reply in the card's thread",
+		if err := p.reopen(ctx, id, db, press, u, "reply in the card's thread",
 			fmt.Sprintf("their reply %q was taken as their answer", words)); err != nil {
 			errs = append(errs, err)
 		}
@@ -1290,14 +1309,22 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 	return errors.Join(errs...)
 }
 
+func (p *poller) redrawUndone(ctx context.Context, id identity, undone []undoneAnswer, press cardPress) []undoneAnswer {
+	api := p.newAPI(id.Token)
+	for _, u := range undone {
+		_, err := p.cards.redraw(ctx, api, u.card.channel, u.card.thread, u.card.ts, p.now())
+		if p.tapDrawn(u.card, slackTime(press.ActionTS), err) != nil {
+			p.log.Printf("card %s: its answer %q is undone, but the card still shows it: %v", u.card.ts, u.answer.Label, err)
+		}
+		if err := p.cards.redrawCopies(ctx, id, u.card); err != nil {
+			p.log.Printf("card %s: its answer %q is undone, but its copies still show it: %v", u.card.ts, u.answer.Label, err)
+		}
+	}
+	return undone
+}
+
 func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press cardPress, u undoneAnswer, how, why string) error {
 	api := p.newAPI(id.Token)
-	if _, err := p.cards.redraw(ctx, api, u.card.channel, u.card.thread, u.card.ts, p.now()); err != nil {
-		p.log.Printf("card %s: its answer %q is undone, but the card still shows it: %v", u.card.ts, u.answer.Label, err)
-	}
-	if err := p.cards.redrawCopies(ctx, id, u.card); err != nil {
-		p.log.Printf("card %s: its answer %q is undone, but its copies still show it: %v", u.card.ts, u.answer.Label, err)
-	}
 	if err := api.RemoveReactionContext(ctx, cardAnsweredReaction, slack.NewRefToMessage(u.card.channel, u.card.ts)); err != nil && errorCode(err) != "no_reaction" {
 		p.log.Printf("card %s: its answer is undone, but the %s reaction stays: %v", u.card.ts, cardAnsweredReaction, err)
 	}

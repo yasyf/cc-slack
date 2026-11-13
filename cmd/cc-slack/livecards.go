@@ -1077,6 +1077,11 @@ func (l *liveCards) undoing(card cardRef) string {
 	return ""
 }
 
+func (l *liveCards) stillAnswered(card cardRef, q questionAnswer) bool {
+	ans, done := l.answer(card.channel, card.thread, q.Waits)
+	return done && ans.Label == q.Label && ans.At.Truncate(time.Second).Equal(slackTime(q.ActionTS))
+}
+
 func (l *liveCards) release(channel, thread, askID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
