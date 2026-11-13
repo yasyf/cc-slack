@@ -211,6 +211,44 @@ func TestLiveStorePruningPersists(t *testing.T) {
 	}
 }
 
+func TestLiveStorePruningKeepsAskingCards(t *testing.T) {
+	l := liveStoreFixture(t)
+	loadLiveStore(t, l)
+	idle := l.now().Add(-liveCardIdle - time.Hour)
+	asking := []*liveThread{
+		{Channel: "D1", Thread: "pr", Updated: idle, PRCards: []*liveMessage{{TS: "pr", Card: statusCard{Waits: "pr-card"}}}},
+		{Channel: "D1", Thread: "question", Updated: idle, Waiting: map[string]*liveMessage{"ask": {TS: "question", Card: statusCard{Waits: "ask"}}}},
+	}
+	tapped := &liveThread{Channel: "D1", Thread: "tapped", Updated: idle, PRCards: []*liveMessage{{TS: "tapped", Card: statusCard{Waits: "tapped-card"}, Tapped: "Approved"}}}
+	var keys []string
+	for _, thread := range append(asking, tapped) {
+		key := threadKey(thread.Channel, thread.Thread)
+		l.threads[key] = thread
+		keys = append(keys, key)
+	}
+	for i := 0; i <= liveMaxThreads; i++ {
+		thread := &liveThread{Channel: "D1", Thread: fmt.Sprint(i), Updated: l.now().Add(time.Duration(i) * time.Second)}
+		key := threadKey(thread.Channel, thread.Thread)
+		l.threads[key] = thread
+		keys = append(keys, key)
+	}
+	l.save(keys, nil)
+	for range 2 {
+		loadLiveStore(t, l)
+		if len(l.threads) != liveMaxThreads {
+			t.Fatalf("store kept %d threads, want %d", len(l.threads), liveMaxThreads)
+		}
+		for _, thread := range asking {
+			if l.threads[threadKey(thread.Channel, thread.Thread)] == nil {
+				t.Fatalf("pruning forgot thread %s, whose card still asks", thread.Thread)
+			}
+		}
+		if l.threads[threadKey(tapped.Channel, tapped.Thread)] != nil || l.threads[threadKey("D1", "2")] != nil || l.threads[threadKey("D1", "3")] == nil {
+			t.Fatal("pruning kept a settled thread past the limit or forgot a newer one")
+		}
+	}
+}
+
 func TestLiveStoreLegacyCutoverIsIdempotent(t *testing.T) {
 	l := liveStoreFixture(t)
 	thread := &liveThread{Channel: "D1", Thread: "1", Updated: l.now(), Answers: map[string]askAnswer{"ask": {Label: "Hold", Tap: "tap", Drawn: true}}}
