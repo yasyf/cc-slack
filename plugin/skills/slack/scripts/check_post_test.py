@@ -248,6 +248,21 @@ class CheckPostTest(unittest.TestCase):
             [("bare-number", "#830225"), ("bare-number", "build 1399"), ("bare-number", "#4031")],
         )
 
+    def test_reads_no_zone_label_inside_code(self) -> None:
+        text = (
+            "The queue filled at `23:58Z` and drained at `23:14:31Z`, from "
+            "`service:runtime-api @timestamp:[2026-11-12T23:42:00Z TO 2026-11-12T23:58:00Z]`.\n"
+            "```\nstatus:error @timestamp:>2026-11-12T23:43:00Z tz:UTC\n```"
+        )
+        self.assertEqual(kinds(text), [])
+
+    def test_still_flags_a_zone_label_beside_code(self) -> None:
+        text = "The queue filled at 23:58Z, logged as `23:58Z`, and drained at 4:14 PM PT.\n```\nUTC\n```\nAll times UTC."
+        self.assertEqual(
+            kinds(text),
+            [("zone-label", "23:58Z"), ("zone-label", "PT"), ("zone-label", "UTC")],
+        )
+
     def test_flags_an_option_named_by_number_or_position(self) -> None:
         text = (
             "Own process plus a memory cap: as 1, and a script over the cap stops.\n\n"
