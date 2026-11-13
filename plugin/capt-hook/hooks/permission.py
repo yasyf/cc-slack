@@ -83,7 +83,8 @@ DM_ORDER = "dm-order"
 ASKED_HERE = "the user's own message in the thread this write goes to, read back from Slack"
 DM_LINK = re.compile(r"https://[\w.-]+\.slack\.com/archives/(D[A-Z0-9]{8,})/p(\d{10})(\d{6})(?:\?thread_ts=(\d{10}\.\d{6}))?")
 SLACK_MESSAGE = "slack.message"
-ORDER_LINE = re.compile(rf'<channel source="{re.escape(CARD_SERVER)}"[^>]*\btype="slack\.message"[^>]*>\s*(?P<payload>\{{.*\}})\s*</channel>', re.S)
+CHANNEL_SERVER = "plugin:cc-slack:channel"
+ORDER_LINE = re.compile(rf'<channel source="(?:{re.escape(CHANNEL_SERVER)}|{re.escape(CARD_SERVER)})"[^>]*\btype="slack\.message"[^>]*>\s*(?P<payload>\{{.*\}})\s*</channel>', re.S)
 BOARD_CARD = "board-card:"
 BOARD_SESSION = "board-session:"
 APPROVED = "Yes"
@@ -1203,10 +1204,10 @@ def owner_dm(text: str = ORDER_TEXT, *, ts: str = ORDER_TS, own: bool = True, fr
     return NOT_DM | {f"{CC_SLACK} dm-peer --channel {OWNER_DM}": json.dumps(peer), f"{CC_SLACK} thread --channel {OWNER_DM}": json.dumps({"messages": [message]})}
 
 
-def dm_arrived(ts: str = ORDER_TS, *, text: str = ORDER_TEXT, operator: bool = True, channel: str = OWNER_DM, thread: str | None = None) -> list[dict[str, Any]]:
+def dm_arrived(ts: str = ORDER_TS, *, text: str = ORDER_TEXT, operator: bool = True, channel: str = OWNER_DM, thread: str | None = None, server: str = CHANNEL_SERVER) -> list[dict[str, Any]]:
     payload = {"type": "slack.message", "kind": "channel", "channel_id": channel, "thread_ts": thread or ts, "ts": ts, "user": "U0OWNER0001", "user_name": "Wren", "from_claude": False, "text": text, "permalink": order_url(ts), "operator": operator}
-    tag = f'<channel source="plugin:cc-slack:cc-slack" subject_id="s1" type="slack.message">\n{json.dumps(payload, separators=(",", ":"))}\n</channel>'
-    return [T.user(tag, isMeta=True, origin={"kind": "channel", "server": "plugin:cc-slack:cc-slack"}), T.assistant("on it")]
+    tag = f'<channel source="{server}" subject_id="s1" type="slack.message">\n{json.dumps(payload, separators=(",", ":"))}\n</channel>'
+    return [T.user(tag, isMeta=True, origin={"kind": "channel", "server": server}), T.assistant("on it")]
 
 
 def briefed(ts: str = ORDER_TS) -> dict[str, Any]:
@@ -1571,6 +1572,7 @@ on(
             case(transcript=relayed(UNLEDGERED), env=LEDGER_ENV, llm={"reason": "the record cites a row", "allow": True, "relied_on": ["owner:m99"]}) >> DENY,
             case(transcript=relayed(CLAIMED), env=LEDGER_ENV, llm={"reason": "the record quotes a grant", "allow": True, "relied_on": [said_evidence("post the fix in every thread you like", PROMPTED_AT, "prompt").id]}) >> DENY,
             case(transcript=dm_arrived(), decide=jev(ORDER_ID)) >> ALLOW,
+            case(transcript=dm_arrived(server=CARD_SERVER), decide=jev(ORDER_ID)) >> ALLOW,
             case(transcript=dm_arrived(STALE_TS), decide=jev(f"operator:{OWNER_DM}/{STALE_TS}")) >> ALLOW,
             case(transcript=dm_arrived(operator=False), decide=jev(ORDER_ID)) >> DENY,
             case(**briefed(), commands=owner_dm(), decide=jev(ORDER_ID)) >> Rewrite(ticket_agent="a-lane"),
