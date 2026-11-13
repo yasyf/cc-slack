@@ -1376,10 +1376,10 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
-	read, err := a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
+	read, err := a.cache.repliesHolding(hc.Ctx, api, channelID, b.ThreadTS, b.TS)
 	if readAsUser(id, err) {
 		if api, err = a.userAPI(hc.Ctx, id); err == nil {
-			read, err = a.cache.replies(hc.Ctx, api, channelID, b.ThreadTS)
+			read, err = a.cache.repliesHolding(hc.Ctx, api, channelID, b.ThreadTS, b.TS)
 		}
 	}
 	if err != nil {

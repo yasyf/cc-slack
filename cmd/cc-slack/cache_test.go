@@ -116,6 +116,31 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	}
 }
 
+func TestThreadReadNamingAMessageTheCacheLacksAsksSlack(t *testing.T) {
+	f := newFixture(t)
+	seedThread(f)
+	f.read(testThread)
+	f.slack.add(testChannel, reply(secondReply, "second"))
+	f.now = f.now.Add(time.Second)
+	read, err := f.cache.repliesHolding(f.ctx, f.slack, testChannel, testThread, secondReply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := texts(read.msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("thread read for its newest reply = %q, want it fetched though the cached copy is fresh", got)
+	}
+	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
+	f.now = f.now.Add(cacheFresh)
+	f.read(testThread)
+	calls := f.slack.callCount(methodReplies)
+	if _, err := f.cache.repliesHolding(f.ctx, f.slack, testChannel, testThread, "1800000000.000900"); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.slack.callCount(methodReplies); n != calls+1 {
+		t.Fatalf("replies calls = %d, want %d: a read naming a message the cache lacks asks Slack inside a rate limit", n, calls+1)
+	}
+}
+
 func TestPollerKeepsAWatchedThreadsCacheCurrent(t *testing.T) {
 	f := newFixture(t)
 	seedThread(f)
