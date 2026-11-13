@@ -1362,37 +1362,45 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
-	api := a.newAPI(id.Token)
-	channelID, err := conversationID(hc.Ctx, api, id, cmp.Or(b.ChannelID, id.DMChannelID))
+	res, err := a.readThread(hc.Ctx, id, b, limit)
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
-	reads := withoutRateWait(hc.Ctx)
+	return ok(res)
+}
+
+func (a *app) readThread(ctx context.Context, id identity, b opBody, limit int) (threadResult, error) {
+	api := a.newAPI(id.Token)
+	channelID, err := conversationID(ctx, api, id, cmp.Or(b.ChannelID, id.DMChannelID))
+	if err != nil {
+		return threadResult{}, err
+	}
+	reads := withoutRateWait(ctx)
 	msgs, err := a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 	if readAsUser(id, err) {
-		if api, err = a.userAPI(hc.Ctx, id); err == nil {
+		if api, err = a.userAPI(ctx, id); err == nil {
 			msgs, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 		}
 	}
 	if err != nil {
-		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
+		return threadResult{}, err
 	}
 	msgs, truncated := threadPage(msgs, b.SinceTS, limit)
 	var raw map[string]json.RawMessage
 	if b.Raw && len(msgs) > 0 {
-		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS, msgs[0].Timestamp); err != nil {
-			return fail(fallback(actionRead, err))
+		if raw, err = api.RawMessages(ctx, "conversations.replies", channelID, b.ThreadTS, msgs[0].Timestamp); err != nil {
+			return threadResult{}, err
 		}
 	}
 	out := make([]readMessage, 0, len(msgs))
 	for _, m := range msgs {
-		msg, err := a.readMessageOf(hc.Ctx, reads, api, id, m, raw[m.Timestamp])
+		msg, err := a.readMessageOf(ctx, reads, api, id, m, raw[m.Timestamp])
 		if err != nil {
-			return fail(fallback(actionRead, err))
+			return threadResult{}, err
 		}
 		out = append(out, msg)
 	}
-	return ok(threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated})
+	return threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated}, nil
 }
 
 func threadPage(msgs []slack.Message, sinceTS string, limit int) ([]slack.Message, bool) {
