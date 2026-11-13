@@ -102,6 +102,7 @@ var (
 	broadcastProp = map[string]any{"type": "boolean", "description": "also post the reply to the channel"}
 	agentProp     = map[string]any{"type": "string", "description": "agent name after yours; defaults to agent"}
 	noWatchProp   = map[string]any{"type": "boolean", "description": "skip the thread watch"}
+	rawProp       = map[string]any{"type": "boolean"}
 	filesProp     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "absolute paths to attach"}
 	blocksProp    = map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "description": "Block Kit blocks; text stays the fallback"}
 	cardProp      = map[string]any{
@@ -297,6 +298,7 @@ var (
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,
 				"limit":    map[string]any{"type": "integer", "description": "default 50"},
 				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this Slack ts, such as 1790210144.444179, or whole epoch seconds"},
+				"raw":      rawProp,
 			},
 		},
 		{
@@ -306,6 +308,7 @@ var (
 			properties: map[string]any{
 				"channel_id": channelProp, "url": urlProp,
 				"limit": map[string]any{"type": "integer", "description": "default 20"},
+				"raw":   rawProp,
 			},
 		},
 		{

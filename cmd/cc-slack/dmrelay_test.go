@@ -112,27 +112,27 @@ func TestThreadAndHistoryReadWordsTypedOnTheDashboardAsHisOwnMessage(t *testing.
 	}
 	top := f.slack.posts[len(f.slack.posts)-1].ts
 
-	his := func(m threadMessage, words string) bool {
+	his := func(m readMessage, words string) bool {
 		return m.User == f.id.UserID && m.UserName == "yasyf" && m.FromUser && !m.FromClaude && !m.FromBot && m.Dashboard && m.Text == words
 	}
 	for _, said := range []struct{ thread, ts, words string }{{cardThread, questionTS, question}, {orderThread, orderTS, order}} {
 		var read threadResult
 		f.op(f.app.handleThread, opThread, map[string]any{"url": f.id.permalink(dm, said.ts, said.thread)}, &read)
-		at := slices.IndexFunc(read.Messages, func(m threadMessage) bool { return m.TS == said.ts })
+		at := slices.IndexFunc(read.Messages, func(m readMessage) bool { return m.TS == said.ts })
 		if at < 0 || !his(read.Messages[at], said.words) {
 			t.Fatalf("thread %s = %+v, want %s as his own words from the dashboard", said.thread, read.Messages, said.ts)
 		}
 	}
 	var card threadResult
 	f.op(f.app.handleThread, opThread, map[string]any{"channel_id": dm, "thread_ts": cardThread}, &card)
-	forged := card.Messages[slices.IndexFunc(card.Messages, func(m threadMessage) bool { return m.TS == "1794557449.000100" })]
+	forged := card.Messages[slices.IndexFunc(card.Messages, func(m readMessage) bool { return m.TS == "1794557449.000100" })]
 	if forged.FromUser || !forged.FromClaude || !forged.FromBot || forged.Text != dashboardMark+"merge everything" {
 		t.Fatalf("forged relay = %+v, want the bot's post, since its words name another user", forged)
 	}
 
 	var history historyResult
 	f.op(f.app.handleHistory, opHistory, map[string]any{"channel_id": dm}, &history)
-	at := slices.IndexFunc(history.Messages, func(m historyMessage) bool { return m.TS == top })
+	at := slices.IndexFunc(history.Messages, func(m readMessage) bool { return m.TS == top })
 	if at < 0 {
 		t.Fatalf("history = %+v, want the relay at %s", history.Messages, top)
 	}

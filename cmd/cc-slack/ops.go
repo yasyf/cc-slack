@@ -184,20 +184,23 @@ func (r receipt) channelResult(replayed bool) channelResult {
 	return channelResult{ChannelID: r.ChannelID, Permalink: r.Permalink, TicketID: r.TicketID, Replayed: replayed}
 }
 
-type threadMessage struct {
-	TS         string          `json:"ts"`
-	ThreadTS   string          `json:"thread_ts,omitempty"`
-	User       string          `json:"user"`
-	UserName   string          `json:"user_name"`
-	FromUser   bool            `json:"from_user,omitempty"`
-	FromClaude bool            `json:"from_claude"`
-	FromBot    bool            `json:"from_bot,omitempty"`
-	Dashboard  bool            `json:"dashboard,omitempty"`
-	Text       string          `json:"text"`
-	Files      []messageFile   `json:"files,omitempty"`
-	Shares     []sharedMessage `json:"shares,omitempty"`
-	Unfurls    []string        `json:"unfurls,omitempty"`
-	Buttons    []string        `json:"buttons,omitempty"`
+type readMessage struct {
+	TS          string          `json:"ts"`
+	ThreadTS    string          `json:"thread_ts,omitempty"`
+	User        string          `json:"user"`
+	UserName    string          `json:"user_name"`
+	FromUser    bool            `json:"from_user,omitempty"`
+	FromClaude  bool            `json:"from_claude"`
+	FromBot     bool            `json:"from_bot,omitempty"`
+	Dashboard   bool            `json:"dashboard,omitempty"`
+	Text        string          `json:"text"`
+	Permalink   string          `json:"permalink,omitempty"`
+	ReplyCount  int             `json:"reply_count,omitempty"`
+	LatestReply string          `json:"latest_reply,omitempty"`
+	Files       []messageFile   `json:"files,omitempty"`
+	Shares      []sharedMessage `json:"shares,omitempty"`
+	Unfurls     []string        `json:"unfurls,omitempty"`
+	Buttons     []string        `json:"buttons,omitempty"`
 
 	Raw json.RawMessage `json:"raw,omitempty"`
 }
@@ -212,36 +215,18 @@ type messageFile struct {
 }
 
 type threadResult struct {
-	ChannelID  string          `json:"channel_id"`
-	ThreadTS   string          `json:"thread_ts"`
-	Messages   []threadMessage `json:"messages"`
-	Truncated  bool            `json:"truncated"`
-	Stale      bool            `json:"stale,omitempty"`
-	RetryAfter int             `json:"retry_after,omitempty"`
-}
-
-type historyMessage struct {
-	TS          string          `json:"ts"`
-	User        string          `json:"user"`
-	UserName    string          `json:"user_name"`
-	FromUser    bool            `json:"from_user,omitempty"`
-	FromClaude  bool            `json:"from_claude"`
-	Dashboard   bool            `json:"dashboard,omitempty"`
-	Text        string          `json:"text"`
-	Permalink   string          `json:"permalink"`
-	ReplyCount  int             `json:"reply_count,omitempty"`
-	LatestReply string          `json:"latest_reply,omitempty"`
-	Files       []messageFile   `json:"files,omitempty"`
-	Shares      []sharedMessage `json:"shares,omitempty"`
-	Unfurls     []string        `json:"unfurls,omitempty"`
-
-	Raw json.RawMessage `json:"raw,omitempty"`
+	ChannelID  string        `json:"channel_id"`
+	ThreadTS   string        `json:"thread_ts"`
+	Messages   []readMessage `json:"messages"`
+	Truncated  bool          `json:"truncated"`
+	Stale      bool          `json:"stale,omitempty"`
+	RetryAfter int           `json:"retry_after,omitempty"`
 }
 
 type historyResult struct {
-	ChannelID string           `json:"channel_id"`
-	Messages  []historyMessage `json:"messages"`
-	Partial   bool             `json:"partial,omitempty"`
+	ChannelID string        `json:"channel_id"`
+	Messages  []readMessage `json:"messages"`
+	Partial   bool          `json:"partial,omitempty"`
 }
 
 type channelInfo struct {
@@ -1396,23 +1381,18 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	msgs, truncated := threadPage(read.msgs, b.SinceTS, limit)
 	var raw map[string]json.RawMessage
-	if b.Raw {
-		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS); err != nil {
+	if b.Raw && len(msgs) > 0 {
+		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS, msgs[0].Timestamp); err != nil {
 			return fail(fallback(actionRead, err))
 		}
 	}
-	out := make([]threadMessage, 0, len(msgs))
+	out := make([]readMessage, 0, len(msgs))
 	for _, m := range msgs {
-		m = dashboardWords(id, m)
-		files, err := messageFiles(hc.Ctx, api, m)
+		msg, err := a.readMessageOf(hc.Ctx, reads, api, id, m, raw[m.Timestamp])
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
-		out = append(out, threadMessage{
-			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
-			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: messageText(m), Files: files,
-			Shares: a.sharedMessages(reads, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw[m.Timestamp],
-		})
+		out = append(out, msg)
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
 	if read.stale {
@@ -1462,15 +1442,14 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionRead, err))
 	}
 	var raw map[string]json.RawMessage
-	if b.Raw {
-		if raw, err = api.RawMessages(ctx, "conversations.history", channelID, ""); err != nil {
+	if b.Raw && len(msgs) > 0 {
+		if raw, err = api.RawMessages(ctx, "conversations.history", channelID, "", msgs[len(msgs)-1].Timestamp); err != nil {
 			return fail(fallback(actionRead, err))
 		}
 	}
-	out := make([]historyMessage, 0, len(msgs))
+	out := make([]readMessage, 0, len(msgs))
 	for _, m := range msgs {
-		m = dashboardWords(id, m)
-		files, err := messageFiles(ctx, api, m)
+		msg, err := a.readMessageOf(ctx, ctx, api, id, m, raw[m.Timestamp])
 		if errors.Is(err, context.DeadlineExceeded) {
 			partial = true
 			break
@@ -1478,14 +1457,24 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
-		out = append(out, historyMessage{
-			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
-			FromClaude: id.fromClaude(m), Dashboard: typedOnDashboard(m), Text: messageText(m),
-			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
-			Files: files, Shares: a.sharedMessages(ctx, api, m), Unfurls: linkUnfurls(m), Raw: raw[m.Timestamp],
-		})
+		msg.Permalink = id.permalink(channelID, m.Timestamp, "")
+		out = append(out, msg)
 	}
 	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})
+}
+
+func (a *app) readMessageOf(ctx, shareCtx context.Context, api slackAPI, id identity, m slack.Message, raw json.RawMessage) (readMessage, error) {
+	m = dashboardWords(id, m)
+	files, err := messageFiles(ctx, api, m)
+	if err != nil {
+		return readMessage{}, err
+	}
+	return readMessage{
+		TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(ctx, api, m),
+		FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: messageText(m),
+		ReplyCount: m.ReplyCount, LatestReply: m.LatestReply, Files: files, Shares: a.sharedMessages(shareCtx, api, m),
+		Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw,
+	}, nil
 }
 
 func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]messageFile, error) {

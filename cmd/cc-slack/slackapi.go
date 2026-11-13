@@ -56,7 +56,7 @@ type slackAPI interface {
 	DeleteCanvasContext(ctx context.Context, canvasID string) error
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
-	RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error)
+	RawMessages(ctx context.Context, method, channelID, threadTS, oldest string) (map[string]json.RawMessage, error)
 	RawMessage(ctx context.Context, channelID, threadTS, ts string) (json.RawMessage, error)
 }
 
@@ -351,9 +351,9 @@ func workObjectBody(form []byte) (map[string]any, bool, error) {
 	return body, true, nil
 }
 
-// RawMessages reads messages as Slack sends them, by timestamp, since slack-go's Message drops what it has no field for.
-func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS string) (map[string]json.RawMessage, error) {
-	query := url.Values{"channel": {channelID}, "include_all_metadata": {"true"}, "limit": {"200"}}
+// RawMessages reads every message from oldest on as Slack sends them, by timestamp, since slack-go's Message drops what it has no field for.
+func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS, oldest string) (map[string]json.RawMessage, error) {
+	query := url.Values{"channel": {channelID}, "oldest": {oldest}, "inclusive": {"true"}, "include_all_metadata": {"true"}, "limit": {"200"}}
 	if threadTS != "" {
 		query.Set("ts", threadTS)
 	}
@@ -377,21 +377,26 @@ func (c *apiClient) RawMessage(ctx context.Context, channelID, threadTS, ts stri
 }
 
 func (c *apiClient) rawMessages(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, error) {
-	messages, _, err := slackMessages(ctx, c.http, c.token, c.endpoint+method, query)
-	if err != nil {
-		return nil, err
-	}
-	found := make(map[string]json.RawMessage, len(messages))
-	for _, raw := range messages {
-		var message struct {
-			TS string `json:"ts"`
-		}
-		if err := json.Unmarshal(raw, &message); err != nil {
+	found := map[string]json.RawMessage{}
+	for {
+		messages, cursor, err := slackMessages(ctx, c.http, c.token, c.endpoint+method, query)
+		if err != nil {
 			return nil, err
 		}
-		found[message.TS] = raw
+		for _, raw := range messages {
+			var message struct {
+				TS string `json:"ts"`
+			}
+			if err := json.Unmarshal(raw, &message); err != nil {
+				return nil, err
+			}
+			found[message.TS] = raw
+		}
+		if cursor == "" {
+			return found, nil
+		}
+		query.Set("cursor", cursor)
 	}
-	return found, nil
 }
 
 func slackMessages(ctx context.Context, hc doer, token, method string, query url.Values) ([]json.RawMessage, string, error) {

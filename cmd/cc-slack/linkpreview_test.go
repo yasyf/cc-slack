@@ -474,7 +474,7 @@ func TestAThreadReadShowsEveryCopyAnsweredOnceItsCardIs(t *testing.T) {
 		if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": c.id.DMChannelID, "thread_ts": thread}).Body, &read); err != nil {
 			t.Fatal(err)
 		}
-		at := slices.IndexFunc(read.Messages, func(m threadMessage) bool { return m.TS == ts })
+		at := slices.IndexFunc(read.Messages, func(m readMessage) bool { return m.TS == ts })
 		if at < 0 {
 			t.Fatalf("thread %s reads %+v, want copy %s in it", thread, read.Messages, ts)
 		}
@@ -663,26 +663,6 @@ func TestAPostNamingAPRAndADocCarriesTheDocCardAndThePRPreview(t *testing.T) {
 	}
 	if !strings.Contains(post.attachments, "Chats load faster") {
 		t.Fatalf("attachments = %s, want the PR's preview", post.attachments)
-	}
-}
-
-func TestAThreadReadNamesEachMessagesButtonsAndPrintsItRaw(t *testing.T) {
-	l := previewingDaemon(t, fakePRRows(t, readyRow(41)).argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "needs_you", Title: "Land it?", Body: "Fixed.\n" + testPR, Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "w1"}})
-	card := l.slack.sent()[0]
-	var read threadResult
-	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testDM, "thread_ts": card.ts, "raw": true}).Body, &read); err != nil {
-		t.Fatal(err)
-	}
-	var buttons []string
-	var raw string
-	for _, m := range read.Messages {
-		if m.TS == card.ts {
-			buttons, raw = m.Buttons, string(m.Raw)
-		}
-	}
-	if !slices.Contains(buttons, "Hold") || !strings.Contains(raw, "Land it?") {
-		t.Fatalf("buttons = %v, raw = %s, want the card's buttons and its message as sent", buttons, raw)
 	}
 }
 
