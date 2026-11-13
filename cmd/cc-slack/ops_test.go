@@ -582,10 +582,14 @@ func TestAThreadShowsASharedMessageAsItsOriginalAuthorsReport(t *testing.T) {
 	l.slack.serveFile(chart, []byte("\x89PNG"))
 	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, Username: "Josh Weiner", User: "U0JOSH", Text: originalText, Files: []slack.File{chart}}})
 	addSharedThread(l)
+	l.do(opThread, map[string]string{"channel_id": originChan, "thread_ts": originTS})
 
 	var res threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
 		t.Fatal(err)
+	}
+	if n := l.slack.callCount(methodReplies); n != 2 {
+		t.Fatalf("replies calls = %d, want one per thread read: the share answers from the cached thread it came from", n)
 	}
 	want := []sharedMessage{{
 		Permalink: originLink, ChannelID: originChan, TS: originTS, User: "U0JOSH", UserName: "Josh Weiner", Text: originalText, Files: []messageFile{chartFile()},
@@ -613,6 +617,7 @@ func TestACardLinkedIntoAThreadReadsItsBodyOnceAndItsShowMeTable(t *testing.T) {
 		Timestamp: "1800000000.000100", BotID: "B0CLAUDE", Text: slackLink(originLink, card.Title),
 		Attachments: []slack.Attachment{{FromURL: originLink, AuthorName: "PlatClaude", Text: card.text()}},
 	}})
+	l.do(opThread, map[string]string{"channel_id": originChan, "thread_ts": originTS})
 
 	var res threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
@@ -633,6 +638,7 @@ func TestHistoryResolvesASharedMessage(t *testing.T) {
 	loggedIn(t, l)
 	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, Username: "Josh Weiner", User: "U0JOSH", Text: originalText}})
 	addSharedThread(l)
+	l.do(opThread, map[string]string{"channel_id": originChan, "thread_ts": originTS})
 
 	var res historyResult
 	if err := json.Unmarshal(l.do(opHistory, map[string]any{"channel_id": testChannel}).Body, &res); err != nil {
@@ -643,23 +649,22 @@ func TestHistoryResolvesASharedMessage(t *testing.T) {
 	}
 }
 
-func TestAThreadKeepsAShareTheBotCannotOpenAndSaysHowToReadIt(t *testing.T) {
+func TestAThreadLeavesAShareWhoseThreadIsNotCachedAsItsLinkWithNoSlackRead(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, Username: "Josh Weiner", User: "U0JOSH", Text: originalText}})
 	addSharedThread(l)
-	l.slack.fail(methodReplies, nil)
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "not_in_channel"})
 
 	var res threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
-	share := res.Messages[0].Shares[0]
-	if share.UserName != "Josh" || share.User != "U0JOSH" || share.Text != originalText || share.ChannelID != originChan {
-		t.Fatalf("share = %+v, want the author and text the attachment carries", share)
+	want := []sharedMessage{{Permalink: originLink, ChannelID: originChan, TS: originTS, User: "U0JOSH", UserName: "Josh", Text: originalText}}
+	if !reflect.DeepEqual(res.Messages[0].Shares, want) {
+		t.Fatalf("shares = %+v, want %+v: the link and what Slack attached to it", res.Messages[0].Shares, want)
 	}
-	if !strings.Contains(share.Unreadable, "not_in_channel") || !strings.Contains(share.Unreadable, mcpThread) {
-		t.Fatalf("unreadable = %q, want the failure and the fallback read", share.Unreadable)
+	if n := l.slack.callCount(methodReplies); n != 1 {
+		t.Fatalf("replies calls = %d, want 1: a share never reads its own thread from Slack", n)
 	}
 }
 

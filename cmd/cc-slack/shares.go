@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"net/url"
 	"slices"
 	"strings"
@@ -62,9 +61,12 @@ func (a *app) sharedMessage(ctx context.Context, api slackAPI, at slack.Attachme
 	share := sharedMessage{
 		Permalink: shareLink(at), ChannelID: ref.channelID, TS: ref.ts, User: at.AuthorID, UserName: shareAuthor(at), Text: cmp.Or(at.Text, at.Fallback),
 	}
-	original, err := a.originalMessage(ctx, api, ref)
+	original, found, err := a.originalMessage(ctx, ref)
 	if err != nil {
 		share.Unreadable = fallback(actionRead, err)
+		return share
+	}
+	if !found {
 		return share
 	}
 	files, err := messageFiles(ctx, api, original)
@@ -77,14 +79,14 @@ func (a *app) sharedMessage(ctx context.Context, api slackAPI, at slack.Attachme
 	return share
 }
 
-func (a *app) originalMessage(ctx context.Context, api slackAPI, ref permalinkRef) (slack.Message, error) {
-	read, err := a.cache.replies(ctx, api, ref.channelID, ref.threadTS)
+func (a *app) originalMessage(ctx context.Context, ref permalinkRef) (slack.Message, bool, error) {
+	msgs, err := a.cache.cached(ctx, ref.channelID, ref.threadTS)
 	if err != nil {
-		return slack.Message{}, err
+		return slack.Message{}, false, err
 	}
-	i := slices.IndexFunc(read.msgs, func(m slack.Message) bool { return m.Timestamp == ref.ts })
+	i := slices.IndexFunc(msgs, func(m slack.Message) bool { return m.Timestamp == ref.ts })
 	if i < 0 {
-		return slack.Message{}, fmt.Errorf("message %s is no longer in %s", ref.ts, ref.channelID)
+		return slack.Message{}, false, nil
 	}
-	return read.msgs[i], nil
+	return msgs[i], true, nil
 }
