@@ -279,6 +279,7 @@ class CheckPostTest(unittest.TestCase):
             ("Checking whether option 1 on that card is the new-tree-only one.", ["is #1 or v1 or 1.5 or 10 or 1% done"]),
             ("Options 1 and 3 both hold.", ["go with 1"]),
             ("Pick the first option.", ["1"]),
+            ("Your pick 2: it costs less.", []),
         )
         for text, asked in cases:
             with self.subTest(text=text, asked=asked):
@@ -289,6 +290,10 @@ class CheckPostTest(unittest.TestCase):
             "Merged 1 PR in 2 days, counted as 1 PR, like 2 days. This is step 1 of the migration on 0.162.3619, "
             "as 1.5 times or as 1% of runs, like <https://github.com/acme/app/pull/4031|#4031>."
         )
+        self.assertEqual(kinds(text), [])
+
+    def test_passes_a_clock_time_after_a_choice_word(self) -> None:
+        text = 'Your "Drop the limit" pick 7:41 AM removed that limit, not the landing rule. Same as 9:05 AM (job start), it held.'
         self.assertEqual(kinds(text), [])
 
     def test_flags_a_paragraph_that_lists_what_is_not_proven_under_any_label(self) -> None:
