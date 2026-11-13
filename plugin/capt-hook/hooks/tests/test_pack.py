@@ -137,9 +137,17 @@ class PackTest(unittest.TestCase):
         self.assertFalse(result.approve)
 
     def test_call_bin_execs_the_artifact_binrun_recorded(self) -> None:
-        for label, fresh, expected in (("fresh", True, "artifact"), ("stale", False, "launcher")):
+        cases = (
+            ("fresh", True, "", "artifact"),
+            ("stale", False, "", "launcher"),
+            ("pinned-runner", True, "/opt/dev/binrun", "launcher"),
+            ("unspawnable", True, "", "launcher"),
+        )
+        for label, fresh, runner, expected in cases:
             with self.subTest(label):
-                artifact = self.stub(stdout="artifact")
+                artifact = self.stub(stdout="artifact").with_name("stub")
+                if label == "unspawnable":
+                    artifact.write_text("#!/nonexistent/interpreter\n")
                 plugin = Path(self.tmp.name) / label / "plugin"
                 (plugin / "bin").mkdir(parents=True)
                 launcher = plugin / "bin" / "cc-slack"
@@ -150,10 +158,12 @@ class PackTest(unittest.TestCase):
                 name = str(descriptor).replace("%", "%25").replace("/", "%2F")
                 record = self.home / ".daemonkit" / "binrun" / "resolved" / name
                 record.parent.mkdir(parents=True, exist_ok=True)
-                record.write_text(f"{artifact.with_name('stub')}\n")
+                record.write_text(f"{artifact}\n")
                 stamp = descriptor.stat().st_mtime + (60 if fresh else -60)
                 os.utime(record, (stamp, stamp))
                 self.common.BIN = launcher
+                os.environ["BINRUN_BIN"] = runner
+                self.addCleanup(os.environ.pop, "BINRUN_BIN", None)
                 evt = mock_event(Event.PreToolUse, tool="Bash", command="go test ./...")
                 self.assertEqual((self.common.call_bin(evt, "agent-inject") or "").strip(), expected)
 

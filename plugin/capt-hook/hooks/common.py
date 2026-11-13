@@ -4,7 +4,9 @@ import importlib.util
 import json
 import os
 import pwd
+import re
 import sqlite3
+import subprocess
 import sys
 from contextlib import closing
 from functools import cache
@@ -13,6 +15,7 @@ from pathlib import Path
 from types import ModuleType
 
 from captain_hook import BaseHookEvent
+from captain_hook.util import reqenv
 
 __capt_hook_skip__ = True
 
@@ -27,6 +30,7 @@ PENDING_DIRECTIVE = (
 )
 SUBJECT_IN_SCOPE = "SELECT EXISTS(SELECT 1 FROM subjects WHERE scope = ?)"
 RECORD_NAME_ESCAPES = str.maketrans({"%": "%25", "/": "%2F"})
+PLUGIN_VERSION = re.compile(r"\d+(?:\.\d+)*")
 
 
 def real_home() -> Path:
@@ -62,14 +66,32 @@ def subject_in_scope() -> bool:
     return plane_may_match(SUBJECT_IN_SCOPE, SCOPE)
 
 
+def plugin_version(root: Path) -> tuple[int, ...] | None:
+    return tuple(map(int, root.name.split("."))) if PLUGIN_VERSION.fullmatch(root.name) else None
+
+
+def newer_plugin_exists() -> bool:
+    if (current := plugin_version(PLUGIN_ROOT)) is None:
+        return False
+    return any(
+        (version := plugin_version(sibling)) is not None
+        and version > current
+        and not (sibling / ".orphaned_at").exists()
+        and os.access(sibling / "bin" / BIN.name, os.X_OK)
+        for sibling in PLUGIN_ROOT.parent.iterdir()
+    )
+
+
 def recorded_artifact() -> str | None:
+    if reqenv.getenv("BINRUN_BIN") or newer_plugin_exists():
+        return None
     descriptor = BIN.with_name(f"{BIN.name}.binrun")
     record = real_home() / ".daemonkit" / "binrun" / "resolved" / str(descriptor).translate(RECORD_NAME_ESCAPES)
     try:
         if int(record.stat().st_mtime) <= int(descriptor.stat().st_mtime):
             return None
         target = record.read_text().strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     return target if os.access(target, os.X_OK) else None
 
@@ -77,15 +99,21 @@ def recorded_artifact() -> str | None:
 def call_bin(evt: BaseHookEvent, sub: str, *, timeout: int = 10) -> str | None:
     if daemon_is_down() or not BIN.exists():
         return None
-    artifact = recorded_artifact()
+    payload = json.dumps(evt._raw)
     try:
-        return evt.ctx.call_cli(
-            [artifact or str(BIN), sub],
-            input=json.dumps(evt._raw),
-            timeout=timeout,
-            env={"BINRUN_PLUGIN_ROOT": str(BIN.parent.parent)} if artifact else None,
-            throw=False,
-        )
+        if artifact := recorded_artifact():
+            try:
+                return evt.ctx.call_cli(
+                    [artifact, sub],
+                    input=payload,
+                    timeout=timeout,
+                    env={"BINRUN_PLUGIN_ROOT": str(PLUGIN_ROOT)},
+                )
+            except OSError:
+                pass
+            except subprocess.SubprocessError:
+                return None
+        return evt.ctx.call_cli([str(BIN), sub], input=payload, timeout=timeout, throw=False)
     except UnicodeDecodeError:
         return None
 
