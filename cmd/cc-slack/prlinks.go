@@ -469,7 +469,11 @@ func (l *liveCards) toCard(channelID, postThread string, posting *statusCard, pr
 	}
 	for i, pr := range named {
 		if stood[i] == (cardRef{}) && pr.state != (refState{}) {
-			l.refs[pr.ref.key()] = pr.state
+			key := pr.ref.key()
+			if l.refs[key] != pr.state {
+				l.refs[key] = pr.state
+				l.dirtyRefs[key] = true
+			}
 		}
 	}
 	return waiting, standing, waiting

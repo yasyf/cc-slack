@@ -1161,15 +1161,20 @@ func (l *liveCards) owedTaps(now time.Time, running time.Duration) ([]dueTap, ti
 		next time.Time
 	)
 	var changed []string
+	rescheduled := map[*owedTap]bool{}
 	for _, t := range l.threads {
 		for _, ans := range t.Answers {
 			switch {
 			case ans.Owed == nil:
 			case ans.Owed.Due.After(now):
 				next = earliest(next, ans.Owed.Due)
+				if rescheduled[ans.Owed] {
+					changed = append(changed, threadKey(t.Channel, t.Thread))
+				}
 			default:
 				due = append(due, dueTap{cardRef{t.Channel, t.Thread, ans.Owed.Card}, *ans.Owed})
 				ans.Owed.Due = now.Add(running)
+				rescheduled[ans.Owed] = true
 				changed = append(changed, threadKey(t.Channel, t.Thread))
 			}
 		}

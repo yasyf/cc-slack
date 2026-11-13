@@ -131,6 +131,56 @@ func TestLiveStoreUndoExpiryWithoutRetainedMessage(t *testing.T) {
 	}
 }
 
+func TestLiveStorePostedPRSeedSurvivesRestart(t *testing.T) {
+	l := liveStoreFixture(t)
+	loadLiveStore(t, l)
+	pr, _ := parseRef(testPRURL)
+	state := refState{State: "open", Head: "head", Checks: "passed"}
+	prs := []linkedPR{{ref: pr, state: state}}
+	if asked, _, _ := l.toCard("D1", "1", nil, prs); len(asked) != 1 {
+		t.Fatal("new PR did not seed a card")
+	}
+	l.commit(&liveThread{
+		Channel: "D1", Thread: "1", Updated: l.now(),
+		Reply: &liveMessage{Card: statusCard{Refs: []cardLink{{URL: testPRURL}}}},
+	})
+	before := liveStoreChanges(t, l)
+	l.toCard("D1", "1", nil, prs)
+	l.save(nil, nil)
+	if liveStoreChanges(t, l) != before {
+		t.Fatal("unchanged PR seed wrote state again")
+	}
+	loadLiveStore(t, l)
+	if l.refs[pr.key()] != state {
+		t.Fatal("posted PR seed did not survive restart")
+	}
+}
+
+func TestLiveStoreSharedOwedTapRescheduleSurvivesRestart(t *testing.T) {
+	l := liveStoreFixture(t)
+	loadLiveStore(t, l)
+	from := &liveThread{
+		Channel: "D1", Thread: "1", Updated: l.now(),
+		Root:    &liveMessage{Card: statusCard{Title: "Retained root"}},
+		Answers: map[string]askAnswer{"ask": {Owed: &owedTap{Card: "card", Due: l.now().Add(-time.Second)}}},
+	}
+	into := &liveThread{Channel: "D1", Thread: "2", Updated: l.now()}
+	into.carryAnswers(from)
+	keys := []string{threadKey(from.Channel, from.Thread), threadKey(into.Channel, into.Thread)}
+	l.threads[keys[0]], l.threads[keys[1]] = from, into
+	l.save(keys, nil)
+	due, _ := l.owedTaps(l.now(), time.Minute)
+	if len(due) != 1 {
+		t.Fatalf("shared tap scheduled %d retries, want one", len(due))
+	}
+	loadLiveStore(t, l)
+	for _, key := range keys {
+		if got := l.threads[key].Answers["ask"].Owed.Due; !got.Equal(l.now().Add(time.Minute)) {
+			t.Fatalf("%s retry due restored as %s", key, got)
+		}
+	}
+}
+
 func TestLiveStorePruningPersists(t *testing.T) {
 	l := liveStoreFixture(t)
 	loadLiveStore(t, l)
