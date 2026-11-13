@@ -801,19 +801,6 @@ func (c statusCard) allPRs() []*cardPR {
 	return prs
 }
 
-func (c statusCard) changedSince(answered statusCard) string {
-	was := map[string]string{}
-	for _, p := range answered.allPRs() {
-		was[p.URL] = p.Changed
-	}
-	for _, p := range c.allPRs() {
-		if p.Changed != "" && p.Changed != was[p.URL] {
-			return p.Changed
-		}
-	}
-	return ""
-}
-
 type cardOffer struct {
 	pr, head, answers string
 }

@@ -525,11 +525,6 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			rest = append(rest, p)
 			continue
 		}
-		if changed := a.cards.changedSinceAnswer(posted, p.Card); changed != "" {
-			p.replaces = append(p.replaces, replacedCard{old: posted, why: changed})
-			rest = append(rest, p)
-			continue
-		}
 		if err := a.pictureRedrawnPRCard(ctx, id, posted, &p.Card); err != nil {
 			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
 			a.tellRefused(ctx, id, p, err)
@@ -866,9 +861,6 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
 		return err
-	}
-	if changed := a.cards.changedSinceAnswer(card, provided[0].Card); changed != "" {
-		return fmt.Errorf("%s changed since he answered or it withdrew its card (%s), so the next post naming it in tap_prs draws its new card", prURL(pr), changed)
 	}
 	if err := a.pictureRedrawnPRCard(ctx, id, card, &provided[0].Card); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)

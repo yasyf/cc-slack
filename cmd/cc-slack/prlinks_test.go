@@ -651,63 +651,51 @@ func changedTapCard(changed string) providedCard {
 	}}
 }
 
-func TestAChangeSinceHisAnswerAsksAgainOnAFreshCardAndMarksTheOldOneReplaced(t *testing.T) {
+func TestAnAnsweredCardAsksAgainInPlaceOnlyUnderANewWaitsID(t *testing.T) {
 	const rewritten = "rewritten to do the opposite of the version he held"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-	old := rootCards(awaitPRCards(t, l, testDM))[0]
-	tapOption(t, l, old, 1)
-	oldNow := func() string {
-		edits := editsOf(l.slack.edited(), old.ts)
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	tapOption(t, l, card, 1)
+	now := func() string {
+		edits := editsOf(l.slack.edited(), card.ts)
 		if len(edits) == 0 {
 			return ""
 		}
 		return edits[len(edits)-1]
 	}
-	eventually(t, "his Hold on the card", func() bool { return strings.Contains(oldNow(), "✓ *Hold* · answered") })
-
-	asks := len(cmd.requests(t))
-	l.do(opDMStatus, map[string]any{"thread_ts": old.ts, "text": "#41 is held", "tap_prs": tapPR41})
-	eventually(t, "the ask with nothing changed", func() bool { return len(cmd.requests(t)) > asks })
-	inOwnThread := linksIn(l, old, old.ts)
-	if got := rootCards(prCards(l, testDM)); len(got) != 1 || inOwnThread || !strings.Contains(oldNow(), "✓ *Hold* · answered") || strings.Contains(oldNow(), "*Replaced:*") {
-		t.Fatalf("PR cards = %+v, old card %s; want the one card, still answered Hold, and no link to it in its own thread", prCards(l, testDM), oldNow())
+	eventually(t, "his Hold on the card", func() bool { return strings.Contains(now(), "✓ *Hold* · answered") })
+	redraw := func(drawn providedCard, what string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{drawn}}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		edits := len(editsOf(l.slack.edited(), card.ts))
+		l.do(opRedrawPRCards, map[string]any{})
+		eventually(t, what, func() bool { return len(editsOf(l.slack.edited(), card.ts)) > edits })
 	}
 
-	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{changedTapCard(rewritten)}}), 0o600); err != nil {
-		t.Fatal(err)
+	redraw(changedTapCard(rewritten), "the card redrawn under the waits id he answered")
+	if got := rootCards(prCards(l, testDM)); len(got) != 1 || !strings.Contains(now(), "✓ *Hold* · answered") || strings.Contains(now(), cardWaitAction) {
+		t.Fatalf("PR cards = %+v, card %s; want the one card still answered Hold, its line changed and no button back", got, now())
 	}
-	asks = len(cmd.requests(t))
-	l.do(opRedrawPRCards, map[string]any{})
-	eventually(t, "the redraw's ask", func() bool { return len(cmd.requests(t)) > asks })
-	l.do(opDMStatus, map[string]any{"thread_ts": old.ts, "text": "#41 was rewritten and waits on your tap", "tap_prs": tapPR41})
-	eventually(t, "a fresh card at the DM root", func() bool { return len(rootCards(prCards(l, testDM))) == 2 })
-	fresh := rootCards(prCards(l, testDM))[1]
-	if !strings.Contains(fresh.blocks, "Merge (Recommended)") || !strings.Contains(fresh.blocks, `"Hold"`) || !strings.Contains(shown(t, fresh), cardChanged) || !strings.Contains(shown(t, fresh), rewritten) {
-		t.Fatalf("fresh card blocks = %s, want Merge and Hold and the line saying what changed", fresh.blocks)
+
+	asked := changedTapCard(rewritten)
+	asked.Card.Waits = "merge:41:09b10f1"
+	redraw(asked, "the card asked again under a new waits id")
+	if text := shown(t, fakePost{blocks: now()}); !strings.Contains(now(), cardWaitAction+"1:merge:41:09b10f1") || !strings.Contains(text, rewritten) || strings.Contains(text, "· answered") || strings.Contains(text, "*Replaced:*") {
+		t.Fatalf("card = %s, want it asking again in place under the new waits id, its changed line shown, with no answer or Replaced line", now())
 	}
-	eventually(t, "the old card marked replaced", func() bool { return strings.Contains(oldNow(), "*Replaced:* "+rewritten) })
-	if !strings.Contains(oldNow(), strings.ReplaceAll(fresh.ts, ".", "")) || !strings.Contains(oldNow(), "✓ *Hold* · answered") {
-		t.Fatalf("old card = %s, want a link to the fresh card and his Hold kept as the old version's answer", oldNow())
-	}
-	if !linksIn(l, fresh, old.ts) {
-		t.Fatalf("posts = %+v, want the fresh card's link in the thread the post named", l.slack.sentTo(testDM))
+	if got := rootCards(prCards(l, testDM)); len(got) != 1 {
+		t.Fatalf("PR cards at the DM root = %+v, want the one card asking again and nothing new posted", got)
 	}
 	var listed driveCardsResult
 	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
-		t.Fatalf("drive-cards = %+v, want the fresh card alone waiting", listed.PRCards)
-	}
-
-	redrawn := len(editsOf(l.slack.edited(), fresh.ts))
-	l.do(opDMStatus, map[string]any{"text": "#41 still waits on your tap", "tap_prs": tapPR41})
-	l.do(opRedrawPRCards, map[string]any{})
-	eventually(t, "the fresh card redrawn in place", func() bool { return len(editsOf(l.slack.edited(), fresh.ts)) > redrawn })
-	if got := rootCards(prCards(l, testDM)); len(got) != 2 || !strings.Contains(oldNow(), "*Replaced:*") {
-		t.Fatalf("PR cards at the DM root = %+v, old card %s; want no third card and the old one still marked replaced", got, oldNow())
+	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(card.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the same card waiting on his tap again", listed.PRCards)
 	}
 }
 
@@ -803,35 +791,6 @@ func TestARedrawForItsPRBringsAWithdrawnCardBackInPlaceOnlyUnderTheWaitsIDItWasW
 		t.Fatalf("redraw-pr-cards --pr = %v, %v; want the withdrawn card redrawn", redrawn, err)
 	}
 	assertBackInPlace(t, l, card, unreacted)
-}
-
-func TestAWithdrawnPRCardDrawnAgainSayingWhatChangedAsksOnAFreshCardAndMarksTheWithdrawnOneReplaced(t *testing.T) {
-	const reworked = "Reworked to your words: topology moves to the session meta table"
-	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
-	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-	old := rootCards(awaitPRCards(t, l, testDM))[0]
-	l.do(opWithdrawPRCard, map[string]any{"pr": tapPR41[0], "reason": "Being reworked to your words"})
-	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{changedTapCard(reworked)}}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	l.do(opDMStatus, map[string]any{"text": "#41 was reworked and waits on your tap", "tap_prs": tapPR41})
-	eventually(t, "a fresh card at the DM root", func() bool { return len(rootCards(prCards(l, testDM))) == 2 })
-	fresh := rootCards(prCards(l, testDM))[1]
-	if !strings.Contains(fresh.blocks, cardWaitAction) || !strings.Contains(shown(t, fresh), reworked) {
-		t.Fatalf("fresh card blocks = %s, want its buttons and the line saying what changed", fresh.blocks)
-	}
-	eventually(t, "the withdrawn card marked replaced", func() bool {
-		edits := editsOf(l.slack.edited(), old.ts)
-		return strings.Contains(edits[len(edits)-1], "*Replaced:* "+reworked)
-	})
-	var listed driveCardsResult
-	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
-		t.Fatal(err)
-	}
-	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
-		t.Fatalf("drive-cards = %+v, want the fresh card alone waiting", listed.PRCards)
-	}
 }
 
 func assertBackInPlace(t *testing.T, l *liveDaemon, card fakePost, unreacted int) {

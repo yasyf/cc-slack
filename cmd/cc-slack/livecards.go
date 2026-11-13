@@ -242,13 +242,6 @@ func (t *liveThread) shows(keys map[string]bool) bool {
 	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
 }
 
-func (t *liveThread) changedSinceAnswer(m *liveMessage, drawn statusCard) string {
-	if drawn.Waits == "" || drawn.Waits != m.Card.Waits || t.open(m) || m.Tapped == cardNoLongerWaits {
-		return ""
-	}
-	return drawn.changedSince(m.Card)
-}
-
 func (t *liveThread) expiredSinceDrawn(now time.Time) bool {
 	for _, k := range t.Asks {
 		if k.ExpiresAt != nil && k.ExpiresAt.After(t.Drawn) && !now.Before(*k.ExpiresAt) {
@@ -797,16 +790,6 @@ func (l *liveCards) staysRetired(card cardRef, drawn statusCard) bool {
 	defer l.mu.Unlock()
 	t, m := l.liveMessage(card.channel, card.ts)
 	return m != nil && t.retired(m) && !t.revives(m, drawn)
-}
-
-func (l *liveCards) changedSinceAnswer(card cardRef, drawn statusCard) string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, m := l.liveMessage(card.channel, card.ts)
-	if m == nil {
-		return ""
-	}
-	return t.changedSinceAnswer(m, drawn)
 }
 
 func (l *liveCards) heads(card cardRef) map[string]string {
