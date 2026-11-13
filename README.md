@@ -126,10 +126,12 @@ preview_command = ["lr", "board", "rows", "--drive", "my-drive", "--all", "--jso
 Your pick on a question card goes to `card_command` before it reaches the session that posted the card,
 as `{"answer": {"waits", "label", "other", "undone", "url", "action_ts", "source"}}`, and so does an Undo of
 it, with `undone` true, so the program records your answer once and the session is told to post no record of
-it. A program that does not know the card exits non-zero, and the session alone keeps the answer. When that
-session has ended, the same request is how the program hears your pick and its Undo: the card closes on your
-pick with its Undo button, unless the program exits non-zero and no session holds your DM, which leaves the
-card open, saying your pick reached no one.
+it. A program that does not know the card replies `{"ok": false}`, and the session alone keeps the answer. A
+program that exits non-zero is asked again every 2 minutes until it records your pick, and the card shows the
+pick recording meanwhile. When the session has ended, the same request is how the program hears your pick and
+its Undo: the card closes on your pick with its Undo button. A pick no program records while no session holds
+your DM is kept for the next session to hold it, and the card closes saying so. A card cc-slack no longer
+stores answers the same way, since its buttons name the question they answer.
 
 A release post in a channel a session's feed watches for releases also goes to `card_command` as
 `{"release": {"name", "line", "link"}}`, once each time its line changes, `line` being what follows

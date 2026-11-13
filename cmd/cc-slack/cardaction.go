@@ -150,8 +150,6 @@ var (
 	errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
 	errCardMoved       = errors.New("the card was redrawn with another question after this answer was drawn")
 	errUndoClosed      = errors.New("the ten minutes to undo this answer had passed")
-	errNoStoredCard    = errors.New("no stored card")
-	errTapNotRecorded  = errors.New("the card command did not record it, so the card offers its answers again")
 )
 
 func hostName() string {
@@ -447,8 +445,11 @@ func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 				p.applyPRTap(context.WithoutCancel(ctx), id, owed.card, owed.tap)
 				return
 			}
-			if p.applyQuestionTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) == tapUnrecorded {
-				p.refuseTap(context.WithoutCancel(ctx), id, owed.card, owed.tap.Question.Waits, owed.tap.Question.Label, errors.New("the card command no longer takes it"))
+			if q := owed.tap.Question; p.applyQuestionTap(context.WithoutCancel(ctx), id, owed.card, owed.tap) == tapUnrecorded {
+				tapped := cardActionPush{Channel: owed.card.channel, ThreadTS: owed.card.thread, MessageTS: owed.card.ts, ActionTS: q.ActionTS}
+				if err := p.handOver(context.WithoutCancel(ctx), id, tapped, askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Waits: true}, owed.tap.Line); err != nil {
+					p.log.Printf("waiting card %s: %q is with no session: %v", q.Waits, q.Label, err)
+				}
 			}
 		})
 	}
@@ -502,8 +503,10 @@ func (p *poller) recordTap(ctx context.Context, id identity, card cardRef, k ask
 	answer := newQuestionAnswer(id, card, k, false, press)
 	answer.UndoUntil = undoUntil
 	recording := "⏳ *" + mrkdwnEscapes.Replace(clipRunes(k.Label, cardMaxDetailLen)) + "* · recording since " + clock(at, p.now())
-	if err := p.tapDrawn(card, at, p.markAnswer(ctx, id, card, k.ID, recording)); err != nil {
-		p.log.Printf("waiting card %s: %q is being recorded, but the card still shows its buttons: %v", k.ID, k.Label, err)
+	if _, drawn := p.cards.cardAt(card.channel, card.ts); drawn {
+		if err := p.tapDrawn(card, at, p.markAnswer(ctx, id, card, k.ID, recording)); err != nil {
+			p.log.Printf("waiting card %s: %q is being recorded, but the card still shows its buttons: %v", k.ID, k.Label, err)
+		}
 	}
 	return p.applyQuestionTap(ctx, id, card, owedTap{Card: card.ts, Question: &answer, Line: answered})
 }
@@ -519,13 +522,11 @@ func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef
 		}
 		p.react(ctx, id, card, cardAnsweredReaction)
 		p.cards.answerDelivered(card.channel, card.thread, answer.Waits)
-	case tapRecording:
+	case tapRecording, tapRefused:
 		tap.Due = p.now().Add(prCardPatience)
 		p.cards.oweTap(card.channel, card.thread, answer.Waits, &tap)
 		p.wake()
 		p.log.Printf("waiting card %s: %q not recorded yet, recorded again at %s: %v", answer.Waits, answer.Label, tap.Due.Format(time.RFC3339), err)
-	case tapRefused:
-		p.refuseTap(ctx, id, card, answer.Waits, answer.Label, err)
 	case tapUnrecorded:
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command does not record it: %v", answer.Waits, answer.Label, err)
 	}
@@ -541,28 +542,22 @@ func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, ask
 	}
 }
 
-func (p *poller) refuseTap(ctx context.Context, id identity, card cardRef, askID, label string, why error) {
-	p.cards.release(card.channel, card.thread, askID)
-	p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" })
-	p.log.Printf("waiting card %s: %q not recorded, so the card offers its answers again: %v", askID, label, why)
-	line := "⚠️ *" + mrkdwnEscapes.Replace(clipRunes(label, cardMaxDetailLen)) + "* was not recorded: " +
-		mrkdwnEscapes.Replace(clipRunes(why.Error(), cardMaxReasonLen)) + ". Tap again, or reply here to say it."
-	if err := p.markHint(ctx, id, card, line); err != nil {
-		p.log.Printf("waiting card %s: its answers are offered again, but the card does not show it: %v", askID, err)
-	}
-}
-
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
 	}
-	card, err := p.cards.located(a)
+	card, threaded := p.cards.located(a)
+	var err error
+	if !threaded {
+		var thread string
+		thread, err = messageThreadOf(ctx, p.newAPI(id.Token), card.Channel, opBody{TS: card.MessageTS})
+		card.ThreadTS = cmp.Or(thread, card.MessageTS)
+	}
 	at := slackTime(a.ActionTS)
 	k, ok := card.tap()
 	if !ok {
 		p.log.Printf("card action %q: dropped: not a status-card button", a.ActionID)
-		p.noteTap(ctx, id, a.ref(), card.ref(), at, "⚠️ *That button no longer does anything.* Reply in this thread to say what you wanted.")
 		return nil
 	}
 	if err == nil {
@@ -573,11 +568,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 	}
 	if why, dropped := droppedBecause(err); dropped {
 		p.log.Printf("card action %s on %s/%s: dropped: %v", a.ActionID, a.Channel, a.ThreadTS, err)
-		p.noteTap(ctx, id, a.ref(), card.ref(), at, "⚠️ *"+mrkdwnEscapes.Replace(k.Label)+"* reached no one: "+why+" Reply in this thread to say it.")
-		err = nil
-	}
-	if errors.Is(err, errTapNotRecorded) {
-		p.log.Printf("card action %s on %s/%s: %v", a.ActionID, a.Channel, a.ThreadTS, err)
+		p.noteTap(ctx, id, a.ref(), card.ref(), at, "⚠️ *"+mrkdwnEscapes.Replace(k.Label)+"* was not taken: "+why)
 		err = nil
 	}
 	p.readBack(ctx, id, a, card, k, err)
@@ -597,13 +588,18 @@ func tapKey(a cardActionPush) string {
 
 func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k askTap, at time.Time) error {
 	if k.Explain {
-		switch held, err := p.tellHolder(ctx, id, a, k, id.permalink(a.Channel, a.MessageTS, a.ThreadTS)); {
-		case err != nil:
+		held, err := p.tellHolder(ctx, id, a, k, id.permalink(a.Channel, a.MessageTS, a.ThreadTS))
+		if err != nil {
 			return err
-		case !held:
-			return fmt.Errorf("%w, and no session holds this DM", errNoStatusSession)
 		}
-		return p.tapDrawn(a.ref(), at, p.markHint(ctx, id, a.ref(), askedForMore(at, p.now())))
+		line := askedForMore(at, p.now())
+		if !held {
+			if err := p.keepTap(ctx, id, a, k); err != nil {
+				return err
+			}
+			line = "🔎 *You asked for more at " + clock(at, p.now()) + ".* The next session to hold this DM explains it in this thread."
+		}
+		return p.tapDrawn(a.ref(), at, p.markHint(ctx, id, a.ref(), line))
 	}
 	label := mrkdwnEscapes.Replace(k.Label)
 	undo := ""
@@ -639,17 +635,21 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 
 func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k askTap, answered string) error {
 	held, err := p.tellHolder(ctx, id, a, k, id.permalink(a.Channel, a.MessageTS, a.ThreadTS))
-	if err != nil || !held {
+	if err == nil && !held {
+		err = p.keepTap(ctx, id, a, k)
+	}
+	if err != nil {
 		if k.ID != "" {
 			p.cards.release(a.Channel, a.ThreadTS, k.ID)
 		}
-		if err == nil {
-			err = errors.New("no session holds this DM and the card command did not record it")
-		}
 		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
 	}
-	p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
-	if err := p.markAnswer(ctx, id, a.ref(), k.ID, answered+" · sent to the session holding this DM"); err != nil {
+	sent := " · kept for the next session to hold this DM"
+	if held {
+		sent = " · sent to the session holding this DM"
+		p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
+	}
+	if err := p.markAnswer(ctx, id, a.ref(), k.ID, answered+sent); err != nil {
 		p.log.Printf("card action %s on %s: sent on, but the card still shows its buttons: %v", a.ActionID, a.MessageTS, err)
 	}
 	p.react(ctx, id, a.ref(), cardAnsweredReaction)
@@ -688,19 +688,20 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 	if k.ID != "" {
 		return true, nil
 	}
-	return true, p.owed.owe(ctx, owedReply{ThreadTS: a.ThreadTS, TS: a.ActionTS, Text: "Tapped " + k.Label + " on " + cmp.Or(k.Question, "a card"), Permalink: permalink})
+	return true, p.keepTap(ctx, id, a, k)
+}
+
+func (p *poller) keepTap(ctx context.Context, id identity, a cardActionPush, k askTap) error {
+	return p.owed.owe(ctx, owedReply{ThreadTS: a.ThreadTS, TS: a.ActionTS, Text: "Tapped " + k.Label + " on " + cmp.Or(k.Question, "a card"),
+		Permalink: id.permalink(a.Channel, a.MessageTS, a.ThreadTS)})
 }
 
 func droppedBecause(err error) (string, bool) {
 	switch {
-	case errors.Is(err, errNoStatusSession):
-		return "the session that posted this card has ended.", true
 	case errors.Is(err, errCardMoved):
 		return "this card now asks something else.", true
 	case errors.Is(err, errUndoClosed):
 		return "the ten minutes to undo this answer had passed, so it stands.", true
-	case errors.Is(err, errNoStoredCard):
-		return "cc-slack no longer holds the card this answers, so the answer was not kept.", true
 	}
 	return "", false
 }
@@ -765,8 +766,8 @@ func (p *poller) unshownTap(a cardActionPush, k askTap, tapErr error) string {
 	if ans, done := p.cards.answer(a.Channel, a.ThreadTS, k.ID); k.ID != "" && done {
 		return line + ", but the answer on record is *" + mrkdwnEscapes.Replace(ans.Label) + "*."
 	}
-	if tapErr != nil || k.ID != "" {
-		return line + " and was not taken. Tap again, or reply here to say it."
+	if tapErr != nil {
+		return line + " and was not taken: " + mrkdwnEscapes.Replace(clipRunes(tapErr.Error(), cardMaxReasonLen)) + "."
 	}
 	return line + ", but it was taken."
 }
@@ -1030,11 +1031,8 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	answered := w.answeredLine(p.now())
 	rec := p.recordWaits(ctx, id, w, answered)
-	switch rec {
-	case tapRecording:
+	if rec == tapRecording || rec == tapRefused {
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
-	case tapRefused:
-		return cardAnswerResult{}, fmt.Errorf("waiting ask %s: %q: %w", w.tap.ID, w.tap.Label, errTapNotRecorded)
 	}
 	db := p.plane.DB()
 	watches, err := p.waitsWatches(ctx, db, id, w, rec)
@@ -1198,7 +1196,7 @@ func askedAgain(title, card string) string {
 }
 
 func (p *poller) undoable(id identity, card cardRef, k askTap) bool {
-	if permissionAsk(k.ID) {
+	if _, drawn := p.cards.cardAt(card.channel, card.ts); permissionAsk(k.ID) || !drawn {
 		return false
 	}
 	if len(id.Config.PRLinks.CardCommand) == 0 || k.Other {
@@ -1241,13 +1239,6 @@ func (p *poller) reopenAnswer(ctx context.Context, id identity, card string) err
 
 func (p *poller) undoAnswer(ctx context.Context, id identity, card cardRef, ans askAnswer, press cardPress, how string) error {
 	db := p.plane.DB()
-	listeners, err := p.cardListeners(ctx, db, card.channel, card.thread)
-	if err != nil {
-		return err
-	}
-	if len(listeners) == 0 && len(id.Config.PRLinks.CardCommand) == 0 {
-		return errNoStatusSession
-	}
 	var errs []error
 	for _, u := range p.cards.undo(card.channel, ans.Tap) {
 		if err := p.reopen(ctx, id, db, press, u, how, fmt.Sprintf("they undid their answer %q", u.answer.Label)); err != nil {
@@ -1322,6 +1313,10 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 		p.log.Printf("waiting card %s: the undo of %q stays with the sessions alone, since the card command did not take it: %v", u.waits, u.answer.Label, err)
 	}
 	recorded := rec == tapRecorded
+	if len(watches) == 0 && !recorded {
+		undid := cardActionPush{Channel: u.card.channel, ThreadTS: u.card.thread, MessageTS: u.card.ts, ActionTS: press.ActionTS}
+		return p.keepTap(ctx, id, undid, askTap{Label: "Undo of " + u.answer.Label, Question: u.question})
+	}
 	line := fmt.Sprintf("%s: %s to the waiting ask %q, so treat it as never given. Tell the lane that asked to stop or redirect "+
 		"whatever it started on that answer and to supersede anything recorded from it; the card waits for their answer again.", who, why, u.waits)
 	if recorded {
@@ -1355,7 +1350,10 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		return cardAnswerResult{}, err
 	}
 	ref, ok := p.cards.cardAt(link.channelID, link.ts)
-	if !ok || ref.channel != id.DMChannelID {
+	if !ok {
+		ref = cardRef{link.channelID, cmp.Or(link.threadTS, link.ts), link.ts}
+	}
+	if ref.channel != id.DMChannelID {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
 	}
 	thread := ref.thread
@@ -1370,9 +1368,9 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 			return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
 		}
 	}
-	waits, m, ok := p.cards.waitingAt(id.DMChannelID, thread, ref.ts)
-	if !ok {
-		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
+	waits, m, err := p.waitingCard(ctx, id, cardRef{id.DMChannelID, thread, ref.ts})
+	if err != nil {
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM: %w", named, card, err)
 	}
 	answers := m.Card.answers()
 	if !other && !withdrawn && !slices.Contains(answers, label) {
@@ -1409,6 +1407,34 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		res.UndoUntil = answer.undoUntil()
 	}
 	return res, err
+}
+
+func (p *poller) waitingCard(ctx context.Context, id identity, r cardRef) (string, liveMessage, error) {
+	if waits, m, ok := p.cards.waitingAt(r.channel, r.thread, r.ts); ok {
+		return waits, m, nil
+	}
+	post, err := messageAt(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts)
+	if err != nil {
+		return "", liveMessage{}, err
+	}
+	for _, b := range post.Blocks.BlockSet {
+		actions, isActions := b.(*slack.ActionBlock)
+		if !isActions || actions.BlockID != cardActionsBlock {
+			continue
+		}
+		for _, e := range actions.Elements.ElementSet {
+			button, isButton := e.(*slack.ButtonBlockElement)
+			if !isButton {
+				continue
+			}
+			if waits, other := strings.CutPrefix(button.ActionID, cardOtherAction); other {
+				if k, ok := decodeTap(button.Value, waits); ok {
+					return waits, liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: k.Question, Waits: waits, Options: k.Options}}, nil
+				}
+			}
+		}
+	}
+	return "", liveMessage{}, errors.New("its message offers no answers")
 }
 
 func (p *poller) dashboardUndoKey(id identity, a waitsAnswer, from string) string {

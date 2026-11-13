@@ -680,7 +680,7 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 }
 
-func TestATapTheCardCommandRefusesOffersTheCardsAnswersAgainAndReachesNoSession(t *testing.T) {
+func TestATapTheCardCommandRefusesStaysRecordingAndIsOwedToTheCardCommand(t *testing.T) {
 	refusing := filepath.Join(t.TempDir(), "card")
 	if err := os.WriteFile(refusing, []byte("#!/bin/sh\ncase \"$(cat)\" in\n*'\"answer\"'*) exit 1 ;;\nesac\necho '{\"cards\":[],\"prs\":[]}'\n"), 0o700); err != nil {
 		t.Fatal(err)
@@ -699,11 +699,11 @@ func TestATapTheCardCommandRefusesOffersTheCardsAnswersAgainAndReachesNoSession(
 	if got := l.inject(agent.TopLevel); got != "" {
 		t.Fatalf("directive = %q, want none, since the card command did not record his answer", got)
 	}
-	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Ring* was not recorded") || !strings.Contains(edits[len(edits)-1], cardWaitAction+"0:"+card.Waits) {
-		t.Fatalf("edits = %v, want the card's answers offered again, saying his tap was not recorded", edits)
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "⏳ *Ring* · recording since") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("edits = %v, want his tap shown as recording, with no buttons to tap again", edits)
 	}
-	if _, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
-		t.Fatal("an answer the card command refused reads as answered")
+	if ans, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); !done || ans.Label != "Ring" || ans.Owed == nil {
+		t.Fatalf("answer = %+v, %v, want Ring kept and owed to the card command", ans, done)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,7 +28,28 @@ func mergeTap(c postedCard, n int) cardActionPush {
 		ActionTS: "1800000100.000000", Seq: fmt.Sprintf("001800000100000-abcd%04d", n)}
 }
 
-func TestATapNoSessionHoldsShowsItsPickOnTheCopyAndTheCard(t *testing.T) {
+func owedTaps(t *testing.T, l *liveDaemon) []string {
+	t.Helper()
+	var owed dmOwedResult
+	if err := json.Unmarshal(l.do(opDMOwed, nil).Body, &owed); err != nil {
+		t.Fatal(err)
+	}
+	taps := make([]string, 0, len(owed.Replies))
+	for _, r := range owed.Replies {
+		taps = append(taps, r.Text)
+	}
+	return taps
+}
+
+func forgetCard(l *liveDaemon, c postedCard) {
+	l.app.cards.mu.Lock()
+	delete(l.app.cards.threads, threadKey(c.id.DMChannelID, c.thread))
+	l.app.cards.mu.Unlock()
+}
+
+const keptTap = "kept for the next session to hold this DM"
+
+func TestATapNoSessionHoldsIsKeptForTheNextHolderOnTheCopyAndTheCard(t *testing.T) {
 	l, id, card, thread := copyDaemon(t, cardBody("Send the report?", "send it"))
 	legacyCopy(t, l, id.permalink(id.DMChannelID, card, ""), thread)
 	post := lastPost(l)
@@ -45,40 +67,57 @@ func TestATapNoSessionHoldsShowsItsPickOnTheCopyAndTheCard(t *testing.T) {
 
 	for _, ts := range []string{card, post.ts} {
 		edits := editsOf(l.slack.edited(), ts)
-		if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*send it* reached no one") {
-			t.Fatalf("message %s edits = %v, want the pick and that it reached no one", ts, edits)
+		if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*send it* · answered") || !strings.Contains(edits[len(edits)-1], keptTap) {
+			t.Fatalf("message %s edits = %v, want the pick kept for the next session", ts, edits)
 		}
 	}
 	if got := l.slack.sent()[sent:]; len(got) != 0 {
-		t.Fatalf("posted %+v, want the note on the messages and no new post", got)
+		t.Fatalf("posted %+v, want the pick on the messages and no new post", got)
+	}
+	if owed := owedTaps(t, l); len(owed) != 1 || !strings.Contains(owed[0], "Tapped send it") {
+		t.Fatalf("owed = %q, want his tap kept for the next session to hold the DM", owed)
 	}
 	if l.app.replay.latest() != push.Seq {
 		t.Fatalf("replay cursor = %q, want it past the tap", l.app.replay.latest())
 	}
 }
 
-func TestAWaitingTapNoSessionHoldsKeepsTheCardOpenAndSaysSo(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
-	c := postWaiting(t, l, mergeCard())
-	endWatches(t, l, c.thread)
+func TestAWaitingTapNoSessionOrDriveTakesIsKeptForTheNextHolder(t *testing.T) {
+	for name, daemon := range map[string]func(*testing.T) *liveDaemon{
+		"no card command": func(t *testing.T) *liveDaemon {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			return l
+		},
+		"the card is no drive's": func(t *testing.T) *liveDaemon {
+			command := cardOwnerCommand(t, `echo "{\"ok\":false,\"why\":\"step-3:merge is no drive's question card\"}"`)
+			l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+			return l
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := daemon(t)
+			c := postWaiting(t, l, mergeCard())
+			endWatches(t, l, c.thread)
+			sent := len(l.slack.sent())
 
-	l.tap(c.id, mergeTap(c, 1))
+			l.tap(c.id, mergeTap(c, 1))
 
-	edits := editsOf(l.slack.edited(), c.ts)
-	if len(edits) == 0 {
-		t.Fatal("the card kept showing what it showed before the tap")
-	}
-	last := edits[len(edits)-1]
-	if !strings.Contains(last, "*Merge* reached no one") || !strings.Contains(last, cardWaitAction) || strings.Contains(last, cardWaitHint) {
-		t.Fatalf("card = %s, want the note beside its buttons and no line saying the lane waits", last)
-	}
-	if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); done {
-		t.Fatal("a tap that reached no one reads as answered")
+			edits := editsOf(l.slack.edited(), c.ts)
+			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") || !strings.Contains(edits[len(edits)-1], keptTap) || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+				t.Fatalf("edits = %v, want his pick in place of the buttons, kept for the next session", edits)
+			}
+			if owed := owedTaps(t, l); len(owed) != 1 || owed[0] != "Tapped Merge on Merge #41 now?" {
+				t.Fatalf("owed = %q, want his tap kept for the next session to hold the DM", owed)
+			}
+			if got := l.slack.sent()[sent:]; len(got) != 0 {
+				t.Fatalf("posted %+v, want nothing asking him to say it again", got)
+			}
+		})
 	}
 }
 
-func TestAnAckNoSessionHoldsSaysItReachedNoOne(t *testing.T) {
+func TestAnAckNoSessionHoldsIsKeptForTheNextHolder(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.do(opDMStatus, cardBody("Rolling out"))
@@ -92,23 +131,64 @@ func TestAnAckNoSessionHoldsSaysItReachedNoOne(t *testing.T) {
 	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: ts, ThreadTS: ts,
 		ActionID: cardAckAction, Value: cardAckLabel, ActionTS: "1800000100.000000"})
 
-	edits := editsOf(l.slack.edited(), ts)
-	if len(edits) == 0 || !strings.Contains(edits[0], "*"+cardAckLabel+"*") || !strings.Contains(edits[len(edits)-1], "*"+cardAckLabel+"* reached no one") {
-		t.Fatalf("edits = %v, want the Ack and that it reached no one", edits)
+	if edits := editsOf(l.slack.edited(), ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*"+cardAckLabel+"*") || !strings.Contains(edits[len(edits)-1], keptTap) {
+		t.Fatalf("edits = %v, want the Ack kept for the next session", edits)
+	}
+	if owed := owedTaps(t, l); len(owed) != 1 || !strings.Contains(owed[0], "Tapped "+cardAckLabel) {
+		t.Fatalf("owed = %q, want the Ack kept for the next session to hold the DM", owed)
 	}
 }
 
-func TestAButtonNoRouteKnowsSaysSoOnTheMessage(t *testing.T) {
-	l := startDaemon(t)
-	loggedIn(t, l)
+func TestATapOnACardCCSlackForgotReachesItsDriveAndClosesTheCard(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
 	c := postWaiting(t, l, mergeCard())
+	forgetCard(l, c)
+	sent := len(l.slack.sent())
 
-	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
-		ActionID: cardActionPrefix + ":retired", ActionTS: "1800000100.000000"})
+	l.tap(c.id, mergeTap(c, 1))
 
+	asked := answersOf(cmd.requests(t))
+	var got struct {
+		Answer questionAnswer `json:"answer"`
+	}
+	if len(asked) != 1 || json.Unmarshal([]byte(asked[0]), &got) != nil || got.Answer.Waits != "step-3:merge" || got.Answer.Label != "Merge" || got.Answer.URL != c.url() {
+		t.Fatalf("card command asked %v, want his Merge under the button's own waits id and the card's link", asked)
+	}
 	edits := editsOf(l.slack.edited(), c.ts)
-	if len(edits) != 1 || !strings.Contains(edits[0], "That button no longer does anything") {
-		t.Fatalf("edits = %v, want the message to say the button is dead", edits)
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered") || !strings.Contains(edits[len(edits)-1], "Merge #41 now?") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("edits = %v, want the card closed on his answer, drawn from the message Slack holds", edits)
+	}
+	if got := l.slack.sent()[sent:]; len(got) != 0 {
+		t.Fatalf("posted %+v, want nothing asking him to tap again", got)
+	}
+}
+
+func TestACloseOnACardCCSlackForgotSettlesItFromTheMessageSlackHolds(t *testing.T) {
+	const board = "http://127.0.0.1:7000/p/asks--ab12"
+	for name, tc := range map[string]struct {
+		fields map[string]any
+		want   string
+	}{
+		"settled":   {map[string]any{"label": "Landed as 5480445", "other": true, "settled": true, "via": "https://github.com/acme/app/pull/41"}, "https://github.com/acme/app/pull/41|Landed as 5480445"},
+		"withdrawn": {map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board}, "*Withdrawn:* superseded by step 4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := postWaiting(t, l, mergeCard())
+			forgetCard(l, c)
+
+			tc.fields["url"] = c.url()
+			var res cardAnswerResult
+			if err := json.Unmarshal(l.do(opCardAnswer, tc.fields).Body, &res); err != nil || !res.Answered {
+				t.Fatalf("close = %+v, %v; want the forgotten card closed", res, err)
+			}
+			edits := editsOf(l.slack.edited(), c.ts)
+			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], tc.want) || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+				t.Fatalf("edits = %v, want %q in place of the buttons", edits, tc.want)
+			}
+		})
 	}
 }
 
@@ -342,30 +422,6 @@ func TestAnUndoOnACardWhoseSessionEndedReachesWhoHeardItsAnswerForTenMinutes(t *
 			t.Fatalf("holder heard %q, want the undo of his first pick as an answer never given, and nothing for the late Undo", got)
 		}
 	})
-}
-
-func TestAnAnswerTheCardCommandDidNotRecordStaysOpenAndSaysWhoMissedIt(t *testing.T) {
-	for _, tc := range []struct{ name, answer, says string }{
-		{"the command fails", "exit 1", "*Merge* was not recorded"},
-		{"the card is no drive's", `echo "{\"ok\":false,\"why\":\"step-3:merge is no drive's question card\"}"`, "*Merge* reached no one"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			command := cardOwnerCommand(t, tc.answer)
-			l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
-			c := postWaiting(t, l, mergeCard())
-			endWatches(t, l, c.thread)
-
-			l.tap(c.id, mergeTap(c, 2))
-
-			edits := editsOf(l.slack.edited(), c.ts)
-			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], tc.says) || !strings.Contains(edits[len(edits)-1], cardWaitAction) || strings.Contains(edits[len(edits)-1], "recording since") {
-				t.Fatalf("edits = %v, want the buttons back and %q", edits, tc.says)
-			}
-			if _, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); done {
-				t.Fatal("an answer no one heard reads as answered")
-			}
-		})
-	}
 }
 
 func TestAQuestionTapTheCardCommandDidNotFinishShowsRecordingUntilItsRetryRecordsIt(t *testing.T) {

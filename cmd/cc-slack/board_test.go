@@ -862,11 +862,7 @@ func TestATapOnAHandEditedCardPostDrawsOnTheEditedPost(t *testing.T) {
 
 func TestAResendOfABoardCardCCSlackNoLongerHoldsRefusesAClosedPost(t *testing.T) {
 	for name, forget := range map[string]func(*liveDaemon, postedCard){
-		"its live cards were pruned": func(l *liveDaemon, c postedCard) {
-			l.app.cards.mu.Lock()
-			delete(l.app.cards.threads, threadKey(c.id.DMChannelID, c.thread))
-			l.app.cards.mu.Unlock()
-		},
+		"its live cards were pruned": forgetCard,
 		"its session let go of its thread": func(l *liveDaemon, c postedCard) {
 			l.do(opUnfollow, map[string]string{"channel_id": c.id.DMChannelID, "thread_ts": c.thread})
 		},
@@ -894,9 +890,7 @@ func TestAResendOfAnOpenBoardCardCCSlackForgotStillRedrawsIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	c := mirroredCard(t, l, map[string]any{"card": mergeCard()})
-	l.app.cards.mu.Lock()
-	delete(l.app.cards.threads, threadKey(c.id.DMChannelID, c.thread))
-	l.app.cards.mu.Unlock()
+	forgetCard(l, c)
 
 	again := mirroredCard(t, l, map[string]any{"card": portCard(c)})
 
