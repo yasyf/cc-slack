@@ -183,6 +183,8 @@ func (c cardCommand) resolves(t *testing.T) []string {
 
 func readAsks(t *testing.T, path string) []string {
 	t.Helper()
+	shownRecords.RLock()
+	defer shownRecords.RUnlock()
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
