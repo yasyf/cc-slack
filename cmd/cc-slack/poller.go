@@ -74,7 +74,6 @@ type poller struct {
 	compact map[string]transcriptMark
 	held    []heldAck
 	edits   map[string]bool
-	handed  map[string]string
 }
 
 type messageNudge struct {

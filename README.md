@@ -133,11 +133,6 @@ its Undo: the card closes on your pick with its Undo button. A pick no program r
 your DM is kept for the next session to hold it, and the card closes saying so. A card cc-slack no longer
 stores answers the same way, since its buttons name the question they answer.
 
-A release post in a channel a session's feed watches for releases also goes to `card_command` as
-`{"release": {"name", "line", "link"}}`, once each time its line changes, `line` being what follows
-`RELEASE` in the feed. A drive uses it to reopen an incident's stop the turn a release it named fails
-a step. Its output is ignored.
-
 A team can check its config in as `.claude/cc-slack.toml`. The daemon keeps
 the config it was logged in with, so run `cc-slack reload` after a change.
 Reload hands the daemon the new config and keeps the bot token, socket URL,
