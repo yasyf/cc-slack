@@ -311,9 +311,10 @@ func TestASendWhoseAnswerWasLostIsResentAndPostsOnce(t *testing.T) {
 }
 
 func TestEveryPostOfAKeyedWriteNamesAStepNoOtherPostOfItNames(t *testing.T) {
-	text := strings.Join(slices.Concat([]string{"Tonight's cards:"}, roomLinks(1, 3), []string{""}, roomLinks(4, 7)), "\n")
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	cards := openCardLinks(t, l, 7)
+	text := strings.Join(slices.Concat([]string{"Tonight's cards:"}, cards[:3], []string{""}, cards[3:]), "\n")
 	for _, write := range []struct {
 		op   daemon.Op
 		body map[string]any
