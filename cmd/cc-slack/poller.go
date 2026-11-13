@@ -809,7 +809,7 @@ func (p *poller) steers(ctx context.Context, db *sql.DB, api slackAPI, id identi
 		toPeople = true
 	}
 	if toPeople || operatorRoot(id, m) {
-		return !toPeople, nil
+		return false, nil
 	}
 	return p.postedIn(ctx, db, api, id, channelID, m.ThreadTimestamp)
 }

@@ -26,14 +26,15 @@ out of it.
 
 The user's words in a channel steer only when they are to the bot: a message
 that mentions the bot, or one that mentions no one else and is a reply in a
-thread this machine's cc-slack posted in or a new top-level message. Those carry
-`operator: true` and follow the holder. While a session holds the DM, one
+thread this machine's cc-slack posted in. Those carry `operator: true` and
+follow the holder. While a session holds the DM, one
 written in a channel another session watches whole reaches the holder on its
 DM watch, with `relayed` set, and never the watching session. A session
 watching one thread still gets them in that thread, and then the holder does
 not. Anything else the user writes there is Slack content, like a teammate's
-message: a reply in a teammate's thread, or a line that mentions a teammate,
-`@here` or a user group and not the bot, in any thread. It reaches the sessions watching that
+message: a new top-level message that does not mention the bot, a reply in a
+teammate's thread, or a line that mentions a teammate, `@here` or a user group
+and not the bot, in any thread. It reaches the sessions watching that
 channel or thread without `operator`, and never the holder.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
