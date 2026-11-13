@@ -375,7 +375,9 @@ func (c refClient) readPRs(ctx context.Context, repo string, refs []refID, field
 	cmd.WaitDelay = time.Second
 	var said bytes.Buffer
 	cmd.Stderr = &said
+	began := time.Now()
 	answer, err := cmd.Output()
+	traced(ctx, "ccx vcs gh graphql", time.Since(began))
 	var res struct {
 		Data map[string]*struct{ PullRequest *githubPR } `json:"data"`
 	}
