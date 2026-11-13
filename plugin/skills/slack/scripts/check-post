@@ -69,7 +69,7 @@ RULES = (
     ),
     Rule(
         "drive-term",
-        re.compile(r"(?<![\w./-])(?i:(?:lanes?|desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)(?![-/]\w|\.\w)|\b(?:merge-)?walker\b|(?<![\w./:-])[oj]\d{2,}(?![\w/-]|\.\w)"),
+        re.compile(r"(?<![\w./-])(?i:(?:desks?|parity|fenc(?:e|ed|es|ing)|stack-enqueue|the drive)\b)(?![-/]\w|\.\w)|\b(?:merge-)?walker\b|(?<![\w./:-])[oj]\d{2,}(?![\w/-]|\.\w)"),
         "say what happens to the reader's work instead, such as the deploy that runs after each merge or the freeze on api",
         reads_code=False,
         reads_labels=True,

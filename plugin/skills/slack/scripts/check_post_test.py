@@ -49,11 +49,11 @@ class CheckPostTest(unittest.TestCase):
     def test_reads_the_words_of_each_link_as_the_reader_sees_them(self) -> None:
         text = (
             "<https://github.com/acme/app/pull/298|a card draws a chart fence> and "
-            "<https://github.com/acme/app/pull/299|o329 lands on the lane>; pick <https://acme.slack.com/archives/D0123/p1|option 2>."
+            "<https://github.com/acme/app/pull/299|o329 lands on the desk>; pick <https://acme.slack.com/archives/D0123/p1|option 2>."
         )
         self.assertEqual(
             kinds(text),
-            [("drive-term", "fence"), ("drive-term", "o329"), ("drive-term", "lane"), ("option-reference", "option 2")],
+            [("drive-term", "fence"), ("drive-term", "o329"), ("drive-term", "desk"), ("option-reference", "option 2")],
         )
 
     def test_flags_a_bare_slack_message_link_which_unfurls_under_words(self) -> None:
@@ -118,7 +118,6 @@ class CheckPostTest(unittest.TestCase):
                 ("codename", "D"),
                 ("drive-term", "walker"),
                 ("drive-term", "desk"),
-                ("drive-term", "lane"),
                 ("drive-term", "fence"),
                 ("zone-label", "PT"),
                 ("drive-term", "parity"),
@@ -137,29 +136,33 @@ class CheckPostTest(unittest.TestCase):
     def test_passes_a_letter_that_names_an_option(self) -> None:
         self.assertEqual(kinds("Direction B keeps one lock, and Plan C, Phase D, Step E and option F follow it."), [])
 
-    def test_still_flags_a_lane_name_and_order_and_job_ids(self) -> None:
+    def test_passes_the_lanes_an_incident_line_names(self) -> None:
+        text = "Three codex lanes run now: a fix lane with apply authority, a rollback lane, and a cause lane."
+        self.assertEqual(kinds(text), [])
+
+    def test_still_flags_order_and_job_ids(self) -> None:
         self.assertEqual(
             kinds("The rt-slack-gates lane took o308 and j789."),
-            [("drive-term", "lane"), ("drive-term", "o308"), ("drive-term", "j789")],
+            [("drive-term", "o308"), ("drive-term", "j789")],
         )
 
     def test_passes_a_multi_agent_term_the_question_it_answers_used(self) -> None:
-        answer = "The drive has two PRs left, and each lane waits on CI."
+        answer = "The drive has two PRs left, and each desk waits on CI."
         self.assertEqual(
-            [(finding.kind, finding.token) for finding in check_post.check(answer, ["how far along is the drive?", "which lanes are still running"])],
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["how far along is the drive?", "which desks are still running"])],
             [],
         )
         self.assertEqual(
             [(finding.kind, finding.token) for finding in check_post.check(answer, ["what's left in this drive?"])],
-            [("drive-term", "lane")],
+            [("drive-term", "desk")],
         )
         self.assertEqual(
             [(finding.kind, finding.token) for finding in check_post.check(answer, ["is the deploy out?"])],
-            [("drive-term", "The drive"), ("drive-term", "lane")],
+            [("drive-term", "The drive"), ("drive-term", "desk")],
         )
         self.assertEqual(
-            [(finding.kind, finding.token) for finding in check_post.check(answer, ["is the driver fixed?", "which laneways are closed"])],
-            [("drive-term", "The drive"), ("drive-term", "lane")],
+            [(finding.kind, finding.token) for finding in check_post.check(answer, ["is the driver fixed?", "which desktops are closed"])],
+            [("drive-term", "The drive"), ("drive-term", "desk")],
         )
 
     def test_passes_an_internal_id_the_message_it_answers_asks_for_or_names(self) -> None:
