@@ -36,9 +36,9 @@ order.
    states that ends in "or waiting on you", in a post that links no
    card in your DM with the app and no PR, a link to a message in your DM
    with the app shown as its raw URL, bare or labeled with its own URL, and a
-   line that links more than five Slack messages or alerts, since Slack draws
-   five a message: put each on its own line, and cc-slack sends a longer post
-   to your DM as pages. Delete a not-proven paragraph and
+   line outside a table that links more than five Slack messages or alerts,
+   since Slack draws five a message: put each on its own line or in a table
+   row, and cc-slack sends a longer post to your DM as pages. Delete a not-proven paragraph and
    put a job on the unknown: the reader gets its result, or nothing. It reads
    through `*bold*`, `_italic_` and `~strike~` markers, ignores anything
    inside a `<url|label>` link or `<@U…>` mention, and reads no identifier

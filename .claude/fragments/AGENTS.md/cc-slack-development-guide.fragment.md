@@ -156,8 +156,10 @@ Slack draws at most five link previews a message. A post to the engineer's DM
 with no blocks and no card that links more than five distinct Slack messages,
 Sentry issues and Datadog monitors goes out as pages, each cut at the last blank
 line before the line holding its sixth such link, or at that line's start when
-no blank line comes before it, so every card draws. `linkPages` in
-`linkpages.go` cuts them. Every page goes where the post goes, at the root or in
+no blank line comes before it, so every card draws. A link in a markdown table
+row counts toward none of the five, since the row draws as a cell of a Slack
+table block, which Slack never previews, so a table of cards stays one message
+with its header once. `linkPages` in `linkpages.go` cuts them. Every page goes where the post goes, at the root or in
 the thread its call names; a root page is watched as the first is, and the
 result's `page_permalink` names each page after the first, space-separated. A
 line that links six or more is refused before anything posts, since no cut
