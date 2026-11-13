@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"maps"
-	"math"
 	"net/url"
 	"os"
 	"reflect"
@@ -215,12 +214,10 @@ type messageFile struct {
 }
 
 type threadResult struct {
-	ChannelID  string        `json:"channel_id"`
-	ThreadTS   string        `json:"thread_ts"`
-	Messages   []readMessage `json:"messages"`
-	Truncated  bool          `json:"truncated"`
-	Stale      bool          `json:"stale,omitempty"`
-	RetryAfter int           `json:"retry_after,omitempty"`
+	ChannelID string        `json:"channel_id"`
+	ThreadTS  string        `json:"thread_ts"`
+	Messages  []readMessage `json:"messages"`
+	Truncated bool          `json:"truncated"`
 }
 
 type historyResult struct {
@@ -1370,16 +1367,16 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
 	reads := withoutRateWait(hc.Ctx)
-	read, err := a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
+	msgs, err := a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 	if readAsUser(id, err) {
 		if api, err = a.userAPI(hc.Ctx, id); err == nil {
-			read, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
+			msgs, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 		}
 	}
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
-	msgs, truncated := threadPage(read.msgs, b.SinceTS, limit)
+	msgs, truncated := threadPage(msgs, b.SinceTS, limit)
 	var raw map[string]json.RawMessage
 	if b.Raw && len(msgs) > 0 {
 		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS, msgs[0].Timestamp); err != nil {
@@ -1394,11 +1391,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		}
 		out = append(out, msg)
 	}
-	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
-	if read.stale {
-		res.RetryAfter = int(math.Ceil(read.retryAfter.Seconds()))
-	}
-	return ok(res)
+	return ok(threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated})
 }
 
 func threadPage(msgs []slack.Message, sinceTS string, limit int) ([]slack.Message, bool) {
@@ -2348,18 +2341,17 @@ func checkUserSession(ctx context.Context, user slackAPI, id identity) error {
 }
 
 func (a *app) latestTS(ctx context.Context, api slackAPI, channelID, threadTS string) (string, error) {
-	var msgs []slack.Message
+	var (
+		msgs []slack.Message
+		err  error
+	)
 	if threadTS != "" {
-		read, err := a.cache.replies(ctx, api, channelID, threadTS)
-		if err != nil {
-			return "", err
-		}
-		msgs = read.msgs
+		msgs, err = a.cache.replies(ctx, api, channelID, threadTS)
 	} else {
-		var err error
-		if msgs, err = fetchHistory(ctx, api, channelID, "", 1); err != nil {
-			return "", err
-		}
+		msgs, err = fetchHistory(ctx, api, channelID, "", 1)
+	}
+	if err != nil {
+		return "", err
 	}
 	if len(msgs) == 0 {
 		return formatTS(a.now()), nil

@@ -176,7 +176,6 @@ class Message:
 class Thread:
     messages: tuple[Message, ...] = ()
     readable: bool = True
-    stale: bool = False
 
 
 def holds_name(text: str, name: str) -> bool:
@@ -274,7 +273,6 @@ def read_thread(conv: Conversation) -> Thread:
             Message(message["ts"], message.get("user", ""), message.get("user_name", ""), message.get("text", ""), bool(message.get("from_user")), bool(message.get("from_claude")), bool(message.get("from_bot")))
             for message in read["messages"]
         ),
-        stale=bool(read.get("stale")),
     )
 
 
@@ -501,7 +499,7 @@ class SolvedLine(CustomTicketCondition):
         if not grants or write.verb != "post" or write.files or write.fields.get("blocks") or not plain(write.text):
             return None
         read = thread_of(ctx)
-        if not read.readable or read.stale or any(message.from_claude for message in read.messages):
+        if not read.readable or any(message.from_claude for message in read.messages):
             return None
         return [ruling_evidence(grants[-1])]
 
@@ -1013,8 +1011,8 @@ def ruled(*answers: dict[str, Any]) -> dict[str, str]:
     return NOT_DM | {"ccn answer search": json.dumps(list(answers))}
 
 
-def thread_read(*messages: dict[str, Any], stale: bool = False) -> dict[str, str]:
-    return {f"{CC_SLACK} thread": json.dumps({"messages": list(messages), "stale": stale})}
+def thread_read(*messages: dict[str, Any]) -> dict[str, str]:
+    return {f"{CC_SLACK} thread": json.dumps({"messages": list(messages)})}
 
 
 def owner_answered(question: str, options: list[str] | dict[str, str], label: str, *, notes: str = "", id: str | None = None, described: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -1392,7 +1390,7 @@ on(
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "This is fixed now, and your chats open again."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED)) >> DENY,
-            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, stale=True)) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | {f"{CC_SLACK} thread": (1, "ratelimited")}) >> DENY,
             case(DANA | {"text": f"{SOLVED_TEXT} Does it work for you now?"}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": f"{SOLVED_TEXT} Please retry and let me know."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,

@@ -54,8 +54,6 @@ including its channel, thread, timestamp, permalink, classification, and
 reason. End with `owed:` followed by the message keys classified `reply` or
 `act`, or `owed: none`.
 
-A `slack_thread` result with `stale: true` is the daemon's cached copy from
-before a Slack rate limit; triage it and name the staleness in the report.
 When `slack_thread` fails, report its error and the affected reference.
 
 Do not post, reply, react, watch, poll, wait, or draft suggested wording.

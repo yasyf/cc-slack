@@ -75,13 +75,6 @@ type inflightRead struct {
 	nudged bool
 }
 
-type threadRead struct {
-	msgs       []slack.Message
-	stale      bool
-	syncedAt   time.Time
-	retryAfter time.Duration
-}
-
 func openReadCache(ctx context.Context, path string) (*readCache, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("read cache dir: %w", err)
@@ -98,28 +91,28 @@ func openReadCache(ctx context.Context, path string) (*readCache, error) {
 
 func (c *readCache) Close() error { return c.st.Close() }
 
-func (c *readCache) replies(ctx context.Context, api slackAPI, channelID, threadTS string) (threadRead, error) {
+func (c *readCache) replies(ctx context.Context, api slackAPI, channelID, threadTS string) ([]slack.Message, error) {
 	return c.read(ctx, api, channelID, threadTS, "")
 }
 
-func (c *readCache) repliesHolding(ctx context.Context, api slackAPI, channelID, threadTS, ts string) (threadRead, error) {
+func (c *readCache) repliesHolding(ctx context.Context, api slackAPI, channelID, threadTS, ts string) ([]slack.Message, error) {
 	return c.read(ctx, api, channelID, threadTS, ts)
 }
 
-func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS, want string) (threadRead, error) {
+func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS, want string) ([]slack.Message, error) {
 	now := c.now()
 	c.mu.Lock()
 	entry, found, err := c.load(ctx, channelID, threadTS)
 	c.mu.Unlock()
 	if err != nil {
-		return threadRead{}, err
+		return nil, err
 	}
 	held := found && (want == "" || slices.ContainsFunc(entry.msgs, func(m slack.Message) bool { return m.Timestamp == want }))
 	if held && entry.fresh(now, c.live()) {
-		return threadRead{msgs: entry.msgs}, c.touch(ctx, channelID, threadTS, now)
+		return entry.msgs, c.touch(ctx, channelID, threadTS, now)
 	}
 	if until := c.limited(); held && now.Before(until) {
-		return threadRead{msgs: entry.msgs, stale: true, syncedAt: entry.syncedAt, retryAfter: until.Sub(now)}, c.touch(ctx, channelID, threadTS, now)
+		return nil, &slack.RateLimitedError{RetryAfter: until.Sub(now)}
 	}
 	since := ""
 	if found && entry.whole(now) {
@@ -134,11 +127,8 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS,
 	if errors.As(err, &rate) {
 		c.limit(c.now().Add(rate.RetryAfter))
 	}
-	if found && errors.As(err, &rate) {
-		return threadRead{msgs: entry.msgs, stale: true, syncedAt: entry.syncedAt, retryAfter: rate.RetryAfter}, c.touch(ctx, channelID, threadTS, now)
-	}
 	if err != nil {
-		return threadRead{}, err
+		return nil, err
 	}
 	_, asUser := api.(userReads)
 	next := threadEntry{msgs: fetched, syncedAt: now, fullAt: now, gen: entry.gen, followed: !asUser}
@@ -150,7 +140,7 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS,
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return threadRead{msgs: next.msgs}, c.commit(ctx, channelID, threadTS, next)
+	return next.msgs, c.commit(ctx, channelID, threadTS, next)
 }
 
 func (c *readCache) limited() time.Time {

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -130,6 +131,9 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 		return fmt.Sprintf("%s is not a conversation the bot can read (%s); one the bot is not in reads as you once the cc-slack config sets [oauth] client_id, and your DM with the app is %s, which channel_id may omit", named, code, dm)
 	case "thread_not_found":
 		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)
+	case "ratelimited":
+		rate, _ := errors.AsType[*slack.RateLimitedError](err)
+		return fmt.Sprintf("cc-slack can't read thread %s now (%s): Slack limits the read for %ds more, so read the thread again after that", thread, code, int(math.Ceil(rate.RetryAfter.Seconds())))
 	}
 	return fallback(actionRead, err)
 }
