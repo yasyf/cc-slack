@@ -149,6 +149,7 @@ type statusCard struct {
 	Artifacts   []cardArtifact    `json:"artifacts,omitempty"`
 	Hints       map[string]string `json:"hints,omitempty"`
 	Replaces    string            `json:"replaces,omitempty"`
+	Siblings    bool              `json:"siblings,omitempty"`
 
 	Pictures   []string    `json:"pictures,omitempty"`
 	Images     []cardImage `json:"images,omitempty"`

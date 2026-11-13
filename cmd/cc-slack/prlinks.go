@@ -62,7 +62,10 @@ type replacedCard struct {
 }
 
 func regrouped(card statusCard) string {
-	if n := len(card.prKeys()); n > 1 {
+	switch n := len(card.prKeys()); {
+	case n > 1 && card.Siblings:
+		return fmt.Sprintf("now one card for %d PRs of one request", n)
+	case n > 1:
 		return fmt.Sprintf("now one card for its stack of %d PRs", n)
 	}
 	return "now a card of its own"
