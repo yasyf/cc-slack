@@ -1013,6 +1013,19 @@ func TestACutNeverEndsOnAHeading(t *testing.T) {
 	}
 }
 
+func TestADrivesMeanwhileLineTakesTheStoppedLinesPlace(t *testing.T) {
+	asks := statusCard{Status: "needs_you", Title: "Which layout?", Options: []string{"One file", "Many files"}, Recommended: "One file", Waits: "demo:j1-7", Drive: "demo"}
+	asks.Meanwhile = "Being built on a branch while you decide, paused on your pick."
+	got := blocksJSON(t, asks.replyBlocks(view()))
+	if strings.Contains(got, "stopped") || !strings.Contains(got, "⏸ *"+asks.Meanwhile+"* "+cardPRHint) {
+		t.Fatalf("a drive's card reads %s, want its meanwhile line where the stopped line was", got)
+	}
+	asks.Options, asks.Recommended = nil, ""
+	if got := blocksJSON(t, asks.replyBlocks(view())); !strings.Contains(got, "⏸ *"+asks.Meanwhile+"* "+cardWriteTap) {
+		t.Fatalf("a drive's written-answer card reads %s, want its meanwhile line before Tap Answer", got)
+	}
+}
+
 func TestEveryLineOfAPRFactReadsAsTheSameBullet(t *testing.T) {
 	if got := plainMrkdwn("- first\n- second\n  - third"); got != "• first\n• second\n  • third" {
 		t.Fatalf("got %q, want every marker converted", got)

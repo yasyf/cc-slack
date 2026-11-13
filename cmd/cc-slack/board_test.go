@@ -704,7 +704,7 @@ func TestABoardQuestionPostsWithNoRecommendationOrNoPresetAnswers(t *testing.T) 
 
 	written := mirroredCard(t, l, map[string]any{"card": statusCard{Status: "needs_you", Title: "What should the title say?", Waits: "title"}})
 	blocks = l.postedAt(t, written.ts).blocks
-	if !strings.Contains(blocks, cardAnswerLabel) || !strings.Contains(blocks, cardWriteHint) || strings.Contains(blocks, `"text":"`+cardOtherLabel+`"`) {
+	if !strings.Contains(blocks, cardAnswerLabel) || !strings.Contains(blocks, cardWriteTap) || strings.Contains(blocks, `"text":"`+cardOtherLabel+`"`) {
 		t.Fatalf("blocks %s, want one Answer button and its hint", blocks)
 	}
 
