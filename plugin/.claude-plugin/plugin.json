@@ -15,10 +15,21 @@
     }
   ],
   "mcpServers": {
+    "channel": {
+      "command": "cc-slack",
+      "args": [
+        "channel",
+        "--no-tools"
+      ],
+      "env": {
+        "CLAUDE_PLUGIN_ROOT": "",
+        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    },
     "cc-slack": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/cc-slack",
       "args": [
-        "channel"
+        "tools"
       ],
       "env": {
         "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
@@ -27,7 +38,7 @@
   },
   "channels": [
     {
-      "server": "cc-slack",
+      "server": "channel",
       "displayName": "cc-slack"
     }
   ]

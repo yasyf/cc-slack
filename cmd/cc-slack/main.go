@@ -21,6 +21,7 @@ func deps() cmd.Deps {
 	d := cmd.Deps{
 		Paths:                  appPaths(),
 		Version:                appVersion,
+		Plugin:                 channelPlugin,
 		NewClient:              newClient,
 		EnsureCurrent:          nameReconnect(requireCurrentState(refuseForeignRollback(func(ctx context.Context) error { return launcher().EnsureCurrent(ctx, daemon.UpgradeTimeout) }))),
 		EnsureCurrentIfRunning: nameReconnect(requireCurrentState(refuseForeignRollback(func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) }))),
@@ -63,6 +64,8 @@ func root() *cobra.Command {
 		cmd.StatusCmd(d),
 		watchCmd(d),
 		cmd.ChannelCmd(d),
+		cmd.ToolsCmd(d),
+		cmd.ChannelCheckCmd(d),
 		cmd.ChannelAckCmd(d),
 		cmd.SessionRecordCmd(d),
 		cmd.AgentStartCmd(d),

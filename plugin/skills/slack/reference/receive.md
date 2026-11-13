@@ -23,9 +23,9 @@ result:
   "${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" watch --until-proven --session "$CLAUDE_CODE_SESSION_ID"
   ```
 
-A `pending` result also sends a `<channel source="cc-slack" type="channel.probe">`
+A `pending` result also sends a `<channel source="plugin:cc-slack:channel" type="channel.probe">`
 tag, which is a delivery check and needs no reply. On every `channel.probe` tag,
-and on the first other `<channel source="cc-slack">` tag while the Monitor runs,
+and on the first other `<channel source="plugin:cc-slack:channel">` tag while the Monitor runs,
 run:
 
 ```bash
@@ -44,7 +44,7 @@ after it starts, never earlier ones; `--lifecycle` adds agent lifecycle events
 for debugging. `slack_watch` registers the Slack conversation to poll. The CLI
 registration verbs are `follow --owner <agent_id>` and `unfollow`.
 
-A `<channel source="cc-slack" type="slack.message">` tag carries
+A `<channel source="plugin:cc-slack:channel" type="slack.message">` tag carries
 `{type, watch_id, kind, channel_id, thread_ts, ts, user, user_name,
 from_claude, text, permalink}`, plus `operator: true` when the user wrote it to the bot: in your DM, mentioning the bot, or mentioning no one else in a thread this machine posted in or as a top-level message. Monitor lines carry the same event data,
 each within the 500 characters a Monitor event holds: a longer line drops a
