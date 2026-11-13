@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -104,22 +105,24 @@ func TestLoginPostsAsTheHandleWithoutADisplayName(t *testing.T) {
 	}
 }
 
-func TestAPostLinkingASlackMessageUnfurls(t *testing.T) {
+func TestAPostDrawsOnlyAnOpenCardItLinks(t *testing.T) {
 	message := "https://example.slack.com/archives/C1/p1793818357021259"
 	for _, tc := range []struct {
-		name, text, want string
+		name, want string
+		text       func(card postedCard) string
 	}{
-		{"a message link", "card: <" + message + "|card>", "true"},
-		{"a message link in a thread", "card: " + message + "?thread_ts=1793818357.021259", "true"},
-		{"a link to one of his DM cards, which draws the card under the words that name it", "card: <https://example.slack.com/archives/" + testDM + "/p1793818357021259|the lock card>", "true"},
-		{"any other link", "see <https://example.com/a|a>", "false"},
-		{"no link", "plain words", "false"},
+		{"an open card under the words that name it", "true", func(c postedCard) string { return "card: <" + c.url() + "|the merge card>" }},
+		{"his own message", "false", func(postedCard) string { return "your order: <" + message + "|your words>" }},
+		{"a message in a thread", "false", func(postedCard) string { return "see " + message + "?thread_ts=1793818357.021259" }},
+		{"any other link", "false", func(postedCard) string { return "see <https://example.com/a|a>" }},
+		{"no link", "false", func(postedCard) string { return "plain words" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := startDaemon(t)
 			loggedIn(t, l)
-			l.post(opSend, map[string]string{"channel_id": testChannel, "text": tc.text})
-			if posts := l.slack.sent(); len(posts) != 1 || posts[0].unfurlLinks != tc.want {
+			card := postWaiting(t, l, mergeCard())
+			l.post(opSend, map[string]string{"channel_id": testChannel, "text": tc.text(card)})
+			if posts := l.slack.sentTo(testChannel); len(posts) != 1 || posts[0].unfurlLinks != tc.want {
 				t.Fatalf("posts = %+v, want one post with unfurl_links=%s", posts, tc.want)
 			}
 		})
@@ -141,7 +144,7 @@ func TestAPostInAThreadWritesALinkToTheMessageItIsUnderAsItsWords(t *testing.T) 
 	}{
 		{"its link under words", "The design job behind <" + parent.Permalink + "|the tally question> has your question", "The design job behind the tally question has your question", "false"},
 		{"its bare link", "Answered in " + parent.Permalink + "?thread_ts=" + parent.TS, "Answered in this thread", "false"},
-		{"another message's link", "Asked beside <" + other.Permalink + "|the cache question>", "", "true"},
+		{"another message's link", "Asked beside <" + other.Permalink + "|the cache question>", "", "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": parent.TS, "text": tc.text})
@@ -153,31 +156,79 @@ func TestAPostInAThreadWritesALinkToTheMessageItIsUnderAsItsWords(t *testing.T) 
 	}
 }
 
-func TestEachPostLinksACardByALinkSlackHasNotShownThisHour(t *testing.T) {
+func TestACardDrawsOncePerThreadByALinkSlackHasNotShownThisHour(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	card := "https://example.slack.com/archives/" + testDM + "/p1793818357021259"
-	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "first: <" + card + "|the lock card>"})
-	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "again: <" + card + "|the lock card>"})
-	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on <" + card + "|the lock card>"}})
-	posts := l.slack.sent()
-	var links []string
+	card := postWaiting(t, l, mergeCard())
+	link := "<" + card.url() + "|the merge card>"
+	var first postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]string{"channel_id": testChannel, "text": "first: " + link}).Body, &first); err != nil {
+		t.Fatal(err)
+	}
+	l.post(opReply, map[string]string{"channel_id": testChannel, "thread_ts": first.TS, "text": "again: " + link})
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "elsewhere: " + link})
+	posts := l.slack.sentTo(testChannel)
+	if len(posts) != 3 {
+		t.Fatalf("posts = %+v, want three", posts)
+	}
+	drew := func(p fakePost) bool { return p.unfurlLinks == "true" && strings.Contains(p.text, freshLinkParam+"=") }
+	if !drew(posts[0]) || drew(posts[1]) || posts[1].unfurlLinks == "true" || !drew(posts[2]) {
+		t.Fatalf("posts = %+v, want the card drawn by the first post, plain in its thread after, and drawn again in the next thread", posts)
+	}
+	if fresh := messageLink.FindString(posts[0].text); fresh == messageLink.FindString(posts[2].text) {
+		t.Fatalf("both threads link the card as %q, want a link per post, since Slack draws no link it showed in the conversation within the hour", fresh)
+	}
+}
+
+func TestOneThreadDrawsEachCardOnceWhateverItsPostsLink(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	titles := []string{"Roll the executor back?", "Raise the executor's memory?", "Page the on-call?"}
+	links := make([]string, 0, len(titles))
+	for n, title := range titles {
+		card := postWaiting(t, l, statusCard{Status: "needs_you", Title: title, Body: "The executor runs out of memory.", Options: []string{"Yes", "No"}, Recommended: "Yes", Waits: fmt.Sprintf("oom:%d", n)})
+		links = append(links, "<"+card.url()+fmt.Sprintf("|card %d>", n+1))
+	}
+	all := strings.Join(links, ", ")
+	lines := []string{
+		"The executor runs out of memory: " + links[0],
+		"Rollback and memory: " + strings.Join(links[:2], ", "),
+		"All three wait: " + all,
+		"Still waiting: " + all,
+		"The rollback is out.",
+		"Still waiting: " + all,
+		"Memory raised: " + all,
+		"Paged: " + all,
+		"No new runs fail.",
+		"Closing out: " + all,
+	}
+	before := len(l.slack.sentTo(testDM))
+	root := postThread(t, l, lines[0])
+	for _, line := range lines[1:] {
+		l.do(opDMStatus, map[string]any{"thread_ts": root, "text": line})
+	}
+	posts := l.slack.sentTo(testDM)[before:]
+	said, linked, drawn := 0, 0, map[string]int{}
 	for _, p := range posts {
-		found := messageLink.FindAllString(p.text+p.blocks, -1)
-		if len(found) == 0 {
-			continue
+		if !strings.HasPrefix(p.text, "<") {
+			said++
+			linked += len(messageLink.FindAllString(p.text, -1))
 		}
 		if p.unfurlLinks != "true" {
-			t.Fatalf("post %+v links the card with unfurl_links=%s, want true", p, p.unfurlLinks)
+			continue
 		}
-		ref, err := parsePermalink(found[0])
-		if err != nil || ref.channelID != testDM || ref.ts != "1793818357.021259" {
-			t.Fatalf("link %q parses to %+v (%v), want the card itself", found[0], ref, err)
+		for _, link := range messageLink.FindAllString(p.text, -1) {
+			if strings.Contains(link, freshLinkParam+"=") {
+				ref, _ := parsePermalink(link)
+				drawn[ref.ts]++
+			}
 		}
-		links = append(links, found[0])
 	}
-	if len(links) != 3 || len(slices.Compact(slices.Sorted(slices.Values(links)))) != 3 {
-		t.Fatalf("links = %q, want three posts each linking the card by a link no other post used, since Slack draws no link it showed in the conversation within the hour", links)
+	if said != 10 || linked != 21 || len(posts) != 12 {
+		t.Fatalf("posts = %+v, want the 10 posts and 21 card links of the incident thread, and the 2 cards a post linked beside cards the thread showed drawn as their own replies", posts)
+	}
+	if len(drawn) != 3 || slices.ContainsFunc(slices.Collect(maps.Values(drawn)), func(n int) bool { return n != 1 }) {
+		t.Fatalf("drawn = %v, want each of the three cards drawn once in the thread, where it drew 21 copies", drawn)
 	}
 }
 
@@ -293,15 +344,10 @@ func TestAThreadListsTheLinksSlackUnfurledApartFromSharedMessages(t *testing.T) 
 	}
 }
 
-func TestAStatusCardLinkingOneOfHisCardsUnfurlsIt(t *testing.T) {
+func TestAStatusCardLinkingOneOfHisOpenCardsUnfurlsIt(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	l.do(opDMStatus, cardBody("Merge the stack?", "merge it"))
-	id, err := loadIdentity(l.ctx, l.srv.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	link := id.permalink(id.DMChannelID, l.slack.sent()[0].ts, "")
+	link := postWaiting(t, l, mergeCard()).url()
 	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "Status", Body: "Waiting on " + link}})
 	posts := l.slack.sent()
 	at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.blocks, link) })

@@ -87,7 +87,7 @@ newest installed plugin, which a session's PATH may not hold.`,
 			for _, raw := range rawCardLinks(text, dmCard) {
 				findings = append(findings, raw)
 			}
-			if crowded, found := crowdedLineIn(text); found {
+			if crowded, found := crowdedLineIn(text, dmCard); found {
 				findings = append(findings, crowded)
 			}
 			findings = append(findings, wallsIn(text)...)

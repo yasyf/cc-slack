@@ -499,11 +499,10 @@ func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	return copies
 }
 
-func (l *liveCards) showsIn(channel, thread, card string) bool {
+func (l *liveCards) showsIn(channel, thread string, card cardRef) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(channel, thread)]
-	return ok && slices.ContainsFunc(t.Copies, func(c liveCardCopy) bool { return c.Card == card })
+	return l.shows(channel, thread, "", card)
 }
 
 func (l *liveCards) askingCards(channel string) []askingCard {
