@@ -192,6 +192,42 @@ func TestACloseOnACardCCSlackForgotSettlesItFromTheMessageSlackHolds(t *testing.
 	}
 }
 
+func TestHisAnswerElsewhereClosesAReplyCardThatWaitsOnNothing(t *testing.T) {
+	long := []string{"Hybrid of one and two plus a watchdog that spawns a small agent", "Only the watchdog, which reads transcripts"}
+	for name, card := range map[string]statusCard{
+		"inline picks": {Status: "needs_you", Title: "Ship it?", Options: []string{"Ship", "Hold"}, Recommended: "Ship"},
+		"listed picks": {Status: "needs_you", Title: "What keeps work moving?", Options: long, Recommended: long[0]},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := postWaiting(t, l, card)
+			reply := c.id.permalink(c.id.DMChannelID, "1800000200.000100", c.thread)
+			words := "Let's do that hybrid plus an automated watchdog"
+
+			var res cardAnswerResult
+			if err := json.Unmarshal(l.do(opCardAnswer, map[string]any{"url": c.url(), "label": words, "other": true, "via": reply}).Body, &res); err != nil || !res.Answered {
+				t.Fatalf("answer = %+v, %v; want the card that waits on nothing closed on his words", res, err)
+			}
+			edits := editsOf(l.slack.edited(), c.ts)
+			if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], strings.ReplaceAll(reply, "&", `\u0026`)+"|"+words) || strings.Contains(edits[len(edits)-1], cardOptionAction) || strings.Contains(edits[len(edits)-1], cardAckAction) {
+				t.Fatalf("edits = %v, want his words linked to his reply in place of every button", edits)
+			}
+		})
+	}
+}
+
+func TestAnAnswerNamingNoOptionOfAReplyCardIsRefused(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	c := postWaiting(t, l, statusCard{Status: "needs_you", Title: "Ship it?", Options: []string{"Ship", "Hold"}, Recommended: "Ship"})
+
+	_, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{"url": c.url(), "label": "Revert", "via": c.url()}))
+	if err == nil || !strings.Contains(err.Error(), `"Revert" is not one of waiting card`) || len(editsOf(l.slack.edited(), c.ts)) != 0 {
+		t.Fatalf("answer outside the options: %v; want it refused and the card left as drawn", err)
+	}
+}
+
 func TestATapWhoseEditFailsSaysSoInTheThread(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

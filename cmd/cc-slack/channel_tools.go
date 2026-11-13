@@ -392,7 +392,7 @@ var (
 		},
 		{
 			name:        "slack_card_answer",
-			description: "Answer a waiting card with an answer the user gave elsewhere, or settle it. A card already answered keeps that answer and returns it as label with already_answered.",
+			description: "Answer a waiting or reply card with an answer the user gave elsewhere, or settle it. A card already answered keeps that answer and returns it as label with already_answered.",
 			op:          opCardAnswer, failure: actionWrite,
 			properties: map[string]any{
 				"waits":   map[string]any{"type": "string", "description": "the card's waits or board id"},

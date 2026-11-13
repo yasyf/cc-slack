@@ -1401,7 +1401,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	}
 	answers := m.Card.answers()
 	if !other && !withdrawn && !slices.Contains(answers, label) {
-		return cardAnswerResult{}, fmt.Errorf("%q is not one of waiting card %q's answers %q; pass other for a write-in", label, waits, answers)
+		return cardAnswerResult{}, fmt.Errorf("%q is not one of waiting card %q's answers %q; pass other for a write-in", label, cmp.Or(waits, card), answers)
 	}
 	at := p.now()
 	permalink := id.permalink(id.DMChannelID, m.TS, thread)
@@ -1420,16 +1420,25 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		settled:   settled,
 		withdrawn: withdrawn,
 	}
+	if waits == "" {
+		if withdrawn {
+			return p.withdrawWaits(ctx, id, answer)
+		}
+		return p.settleWaits(ctx, id, answer)
+	}
+	return p.answerWaitsElsewhere(ctx, id, answer, from)
+}
+
+func (p *poller) answerWaitsElsewhere(ctx context.Context, id identity, answer waitsAnswer, from string) (cardAnswerResult, error) {
 	answer.undo = p.dashboardUndoKey(id, answer, from)
 	res, err := p.answerWaits(ctx, id, answer)
 	if errors.Is(err, errNoStatusSession) {
 		answer.settled = true
 		res, err = p.answerWaits(ctx, id, answer)
 	}
-	if err == nil && res.Answered && !other && !withdrawn {
-		answered := cardRef{id.DMChannelID, thread, m.TS}
-		if !p.answerCopies(ctx, id, answered, label, false, at, answer.undo) {
-			p.recordPRTap(ctx, id, answered, waits, label, cardPress{"", "answered " + via})
+	if err == nil && res.Answered && !answer.other && !answer.withdrawn {
+		if !p.answerCopies(ctx, id, answer.card, answer.tap.Label, false, answer.at, answer.undo) {
+			p.recordPRTap(ctx, id, answer.card, answer.tap.ID, answer.tap.Label, cardPress{"", "answered " + answer.via})
 		}
 		res.UndoUntil = answer.undoUntil()
 	}
@@ -1444,22 +1453,35 @@ func (p *poller) waitingCard(ctx context.Context, id identity, r cardRef) (strin
 	if err != nil {
 		return "", liveMessage{}, err
 	}
+	var options []string
 	for _, b := range post.Blocks.BlockSet {
-		actions, isActions := b.(*slack.ActionBlock)
-		if !isActions || actions.BlockID != cardActionsBlock {
-			continue
-		}
-		for _, e := range actions.Elements.ElementSet {
-			button, isButton := e.(*slack.ButtonBlockElement)
-			if !isButton {
+		switch b := b.(type) {
+		case *slack.SectionBlock:
+			if strings.HasPrefix(b.BlockID, cardOptionBlock) && b.Accessory != nil && b.Accessory.ButtonElement != nil && strings.HasPrefix(b.Accessory.ButtonElement.ActionID, cardOptionAction) {
+				options = append(options, b.Accessory.ButtonElement.Value)
+			}
+		case *slack.ActionBlock:
+			if b.BlockID != cardActionsBlock {
 				continue
 			}
-			if waits, other := strings.CutPrefix(button.ActionID, cardOtherAction); other {
-				if k, ok := decodeTap(button.Value, waits); ok {
-					return waits, liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: k.Question, Waits: waits, Options: k.Options}}, nil
+			for _, e := range b.Elements.ElementSet {
+				button, isButton := e.(*slack.ButtonBlockElement)
+				if !isButton {
+					continue
+				}
+				if waits, other := strings.CutPrefix(button.ActionID, cardOtherAction); other {
+					if k, ok := decodeTap(button.Value, waits); ok {
+						return waits, liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: k.Question, Waits: waits, Options: k.Options}}, nil
+					}
+				}
+				if strings.HasPrefix(button.ActionID, cardOptionAction) {
+					options = append(options, button.Value)
 				}
 			}
 		}
+	}
+	if len(options) > 0 {
+		return "", liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: post.Text, Options: options}}, nil
 	}
 	return "", liveMessage{}, errors.New("its message offers no answers")
 }
