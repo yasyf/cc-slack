@@ -1051,6 +1051,7 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var undone []undoneAnswer
+	changed := false
 	for _, t := range l.threads {
 		for waits, ans := range t.Answers {
 			answered := t.answered(waits)
@@ -1058,6 +1059,7 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 				continue
 			}
 			delete(t.Answers, waits)
+			changed = true
 			for _, m := range answered {
 				m.Tapped = ""
 				if !slices.ContainsFunc(undone, func(u undoneAnswer) bool { return u.card == cardRef{t.Channel, t.Thread, m.TS} }) {
@@ -1066,7 +1068,9 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 			}
 		}
 	}
-	l.save()
+	if changed {
+		l.save()
+	}
 	return undone
 }
 
@@ -1116,8 +1120,10 @@ func (l *liveCards) release(channel, thread, askID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if t, ok := l.threads[threadKey(channel, thread)]; ok {
-		delete(t.Answers, askID)
-		l.save()
+		if _, answered := t.Answers[askID]; answered {
+			delete(t.Answers, askID)
+			l.save()
+		}
 	}
 }
 
@@ -1157,7 +1163,7 @@ func (l *liveCards) answerDrawn(channel, thread, askID string) {
 	if !ok {
 		return
 	}
-	if ans, done := t.Answers[askID]; done {
+	if ans, done := t.Answers[askID]; done && !ans.Drawn {
 		ans.Drawn = true
 		t.Answers[askID] = ans
 		l.save()
