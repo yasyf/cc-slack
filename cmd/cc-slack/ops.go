@@ -2560,7 +2560,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	id.Agent = b.Agent
+	id.Agent, id.Drive = b.Agent, b.Drive
 	if err := cmp.Or(a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive), a.uploadCardPictures(hc.Ctx, id, b)); err != nil {
 		return fail(fallback(actionWrite, err))
 	}

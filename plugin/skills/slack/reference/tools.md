@@ -8,7 +8,8 @@ The shared bot posts as `<display name> (<agent>)` with the user's avatar
 and no message prefix. Pass `agent` on `slack_send`, `slack_reply`, and
 `slack_dm_status`, or `--agent` on the CLI verbs, naming the agent writing:
 `claude` from Claude Code, `codex` from Codex, `cursor` from Cursor. A post
-without it reads `<display name> (agent)`. The user-level Slack Model Context Protocol (MCP) posts
+without it reads `<display name> (agent)`, and a `dm-status` post naming its
+drive with `--drive` reads `<display name> (<agent> · <drive>)`. The user-level Slack Model Context Protocol (MCP) posts
 as the user. When the session's project opts in with `[permissions]
 enabled = true` in its `.claude/cc-slack.toml`, protected writes on both
 surfaces need explicit user permission.

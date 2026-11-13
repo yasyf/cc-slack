@@ -235,6 +235,35 @@ func TestARedrawAsksTheCardCommandForThePostedCardAsItStandsNow(t *testing.T) {
 	eventually(t, "the redraw asked as a redraw", func() bool { return reflect.DeepEqual(cmd.requests(t), want) })
 }
 
+func TestADrivesPostAndThePRCardDrawnBesideItNameTheDriveInTheBotName(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41, "agent": "claude", "drive": "ssql-duckdb"})
+	card := awaitPRCards(t, l, testDM)[0]
+	l.do(opDMStatus, map[string]any{"text": "a session in no drive", "agent": "claude"})
+	posted := func(words string) fakePost {
+		t.Helper()
+		posts := l.slack.sentTo(testDM)
+		at := slices.IndexFunc(posts, func(p fakePost) bool { return strings.Contains(p.text, words) })
+		if at < 0 {
+			t.Fatalf("no post saying %q in %+v", words, posts)
+		}
+		return posts[at]
+	}
+	for _, c := range []struct {
+		post fakePost
+		want string
+	}{
+		{posted("is green"), "yasyf (claude · ssql-duckdb)"},
+		{card, "yasyf (claude · ssql-duckdb)"},
+		{posted("in no drive"), "yasyf (claude)"},
+	} {
+		if c.post.username != c.want {
+			t.Errorf("post %s %q sent as %q, want %q", c.post.ts, c.post.text, c.post.username, c.want)
+		}
+	}
+}
+
 func TestAHeldRowDrawsItsCardAndTheSamePostAsksWhenTheHoldLifts(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, heldRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
