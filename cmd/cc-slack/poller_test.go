@@ -321,8 +321,8 @@ func TestPollerErrorsWatchOnFatalSlackError(t *testing.T) {
 	if err := json.Unmarshal(f.plane.events[0].Payload, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got.Error, "not_in_channel") || !strings.Contains(got.Error, mcpThread) {
-		t.Fatalf("error = %q, want the code and the MCP fallback", got.Error)
+	if !strings.Contains(got.Error, "not_in_channel") || !strings.Contains(got.Error, "slack_thread") {
+		t.Fatalf("error = %q, want the code and the read as you", got.Error)
 	}
 	f.nudgeThread()
 	if n := f.tick(); !n.IsZero() {

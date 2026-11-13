@@ -408,7 +408,7 @@ thread_ts: %s
 dm_ts: %s
 
 %s opened this Slack message in this workspace with the "Open in Claude" shortcut.
-1. Read the thread with the cc-slack slack_thread tool (channel_id and thread_ts above). If cc-slack is unavailable, read it with mcp__slack__slack_get_thread instead.
+1. Read the thread with the cc-slack slack_thread tool (channel_id and thread_ts above).
 2. Watch the thread with slack_watch (channel_id and thread_ts above) so replies reach you.
 3. Report progress with slack_dm_status, passing thread_ts set to the dm_ts above on every call, so status lands under the shortcut DM.
 4. Do what the message asks, in this workspace.

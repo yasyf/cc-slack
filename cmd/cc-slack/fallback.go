@@ -27,8 +27,6 @@ const (
 
 const (
 	mcpSend     = "mcp__slack__slack_send_message"
-	mcpThread   = "mcp__slack__slack_get_thread"
-	mcpHistory  = "mcp__slack__slack_conversations_history"
 	mcpReaction = "mcp__slack__slack_add_reaction"
 	mcpUnreact  = "mcp__slack__slack_remove_reaction"
 	mcpUsers    = "mcp__slack__slack_users_search"
@@ -79,10 +77,10 @@ func fallback(a action, err error) string {
 		return fmt.Sprintf("cc-slack can't download this file (%s); the bot reads only files shared where it is a member, so no Slack MCP tool stands in", errorCode(err))
 	}
 	if errors.Is(err, errNoIdentity) {
-		return fmt.Sprintf("%v: run `cc-slack login`, or fall back to %s", err, fallbackTool(a))
+		return withFallback(fmt.Sprintf("%v: run `cc-slack login`", err), ", or fall back to ", a)
 	}
 	if errors.Is(err, daemon.ErrIncumbentNewer) || errors.Is(err, errStaleProcess) {
-		return fmt.Sprintf("%v; until then, fall back to %s", err, fallbackTool(a))
+		return withFallback(err.Error(), "; until then, fall back to ", a)
 	}
 	code := failureCode(err)
 	switch a {
@@ -93,15 +91,15 @@ func fallback(a action, err error) string {
 	case actionUnreact:
 		return fmt.Sprintf("cc-slack can't remove a reaction here (%s); fall back to %s (removes yours)", code, mcpUnreact)
 	case actionWatch:
-		return fmt.Sprintf("cc-slack can't watch this conversation (%s): the bot reads only conversations it is a member of, "+
-			"so invite it there, or read with %s for a thread or %s for a channel", code, mcpThread, mcpHistory)
+		return fmt.Sprintf("cc-slack can't watch this conversation (%s): the bot watches only conversations it is a member of, "+
+			"so invite it there, or read it once with slack_thread or slack_history, which read it as you with [oauth] client_id set", code)
 	case actionUsers:
 		return fmt.Sprintf("cc-slack can't look people up (%s); a user id such as U0123ABCDE resolves through users.info, "+
 			"an exact email through users.lookupByEmail and any other query through users.list, or search as you with %s", code, mcpUsers)
 	case actionChannels:
 		return fmt.Sprintf("cc-slack can't list channels (%s); fall back to %s (lists as you)", code, mcpChannels)
 	default:
-		return fmt.Sprintf("cc-slack can't read this conversation (%s); fall back to %s for a thread or %s for a channel", code, mcpThread, mcpHistory)
+		return fmt.Sprintf("cc-slack can't read this conversation (%s)", code)
 	}
 }
 
@@ -129,11 +127,18 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 		if id.Config.OAuth.enabled() {
 			return fmt.Sprintf("%s is not a conversation the bot or you can read (%s); your DM with the app is %s, which channel_id may omit", named, code, dm)
 		}
-		return fmt.Sprintf("%s is not a conversation the bot can read (%s); a private channel the bot is not in reads through %s, and your DM with the app is %s, which channel_id may omit", named, code, mcpThread, dm)
+		return fmt.Sprintf("%s is not a conversation the bot can read (%s); one the bot is not in reads as you once the cc-slack config sets [oauth] client_id, and your DM with the app is %s, which channel_id may omit", named, code, dm)
 	case "thread_not_found":
 		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)
 	}
 	return fallback(actionRead, err)
+}
+
+func withFallback(msg, join string, a action) string {
+	if tool := fallbackTool(a); tool != "" {
+		return msg + join + tool
+	}
+	return msg
 }
 
 func fallbackTool(a action) string {
@@ -149,6 +154,6 @@ func fallbackTool(a action) string {
 	case actionChannels:
 		return mcpChannels
 	default:
-		return mcpThread + " / " + mcpHistory
+		return ""
 	}
 }

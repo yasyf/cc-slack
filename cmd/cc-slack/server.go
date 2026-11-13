@@ -129,6 +129,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 	a.socket.hello = a.hello
 	cache.live = func() bool { return a.socket.status() == socketConnected && replay.current() }
 	p.recard, cards.recard = a.recardPR, a.recardPR
+	p.keepUser = a.keepUserToken
 	return a
 }
 
@@ -175,6 +176,9 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			}
 			if id, err := loadIdentity(ctx, s.DB()); err == nil {
 				a.cards.usePictures(id.Config.Pictures)
+			}
+			if err := a.resumeConsent(ctx); err != nil {
+				a.poller.log.Printf("serve the pending consent's redirect: %v", err)
 			}
 			a.shortcuts.plane = s
 			a.shortcuts.spawn = s.Background

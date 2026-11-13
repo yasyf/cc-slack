@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -51,5 +53,60 @@ func TestSlackOAuthReadsTheUserTokenAndSlacksRefusal(t *testing.T) {
 				t.Fatalf("oauth = %+v, %v after sending %v", got, err, sent)
 			}
 		})
+	}
+}
+
+func oauthFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	f.id.Config.OAuth.ClientID = testClientID
+	if err := saveIdentity(f.ctx, f.db(), f.id); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestAConsentLinkPostedBeforeARestartStillCompletes(t *testing.T) {
+	f := oauthFixture(t)
+	if err := f.app.askConsent(f.ctx, f.id); !errors.As(err, new(userConsentError)) {
+		t.Fatalf("askConsent = %v, want the consent card's refusal", err)
+	}
+	state := consentLink(t, f.slack).Query().Get("state")
+
+	f.app.user, f.user.consent = f.user.session(), nil
+	if err := f.app.resumeConsent(f.ctx); err != nil || f.user.consent == nil {
+		t.Fatalf("resumeConsent = %v, want the restarted daemon serving the redirect again", err)
+	}
+	if err := f.app.askConsent(f.ctx, f.id); !errors.As(err, new(userConsentError)) || len(f.slack.sentTo(f.id.DMChannelID)) != 1 {
+		t.Fatalf("askConsent after the restart = %v, want the same card and no second one", err)
+	}
+	f.user.answer = oauthAccess{OK: true, AuthedUser: oauthToken{ID: f.id.UserID, AccessToken: "xoxe.xoxp-1"}}
+	f.user.answer.Team.ID = f.id.TeamID
+	if code := redirect(f.user, "code=c1&state="+state); code != http.StatusOK {
+		t.Fatalf("redirect after the restart answered %d, want 200", code)
+	}
+	if tok, ok := f.user.stored(); !ok || tok.AccessToken != "xoxe.xoxp-1" {
+		t.Fatalf("stored = %+v, want the consented token", tok)
+	}
+	if code := redirect(f.user, "code=c1&state="+state); code != http.StatusBadRequest {
+		t.Fatalf("a second tap answered %d, want 400 once the consent is spent", code)
+	}
+}
+
+func TestThePollerRenewsTheUserTokenBeforeItExpires(t *testing.T) {
+	f := oauthFixture(t)
+	f.user.store(userToken{UserID: f.id.UserID, TeamID: f.id.TeamID, AccessToken: storedUserToken, RefreshToken: "xoxe-1", ExpiresAt: f.now.Add(time.Minute).Unix()})
+	f.user.answer = oauthAccess{OK: true, oauthToken: oauthToken{AccessToken: "xoxe.xoxp-renewed", RefreshToken: "xoxe-2", ExpiresIn: 43200}}
+
+	want := f.now.Add(43200*time.Second - userTokenRenewal)
+	if next := f.tick(); !next.Equal(want) {
+		t.Fatalf("next tick = %v, want %v, 5 minutes before the renewed token expires", next, want)
+	}
+	if tok, _ := f.user.stored(); tok.AccessToken != "xoxe.xoxp-renewed" || tok.RefreshToken != "xoxe-2" || len(f.user.sentGrants()) != 1 {
+		t.Fatalf("stored = %+v after %d grants, want one renewal holding the new refresh token", tok, len(f.user.sentGrants()))
+	}
+	f.tick()
+	if n := len(f.user.sentGrants()); n != 1 {
+		t.Fatalf("grants = %d, want no second renewal while the token is fresh", n)
 	}
 }

@@ -35,8 +35,6 @@ var (
 	errNoClientID   = errors.New("the cc-slack config names no [oauth] client_id, the Slack app's client ID its consent link carries")
 )
 
-func userTokenPath() string { return filepath.Join(appPaths().StateDir(), "user-token.json") }
-
 type userToken struct {
 	UserID       string `json:"user_id"`
 	TeamID       string `json:"team_id"`
@@ -75,25 +73,28 @@ type oauthAccess struct {
 }
 
 type userSession struct {
-	mu      sync.Mutex
-	path    string
-	oauth   func(ctx context.Context, form url.Values) (oauthAccess, error)
-	api     func(token string) slackAPI
-	listen  func(ctx context.Context, h http.Handler) error
-	serving bool
-	pending *pendingConsent
+	mu          sync.Mutex
+	path        string
+	consentPath string
+	oauth       func(ctx context.Context, form url.Values) (oauthAccess, error)
+	api         func(token string) slackAPI
+	listen      func(ctx context.Context, h http.Handler) error
+	serving     bool
 }
 
 type pendingConsent struct {
-	state    string
-	verifier string
-	id       identity
-	ts       string
+	State    string `json:"state"`
+	Verifier string `json:"verifier"`
+	TS       string `json:"ts"`
 }
 
 func newUserSession() *userSession {
 	client := &http.Client{Timeout: 30 * time.Second}
-	return &userSession{path: userTokenPath(), oauth: slackOAuth(client), api: newSlackAPI, listen: listenConsent}
+	dir := appPaths().StateDir()
+	return &userSession{
+		path: filepath.Join(dir, "user-token.json"), consentPath: filepath.Join(dir, "user-consent.json"),
+		oauth: slackOAuth(client), api: newSlackAPI, listen: listenConsent,
+	}
 }
 
 func listenConsent(ctx context.Context, h http.Handler) error {
@@ -130,30 +131,47 @@ func slackOAuth(client *http.Client) func(ctx context.Context, form url.Values) 
 }
 
 func (u *userSession) read() (userToken, error) {
-	raw, err := os.ReadFile(u.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return userToken{}, errNoUserToken
+	tok, ok, err := loadJSON[userToken](u.path)
+	if err == nil && !ok {
+		err = errNoUserToken
 	}
-	if err != nil {
-		return userToken{}, err
-	}
-	var tok userToken
-	if err := json.Unmarshal(raw, &tok); err != nil {
-		return userToken{}, fmt.Errorf("read %s: %w", u.path, err)
-	}
-	return tok, nil
+	return tok, err
 }
 
 func (u *userSession) save(tok userToken) error {
-	tmp := u.path + ".tmp"
-	if err := os.WriteFile(tmp, mustJSON(tok), 0o600); err != nil {
+	if err := storeJSON(u.path, tok); err != nil {
 		return fmt.Errorf("write the Slack user token: %w", err)
 	}
-	return os.Rename(tmp, u.path)
+	return nil
 }
 
-func (u *userSession) forget() error {
-	if err := os.Remove(u.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+func (u *userSession) forget() error { return dropFile(u.path) }
+
+func loadJSON[T any](path string) (T, bool, error) {
+	var v T
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return v, false, nil
+	}
+	if err != nil {
+		return v, false, err
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return v, false, fmt.Errorf("read %s: %w", path, err)
+	}
+	return v, true, nil
+}
+
+func storeJSON(path string, v any) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, mustJSON(v), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func dropFile(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -183,6 +201,22 @@ func (a *app) renewUserToken(ctx context.Context, id identity, tok userToken) (u
 	return renewed, nil
 }
 
+func (a *app) keepUserToken(ctx context.Context, id identity) time.Time {
+	a.user.mu.Lock()
+	defer a.user.mu.Unlock()
+	tok, err := a.user.read()
+	if err != nil || tok.ExpiresAt == 0 || tok.UserID != id.UserID || tok.TeamID != id.TeamID || !id.Config.OAuth.enabled() {
+		return time.Time{}
+	}
+	if tok.due(a.now()) {
+		if tok, err = a.renewUserToken(ctx, id, tok); err != nil {
+			a.poller.log.Printf("renew the Slack user token: %v", err)
+			return a.now().Add(errorRetry)
+		}
+	}
+	return time.Unix(tok.ExpiresAt, 0).Add(-userTokenRenewal)
+}
+
 type userReads struct{ slackAPI }
 
 func readAsUser(id identity, err error) bool {
@@ -194,25 +228,26 @@ func staleSession(err error) bool {
 }
 
 func (a *app) askConsent(ctx context.Context, id identity) error {
-	if c := a.user.pending; c != nil {
-		return userConsentError{permalink: id.permalink(id.DMChannelID, c.ts, "")}
-	}
 	if !id.Config.OAuth.enabled() {
 		return errNoClientID
 	}
-	if !a.user.serving {
-		if err := a.user.listen(ctx, http.HandlerFunc(a.serveConsent)); err != nil {
-			return err
-		}
-		a.user.serving = true
+	if err := a.serveConsentRedirect(ctx); err != nil {
+		return err
 	}
-	c := &pendingConsent{state: randomToken(), verifier: randomToken(), id: id}
-	challenge := sha256.Sum256([]byte(c.verifier))
+	c, held, err := loadJSON[pendingConsent](a.user.consentPath)
+	if err != nil {
+		return err
+	}
+	if held {
+		return userConsentError{permalink: id.permalink(id.DMChannelID, c.TS, "")}
+	}
+	c = pendingConsent{State: randomToken(), Verifier: randomToken()}
+	challenge := sha256.Sum256([]byte(c.Verifier))
 	link := slackAuthorizeURL + "?" + url.Values{
 		"client_id":             {id.Config.OAuth.ClientID},
 		"user_scope":            {strings.Join(userScopes, ",")},
 		"redirect_uri":          {consentRedirect},
-		"state":                 {c.state},
+		"state":                 {c.State},
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
 		"code_challenge_method": {"S256"},
 		"team":                  {id.TeamID},
@@ -224,9 +259,31 @@ func (a *app) askConsent(ctx context.Context, id identity) error {
 	if err != nil {
 		return fmt.Errorf("post the consent card: %w", err)
 	}
-	c.ts = ts
-	a.user.pending = c
+	c.TS = ts
+	if err := storeJSON(a.user.consentPath, c); err != nil {
+		return fmt.Errorf("keep the consent card's link: %w", err)
+	}
 	return userConsentError{permalink: id.permalink(id.DMChannelID, ts, "")}
+}
+
+func (a *app) serveConsentRedirect(ctx context.Context) error {
+	if a.user.serving {
+		return nil
+	}
+	if err := a.user.listen(ctx, http.HandlerFunc(a.serveConsent)); err != nil {
+		return err
+	}
+	a.user.serving = true
+	return nil
+}
+
+func (a *app) resumeConsent(ctx context.Context) error {
+	a.user.mu.Lock()
+	defer a.user.mu.Unlock()
+	if _, held, err := loadJSON[pendingConsent](a.user.consentPath); err != nil || !held {
+		return err
+	}
+	return a.serveConsentRedirect(ctx)
 }
 
 func randomToken() string {
@@ -239,33 +296,46 @@ func (a *app) serveConsent(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	a.user.mu.Lock()
 	defer a.user.mu.Unlock()
-	c := a.user.pending
-	if r.URL.Path != consentPath || c == nil || q.Get("state") != c.state {
+	c, held, err := loadJSON[pendingConsent](a.user.consentPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if r.URL.Path != consentPath || !held || q.Get("state") != c.State {
 		http.Error(w, "cc-slack holds no consent for this link; retry the read for a fresh one", http.StatusBadRequest)
 		return
 	}
-	a.user.pending = nil
-	outcome, status := a.finishConsent(r.Context(), c, q)
-	if _, _, _, err := a.newAPI(c.id.Token).UpdateMessageContext(r.Context(), c.id.DMChannelID, c.ts, c.id.postOptions(outcome, "")...); err != nil {
-		a.poller.log.Printf("edit the consent card %s: %v", c.ts, err)
+	id, err := loadIdentity(r.Context(), a.poller.plane.DB())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("cc-slack cannot finish the consent without its login: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := dropFile(a.user.consentPath); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	outcome, status := a.finishConsent(r.Context(), id, c.Verifier, q)
+	if _, _, _, err := a.newAPI(id.Token).UpdateMessageContext(r.Context(), id.DMChannelID, c.TS, id.postOptions(outcome, "")...); err != nil {
+		a.poller.log.Printf("edit the consent card %s: %v", c.TS, err)
 	}
 	http.Error(w, outcome, status)
 }
 
-func (a *app) finishConsent(ctx context.Context, c *pendingConsent, q url.Values) (string, int) {
+func (a *app) finishConsent(ctx context.Context, id identity, verifier string, q url.Values) (string, int) {
 	if e := q.Get("error"); e != "" {
 		return fmt.Sprintf("Not allowed: Slack answered %s, so cc-slack still cannot read as you", e), http.StatusForbidden
 	}
-	got, err := a.user.oauth(ctx, url.Values{"client_id": {c.id.Config.OAuth.ClientID}, "code": {q.Get("code")}, "code_verifier": {c.verifier}, "redirect_uri": {consentRedirect}})
+	got, err := a.user.oauth(ctx, url.Values{"client_id": {id.Config.OAuth.ClientID}, "code": {q.Get("code")}, "code_verifier": {verifier}, "redirect_uri": {consentRedirect}})
 	if err != nil {
 		return fmt.Sprintf("Not allowed: trading Slack's code for a token failed (%v)", err), http.StatusBadGateway
 	}
-	if got.AuthedUser.ID != c.id.UserID || got.Team.ID != c.id.TeamID {
-		return fmt.Sprintf("Not allowed: this consent is %s in %s, not %s in %s", got.AuthedUser.ID, got.Team.ID, c.id.UserID, c.id.TeamID), http.StatusForbidden
+	if got.AuthedUser.ID != id.UserID || got.Team.ID != id.TeamID {
+		return fmt.Sprintf("Not allowed: this consent is %s in %s, not %s in %s", got.AuthedUser.ID, got.Team.ID, id.UserID, id.TeamID), http.StatusForbidden
 	}
-	if err := a.user.save(got.AuthedUser.userToken(c.id.UserID, c.id.TeamID, a.now())); err != nil {
+	if err := a.user.save(got.AuthedUser.userToken(id.UserID, id.TeamID, a.now())); err != nil {
 		return fmt.Sprintf("Not allowed: saving the token failed (%v)", err), http.StatusInternalServerError
 	}
-	a.poller.log.Printf("%s allowed cc-slack to read Slack as them", c.id.UserID)
+	a.poller.wake()
+	a.poller.log.Printf("%s allowed cc-slack to read Slack as them", id.UserID)
 	return "Allowed: cc-slack now reads Slack as you on this Mac. You can close this tab.", http.StatusOK
 }

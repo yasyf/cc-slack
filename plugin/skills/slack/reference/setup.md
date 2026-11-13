@@ -53,7 +53,10 @@ it subscribes.
 
 ## Fall back when the bot cannot act
 
-Use the matching tool below for reads the bot cannot make. A write in the
+Use the matching tool below for posts and reactions the bot cannot make.
+Reads have no fallback tool: `slack_thread` and `slack_history` read a
+conversation the bot is not in as the user once they tap Allow on cc-slack's
+consent card, which the refusal links. A write in the
 user's 1:1 DM with someone else, which the bot cannot join, goes to the
 group DM of that person, the user and the app: post it as usual with
 `channel_id` set to that person's user id, which the refusal names, and
@@ -65,8 +68,7 @@ If the user declines, leave the write unsent. Prefix every MCP post with
 | Failure | Next step |
 |---|---|
 | Post or reply fails | `mcp__slack__slack_send_message` |
-| Thread read fails | `mcp__slack__slack_get_thread` |
-| Channel history read fails | `mcp__slack__slack_conversations_history` |
+| Read refused with a consent card | Ask the user to tap Allow on the card the refusal links, on the Mac running cc-slack, then read again |
 | Reaction fails | `mcp__slack__slack_add_reaction` |
 | Private channel excludes the bot and the self-invite failed | Report the cause the refusal names, then retry the same write once it is fixed; never ask the user to `/invite` the app |
 | Personal 1:1 DM excludes the bot | Post as usual to the person's user id, which the refusal names; never the Slack MCP |

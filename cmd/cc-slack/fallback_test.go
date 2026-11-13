@@ -23,15 +23,15 @@ func TestFallbackNamesTheMCPToolForEachAction(t *testing.T) {
 		{"react", actionReact, slack.SlackErrorResponse{Err: "not_in_channel"}, []string{"can't react here (not_in_channel)", mcpReaction}},
 		{"unreact", actionUnreact, slack.SlackErrorResponse{Err: "not_in_channel"}, []string{"can't remove a reaction here (not_in_channel)", mcpUnreact}},
 		{"invite", actionReact, inviteNeededError{channelID: "C0PRIVATE1"}, []string{"<#C0PRIVATE1>", "channel-join"}},
-		{"read", actionRead, slack.SlackErrorResponse{Err: "missing_scope"}, []string{"can't read this conversation (missing_scope)", mcpThread, mcpHistory}},
-		{"watch", actionWatch, slack.SlackErrorResponse{Err: "not_in_channel"}, []string{"can't watch", "member of", mcpThread, mcpHistory}},
+		{"read", actionRead, slack.SlackErrorResponse{Err: "missing_scope"}, []string{"can't read this conversation (missing_scope)"}},
+		{"watch", actionWatch, slack.SlackErrorResponse{Err: "not_in_channel"}, []string{"can't watch", "member of", "slack_thread", "[oauth] client_id"}},
 		{"users", actionUsers, slackCallError{"users.list", slack.SlackErrorResponse{Err: "fatal_error"}}, []string{"can't look people up (Slack's users.list answered fatal_error)", "users.info", "users.lookupByEmail", mcpUsers}},
 		{"users daemon down", actionUsers, errors.New("dial unix: no such file"), []string{"can't look people up (dial unix: no such file)", mcpUsers}},
 		{"users server error", actionUsers, slackCallError{"users.list", errors.New("slack server error: 503 Service Unavailable after 4 tries")}, []string{"(Slack's users.list answered slack server error: 503 Service Unavailable after 4 tries)"}},
 		{"channels", actionChannels, slackCallError{"conversations.list", slack.SlackErrorResponse{Err: "fatal_error"}}, []string{"can't list channels (Slack's conversations.list answered fatal_error)", mcpChannels}},
 		{"users not logged in", actionUsers, errNoIdentity, []string{"run `cc-slack login`", mcpUsers}},
 		{"rate limit", actionWrite, &slack.RateLimitedError{RetryAfter: time.Second}, []string{"(ratelimited)", mcpSend}},
-		{"daemon down", actionRead, errors.New("dial unix: no such file"), []string{"(dial unix: no such file)", mcpThread}},
+		{"daemon down", actionRead, errors.New("dial unix: no such file"), []string{"(dial unix: no such file)"}},
 		{"no identity", actionWrite, errNoIdentity, []string{"run `cc-slack login`", mcpSend}},
 	}
 	for _, tc := range cases {
@@ -43,6 +43,20 @@ func TestFallbackNamesTheMCPToolForEachAction(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadFailuresNameNoSlackMCPTool(t *testing.T) {
+	for _, a := range []action{actionRead, actionWatch} {
+		for _, err := range []error{slack.SlackErrorResponse{Err: "channel_not_found"}, errNoIdentity, errStaleProcess, context.DeadlineExceeded} {
+			if got := fallback(a, err); strings.Contains(got, "mcp__slack__") {
+				t.Errorf("fallback(%d, %v) = %q, want no Slack MCP tool", a, err, got)
+			}
+		}
+	}
+	got := threadReadFailure(slack.SlackErrorResponse{Err: "channel_not_found"}, "D0THEIRDM", identity{DMChannelID: "D0APP"}, "1800000000.000100")
+	if strings.Contains(got, "mcp__slack__") || !strings.Contains(got, "[oauth] client_id") {
+		t.Fatalf("thread read failure = %q, want the read as you and no Slack MCP tool", got)
 	}
 }
 

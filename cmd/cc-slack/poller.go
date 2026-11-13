@@ -48,6 +48,7 @@ type plane interface {
 
 type poller struct {
 	recard    func(ctx context.Context, id identity, card cardRef, pr refID)
+	keepUser  func(ctx context.Context, id identity) time.Time
 	plane     plane
 	newAPI    func(token string) slackAPI
 	alive     func(pid int) bool
@@ -360,6 +361,9 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		next = earliest(next, due)
 	}
 	if due := p.retryTaps(ctx, id); !due.IsZero() {
+		next = earliest(next, due)
+	}
+	if due := p.keepUser(ctx, id); !due.IsZero() {
 		next = earliest(next, due)
 	}
 	due, err := p.feedTick(ctx, db, api, id, watches)

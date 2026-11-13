@@ -223,11 +223,14 @@ func TestShortcutDMOpensAWorkspaceAndRepliesInTheDMThread(t *testing.T) {
 	if first, _, _ := strings.Cut(prompt, "\n"); first != shortcutBriefMarker {
 		t.Fatalf("prompt first line = %q, want %q", first, shortcutBriefMarker)
 	}
-	for _, s := range []string{link, "slack_thread", "slack_watch", "mcp__slack__slack_get_thread", "Yasyf Mohamedali",
+	for _, s := range []string{link, "slack_thread", "slack_watch", "Yasyf Mohamedali",
 		"\nthread_ts: " + testSourceTS + "\n", "\ndm_ts: " + testDMTS + "\n", "slack_dm_status, passing thread_ts"} {
 		if !strings.Contains(prompt, s) {
 			t.Fatalf("prompt lacks %q:\n%s", s, prompt)
 		}
+	}
+	if strings.Contains(prompt, "mcp__slack__") {
+		t.Fatalf("prompt names a Slack MCP read:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "rm -rf") || strings.Contains(prompt, "evil.example") {
 		t.Fatalf("prompt carries Slack-supplied text:\n%s", prompt)
