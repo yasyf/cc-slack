@@ -879,6 +879,23 @@ func fourPRStackCard() providedCard {
 	return card
 }
 
+func TestAReplacedCardCallsSiblingPRsOfOneRequestNoStack(t *testing.T) {
+	stack, siblings := fourPRStackCard().Card, fourPRStackCard().Card
+	siblings.Siblings = true
+	for _, c := range []struct {
+		card statusCard
+		want string
+	}{
+		{stack, "now one card for its stack of 4 PRs"},
+		{siblings, "now one card for 4 PRs of one request"},
+		{stackMemberCard().Card, "now a card of its own"},
+	} {
+		if got := regrouped(c.card); got != c.want {
+			t.Errorf("regrouped(siblings %v, %d PRs) = %q, want %q", c.card.Siblings, len(c.card.PRs), got, c.want)
+		}
+	}
+}
+
 func prAsks(asks []string) []string {
 	return slices.DeleteFunc(asks, func(ask string) bool { return !strings.HasPrefix(ask, `{"prs"`) })
 }
