@@ -562,7 +562,7 @@ func (l *liveCards) copySource(channel, ts string) (cardRef, bool) {
 	return cardRef{}, false
 }
 
-func (l *liveCards) located(a cardActionPush) (cardActionPush, error) {
+func (l *liveCards) located(a cardActionPush) (cardActionPush, bool) {
 	card, copied := a.onCard()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -570,14 +570,10 @@ func (l *liveCards) located(a cardActionPush) (cardActionPush, error) {
 	if !found && !copied {
 		stored, found = l.copySource(a.Channel, card.MessageTS)
 	}
-	switch {
-	case found:
+	if found {
 		card.MessageTS, card.ThreadTS = stored.ts, stored.thread
-	case copied:
-		a.ActionID = card.ActionID
-		return a, fmt.Errorf("%w: copy %s answers card %s", errNoStoredCard, a.MessageTS, card.MessageTS)
 	}
-	return card, nil
+	return card, found || !copied
 }
 
 func (l *liveCards) retire(posts []string, by, line string) {
@@ -1006,7 +1002,8 @@ func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, a
 	defer l.mu.Unlock()
 	t, ok := l.threads[threadKey(channel, thread)]
 	if !ok {
-		return false, askAnswer{}, fmt.Errorf("%w: no card in thread %s/%s", errNoStoredCard, channel, thread)
+		t = &liveThread{Channel: channel, Thread: thread, Updated: l.now()}
+		l.threads[threadKey(channel, thread)] = t
 	}
 	if prior, done := t.Answers[askID]; done {
 		return false, prior, nil
@@ -1260,11 +1257,7 @@ func (l *liveCards) waitingAt(channel, thread, ts string) (string, liveMessage, 
 func (l *liveCards) stillAsks(channel, thread, waits, question string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	t, ok := l.threads[threadKey(channel, thread)]
-	switch {
-	case !ok:
-		return fmt.Errorf("%w: no card in thread %s/%s", errNoStoredCard, channel, thread)
-	case t.Waiting[waits] != nil && t.Waiting[waits].Card.Title != question:
+	if t, ok := l.threads[threadKey(channel, thread)]; ok && t.Waiting[waits] != nil && t.Waiting[waits].Card.Title != question {
 		return errCardMoved
 	}
 	return nil
@@ -1302,7 +1295,7 @@ func (l *liveCards) lastAnswer(channel, thread string) time.Time {
 	var last time.Time
 	if t, ok := l.threads[threadKey(channel, thread)]; ok {
 		for _, ans := range t.Answers {
-			if !ans.Withdrawn && ans.At.After(last) {
+			if !ans.Withdrawn && ans.Undelivered == "" && ans.At.After(last) {
 				last = ans.At
 			}
 		}
