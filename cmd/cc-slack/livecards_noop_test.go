@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -10,49 +9,19 @@ import (
 
 func unchangedLiveFiles(t *testing.T, cards *liveCards) func() {
 	t.Helper()
-	type savedFile struct {
-		path string
-		info os.FileInfo
-		data []byte
+	changes := func() int {
+		t.Helper()
+		var n int
+		if err := cards.st.DB().QueryRow("SELECT total_changes()").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
 	}
-	saved := make([]savedFile, 0, 2)
-	for _, path := range []string{cards.path, cards.refsPath()} {
-		file, err := os.Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := file.Close(); err != nil {
-				t.Error(err)
-			}
-		})
-		info, err := file.Stat()
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		saved = append(saved, savedFile{path, info, data})
-	}
+	before := changes()
 	return func() {
 		t.Helper()
-		for _, before := range saved {
-			info, err := os.Stat(before.path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !os.SameFile(before.info, info) {
-				t.Errorf("%s was replaced by a no-op", before.path)
-			}
-			data, err := os.ReadFile(before.path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(before.data, data) {
-				t.Errorf("%s contents changed during a no-op", before.path)
-			}
+		if after := changes(); after != before {
+			t.Errorf("no-op wrote %d rows", after-before)
 		}
 	}
 }
@@ -105,7 +74,7 @@ func TestLiveCardAnswerNoopsPreserveFiles(t *testing.T) {
 			thread.Answers = map[string]askAnswer{testWaits: {At: clock.now().UTC(), Label: "Hold", Other: true, Drawn: true, Tap: "tap"}}
 			thread.Reply.Tapped = "Hold"
 			cards.refs[testPRURL] = refState{State: "merged"}
-			cards.save()
+			cards.save([]string{threadKey(thread.Channel, thread.Thread)}, []string{testPRURL})
 			before := mustJSON(cards.threads)
 			checkFiles := unchangedLiveFiles(t, cards)
 			if got := tt.run(cards, card); len(got) != 0 {
@@ -165,7 +134,7 @@ func TestLiveCardAnswerMutationsPersist(t *testing.T) {
 			thread.Answers = map[string]askAnswer{waits: answer, "keep": keep}
 			thread.Reply.Tapped = "Hold"
 			cards.refs[testPRURL] = refState{State: "merged"}
-			cards.save()
+			cards.save([]string{threadKey(thread.Channel, thread.Thread)}, []string{testPRURL})
 			if got := tt.run(cards, card); len(got) != tt.wantUndone {
 				t.Fatalf("undone = %v, want %d cards", got, tt.wantUndone)
 			}

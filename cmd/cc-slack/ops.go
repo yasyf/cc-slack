@@ -3085,19 +3085,22 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		}
 	}
 	t.keep(card, placed)
+	var changed []string
 	if superseded != nil {
 		cards.forget(prior, superseded.TS)
+		changed = append(changed, threadKey(prior.Channel, prior.Thread))
 	}
 	for _, older := range place.older {
 		cards.forget(older.thread, older.card.TS)
+		changed = append(changed, threadKey(older.thread.Channel, older.thread.Thread))
 		a.markReworded(ctx, id, older.card, t, placed)
 	}
 	askedAgainLine := askedAgain(card.Title, id.permalink(id.DMChannelID, placed.TS, t.Thread))
 	if asked == nil {
-		cards.retire(card.Supersedes, placed.TS, askedAgainLine)
+		changed = append(changed, cards.retire(card.Supersedes, placed.TS, askedAgainLine)...)
 	}
-	cards.dropReplaced(t, replaces, placed)
-	cards.commit(t)
+	changed = append(changed, cards.dropReplaced(t, replaces, placed)...)
+	cards.commit(t, changed...)
 	if superseded != nil {
 		if _, _, err := a.newAPI(id.Token).DeleteMessageContext(ctx, id.DMChannelID, superseded.TS); err != nil {
 			a.poller.log.Printf("card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, placed.TS, err)

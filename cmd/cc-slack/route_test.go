@@ -78,6 +78,7 @@ func launchDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	t.Helper()
 	fs := newFakeSlack()
 	a := newApp(func(string) slackAPI { return fs }, func(int) bool { return true }, openTestCache(t), openTestOwed(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t))
+	t.Cleanup(func() { _ = a.cards.close() })
 	tickets := newFakeCaptHook()
 	a.captHook = tickets.run
 	a.claudeCwd = projectWith(t, true)

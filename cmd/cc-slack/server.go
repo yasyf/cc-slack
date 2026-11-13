@@ -227,12 +227,14 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s, err := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, feeds, threads, replay).buildServer()
+	a := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, feeds, threads, replay)
+	defer func() { _ = a.cards.close() }()
+	s, err := a.buildServer()
 	if err != nil {
 		return err
 	}
 	err = s.Serve(ctx)
-	if errors.Is(err, store.ErrUnsupportedSchema) {
+	if errors.Is(err, store.ErrUnsupportedSchema) && !errors.Is(err, errLiveCardsStore) {
 		log.Printf("%s predates this build's schema; leaving it for `cc-slack login` to archive: %v", statePath(), err)
 		return nil
 	}

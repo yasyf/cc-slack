@@ -158,8 +158,8 @@ func (c *testClock) advance(d time.Duration) { c.at.Add(int64(d)) }
 
 func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *testClock) *liveCards {
 	t.Helper()
-	return &liveCards{
-		path:    t.TempDir() + "/live-cards.json",
+	cards := &liveCards{
+		path:    t.TempDir() + "/live-cards.db",
 		client:  newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, clock.now),
 		log:     log.New(io.Discard, "", 0),
 		now:     clock.now,
@@ -172,6 +172,11 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 		drawing: map[string]*sync.Mutex{},
 		undrawn: map[string]map[string]bool{},
 	}
+	if err := cards.load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cards.close() })
+	return cards
 }
 
 func seedLiveThread(l *liveCards, card statusCard, at time.Time) {
@@ -270,6 +275,7 @@ func TestAPRCardWhosePRsEndedBeforeItsBuildCollapsesOnceAndARestartRedrawsItNoMo
 	cards.threads[threadKey("D"+testUser, thread)] = &liveThread{Channel: "D" + testUser, Thread: thread, Updated: clock.now(), PRCards: []*liveMessage{{TS: ts, At: clock.now(), Card: card}}}
 	id, _ := parseRef(testPRURL)
 	cards.refs[id.key()] = refState{State: "merged"}
+	cards.save([]string{threadKey("D"+testUser, thread)}, []string{id.key()})
 
 	cards.tick(l.ctx)
 	if edits := editsOf(l.slack.edited(), ts); len(edits) != 1 || !strings.Contains(edits[0], "🟣 Merged") || strings.Contains(edits[0], `"type":"button"`) {
