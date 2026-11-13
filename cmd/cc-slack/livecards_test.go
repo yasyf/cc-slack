@@ -158,8 +158,8 @@ func (c *testClock) advance(d time.Duration) { c.at.Add(int64(d)) }
 
 func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *testClock) *liveCards {
 	t.Helper()
-	return &liveCards{
-		path:    t.TempDir() + "/live-cards.json",
+	cards := &liveCards{
+		path:    t.TempDir() + "/live-cards.db",
 		client:  newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, clock.now),
 		log:     log.New(io.Discard, "", 0),
 		now:     clock.now,
@@ -172,6 +172,11 @@ func standaloneCards(t *testing.T, l *liveDaemon, srv *httptest.Server, clock *t
 		drawing: map[string]*sync.Mutex{},
 		undrawn: map[string]map[string]bool{},
 	}
+	if err := cards.load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cards.close() })
+	return cards
 }
 
 func seedLiveThread(l *liveCards, card statusCard, at time.Time) {

@@ -3,13 +3,10 @@ package main
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,6 +15,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/yasyf/cc-interact/store"
 )
 
 const (
@@ -35,7 +33,7 @@ const (
 
 var goneCardCodes = map[string]bool{"message_not_found": true, "cant_update_message": true, "channel_not_found": true}
 
-func liveCardsPath() string { return filepath.Join(appPaths().StateDir(), "live-cards.json") }
+func liveCardsPath() string { return filepath.Join(appPaths().StateDir(), "live-cards.db") }
 
 type liveMessage struct {
 	TS     string     `json:"ts"`
@@ -299,12 +297,15 @@ type liveCards struct {
 
 	pictures atomic.Pointer[pictureConfig]
 
-	mu      sync.Mutex
-	threads map[string]*liveThread
-	refs    map[string]refState
-	hosts   map[string]*refHost
-	drawing map[string]*sync.Mutex
-	undrawn map[string]map[string]bool
+	st           *store.Store
+	dirtyThreads map[string]bool
+	dirtyRefs    map[string]bool
+	mu           sync.Mutex
+	threads      map[string]*liveThread
+	refs         map[string]refState
+	hosts        map[string]*refHost
+	drawing      map[string]*sync.Mutex
+	undrawn      map[string]map[string]bool
 }
 
 func (l *liveCards) canvas() canvas {
@@ -580,51 +581,27 @@ func (l *liveCards) located(a cardActionPush) (cardActionPush, error) {
 	return card, nil
 }
 
-func (l *liveCards) retire(posts []string, by, line string) {
+func (l *liveCards) retire(posts []string, by, line string) []string {
+	var changed []string
 	for _, post := range posts {
 		ref, _ := parsePermalink(post)
-		if _, m := l.liveMessage(ref.channelID, ref.ts); m != nil && m.ReplacedBy == "" {
+		if t, m := l.liveMessage(ref.channelID, ref.ts); m != nil && m.ReplacedBy == "" {
+			changed = append(changed, threadKey(t.Channel, t.Thread))
 			m.ReplacedBy, m.Tapped = by, cmp.Or(m.Tapped, line)
 		}
 	}
+	return changed
 }
 
-func (l *liveCards) refsPath() string { return filepath.Join(filepath.Dir(l.path), "live-refs.json") }
-
-func (l *liveCards) load() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	refs, err := os.ReadFile(l.refsPath())
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
-		return fmt.Errorf("read live refs: %w", err)
-	default:
-		if err := json.Unmarshal(refs, &l.refs); err != nil {
-			return fmt.Errorf("decode live refs %s: %w", l.refsPath(), err)
+func (l *liveCards) prune() []string {
+	var removed []string
+	cutoff := l.now().Add(-liveCardIdle)
+	for k, t := range l.threads {
+		if t.Updated.Before(cutoff) {
+			delete(l.threads, k)
+			removed = append(removed, k)
 		}
 	}
-	data, err := os.ReadFile(l.path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read live cards: %w", err)
-	}
-	var threads []*liveThread
-	if err := json.Unmarshal(data, &threads); err != nil {
-		return fmt.Errorf("decode live cards %s: %w", l.path, err)
-	}
-	for _, t := range threads {
-		l.threads[threadKey(t.Channel, t.Thread)] = t
-	}
-	l.prune()
-	return nil
-}
-
-func (l *liveCards) prune() {
-	cutoff := l.now().Add(-liveCardIdle)
-	maps.DeleteFunc(l.threads, func(_ string, t *liveThread) bool { return t.Updated.Before(cutoff) })
 	for len(l.threads) > liveMaxThreads {
 		oldest := ""
 		for k, t := range l.threads {
@@ -633,23 +610,9 @@ func (l *liveCards) prune() {
 			}
 		}
 		delete(l.threads, oldest)
+		removed = append(removed, oldest)
 	}
-}
-
-func (l *liveCards) save() {
-	l.saveFile(l.path, slices.SortedFunc(maps.Values(l.threads), func(a, b *liveThread) int { return a.Updated.Compare(b.Updated) }))
-	l.saveFile(l.refsPath(), l.refs)
-}
-
-func (l *liveCards) saveFile(path string, v any) {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, mustJSON(v), 0o600); err != nil {
-		l.log.Printf("write %s: %v", filepath.Base(path), err)
-		return
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		l.log.Printf("save %s: %v", filepath.Base(path), err)
-	}
+	return removed
 }
 
 func (l *liveCards) draft(channel, thread string) *liveThread {
@@ -731,7 +694,7 @@ func (l *liveCards) reword(channel string, threads []string, card statusCard) (c
 		}
 	}
 	t.Updated = l.now()
-	l.save()
+	l.save([]string{threadKey(t.Channel, t.Thread)}, nil)
 	return cardRef{channel, t.Thread, ts}, true
 }
 
@@ -766,7 +729,7 @@ func (l *liveCards) editByHand(channel, ts string, edit func() error) error {
 				m.Edited = true
 			}
 		}
-		l.save()
+		l.save([]string{key}, nil)
 	}
 	return nil
 }
@@ -973,24 +936,28 @@ func (l *liveCards) forget(t *liveThread, ts string) {
 	}
 }
 
-func (l *liveCards) dropReplaced(into *liveThread, replaces string, placed *liveMessage) {
+func (l *liveCards) dropReplaced(into *liveThread, replaces string, placed *liveMessage) []string {
+	var changed []string
 	if placed.TS != replaces {
-		return
+		return nil
 	}
 	for _, t := range append(slices.Collect(maps.Values(l.threads)), into) {
 		for _, m := range t.messages() {
 			if t.Channel == into.Channel && m != nil && m != placed && m.TS == placed.TS {
 				t.drop(m)
+				changed = append(changed, threadKey(t.Channel, t.Thread))
 			}
 		}
 	}
+	return changed
 }
 
-func (l *liveCards) commit(t *liveThread) {
+func (l *liveCards) commit(t *liveThread, changed ...string) {
 	t.Drawn = l.now()
 	l.threads[threadKey(t.Channel, t.Thread)] = t
-	l.prune()
-	l.save()
+	changed = append(changed, threadKey(t.Channel, t.Thread))
+	changed = append(changed, l.prune()...)
+	l.save(changed, nil)
 	l.wake()
 }
 
@@ -1015,7 +982,7 @@ func (l *liveCards) claim(channel, thread, askID string, ans askAnswer) (bool, a
 		t.Answers = map[string]askAnswer{}
 	}
 	t.Answers[askID] = ans
-	l.save()
+	l.save([]string{threadKey(channel, thread)}, nil)
 	if !ans.UndoUntil.IsZero() {
 		select {
 		case l.dueCh <- ans.UndoUntil:
@@ -1050,7 +1017,7 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var undone []undoneAnswer
-	changed := false
+	var changed []string
 	for _, t := range l.threads {
 		for waits, ans := range t.Answers {
 			answered := t.answered(waits)
@@ -1058,7 +1025,7 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 				continue
 			}
 			delete(t.Answers, waits)
-			changed = true
+			changed = append(changed, threadKey(t.Channel, t.Thread))
 			for _, m := range answered {
 				m.Tapped = ""
 				if !slices.ContainsFunc(undone, func(u undoneAnswer) bool { return u.card == cardRef{t.Channel, t.Thread, m.TS} }) {
@@ -1067,9 +1034,7 @@ func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered 
 			}
 		}
 	}
-	if changed {
-		l.save()
-	}
+	l.save(changed, nil)
 	return undone
 }
 
@@ -1082,6 +1047,7 @@ func (l *liveCards) closeUndos(now time.Time) []closedUndo {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var closed []closedUndo
+	var changed []string
 	for _, t := range l.threads {
 		for waits, ans := range t.Answers {
 			if ans.UndoUntil.IsZero() || now.Before(ans.UndoUntil) {
@@ -1089,14 +1055,13 @@ func (l *liveCards) closeUndos(now time.Time) []closedUndo {
 			}
 			ans.Tap, ans.UndoUntil = "", time.Time{}
 			t.Answers[waits] = ans
+			changed = append(changed, threadKey(t.Channel, t.Thread))
 			for _, m := range t.answered(waits) {
 				closed = append(closed, closedUndo{cardRef{t.Channel, t.Thread, m.TS}, m.Tapped})
 			}
 		}
 	}
-	if len(closed) > 0 {
-		l.save()
-	}
+	l.save(changed, nil)
 	return slices.CompactFunc(closed, func(a, b closedUndo) bool { return a.card == b.card })
 }
 
@@ -1121,7 +1086,7 @@ func (l *liveCards) release(channel, thread, askID string) {
 	if t, ok := l.threads[threadKey(channel, thread)]; ok {
 		if _, answered := t.Answers[askID]; answered {
 			delete(t.Answers, askID)
-			l.save()
+			l.save([]string{threadKey(channel, thread)}, nil)
 		}
 	}
 }
@@ -1165,7 +1130,7 @@ func (l *liveCards) answerDrawn(channel, thread, askID string) {
 	if ans, done := t.Answers[askID]; done && !ans.Drawn {
 		ans.Drawn = true
 		t.Answers[askID] = ans
-		l.save()
+		l.save([]string{threadKey(channel, thread)}, nil)
 	}
 }
 
@@ -1179,7 +1144,7 @@ func (l *liveCards) oweTap(channel, thread, askID string, tap *owedTap) {
 	if ans, done := t.Answers[askID]; done && (ans.Owed != nil || tap != nil) {
 		ans.Owed = tap
 		t.Answers[askID] = ans
-		l.save()
+		l.save([]string{threadKey(channel, thread)}, nil)
 	}
 }
 
@@ -1195,6 +1160,7 @@ func (l *liveCards) owedTaps(now time.Time, running time.Duration) ([]dueTap, ti
 		due  []dueTap
 		next time.Time
 	)
+	var changed []string
 	for _, t := range l.threads {
 		for _, ans := range t.Answers {
 			switch {
@@ -1204,12 +1170,11 @@ func (l *liveCards) owedTaps(now time.Time, running time.Duration) ([]dueTap, ti
 			default:
 				due = append(due, dueTap{cardRef{t.Channel, t.Thread, ans.Owed.Card}, *ans.Owed})
 				ans.Owed.Due = now.Add(running)
+				changed = append(changed, threadKey(t.Channel, t.Thread))
 			}
 		}
 	}
-	if len(due) > 0 {
-		l.save()
-	}
+	l.save(changed, nil)
 	return due, next
 }
 
@@ -1223,7 +1188,7 @@ func (l *liveCards) answerDelivered(channel, thread, askID string) {
 	if ans, done := t.Answers[askID]; done && ans.Undelivered != "" {
 		ans.Undelivered = ""
 		t.Answers[askID] = ans
-		l.save()
+		l.save([]string{threadKey(channel, thread)}, nil)
 	}
 }
 
@@ -1511,7 +1476,7 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 	if whole {
 		t.Drawn, t.Stale = now, len(errs) > 0
 	}
-	l.save()
+	l.save([]string{threadKey(t.Channel, t.Thread)}, nil)
 	carriers := l.carriersOf(t, redrawn)
 	l.mu.Unlock()
 	for _, carrier := range carriers {
@@ -1544,11 +1509,7 @@ func (t *liveThread) drop(m *liveMessage) {
 func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool, time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	tracked := len(l.threads)
-	l.prune()
-	if len(l.threads) != tracked {
-		l.save()
-	}
+	removed := l.prune()
 	byHost := map[string][]refID{}
 	seen := map[string]bool{}
 	var unknown map[string]bool
@@ -1580,7 +1541,14 @@ func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool,
 			}
 		}
 	}
-	maps.DeleteFunc(l.refs, func(k string, _ refState) bool { return !seen[k] && !l.cited(k) })
+	var removedRefs []string
+	for k := range l.refs {
+		if !seen[k] && !l.cited(k) {
+			delete(l.refs, k)
+			removedRefs = append(removedRefs, k)
+		}
+	}
+	l.save(removed, removedRefs)
 	return byHost, unknown, expiry
 }
 
@@ -1685,13 +1653,16 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		}
 		states, err := l.fetch(ctx, name, h, byHost[name])
 		l.mu.Lock()
+		var changedRefs []string
 		for k, s := range states {
-			if l.refs[k] != s {
+			if prior, known := l.refs[k]; !known || prior != s {
 				moved[k] = s.movedFrom(l.refs[k])
 				l.refs[k] = s
 				changed[k] = true
+				changedRefs = append(changedRefs, k)
 			}
 		}
+		l.save(nil, changedRefs)
 		l.mu.Unlock()
 		h.due = now.Add(refPollEvery)
 		if err != nil {
@@ -1718,20 +1689,20 @@ func (l *liveCards) collapseEnded() map[string]bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	ended := map[string]bool{}
+	var changed []string
 	for _, t := range l.threads {
 		for _, m := range t.PRCards {
 			if m.Ended || m.Card.ended(l.refs) == "" {
 				continue
 			}
 			m.Ended = true
+			changed = append(changed, threadKey(t.Channel, t.Thread))
 			for _, id := range m.Card.refIDs() {
 				ended[id.key()] = true
 			}
 		}
 	}
-	if len(ended) > 0 {
-		l.save()
-	}
+	l.save(changed, nil)
 	return ended
 }
 

@@ -25,7 +25,7 @@ func TestAPRRowShowsItsTitleAndNeverItsCommit(t *testing.T) {
 func TestAnEditThatTakesAPROffItsPostDropsThatPRsApprove(t *testing.T) {
 	now := time.Unix(1800000000, 0)
 	l := &liveCards{
-		path:    filepath.Join(t.TempDir(), "live-cards.json"),
+		path:    filepath.Join(t.TempDir(), "live-cards.db"),
 		log:     log.New(io.Discard, "", 0),
 		now:     func() time.Time { return now },
 		wakeCh:  make(chan struct{}, 1),
@@ -35,6 +35,10 @@ func TestAnEditThatTakesAPROffItsPostDropsThatPRsApprove(t *testing.T) {
 		drawing: map[string]*sync.Mutex{},
 		undrawn: map[string]map[string]bool{},
 	}
+	if err := l.load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.close() })
 	const channel, cards, post = "D1", "1800000000.000200", "1800000000.000100"
 	prCard := func(n int) *liveMessage {
 		return &liveMessage{TS: fmt.Sprintf("1800000000.0002%02d", n-40), Card: statusCard{PRs: []cardPR{{URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n)}}}}
