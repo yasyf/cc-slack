@@ -891,6 +891,7 @@ type fixture struct {
 	now       time.Time
 	alive     map[int]bool
 	id        identity
+	user      *fakeUserToken
 }
 
 func agentAvatar(_ context.Context, id identity) (string, error) {
@@ -919,6 +920,8 @@ func newFixture(t *testing.T) *fixture {
 	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t))
 	f.app.now = func() time.Time { return f.now }
 	f.app.avatar = agentAvatar
+	f.user = newFakeUserToken(t)
+	f.app.user = f.user.session()
 	f.poller = f.app.poller
 	f.poller.plane = f.plane
 	f.poller.now = func() time.Time { return f.now }
@@ -1100,7 +1103,7 @@ func newFakeUserToken(t *testing.T) *fakeUserToken {
 }
 
 func (f *fakeUserToken) session() *userSession {
-	return &userSession{path: f.path, oauth: f.oauth, api: f.api, listen: f.listen}
+	return &userSession{path: f.path, consentPath: filepath.Join(filepath.Dir(f.path), "user-consent.json"), oauth: f.oauth, api: f.api, listen: f.listen}
 }
 
 func (f *fakeUserToken) oauth(_ context.Context, form url.Values) (oauthAccess, error) {

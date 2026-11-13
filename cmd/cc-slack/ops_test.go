@@ -509,7 +509,7 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	}
 	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "not_in_channel"})
 	raw, _ = json.Marshal(map[string]string{"channel_id": "C9"})
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), mcpHistory) {
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), "not_in_channel") || strings.Contains(err.Error(), "mcp__slack__") {
 		t.Fatalf("unreadable channel: %v", err)
 	}
 }
@@ -1069,7 +1069,7 @@ func TestFollowRejectsUnknownOwnerAndUnreadableChannel(t *testing.T) {
 	}
 	l.slack.fail(historyOf("G9"), slack.SlackErrorResponse{Err: "not_in_channel"})
 	raw, _ = json.Marshal(map[string]string{"channel_id": "G9"})
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opFollow, raw); err == nil || !strings.Contains(err.Error(), mcpHistory) {
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opFollow, raw); err == nil || !strings.Contains(err.Error(), "slack_history") {
 		t.Fatalf("unreadable channel: %v", err)
 	}
 }
@@ -1315,7 +1315,7 @@ func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	loggedInWithOAuth(t, l)
 	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
-	link := consentLink(t, l)
+	link := consentLink(t, l.slack)
 	if got := link.Query(); got.Get("client_id") != testClientID || got.Get("redirect_uri") != consentRedirect || got.Get("code_challenge_method") != "S256" ||
 		!strings.Contains(got.Get("user_scope"), "im:history") || got.Get("team") != "T1" {
 		t.Fatalf("consent link %s, want PlatClaude's client, the localhost redirect, S256 PKCE and im:history", link)
@@ -1325,7 +1325,7 @@ func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	user.add("D0THEIRDM", slack.Message{Msg: slack.Msg{Timestamp: testThread, User: "UOTHER", Text: "can you look at the deploy?"}})
 	l.user.answer = oauthAccess{OK: true, AuthedUser: oauthToken{ID: testUser, AccessToken: "xoxe.xoxp-1", RefreshToken: "xoxe-1", ExpiresIn: 43200}}
 	l.user.answer.Team.ID = "T1"
-	if code := redirect(l, "code=c1&state="+link.Query().Get("state")); code != http.StatusOK {
+	if code := redirect(l.user, "code=c1&state="+link.Query().Get("state")); code != http.StatusOK {
 		t.Fatalf("redirect answered %d, want 200", code)
 	}
 	grant := l.user.sentGrants()[0]
@@ -1352,14 +1352,14 @@ func TestConsentRefusesAnotherAccountAndAForeignState(t *testing.T) {
 	loggedInWithOAuth(t, l)
 	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
-	state := consentLink(t, l).Query().Get("state")
+	state := consentLink(t, l.slack).Query().Get("state")
 
-	if code := redirect(l, "code=c1&state=forged"); code != http.StatusBadRequest || len(l.user.sentGrants()) != 0 {
+	if code := redirect(l.user, "code=c1&state=forged"); code != http.StatusBadRequest || len(l.user.sentGrants()) != 0 {
 		t.Fatalf("forged state answered %d after %d grants, want 400 and no trade", code, len(l.user.sentGrants()))
 	}
 	l.user.answer = oauthAccess{OK: true, AuthedUser: oauthToken{ID: "UOTHER", AccessToken: "xoxe.xoxp-other"}}
 	l.user.answer.Team.ID = "T1"
-	if code := redirect(l, "code=c1&state="+state); code != http.StatusForbidden {
+	if code := redirect(l.user, "code=c1&state="+state); code != http.StatusForbidden {
 		t.Fatalf("another account's consent answered %d, want 403", code)
 	}
 	if _, ok := l.user.stored(); ok {
@@ -1400,9 +1400,9 @@ func loggedInWithOAuth(t *testing.T, l *liveDaemon) {
 	})
 }
 
-func consentLink(t *testing.T, l *liveDaemon) *url.URL {
+func consentLink(t *testing.T, s *fakeSlack) *url.URL {
 	t.Helper()
-	cards := l.slack.sentTo("D" + testUser)
+	cards := s.sentTo("D" + testUser)
 	if len(cards) != 1 {
 		t.Fatalf("DM posts = %+v, want one consent card", cards)
 	}
@@ -1417,9 +1417,9 @@ func consentLink(t *testing.T, l *liveDaemon) *url.URL {
 	return link
 }
 
-func redirect(l *liveDaemon, query string) int {
+func redirect(u *fakeUserToken, query string) int {
 	rec := httptest.NewRecorder()
-	l.user.consent.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, consentPath+"?"+query, http.NoBody))
+	u.consent.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, consentPath+"?"+query, http.NoBody))
 	return rec.Code
 }
 

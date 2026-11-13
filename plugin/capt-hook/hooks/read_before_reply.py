@@ -22,7 +22,7 @@ PICKUP = P + "slack_pickup"
 FALLBACK_READ = "mcp__slack__slack_get_thread"
 NO_READ = (
     "This agent has not read the thread, and its newest message is neither one the agent got nor one it posted."
-    " Call `slack_thread` with `channel_id` {channel} and `thread_ts` {thread}, or `mcp__slack__slack_get_thread` outside the bot's channels, then retry."
+    " Call `slack_thread` with `channel_id` {channel} and `thread_ts` {thread}, then retry."
 )
 OLD_READ = (
     "This agent's last whole read of the thread is {minutes} minutes old{behind}."
@@ -160,7 +160,7 @@ class ReadsThread:
     Event.PreToolUse,
     only_if=[RepliesInThread()],
     tests={
-        Input(tool=P + "slack_reply", tool_input=REPLY, commands=UNSEEN): Block(pattern=r"has not read the thread.*`slack_thread` with `channel_id` C0APPTHREAD and `thread_ts` 1790210144\.444179, or `mcp__slack__slack_get_thread`"),
+        Input(tool=P + "slack_reply", tool_input=REPLY, commands=UNSEEN): Block(pattern=r"has not read the thread.*`slack_thread` with `channel_id` C0APPTHREAD and `thread_ts` 1790210144\.444179, then retry"),
         Input(tool=P + "slack_send", tool_input=REPLY, commands=UNSEEN): Block(),
         Input(tool="mcp__slack__slack_send_message", tool_input=REPLY, commands=UNSEEN): Block(),
         Input(command=f"{CLI} reply --url {THREAD_LINK} --text 'on it'", commands=UNSEEN): Block(),

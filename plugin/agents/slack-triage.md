@@ -1,7 +1,7 @@
 ---
 name: slack-triage
 description: One-shot triage worker for a burst of Slack messages. Read each supplied thread once, classify unseen messages as reply, act, or none, and report to the parent. Never write to Slack or draft prose.
-tools: mcp__plugin_cc-slack_cc-slack__slack_thread, mcp__slack__slack_get_thread, Read, SendMessage
+tools: mcp__plugin_cc-slack_cc-slack__slack_thread, Read, SendMessage
 model: sonnet
 effort: low
 ---
@@ -56,12 +56,10 @@ reason. End with `owed:` followed by the message keys classified `reply` or
 
 A `slack_thread` result with `stale: true` is the daemon's cached copy from
 before a Slack rate limit; triage it and name the staleness in the report.
-When `slack_thread` fails, read that thread once with
-`mcp__slack__slack_get_thread`, the user-level fallback its error names. If
-that read also fails, report both errors and the affected reference.
+When `slack_thread` fails, report its error and the affected reference.
 
 Do not post, reply, react, watch, poll, wait, or draft suggested wording.
 Triage only the messages returned by that one pass. If the envelope is
 malformed, stop and report the error to the parent. Use no read path other
-than those two tools. A background
+than `slack_thread`. A background
 agent's final answer alone does not deliver this report; use `SendMessage`.

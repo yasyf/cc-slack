@@ -385,8 +385,8 @@ func TestThreadOpMarksStaleReadsAndSeesTheBotsOwnReply(t *testing.T) {
 	l.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
 	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000900"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw); err == nil ||
-		!strings.Contains(err.Error(), "ratelimited") || !strings.Contains(err.Error(), mcpThread) {
-		t.Fatalf("uncached rate-limited read: %v, want the error to name %s", err, mcpThread)
+		!strings.Contains(err.Error(), "ratelimited") || strings.Contains(err.Error(), "mcp__slack__") {
+		t.Fatalf("uncached rate-limited read: %v, want the rate limit and no Slack MCP tool", err)
 	}
 }
 

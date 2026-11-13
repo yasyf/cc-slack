@@ -8,8 +8,8 @@ and a bot DM with a reply from `<display name> (agent)` naming this workspace.
 
 1. Read `slack_thread` with the brief's channel and thread ids. The permalink
    `url` works too.
-2. If the bot cannot read a private channel or DM, use
-   `mcp__slack__slack_get_thread`.
+2. If the read is refused with a consent card, ask the user to tap Allow on
+   it, then read again: cc-slack then reads the private channel or DM as them.
 3. Call `slack_watch` for that thread as the top-level session. Omit `owner`.
 4. Call `slack_dm_status(card)` with `thread_ts` set to the brief's `dm_ts`
    and one line saying the session started and what it read. The card lands
@@ -38,6 +38,6 @@ approval. Call `slack_unwatch(watch_id)` when done.
 
 | Failure | Next step |
 |---|---|
-| Thread unreadable | Read through `mcp__slack__slack_get_thread` and say so in `slack_dm_status` |
+| Thread unreadable | Say why in `slack_dm_status`, linking the consent card when the refusal names one |
 | Watch fails because the bot is outside a private channel | Work from the one read. Ask the user to paste new replies or re-run later |
 | No identity | Run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" login` and check `whoami` |
