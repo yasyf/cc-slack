@@ -15,13 +15,17 @@ func unchangedLiveFiles(t *testing.T, cards *liveCards) func() {
 		info os.FileInfo
 		data []byte
 	}
-	var saved []savedFile
+	saved := make([]savedFile, 0, 2)
 	for _, path := range []string{cards.path, cards.refsPath()} {
 		file, err := os.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { file.Close() })
+		t.Cleanup(func() {
+			if err := file.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 		info, err := file.Stat()
 		if err != nil {
 			t.Fatal(err)
