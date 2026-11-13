@@ -1631,7 +1631,10 @@ func TestATapRedrawsItsCardWithinASecondWhileGitHubAndTheCardCommandStall(t *tes
 	l.push(id, cardActionPush{User: testUser, Channel: testDM, MessageTS: other.ts, ThreadTS: cmp.Or(other.threadTS, other.ts),
 		ActionID: cardWaitAction + "0:" + docs.Waits, Value: string(mustJSON(askTap{ID: docs.Waits, Label: "Ship", Question: docs.Title, Options: docs.Options})),
 		ActionTS: fmt.Sprintf("%d.000200", time.Now().Unix()), Seq: "001800000100000-abcd0402"})
-	within(t, time.Second, "the other card drawing his Ship", func() bool { return answered(l, other.ts, "Ship") })
+	within(t, time.Second, "the other card drawing his Ship as recording", func() bool {
+		edits := editsOf(l.slack.edited(), other.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "⏳ *Ship* · recording since")
+	})
 }
 
 func sentWith(t *testing.T, l *liveDaemon, channelID, text string) fakePost {

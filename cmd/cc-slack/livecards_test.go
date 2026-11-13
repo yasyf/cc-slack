@@ -815,13 +815,20 @@ func TestCardReopenUndoesAnAnswerTakenFromHisReplyInTheCardsThread(t *testing.T)
 	if edits := editsOf(l.slack.edited(), thread); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], cardWaitAction) || strings.Contains(edits[len(edits)-1], question) {
 		t.Fatalf("card edits %v, want the card offering its options again", edits)
 	}
-	want := []string{string(mustJSON(map[string]any{"answer": map[string]any{
+	undone := string(mustJSON(map[string]any{"answer": map[string]any{
 		"waits": card.Waits, "label": question, "other": true, "undone": true, "url": cardURL,
 		"action_ts": fmt.Sprintf("%d.%06d", slackTime(thread).Unix()+1, 1), "source": "wrote in the card's thread",
-	}}))}
-	eventually(t, "the card command to record the reopened answer", func() bool { return len(answersOf(cmd.requests(t))) == len(want) })
-	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
-		t.Fatalf("card command asked %v, want his reply recorded as undone once", got)
+	}}))
+	eventually(t, "the card command to record the reopened answer", func() bool { return len(answersOf(cmd.requests(t))) == 2 })
+	got := answersOf(cmd.requests(t))
+	var first struct {
+		Answer map[string]any `json:"answer"`
+	}
+	if err := json.Unmarshal([]byte(got[0]), &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Answer["label"] != question || first.Answer["undone"] != false || got[1] != undone {
+		t.Fatalf("card command asked %v, want his reply recorded, then recorded as undone once", got)
 	}
 }
 
@@ -866,12 +873,19 @@ func TestCardReopenTakesBackADashboardAnswerWhileItsUndoShows(t *testing.T) {
 	if drawn := lastEdit(); !strings.Contains(drawn, cardWaitAction) || strings.Contains(drawn, cardUndoAction) {
 		t.Fatalf("card %s, want its options offered again and no Undo", drawn)
 	}
-	eventually(t, "the card command to record the undo", func() bool { return len(answersOf(cmd.requests(t))) == 1 })
-	var recorded struct {
+	eventually(t, "the card command to record the undo", func() bool { return len(answersOf(cmd.requests(t))) == 2 })
+	var answered, recorded struct {
 		Answer map[string]any `json:"answer"`
 	}
-	if err := json.Unmarshal([]byte(answersOf(cmd.requests(t))[0]), &recorded); err != nil {
+	asked := answersOf(cmd.requests(t))
+	if err := json.Unmarshal([]byte(asked[0]), &answered); err != nil {
 		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(asked[1]), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if got := answered.Answer; got["label"] != "Ring" || got["undone"] != false {
+		t.Fatalf("card command asked %v first, want the dashboard's Ring recorded", got)
 	}
 	if got := recorded.Answer; got["label"] != "Ring" || got["undone"] != true || got["source"] != "took the answer back off Slack" {
 		t.Fatalf("card command asked %v, want Ring recorded as undone", got)

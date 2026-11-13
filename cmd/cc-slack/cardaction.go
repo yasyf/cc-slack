@@ -1023,44 +1023,13 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		return cardAnswerResult{Already: true, Label: prior.Label, Other: prior.Other, At: prior.At}, nil
 	}
 	if w.withdrawn {
-		reason := clipRunes(mrkdwnEscapes.Replace(w.tap.Label), cardMaxReasonLen) + " · " + clock(w.at, p.now())
-		line := "*Withdrawn:* " + reason
-		if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
-			line = "*Replaced:* " + reason + " · " + slackLink(w.via, "what replaced it")
-		}
-		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
-			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
-			return cardAnswerResult{}, err
-		}
-		p.react(ctx, id, w.card, cardWithdrawnReaction)
-		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+		return p.withdrawWaits(ctx, id, w)
 	}
 	if w.settled {
-		line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
-		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
-			p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
-			return cardAnswerResult{}, err
-		}
-		p.react(ctx, id, w.card, cardAnsweredReaction)
-		p.answerSuperseded(ctx, id, w)
-		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+		return p.settleWaits(ctx, id, w)
 	}
-	answer := "✓ *" + mrkdwnEscapes.Replace(w.tap.Label) + "* · answered "
-	if w.other {
-		answer = "✓ *Other:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · answered "
-	}
-	if w.via != "" {
-		answer += "on " + slackLink(w.via, w.viaName) + " "
-	}
-	answered := answer + clock(w.at, p.now())
-	rec := tapUnrecorded
-	if w.records {
-		undoUntil := time.Time{}
-		if w.via != "" {
-			undoUntil = w.undoUntil()
-		}
-		rec = p.recordTap(ctx, id, w.card, w.tap, w.press, w.at, undoUntil, answered)
-	}
+	answered := w.answeredLine(p.now())
+	rec := p.recordWaits(ctx, id, w, answered)
 	switch rec {
 	case tapRecording:
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
@@ -1068,26 +1037,99 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 		return cardAnswerResult{}, fmt.Errorf("waiting ask %s: %q: %w", w.tap.ID, w.tap.Label, errTapNotRecorded)
 	}
 	db := p.plane.DB()
-	watches, err := p.dmWatches(ctx, db, w.card.channel, w.card.thread)
-	if err == nil && len(watches) == 0 && rec == tapUnrecorded {
-		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
-	}
-	if err != nil && rec == tapUnrecorded {
-		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
-		p.redrawOffer(ctx, id, w.card, w.tap.ID)
+	watches, err := p.waitsWatches(ctx, db, id, w, rec)
+	if err != nil {
 		return cardAnswerResult{}, err
 	}
-	if err != nil {
-		p.log.Printf("waiting ask %s: recorded, but its posting session is not told: %v", w.tap.ID, err)
-	}
 	if rec == tapUnrecorded {
-		if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, answered)); err != nil {
-			p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
-		}
-		p.react(ctx, id, w.card, cardAnsweredReaction)
+		p.drawAnswered(ctx, id, w, answered)
 	}
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
-	recorded := rec == tapRecorded
+	if err := p.deliverWaits(ctx, db, id, w, watches, permalink, rec == tapRecorded); err != nil {
+		return cardAnswerResult{}, err
+	}
+	p.cards.answerDelivered(w.card.channel, w.card.thread, w.tap.ID)
+	if w.via == "" {
+		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
+	}
+	p.answerSuperseded(ctx, id, w)
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+func (p *poller) withdrawWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
+	reason := clipRunes(mrkdwnEscapes.Replace(w.tap.Label), cardMaxReasonLen) + " · " + clock(w.at, p.now())
+	line := "*Withdrawn:* " + reason
+	if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
+		line = "*Replaced:* " + reason + " · " + slackLink(w.via, "what replaced it")
+	}
+	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
+		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+		return cardAnswerResult{}, err
+	}
+	p.react(ctx, id, w.card, cardWithdrawnReaction)
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+}
+
+func (p *poller) settleWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
+	line := "✓ " + slackLink(w.via, clipRunes(w.tap.Label, cardMaxDetailLen)) + " · " + clock(w.at, p.now())
+	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
+		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+		return cardAnswerResult{}, err
+	}
+	p.react(ctx, id, w.card, cardAnsweredReaction)
+	p.answerSuperseded(ctx, id, w)
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+}
+
+func (w waitsAnswer) answeredLine(now time.Time) string {
+	answer := "✓ *" + mrkdwnEscapes.Replace(w.tap.Label) + "* · answered "
+	if w.other {
+		answer = "✓ *Other:* " + mrkdwnEscapes.Replace(clipRunes(w.tap.Label, cardMaxDetailLen)) + " · answered "
+	}
+	if w.via != "" {
+		answer += "on " + slackLink(w.via, w.viaName) + " "
+	}
+	return answer + clock(w.at, now)
+}
+
+func (p *poller) recordWaits(ctx context.Context, id identity, w waitsAnswer, answered string) tapRecord {
+	if !w.records {
+		return tapUnrecorded
+	}
+	undoUntil := time.Time{}
+	if w.via != "" {
+		undoUntil = w.undoUntil()
+	}
+	return p.recordTap(ctx, id, w.card, w.tap, w.press, w.at, undoUntil, answered)
+}
+
+func (p *poller) waitsWatches(ctx context.Context, db *sql.DB, id identity, w waitsAnswer, rec tapRecord) ([]watch, error) {
+	watches, err := p.dmWatches(ctx, db, w.card.channel, w.card.thread)
+	if rec != tapUnrecorded {
+		if err != nil {
+			p.log.Printf("waiting ask %s: recorded, but its posting session is not told: %v", w.tap.ID, err)
+		}
+		return watches, nil
+	}
+	if err == nil && len(watches) == 0 {
+		err = fmt.Errorf("%w: %s/%s", errNoStatusSession, w.card.channel, w.card.thread)
+	}
+	if err != nil {
+		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
+		p.redrawOffer(ctx, id, w.card, w.tap.ID)
+		return nil, err
+	}
+	return watches, nil
+}
+
+func (p *poller) drawAnswered(ctx context.Context, id identity, w waitsAnswer, answered string) {
+	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, answered)); err != nil {
+		p.log.Printf("waiting ask %s on %s: answered, but the card still shows its buttons: %v", w.tap.ID, w.card.ts, err)
+	}
+	p.react(ctx, id, w.card, cardAnsweredReaction)
+}
+
+func (p *poller) deliverWaits(ctx context.Context, db *sql.DB, id identity, w waitsAnswer, watches []watch, permalink string, recorded bool) error {
 	capture, notesLabel := "", ""
 	if !recorded {
 		capture, notesLabel = captureLine(id, w.tap, w.at, w.where), slackLabel(w.tap)
@@ -1109,15 +1151,10 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 				return mustJSON(msg)
 			},
 		}); err != nil {
-			return cardAnswerResult{}, fmt.Errorf("waiting ask %s keeps its answer %q, but delivering it to watch %d failed: %w", w.tap.ID, w.tap.Label, watch.ID, err)
+			return fmt.Errorf("waiting ask %s keeps its answer %q, but delivering it to watch %d failed: %w", w.tap.ID, w.tap.Label, watch.ID, err)
 		}
 	}
-	p.cards.answerDelivered(w.card.channel, w.card.thread, w.tap.ID)
-	if w.via == "" {
-		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
-	}
-	p.answerSuperseded(ctx, id, w)
-	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+	return nil
 }
 
 const (
