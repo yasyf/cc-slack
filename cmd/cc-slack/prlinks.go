@@ -54,6 +54,7 @@ type providedCard struct {
 	Card   statusCard `json:"card"`
 
 	replaces []replacedCard
+	reasks   bool
 }
 
 type replacedCard struct {
@@ -290,8 +291,8 @@ func refuseTapCards(id identity, channelID string, asked []string) error {
 	return fmt.Errorf("drew no card for tap_prs %s: %s", strings.Join(asked, ", "), why)
 }
 
-func prCardThread(id identity, channelID, postThread string) string {
-	if channelID == id.DMChannelID {
+func prCardThread(id identity, channelID, postThread, postTS string) string {
+	if channelID == id.DMChannelID && postThread == postTS {
 		return ""
 	}
 	return postThread
@@ -325,7 +326,7 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 		}
 	}
 	t := tapCards{undrawn: map[string]string{}}
-	t.ask, t.standing, t.waiting = a.cards.toCard(channelID, thread, b.Card, prs)
+	t.ask, t.standing, t.waiting = a.cards.toCard(channelID, thread, channelID == id.DMChannelID, b.Card, prs)
 	if len(t.ask) > 0 {
 		a.askCardCommand(ctx, id, channelID, thread, &t)
 	}
@@ -463,7 +464,7 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	default:
 		beside = cardBeside{thread: postTS, carry: true}
 	}
-	placed := a.postPRCards(ctx, db, id, channelID, prCardThread(id, channelID, postThread), beside, t, func(thread string) error {
+	placed := a.postPRCards(ctx, db, id, channelID, prCardThread(id, channelID, postThread, postTS), beside, t, func(thread string) error {
 		return a.bindSessionThread(ctx, db, sub, id, thread)
 	})
 	undrawn := map[string]string{}
@@ -476,7 +477,7 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, t.waiting), placed, undrawn
 }
 
-func (l *liveCards) toCard(channelID, postThread string, posting *statusCard, prs []linkedPR) (asked []refID, standing []cardRef, waiting []refID) {
+func (l *liveCards) toCard(channelID, postThread string, dm bool, posting *statusCard, prs []linkedPR) (asked []refID, standing []cardRef, waiting []refID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
@@ -490,7 +491,7 @@ func (l *liveCards) toCard(channelID, postThread string, posting *statusCard, pr
 	var stood []cardRef
 	for _, pr := range named {
 		keys := map[string]bool{pr.ref.key(): true}
-		card, _ := l.rootPRCard(channelID, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
+		card, _ := l.standingPRCard(channelID, dm, func(t *liveThread, m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
 		waiting, stood = append(waiting, pr.ref), append(stood, card)
 		if card != (cardRef{}) && !slices.Contains(standing, card) {
 			standing = append(standing, card)
@@ -545,7 +546,7 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 
 func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any, replaced []replacedCard) {
 	for _, p := range provided {
-		posted, found, others := a.cards.posted(channelID, thread, p.Card)
+		posted, found, others := a.postedPRCard(id, channelID, thread, p.Card)
 		for _, old := range others {
 			p.replaces = append(p.replaces, replacedCard{old: old, why: regrouped(p.Card)})
 		}
@@ -567,7 +568,7 @@ func (a *app) redrawInPlace(ctx context.Context, id identity, posted cardRef, p 
 		a.tellRefused(ctx, id, p, err)
 		return false
 	}
-	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, a.now()); err != nil {
+	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, p.reasks, a.now()); err != nil {
 		a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
 		a.tellRefused(ctx, id, p, err)
 		return false
@@ -579,7 +580,7 @@ func (a *app) redrawInPlace(ctx context.Context, id identity, posted cardRef, p 
 }
 
 func (a *app) redrawStanding(ctx context.Context, id identity, channelID, thread string, p providedCard) {
-	same, found, others := a.cards.posted(channelID, thread, p.Card)
+	same, found, others := a.postedPRCard(id, channelID, thread, p.Card)
 	if found && a.redrawInPlace(ctx, id, same, p) {
 		a.tellShown(ctx, id, []map[string]any{shownCard(p)})
 	}
@@ -594,6 +595,13 @@ func (a *app) redrawStanding(ctx context.Context, id identity, channelID, thread
 	}
 }
 
+func (a *app) postedPRCard(id identity, channelID, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
+	if channelID == id.DMChannelID {
+		thread = ""
+	}
+	return a.cards.posted(channelID, thread, card)
+}
+
 func (p providedCard) replacedBy(card cardRef) []replacedCard {
 	replaced := slices.Clone(p.replaces)
 	for i := range replaced {
@@ -603,6 +611,7 @@ func (p providedCard) replacedBy(card cardRef) []replacedCard {
 }
 
 func (a *app) placePRCards(ctx context.Context, db *sql.DB, id identity, channelID, thread string, provided []providedCard, bind func(thread string) error) ([]cardRef, []map[string]any, []replacedCard) {
+	defer a.cards.drawLock("pr:" + channelID)()
 	provided, placed, shown, replaced := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
 	cards := a.cards
 	cards.mu.Lock()
@@ -686,6 +695,7 @@ func (a *app) showPRCard(ctx context.Context, db *sql.DB, id identity, beside ca
 }
 
 func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread string, card cardRef) error {
+	defer a.cards.drawLock("link:" + threadKey(card.channel, thread))()
 	if a.cards.showsIn(card.channel, thread, card) {
 		return nil
 	}
@@ -912,7 +922,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 		a.tellRefused(ctx, id, provided[0], err)
 		return err
 	}
-	thread := prCardThread(id, card.channel, card.thread)
+	thread := prCardThread(id, card.channel, card.thread, card.ts)
 	if thread == card.ts {
 		thread = ""
 	}

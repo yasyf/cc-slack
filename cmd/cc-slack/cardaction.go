@@ -906,7 +906,12 @@ func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k
 }
 
 func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool, press cardPress) bool {
-	won, prior, err := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, askAnswer{At: at, Label: label})
+	tap := owedTap{Card: c.ref.ts, Answer: newPRAnswer(c.pr, c.waits, label, press, p.cards.heads(c.ref)), Due: p.now().Add(prCardPatience)}
+	ans := askAnswer{At: at, Label: label}
+	if !applied {
+		ans.Owed = &tap
+	}
+	won, prior, err := p.cards.claim(c.ref.channel, c.ref.thread, c.waits, ans)
 	switch {
 	case err != nil:
 		p.log.Printf("PR card %s: %q dropped: %v", c.waits, label, err)
@@ -921,7 +926,7 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	if applied {
 		return true
 	}
-	return p.applyPRTap(ctx, id, c.ref, owedTap{Card: c.ref.ts, Answer: newPRAnswer(c.pr, c.waits, label, press, p.cards.heads(c.ref))})
+	return p.applyPRTap(ctx, id, c.ref, tap)
 }
 
 func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time, undo string) bool {
@@ -985,7 +990,8 @@ func (p *poller) tapRow(ctx context.Context, id identity, a cardActionPush, k as
 }
 
 func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k askTap, pr refID, at time.Time) error {
-	won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label})
+	tap := owedTap{Card: a.MessageTS, Row: true, Answer: newPRAnswer(pr, k.ID, k.Label, a.press(), p.cards.heads(a.ref())), Due: p.now().Add(prCardPatience)}
+	won, prior, err := p.cards.claim(a.Channel, a.ThreadTS, k.ID, askAnswer{At: at, Label: k.Label, Owed: &tap})
 	if err != nil {
 		return err
 	}
@@ -996,7 +1002,7 @@ func (p *poller) tapPRRow(ctx context.Context, id identity, a cardActionPush, k 
 	if err := p.tapDrawn(a.ref(), at, p.drawTap(ctx, id, a.ref(), cardRowBlock+k.ID, "✓ *"+mrkdwnEscapes.Replace(k.Label)+"* · answered "+clock(at, p.now()), true)); err != nil {
 		p.log.Printf("PR row %s: %q taken, but the card still shows its buttons: %v", k.ID, k.Label, err)
 	}
-	p.applyPRTap(ctx, id, a.ref(), owedTap{Card: a.MessageTS, Row: true, Answer: newPRAnswer(pr, k.ID, k.Label, a.press(), p.cards.heads(a.ref()))})
+	p.applyPRTap(ctx, id, a.ref(), tap)
 	return nil
 }
 

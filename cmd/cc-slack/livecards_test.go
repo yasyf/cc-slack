@@ -366,7 +366,7 @@ func TestAPRCardRedrawSlackRefusedIsDrawnAgainOnTheNextRefreshPass(t *testing.T)
 	l.slack.fail("chat.update", slack.SlackErrorResponse{Err: "invalid_blocks", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] downloading image failed [json-pointer:/blocks/19/image_url]"}}})
 	restacked := card
 	restacked.Title = "Fix: approve the chat list at its restacked head?"
-	err := cards.replacePRCard(l.ctx, l.slack, cardRef{"D" + testUser, thread, ts}, restacked, clock.now())
+	err := cards.replacePRCard(l.ctx, l.slack, cardRef{"D" + testUser, thread, ts}, restacked, false, clock.now())
 	if err == nil || !strings.HasSuffix(err.Error(), "invalid_blocks: [ERROR] downloading image failed [json-pointer:/blocks/19/image_url]") {
 		t.Fatalf("refused redraw = %v, want Slack's code and the block its answer names", err)
 	}
