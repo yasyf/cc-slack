@@ -77,7 +77,10 @@ answer labelled `slack-grant:<channel>/<thread ts>` or
 that carries out what they asked and a correction they asked for pass, as does
 an edit or delete of your own post. An ask in a granted thread is judged
 against the grant's words: a question about what was reported there passes,
-and an ask about anything else passes only when those words name it. A rule of
+and an ask about anything else passes only when those words name it. A grant the
+writing session cites as `grant=<answer id>`, in its brief or in a record
+relayed to it, reaches Jev as the user's words when that cc-notes answer is
+tagged `from:owner` and nothing supersedes it. A rule of
 the user's that limits a place, such as one solved post per bug thread, holds
 back each write Jev judges there. When Jev refuses, the refusal's card opens with Jev's reason on its `Why:` line.
 A new ask of a person, or any post a lane or root requests that is neither
