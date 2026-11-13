@@ -3053,11 +3053,10 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 	if err != nil {
 		return "", "", false, nil, err
 	}
-	card.InPlace = false
 	if place.nothing {
 		return "", "", false, nil, nil
 	}
-	t, prior, asked, superseded, moved := place.thread, place.prior, place.asked, place.superseded, place.moved
+	t, prior, asked, superseded := place.thread, place.prior, place.asked, place.superseded
 	was := place.withdraws(card)
 	t.apply(card, msg.tag, a.now(), false)
 	placed, err := a.placeCard(ctx, db, id, t, asked)
@@ -3070,8 +3069,8 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 		}
 	}
 	t.keep(card, placed)
-	if gone := cmp.Or(superseded, moved); gone != nil {
-		cards.forget(prior, gone.TS)
+	if superseded != nil {
+		cards.forget(prior, superseded.TS)
 	}
 	for _, older := range place.older {
 		cards.forget(older.thread, older.card.TS)
@@ -3088,7 +3087,6 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 			a.poller.log.Printf("card %s/%s superseded by %s not deleted: %v", id.DMChannelID, superseded.TS, placed.TS, err)
 		}
 	}
-	a.markReworded(ctx, id, moved, t, placed)
 	if asked == nil {
 		a.poller.noteSuperseded(ctx, id, card.Supersedes, askedAgainLine)
 	}
@@ -3101,33 +3099,27 @@ func (a *app) placeStatusCard(ctx context.Context, db *sql.DB, sub subject.Subje
 	return t.Thread, placed.TS, true, was, nil
 }
 
-func (a *app) markReworded(ctx context.Context, id identity, moved *liveMessage, t *liveThread, placed *liveMessage) {
-	if moved == nil {
-		return
-	}
+func (a *app) markReworded(ctx context.Context, id identity, old *liveMessage, t *liveThread, placed *liveMessage) {
 	v := t.view(placed, a.now(), a.cards.canvas())
 	v.final = true
 	blocks := placed.Card.replyBlocks(v)
 	line := mrkdwn(cardCopyBlock+"-reworded", cardRewordedLine+" · "+slackLink(id.permalink(id.DMChannelID, placed.TS, t.Thread), "answer the new card"))
-	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, moved.TS, placed.Card.replyText(v), slices.Insert(blocks, len(blocks)-1, line)); err != nil {
-		a.poller.log.Printf("card %s/%s asked again with new words at %s, but it keeps its buttons: %v", id.DMChannelID, moved.TS, placed.TS, err)
+	if err := updateMessage(ctx, a.newAPI(id.Token), id.DMChannelID, old.TS, placed.Card.replyText(v), slices.Insert(blocks, len(blocks)-1, line)); err != nil {
+		a.poller.log.Printf("card %s/%s asked again with new words at %s, but it keeps its buttons: %v", id.DMChannelID, old.TS, placed.TS, err)
 	}
 }
 
 type cardPlace struct {
-	thread                   *liveThread
-	prior                    *liveThread
-	older                    []heldCard
-	asked, superseded, moved *liveMessage
-	nothing, revived         bool
+	thread            *liveThread
+	prior             *liveThread
+	older             []heldCard
+	asked, superseded *liveMessage
+	nothing, revived  bool
 }
 
 func (p cardPlace) withdraws(card statusCard) []string {
 	var was []string
-	switch {
-	case p.moved != nil:
-		was = append(was, p.moved.TS)
-	case p.asked != nil && (p.revived || reworded(p.asked.Card, card)):
+	if p.asked != nil && (p.revived || reworded(p.asked.Card, card)) {
 		was = append(was, p.asked.TS)
 	}
 	for _, older := range p.older {
@@ -3137,7 +3129,6 @@ func (p cardPlace) withdraws(card statusCard) []string {
 }
 
 func reworded(was, now statusCard) bool {
-	now.InPlace = false
 	return now.Waits != "" && was.Waits != "" && !sameCard(was, now)
 }
 
@@ -3157,15 +3148,12 @@ func (l *liveCards) placeFor(channel, under, replaces string, threads []string, 
 	case place.asked != nil && card.gainsRows(place.asked.Card):
 		place.superseded, place.asked = place.asked, nil
 		place.thread.carryAnswers(place.prior)
-	case place.asked != nil && !place.revived && !card.InPlace && reworded(place.asked.Card, card):
-		place.moved, place.asked = place.asked, nil
-		place.thread.carryAnswers(place.prior)
 	case place.asked != nil:
 		place.thread = l.draft(place.prior.Channel, place.prior.Thread)
 	case card.Group != "" && len(card.Rows) == 0:
 		place.nothing = true
 	}
-	if place.asked == nil && place.superseded == nil && place.moved == nil && replaces != "" {
+	if place.asked == nil && place.superseded == nil && replaces != "" {
 		place.asked = &liveMessage{TS: replaces}
 	}
 	if place.revived {

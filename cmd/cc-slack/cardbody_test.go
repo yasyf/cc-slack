@@ -825,11 +825,8 @@ func TestAWaitingCardThatReplacesAPostTakesItsPlaceWithItsButtons(t *testing.T) 
 			l.do(opDMStatus, map[string]any{"card": ask})
 			edits = l.slack.edited()
 			sent := l.slack.sent()
-			if len(sent) != before+1 || !strings.Contains(sent[before].blocks, "tonight") || !strings.Contains(sent[before].blocks, cardWaitAction) {
-				t.Fatalf("posts = %+v, want the new words posted once with their buttons", sent[before:])
-			}
-			if last := edits[len(edits)-1]; last.ts != first["ts"] || !strings.Contains(last.blocks, "tonight") || strings.Contains(last.blocks, cardWaitAction) || !strings.Contains(last.blocks, cardRewordedLine) {
-				t.Fatalf("edits = %+v, want the first message redrawn with the new words and a line in place of its buttons", edits)
+			if len(sent) != before || edits[len(edits)-1].ts != first["ts"] || !strings.Contains(edits[len(edits)-1].blocks, "tonight") || !strings.Contains(edits[len(edits)-1].blocks, cardWaitAction) {
+				t.Fatalf("posts = %d, want %d; edits = %+v, want the waiting card redrawn on the first message with its buttons", len(sent), before, edits)
 			}
 		})
 	}
