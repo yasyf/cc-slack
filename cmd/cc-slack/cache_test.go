@@ -33,7 +33,7 @@ func texts(msgs []slack.Message) []string {
 	return out
 }
 
-func (f *fixture) read(threadTS string) threadRead {
+func (f *fixture) read(threadTS string) []slack.Message {
 	f.t.Helper()
 	r, err := f.cache.replies(f.ctx, f.slack, testChannel, threadTS)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestThreadReadServesAFreshCacheWithoutCallingSlack(t *testing.T) {
 	seedThread(f)
 	f.read(testThread)
 	f.now = f.now.Add(cacheFresh - time.Second)
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first"}) {
 		t.Fatalf("cached thread = %q", got)
 	}
 	if n := f.slack.callCount(methodReplies); n != 1 {
@@ -75,7 +75,7 @@ func TestThreadReadFetchesOnlyTheDeltaAndRefreshesInFull(t *testing.T) {
 	f.read(testThread)
 	f.slack.add(testChannel, reply(secondReply, "second"))
 	f.now = f.now.Add(cacheFresh)
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("merged thread = %q", got)
 	}
 	if got := f.slack.repliesOldest(); !slices.Equal(got, []string{"", firstReply}) {
@@ -85,7 +85,7 @@ func TestThreadReadFetchesOnlyTheDeltaAndRefreshesInFull(t *testing.T) {
 	f.slack.setText(firstReply, "first, edited")
 	f.slack.remove(testChannel, secondReply)
 	f.now = f.now.Add(cacheFullRefresh)
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first, edited"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first, edited"}) {
 		t.Fatalf("refreshed thread = %q, want the edit picked up and the deleted reply gone", got)
 	}
 	if got := f.slack.repliesOldest(); got[len(got)-1] != "" {
@@ -93,7 +93,7 @@ func TestThreadReadFetchesOnlyTheDeltaAndRefreshesInFull(t *testing.T) {
 	}
 }
 
-func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
+func TestARateLimitedThreadReadFailsUntilSlackAnswers(t *testing.T) {
 	f := newFixture(t)
 	seedThread(f)
 	f.read(testThread)
@@ -101,25 +101,26 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	f.now = f.now.Add(cacheFresh)
 	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
 
-	stale := f.read(testThread)
-	if !stale.stale || stale.retryAfter != 30*time.Second || !slices.Equal(texts(stale.msgs), []string{"root", "first"}) {
-		t.Fatalf("rate-limited read = %+v, want the cached thread marked stale with Retry-After", stale)
+	msgs, err := f.cache.replies(f.ctx, f.slack, testChannel, testThread)
+	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 30*time.Second || msgs != nil {
+		t.Fatalf("rate-limited read = %q, %v, want no messages and Slack's 30s Retry-After", texts(msgs), err)
 	}
 	calls := f.slack.callCount(methodReplies)
 	f.now = f.now.Add(10 * time.Second)
-	if held := f.read(testThread); !held.stale || held.retryAfter != 20*time.Second {
-		t.Fatalf("read inside the limit = %+v, want the cached thread stale for the 20s Slack still limits", held)
+	msgs, err = f.cache.replies(f.ctx, f.slack, testChannel, testThread)
+	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 20*time.Second || msgs != nil {
+		t.Fatalf("read inside the limit = %q, %v, want no messages and the 20s Slack still limits", texts(msgs), err)
 	}
 	if n := f.slack.callCount(methodReplies); n != calls {
 		t.Fatalf("replies calls = %d, want %d: a cached thread asks Slack nothing until its Retry-After passes", n, calls)
 	}
 	f.now = f.now.Add(20 * time.Second)
-	if fresh := f.read(testThread); fresh.stale || !slices.Equal(texts(fresh.msgs), []string{"root", "first", "second"}) {
-		t.Fatalf("read after the limit = %+v, want a fresh merged thread", fresh)
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("read after the limit = %q, want a fresh merged thread", got)
 	}
 
 	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
-	_, err := f.cache.replies(f.ctx, f.slack, testChannel, "1800000000.000900")
+	_, err = f.cache.replies(f.ctx, f.slack, testChannel, "1800000000.000900")
 	if !errors.As(err, new(*slack.RateLimitedError)) {
 		t.Fatalf("uncached read under a rate limit: %v, want the rate-limit error", err)
 	}
@@ -135,12 +136,14 @@ func TestThreadReadNamingAMessageTheCacheLacksAsksSlack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := texts(read.msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(read); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("thread read for its newest reply = %q, want it fetched though the cached copy is fresh", got)
 	}
 	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
 	f.now = f.now.Add(cacheFresh)
-	f.read(testThread)
+	if _, err := f.cache.replies(f.ctx, f.slack, testChannel, testThread); !errors.As(err, new(*slack.RateLimitedError)) {
+		t.Fatalf("rate-limited read: %v, want the rate-limit error", err)
+	}
 	calls := f.slack.callCount(methodReplies)
 	if _, err := f.cache.repliesHolding(f.ctx, f.slack, testChannel, testThread, "1800000000.000900"); err != nil {
 		t.Fatal(err)
@@ -163,7 +166,7 @@ func TestAFollowedThreadStaysFreshUntilANudgeNamesIt(t *testing.T) {
 
 	f.slack.add(testChannel, reply(secondReply, "second"))
 	f.cache.nudged(f.ctx, messageNudge{Channel: testChannel, TS: secondReply, ThreadTS: testThread})
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("nudged thread = %q, want the reply the nudge named", got)
 	}
 	f.read(testThread)
@@ -209,7 +212,7 @@ func TestANudgeDuringAThreadsFirstReadLeavesItForADelta(t *testing.T) {
 	if _, err := f.cache.replies(f.ctx, api, testChannel, testThread); err != nil {
 		t.Fatal(err)
 	}
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("thread = %q, want the reply nudged while the first read ran", got)
 	}
 }
@@ -223,7 +226,7 @@ func TestAHelloWithNoReplayRereadsEveryFollowedThread(t *testing.T) {
 	if _, err := f.app.hello(); err != nil {
 		t.Fatal(err)
 	}
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("thread = %q, want a reread once the socket could not replay what it missed", got)
 	}
 }
@@ -243,7 +246,7 @@ func TestPollerKeepsAWatchedThreadsCacheCurrent(t *testing.T) {
 	f.nudgeThread()
 	f.tick()
 	calls := f.slack.callCount(methodReplies)
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
 		t.Fatalf("watched thread = %q, want the polled reply merged", got)
 	}
 	if n := f.slack.callCount(methodReplies); n != calls {
@@ -290,7 +293,7 @@ func TestObserveDropsAPollSupersededByARead(t *testing.T) {
 	if err := f.cache.observe(f.ctx, testChannel, testThread, firstReply, gen, polled); err != nil {
 		t.Fatal(err)
 	}
-	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first, edited"}) {
+	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first, edited"}) {
 		t.Fatalf("thread = %q, want the older poll dropped", got)
 	}
 }
@@ -505,7 +508,7 @@ func TestNamesSurviveARestartAndOutliveARateLimit(t *testing.T) {
 	}
 }
 
-func TestThreadOpMarksStaleReadsAndSeesTheBotsOwnReply(t *testing.T) {
+func TestThreadOpSeesTheBotsOwnReply(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.slack.add(testChannel, rootMessage(testThread, "root"))
@@ -523,17 +526,46 @@ func TestThreadOpMarksStaleReadsAndSeesTheBotsOwnReply(t *testing.T) {
 	if res := readThread(); len(res.Messages) != 2 || res.Messages[1].Text != "on it" {
 		t.Fatalf("thread after the bot's reply = %+v, want the reply without waiting out the cache", res.Messages)
 	}
+}
 
-	if err := l.app.cache.invalidate(l.ctx, testChannel, testThread); err != nil {
+func TestThreadOpFailsUnderARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
+	const (
+		thread = "1794519611.114589"
+		ninth  = "1794526467.338209"
+		his    = "1794531817.560739"
+	)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	inThread := func(ts, text string) slack.Message {
+		m := reply(ts, text)
+		m.ThreadTimestamp = thread
+		return m
+	}
+	l.slack.add(testChannel, rootMessage(thread, "root"))
+	for i := range 7 {
+		l.slack.add(testChannel, inThread(fmt.Sprintf("179452%04d.000100", i), fmt.Sprintf("reply %d", i+1)))
+	}
+	l.slack.add(testChannel, inThread(ninth, "the ninth message"))
+	permalink := "https://acme.slack.com/archives/C1/p" + strings.ReplaceAll(thread, ".", "")
+	var cached threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": permalink}).Body, &cached); err != nil {
 		t.Fatal(err)
 	}
+	if len(cached.Messages) != 9 {
+		t.Fatalf("first read = %d messages, want the 9 the cache then held", len(cached.Messages))
+	}
+	l.slack.add(testChannel, inThread(his, "his newest message"))
+	l.post(opReply, map[string]any{"url": permalink, "text": "on it", "no_watch": true})
 	l.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
-	if res := readThread(); !res.Stale || res.RetryAfter != 30 || len(res.Messages) != 2 {
-		t.Fatalf("rate-limited thread = %+v, want the cached copy with stale and retry_after", res)
+
+	raw, _ := json.Marshal(map[string]string{"url": permalink})
+	answer, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw)
+	if err == nil || !strings.Contains(err.Error(), "ratelimited") || !strings.Contains(err.Error(), "30s more") || strings.Contains(err.Error(), "mcp__slack__") {
+		t.Fatalf("rate-limited read of thread %s = %s, %v, want it refused with the 30s Slack limits it and no Slack MCP tool, never the 9 cached messages without %s", thread, answer.Body, err, his)
 	}
 
 	l.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
-	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000900"})
+	raw, _ = json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000900"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw); err == nil ||
 		!strings.Contains(err.Error(), "ratelimited") || strings.Contains(err.Error(), "mcp__slack__") {
 		t.Fatalf("uncached rate-limited read: %v, want the rate limit and no Slack MCP tool", err)

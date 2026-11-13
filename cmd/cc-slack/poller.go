@@ -814,11 +814,11 @@ func (p *poller) steers(ctx context.Context, db *sql.DB, api slackAPI, id identi
 }
 
 func (p *poller) postedIn(ctx context.Context, db *sql.DB, api slackAPI, id identity, channelID, threadTS string) (bool, error) {
-	read, err := p.cache.replies(ctx, api, channelID, threadTS)
+	msgs, err := p.cache.replies(ctx, api, channelID, threadTS)
 	if err != nil {
 		return false, fmt.Errorf("read %s/%s for a post of ours: %w", channelID, threadTS, err)
 	}
-	for _, m := range read.msgs {
+	for _, m := range msgs {
 		if !id.botPosted(m) {
 			continue
 		}

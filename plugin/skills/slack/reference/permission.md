@@ -163,14 +163,14 @@ last 10 minutes with `slack_thread`. Pass `since_ts` as the newest ts you have a
 the read returns only what is newer, so a long thread is never read again whole. With `since_ts`,
 a read past its `limit` returns the oldest of the newer messages and reads `truncated`, so read
 again with `since_ts` set to the last `ts` it returned until a read is not truncated.
-A `truncated` or `stale` read does not count, and neither does a subagent's read
+A `truncated` read does not count, and neither does a subagent's read
 for its parent or a parent's for its subagent. A thread whose newest message is
 this agent's own reply counts as read through it, so the agent's next reply
 needs no new read; a newer message from a person or another agent does not
 count, even when that agent posted as the same bot. The refusal names the check
 that failed: no read by this agent, a whole read past 10 minutes and how many
-messages behind the thread's newest it is, a truncated read, or a stale one,
-each with the `slack_thread` call that clears it.
+messages behind the thread's newest it is, or a truncated read, each with the
+`slack_thread` call that clears it.
 
 A message listed under `shares` is someone else's report. The person, the
 machine, and the screenshot belong to its original author, not to whoever shared

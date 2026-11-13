@@ -301,12 +301,10 @@ class PackTest(unittest.TestCase):
         slot.set(reads)
         self.assertTrue(self.refused(session))
 
-    def test_a_truncated_or_stale_read_is_not_a_full_read(self) -> None:
-        for label, result in (("truncated", {"truncated": True}), ("stale", {"stale": True, "retry_after": 30})):
-            with self.subTest(case=label):
-                session = Path(self.tmp.name) / label
-                self.read(session, **result)
-                self.assertTrue(self.refused(session))
+    def test_a_truncated_read_is_not_a_full_read(self) -> None:
+        session = Path(self.tmp.name) / "truncated"
+        self.read(session, truncated=True)
+        self.assertTrue(self.refused(session))
 
     def test_a_read_of_only_what_is_new_counts_unless_it_is_cut(self) -> None:
         since = THREAD | {"since_ts": "1790210300.000001"}

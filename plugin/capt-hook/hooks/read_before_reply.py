@@ -37,10 +37,6 @@ CUT_READ = (
     "This agent's last read of the thread was truncated, and it has no whole read to start from."
     " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and a `limit` above the thread's length, then retry."
 )
-STALE_READ = (
-    "This agent's last read of the thread was a stale copy served while Slack rate-limited the bot."
-    " Call `slack_thread` with `channel_id` {channel} and `thread_ts` {thread} again once its `retry_after` passes, then retry."
-)
 REPLY = THREAD | {"text": "On it."}
 FULL_READ = json.dumps(THREAD | {"messages": [], "truncated": False})
 SEEN = f"{BIN} thread-seen"
@@ -108,8 +104,6 @@ def newest_reached(evt: ToolHookEvent, write: Write, known: ThreadReads, found: 
 
 def refusal(write: Write, read: ThreadRead, now: datetime, after: int) -> str:
     where = {"channel": write.channel, "thread": write.thread, "since": read.through}
-    if read.gap == "stale":
-        return STALE_READ.format(**where)
     if read.gap == "truncated":
         return (TRUNCATED_READ if read.through else CUT_READ).format(**where)
     if read.at is None:
@@ -176,7 +170,6 @@ class ReadsThread:
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[reads(THREAD["thread_ts"], age=timedelta(minutes=11), through=PICKED, gap="truncated")], commands=UNSEEN): Block(
             pattern=r"was truncated, so it did not reach every message.*`since_ts` 1790210300\.000001,.*the last `ts` it returned"
         ),
-        Input(tool=P + "slack_reply", tool_input=REPLY, state=[gapped("stale")], commands=UNSEEN): Block(pattern=r"stale copy.*`retry_after`"),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[reads(THREAD["thread_ts"], age=timedelta(minutes=2), gap="truncated")], commands=UNSEEN): Allow(),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[picks(PICKED), posts(POSTED)], commands=seen(POSTED, delivered=False)): Allow(),
         Input(command=f"{CLI} reply --url {THREAD_LINK} --text 'and done'", state=[posts(POSTED)], commands=seen(POSTED, delivered=False)): Allow(),
@@ -219,7 +212,7 @@ def replies_read_their_thread_first(evt: PreToolUseEvent) -> HookResult | None:
 def thread_reads_are_recorded(evt: PostToolUseEvent) -> HookResult | None:
     if (read := thread_read(evt)) is None:
         return None
-    gap = "truncated" if read.get("truncated") else "stale" if read.get("stale") else ""
+    gap = "truncated" if read.get("truncated") else ""
     with evt.ctx.state[ThreadReads].mutate() as known:
         now = datetime.now(UTC)
         for thread in read_threads(evt):
