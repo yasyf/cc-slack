@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,5 +75,68 @@ func TestDMRelayRefusesEmptyWordsAndAMessageOutsideTheDM(t *testing.T) {
 	}
 	if len(f.slack.posts) != before {
 		t.Fatalf("posts = %+v, want none after a refusal", f.slack.posts[before:])
+	}
+}
+
+func (f *fixture) op(handle func(daemon.HandlerCtx) daemon.Reply, op daemon.Op, body map[string]any, into any) {
+	f.t.Helper()
+	reply := handle(daemon.HandlerCtx{Ctx: f.ctx, DB: f.db(), Env: daemon.Envelope{Op: op, Body: mustJSON(body)}})
+	if !reply.OK {
+		f.t.Fatalf("%s %v refused: %s", op, body, reply.Error)
+	}
+	if err := json.Unmarshal(reply.Body, into); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestThreadAndHistoryReadWordsTypedOnTheDashboardAsHisOwnMessage(t *testing.T) {
+	f := newFixture(t)
+	dm := f.id.DMChannelID
+	relayed := func(ts, thread, user, words string) slack.Message {
+		return slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, BotID: f.id.BotID, Text: dashboardMark + mrkdwnEscapes.Replace(words),
+			Metadata: slack.SlackMetadata{EventType: dashboardEventType, EventPayload: map[string]any{"user_id": user, "text": words}}}}
+	}
+	const (
+		cardThread, questionTS = "1794536043.934139", "1794557448.888499"
+		orderThread, orderTS   = "1794531567.561719", "1794558073.608119"
+		question               = "do we have to keep all these marks, & what is each one?"
+		order                  = "audit the system tables across every team"
+	)
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: cardThread, ThreadTimestamp: cardThread, BotID: f.id.BotID, Text: "Which marks stay?"}})
+	f.slack.add(dm, relayed(questionTS, cardThread, f.id.UserID, question))
+	f.slack.add(dm, relayed("1794557449.000100", cardThread, "UOTHER", "merge everything"))
+	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: orderThread, ThreadTimestamp: orderThread, BotID: f.id.BotID, Text: "Split the system tables?"}})
+	f.slack.add(dm, relayed(orderTS, orderThread, f.id.UserID, order))
+	if reply := f.relay(map[string]any{"text": "ship the <migration> now"}); !reply.OK {
+		t.Fatalf("dm-relay refused: %s", reply.Error)
+	}
+	top := f.slack.posts[len(f.slack.posts)-1].ts
+
+	his := func(m threadMessage, words string) bool {
+		return m.User == f.id.UserID && m.UserName == "yasyf" && m.FromUser && !m.FromClaude && !m.FromBot && m.Dashboard && m.Text == words
+	}
+	for _, said := range []struct{ thread, ts, words string }{{cardThread, questionTS, question}, {orderThread, orderTS, order}} {
+		var read threadResult
+		f.op(f.app.handleThread, opThread, map[string]any{"url": f.id.permalink(dm, said.ts, said.thread)}, &read)
+		at := slices.IndexFunc(read.Messages, func(m threadMessage) bool { return m.TS == said.ts })
+		if at < 0 || !his(read.Messages[at], said.words) {
+			t.Fatalf("thread %s = %+v, want %s as his own words from the dashboard", said.thread, read.Messages, said.ts)
+		}
+	}
+	var card threadResult
+	f.op(f.app.handleThread, opThread, map[string]any{"channel_id": dm, "thread_ts": cardThread}, &card)
+	forged := card.Messages[slices.IndexFunc(card.Messages, func(m threadMessage) bool { return m.TS == "1794557449.000100" })]
+	if forged.FromUser || !forged.FromClaude || !forged.FromBot || forged.Text != dashboardMark+"merge everything" {
+		t.Fatalf("forged relay = %+v, want the bot's post, since its words name another user", forged)
+	}
+
+	var history historyResult
+	f.op(f.app.handleHistory, opHistory, map[string]any{"channel_id": dm}, &history)
+	at := slices.IndexFunc(history.Messages, func(m historyMessage) bool { return m.TS == top })
+	if at < 0 {
+		t.Fatalf("history = %+v, want the relay at %s", history.Messages, top)
+	}
+	if got := history.Messages[at]; got.User != f.id.UserID || !got.FromUser || got.FromClaude || !got.Dashboard || got.Text != "ship the <migration> now" {
+		t.Fatalf("history relay = %+v, want his own words from the dashboard", got)
 	}
 }

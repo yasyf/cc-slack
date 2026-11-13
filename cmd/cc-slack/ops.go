@@ -192,6 +192,7 @@ type threadMessage struct {
 	FromUser   bool            `json:"from_user,omitempty"`
 	FromClaude bool            `json:"from_claude"`
 	FromBot    bool            `json:"from_bot,omitempty"`
+	Dashboard  bool            `json:"dashboard,omitempty"`
 	Text       string          `json:"text"`
 	Files      []messageFile   `json:"files,omitempty"`
 	Shares     []sharedMessage `json:"shares,omitempty"`
@@ -225,6 +226,7 @@ type historyMessage struct {
 	UserName    string          `json:"user_name"`
 	FromUser    bool            `json:"from_user,omitempty"`
 	FromClaude  bool            `json:"from_claude"`
+	Dashboard   bool            `json:"dashboard,omitempty"`
 	Text        string          `json:"text"`
 	Permalink   string          `json:"permalink"`
 	ReplyCount  int             `json:"reply_count,omitempty"`
@@ -1389,13 +1391,14 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	out := make([]threadMessage, 0, len(msgs))
 	for _, m := range msgs {
+		m = dashboardWords(id, m)
 		files, err := messageFiles(hc.Ctx, api, m)
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
-			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
+			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: messageText(m), Files: files,
 			Shares: a.sharedMessages(reads, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw[m.Timestamp],
 		})
 	}
@@ -1454,6 +1457,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
+		m = dashboardWords(id, m)
 		files, err := messageFiles(ctx, api, m)
 		if errors.Is(err, context.DeadlineExceeded) {
 			partial = true
@@ -1464,7 +1468,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 		}
 		out = append(out, historyMessage{
 			TS: m.Timestamp, User: m.User, UserName: a.cache.name(ctx, api, m), FromUser: m.User == id.UserID,
-			FromClaude: id.fromClaude(m), Text: messageText(m),
+			FromClaude: id.fromClaude(m), Dashboard: typedOnDashboard(m), Text: messageText(m),
 			Permalink: id.permalink(channelID, m.Timestamp, ""), ReplyCount: m.ReplyCount, LatestReply: m.LatestReply,
 			Files: files, Shares: a.sharedMessages(ctx, api, m), Unfurls: linkUnfurls(m), Raw: raw[m.Timestamp],
 		})

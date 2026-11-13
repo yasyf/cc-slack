@@ -472,7 +472,7 @@ func fetchRecentTopLevel(ctx context.Context, api slackAPI, channelID string, li
 	partial := false
 	for range maxPages {
 		resp, err := api.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
-			ChannelID: channelID, Cursor: cursor, Limit: min(limit, pageLimit),
+			ChannelID: channelID, Cursor: cursor, Limit: min(limit, pageLimit), IncludeAllMetadata: true,
 		})
 		if err != nil {
 			var rate *slack.RateLimitedError
