@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -25,6 +26,8 @@ const prLookupPatience = 5 * time.Second
 var prCardPatience = 2 * time.Minute
 
 var errCardCommandUnfinished = errors.New("the card command did not finish")
+
+var shownRecords sync.RWMutex
 
 var (
 	prUnscanned   = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
@@ -768,9 +771,13 @@ func (a *app) tellShown(ctx context.Context, id identity, shown []map[string]any
 	if len(shown) == 0 {
 		return
 	}
-	if _, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"shown": shown}); err != nil {
-		a.poller.log.Printf("PR cards stand, but the card command did not record them, so their rows may draw again: %v", err)
-	}
+	shownRecords.Lock()
+	go func() {
+		defer shownRecords.Unlock()
+		if _, _, err := cardCommandRan(context.WithoutCancel(ctx), id.Config.PRLinks.CardCommand, map[string]any{"shown": shown}); err != nil {
+			a.poller.log.Printf("PR cards stand, but the card command did not record them, so their rows may draw again: %v", err)
+		}
+	}()
 }
 
 func (a *app) tellRefused(ctx context.Context, id identity, p providedCard, refusal error) {
@@ -941,6 +948,12 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 }
 
 func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, string, error) {
+	shownRecords.RLock()
+	defer shownRecords.RUnlock()
+	return cardCommandRan(ctx, command, ask)
+}
+
+func cardCommandRan(ctx context.Context, command []string, ask any) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, installed(command[0]), command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
