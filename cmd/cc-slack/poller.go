@@ -478,17 +478,18 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 			if !live {
 				continue
 			}
-			w.ThreadTS = thread
 			g := group(cursorKey{dmChannelID, thread})
+			if holder.ID != 0 {
+				g.cover(holder)
+				continue
+			}
+			w.ThreadTS = thread
 			g.watches = append(g.watches, w)
 		}
 	}
 	for i := range groups {
 		inThread := slices.Clone(groups[i].watches)
 		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return mates.onAnotherSessionsCard(w, inThread) })
-		if holder.ID != 0 && groups[i].key.channelID == dmChannelID && groups[i].key.threadTS != "" {
-			groups[i].watches = mates.takeOver(groups[i].watches, holder)
-		}
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
@@ -498,15 +499,19 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		g := group(key)
 		g.since = since[key]
 		for _, w := range channels[key.channelID] {
-			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !mates.onAnotherSessionsCard(w, g.watches) {
-				g.covering = append(g.covering, w)
-			}
+			g.cover(w)
 		}
 	}
 	root := group(cursorKey{dmChannelID, ""})
 	root.root = true
 	root.sessions = sessions
 	return groups
+}
+
+func (g *cursorGroup) cover(w watch) {
+	if !slices.ContainsFunc(slices.Concat(g.watches, g.covering), func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) {
+		g.covering = append(g.covering, w)
+	}
 }
 
 func dmHolderIn(watches []watch, dmChannelID string) watch {
@@ -659,11 +664,11 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 	if arrived {
 		p.holdAck(ctx, db, reaching, m)
 	}
-	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, steers); err != nil {
+	if err := p.routeAll(ctx, db, api, id, g, watching, m, steers); err != nil {
 		return err
 	}
 	if rooted {
-		if err := p.routeRoot(ctx, db, api, id, g.sessions, m, g.mates); err != nil {
+		if err := p.routeRoot(ctx, db, api, id, g, m); err != nil {
 			return err
 		}
 	}
@@ -712,7 +717,7 @@ func (g cursorGroup) toHolder(watching []watch) []watch {
 	return []watch{relay}
 }
 
-func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, m slack.Message, mates driveMates, steers bool) error {
+func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, watches []watch, m slack.Message, steers bool) error {
 	fed, err := p.feeds.fed(ctx, watches)
 	if err != nil {
 		return err
@@ -727,7 +732,7 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 		if !steers && (w.Kind == kindDM || (w.Kind == kindChannel && w.ChannelID == id.DMChannelID)) {
 			continue
 		}
-		d, err := p.messageDelivery(ctx, api, id, w, m, mates, steers)
+		d, err := p.messageDelivery(ctx, api, id, g, w, m, steers)
 		if err != nil {
 			return err
 		}

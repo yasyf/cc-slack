@@ -1910,11 +1910,7 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	mates, err := loadDriveMates(hc.Ctx, a.poller.threads, a.cards, id.DMChannelID)
-	if err != nil {
-		return fail(err.Error())
-	}
-	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder, mates)
+	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder)
 	if err != nil {
 		return fail(err.Error())
 	}

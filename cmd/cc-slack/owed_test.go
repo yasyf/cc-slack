@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -110,16 +109,7 @@ func TestAReplyInAStoodDownLanesDMThreadReachesTheHolder(t *testing.T) {
 
 func cardSessionElsewhere(t *testing.T, f *fixture) subject.Subject {
 	t.Helper()
-	id, pid := "abcdef0123456789abcdef0123456789", testPID+2
-	f.alive[pid] = true
-	if _, err := storeSubjects(f).Create(f.ctx, id, "", "sess-card", scopeName, pid, statusOpen); err != nil {
-		t.Fatal(err)
-	}
-	sub, err := storeSubjects(f).Get(f.ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sub
+	return sessionElsewhere(t, f, "abcdef0123456789abcdef0123456789", "sess-card", testPID+2)
 }
 
 func owedToHolder(t *testing.T, f *fixture) []owedReply {
@@ -131,111 +121,112 @@ func owedToHolder(t *testing.T, f *fixture) []owedReply {
 	return owed.Replies
 }
 
-func TestAReplyInAnotherSessionsCardThreadReachesOnlyThatSession(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := dmMessageOf(t, f, cardSessionElsewhere(t, f))
-	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindThread, f.id.DMChannelID, thread, thread, f.now); err != nil {
-		t.Fatal(err)
-	}
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindDM}) {
-		t.Fatalf("delivered to %v, want only the card's session", got)
-	}
-	if got := owedToHolder(t, f); len(got) != 0 {
-		t.Fatalf("holder owes %+v, want nothing from another session's card", got)
-	}
-}
-
-func TestTheHolderGetsACardThreadBackWhenItsSessionEnds(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	sub := cardSessionElsewhere(t, f)
-	thread := dmMessageOf(t, f, sub)
-	f.tick()
-	f.alive[sub.ClaudePID] = false
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindChannel}) {
-		t.Fatalf("delivered to %v, want only the holder once the card's session ended", got)
-	}
-	if got := owedToHolder(t, f); len(got) != 1 {
-		t.Fatalf("holder owes %+v, want the reply", got)
-	}
-}
-
 func cardForDrive(f *fixture, thread, drive string) {
 	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
 		Waiting: map[string]*liveMessage{"card-" + thread: {TS: thread, Card: statusCard{Title: "Ship it?", Waits: "card-" + thread, Drive: drive}}}}
 }
 
-func TestTheDMHolderTakesOverRepliesUnderItsDrivesOtherSessions(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
-	earlier := cardSessionElsewhere(t, f)
-	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents-rebuild")
-	cardForDrive(f, dmMessageOf(t, f, earlier), "durable-agents")
-	laneID, lanePID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", testPID+3
-	f.alive[lanePID] = true
-	if _, err := storeSubjects(f).Create(f.ctx, laneID, "", "sess-lane", scopeName, lanePID, statusOpen); err != nil {
+func sessionElsewhere(t *testing.T, f *fixture, id, session string, pid int) subject.Subject {
+	t.Helper()
+	f.alive[pid] = true
+	if _, err := storeSubjects(f).Create(f.ctx, id, "", session, scopeName, pid, statusOpen); err != nil {
 		t.Fatal(err)
 	}
-	lane, err := storeSubjects(f).Get(f.ctx, laneID)
+	sub, err := storeSubjects(f).Get(f.ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	thread := dmMessageOf(t, f, lane)
-	cardForDrive(f, thread, "durable-agents-rebuild")
-	f.tick()
+	return sub
+}
 
-	ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+func TestEveryReplyInAHeldDMReachesTheHolderAloneWhoeverPostedItsThread(t *testing.T) {
+	for name, posted := range map[string]func(*testing.T, *fixture) string{
+		"another live session's post": func(t *testing.T, f *fixture) string {
+			return dmMessageOf(t, f, cardSessionElsewhere(t, f))
+		},
+		"an ended session's post": func(t *testing.T, f *fixture) string {
+			sub := cardSessionElsewhere(t, f)
+			thread := dmMessageOf(t, f, sub)
+			f.tick()
+			f.alive[sub.ClaudePID] = false
+			return thread
+		},
+		"an earlier session's post in the holder's own process": func(t *testing.T, f *fixture) string {
+			return dmMessageOf(t, f, secondSession(t, f))
+		},
+		"a post of a session on the holder's drive": func(t *testing.T, f *fixture) string {
+			cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
+			lane := sessionElsewhere(t, f, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sess-lane", testPID+3)
+			thread := dmMessageOf(t, f, lane)
+			cardForDrive(f, thread, "durable-agents")
+			return thread
+		},
+		"another drive's card": func(t *testing.T, f *fixture) string {
+			cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
+			thread := dmMessageOf(t, f, cardSessionElsewhere(t, f))
+			cardForDrive(f, thread, "long-running rewrite")
+			return thread
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			holdDM(t, f)
+			thread := posted(t, f)
+			f.tick()
 
-	got := payloads(t, f)
-	if len(got) != 1 || got[0].Kind != kindChannel || got[0].ThreadOwner != nil {
-		t.Fatalf("delivered %+v, want the reply on the DM holder's channel watch alone, with no other owner", got)
-	}
-	if owed := owedToHolder(t, f); len(owed) != 1 {
-		t.Fatalf("the DM holder owes %+v, want the reply", owed)
+			ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+
+			got := deliveredTo(t, f)
+			his := got[testSubject]
+			if len(got) != 1 || len(his) != 1 || his[0].Kind != kindChannel || his[0].ThreadOwner != nil {
+				t.Fatalf("delivered %+v, want the reply on the holder's channel watch alone, with no other owner", got)
+			}
+			if owed := owedToHolder(t, f); len(owed) != 1 {
+				t.Fatalf("the holder owes %+v, want the reply", owed)
+			}
+		})
 	}
 }
 
-func TestAReplyUnderAnotherDrivesCardStaysWithItsSession(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
-	thread := dmMessageOf(t, f, cardSessionElsewhere(t, f))
-	cardForDrive(f, thread, "long-running rewrite")
-	f.tick()
+func TestTheRepliesThatReachedOnlyAHandlerOnNov12ReachTheHolder(t *testing.T) {
+	for name, tc := range map[string]struct {
+		thread, reply string
+		handlers      int
+		watched       bool
+	}{
+		"under two handlers' posts in a thread the holder watches": {"1794531817.560739", "1794534583.812079", 2, true},
+		"under one handler's post":                                 {"1794526897.162909", "1794528357.008639", 1, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			dm := f.id.DMChannelID
+			holdDM(t, f)
+			cardForDrive(f, dmMessageOf(t, f, subjectFor(t, f)), "durable-agents")
+			f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: tc.thread, User: f.id.BotUserID, BotID: f.id.BotID, Text: "an answer"}})
+			if tc.watched {
+				if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindThread, dm, tc.thread, tc.thread, f.now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := range tc.handlers {
+				handler := sessionElsewhere(t, f, fmt.Sprintf("%032d", i+1), fmt.Sprintf("sess-handler-%d", i), testPID+10+i)
+				if err := f.app.openSessionThread(f.ctx, f.db(), handler, dm, tc.thread); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.tick()
 
-	ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+			ownerReplies(f, tc.thread, tc.reply, "so we need the new way?")
 
-	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindDM}) {
-		t.Fatalf("delivered to %v, want only the other drive's session", got)
-	}
-	if owed := owedToHolder(t, f); len(owed) != 0 {
-		t.Fatalf("the DM holder owes %+v, want nothing from another drive's card", owed)
-	}
-}
-
-func TestAReplyOnACardFromTheHoldersOwnProcessStillReachesTheHolder(t *testing.T) {
-	f := newFixture(t)
-	holdDM(t, f)
-	thread := dmMessageOf(t, f, secondSession(t, f))
-	f.tick()
-
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	if got := deliveredKinds(t, f); !slices.Equal(got, []string{kindChannel, kindDM}) {
-		t.Fatalf("delivered to %v, want the holder and the card's earlier session in the same process", got)
-	}
-	if got := owedToHolder(t, f); len(got) != 1 {
-		t.Fatalf("holder owes %+v, want the reply", got)
+			got := deliveredTo(t, f)
+			his := got[testSubject]
+			if len(got) != 1 || len(his) != 1 || his[0].TS != tc.reply || his[0].ThreadOwner != nil {
+				t.Fatalf("delivered %+v, want the reply once to the holder and none to a handler", got)
+			}
+			if owed := owedToHolder(t, f); len(owed) != 1 || owed[0].TS != tc.reply {
+				t.Fatalf("the holder owes %+v, want the reply", owed)
+			}
+		})
 	}
 }
 
@@ -492,13 +483,14 @@ func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
 	}
 }
 
-func TestAReplyUnderAnotherSessionsCardTellsTheHolderWhoseItIs(t *testing.T) {
+func TestAReplyInAnUnheldDMTellsAnEarlierPosterWhoseCardItAnswers(t *testing.T) {
 	f := newFixture(t)
-	holdDM(t, f)
 	thread := postDMThread(t, f)
-	lane := secondSession(t, f)
-	if err := f.app.openSessionThread(f.ctx, f.db(), lane, f.id.DMChannelID, thread); err != nil {
-		t.Fatal(err)
+	later := cardSessionElsewhere(t, f)
+	for _, sub := range []subject.Subject{subjectFor(t, f), later} {
+		if err := f.app.openSessionThread(f.ctx, f.db(), sub, f.id.DMChannelID, thread); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.app.cards.threads[threadKey(f.id.DMChannelID, thread)] = &liveThread{Channel: f.id.DMChannelID, Thread: thread,
 		Waiting: map[string]*liveMessage{"guardduty": {TS: thread, Card: statusCard{Title: "Try it once?", Waits: "guardduty"}}}}
@@ -506,26 +498,18 @@ func TestAReplyUnderAnotherSessionsCardTellsTheHolderWhoseItIs(t *testing.T) {
 
 	ownerReplies(f, thread, "1800000001.500000", "tag the engines instead")
 
-	var held *messagePayload
-	for _, got := range payloads(t, f) {
-		if got.Kind == kindChannel {
-			held = &got
-		}
+	got := deliveredTo(t, f)
+	want := threadOwner{Session: "sess-card", Card: "guardduty", Title: "Try it once?"}
+	if earlier := got[testSubject]; len(earlier) != 1 || earlier[0].ThreadOwner == nil || *earlier[0].ThreadOwner != want {
+		t.Fatalf("earlier poster's payloads = %+v, want thread owner %+v", earlier, want)
 	}
-	want := threadOwner{Session: "sess-2", Card: "guardduty", Title: "Try it once?"}
-	if held == nil || held.ThreadOwner == nil || *held.ThreadOwner != want {
-		t.Fatalf("holder's payload = %+v, want thread owner %+v", held, want)
-	}
-	for _, d := range f.plane.directives {
-		if d.subjectID == testSubject && !strings.Contains(d.text, `the card "Try it once?" (card guardduty), which session sess-2 posted`) {
-			t.Fatalf("holder's directive = %q, want it to name the card and the session that owns it", d.text)
-		}
+	if own := got[later.ID]; len(own) != 1 || own[0].ThreadOwner != nil {
+		t.Fatalf("later poster's payloads = %+v, want the reply with no other owner", own)
 	}
 }
 
-func TestAReplyUnderAnEndedSessionsCardTellsTheHolderItEnded(t *testing.T) {
+func TestAReplyInAnUnheldDMTellsAnEarlierPosterTheLaterPosterEnded(t *testing.T) {
 	f := newFixture(t)
-	holdDM(t, f)
 	thread := postDMThread(t, f)
 	if _, err := storeSubjects(f).Create(f.ctx, stoodDownID, "", "sess-gone", scopeName, stoodDownPID, statusOpen); err != nil {
 		t.Fatal(err)
@@ -534,8 +518,10 @@ func TestAReplyUnderAnEndedSessionsCardTellsTheHolderItEnded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.openSessionThread(f.ctx, f.db(), gone, f.id.DMChannelID, thread); err != nil {
-		t.Fatal(err)
+	for _, sub := range []subject.Subject{subjectFor(t, f), gone} {
+		if err := f.app.openSessionThread(f.ctx, f.db(), sub, f.id.DMChannelID, thread); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.tick()
 
@@ -543,10 +529,7 @@ func TestAReplyUnderAnEndedSessionsCardTellsTheHolderItEnded(t *testing.T) {
 
 	got := payloads(t, f)
 	if len(got) != 1 || got[0].ThreadOwner == nil || *got[0].ThreadOwner != (threadOwner{Session: "sess-gone", Ended: true}) {
-		t.Fatalf("delivered %+v, want the reply on the holder's watch naming the ended session", got)
-	}
-	if text := f.plane.directives[0].text; !strings.Contains(text, "session sess-gone posted; that session has ended") {
-		t.Fatalf("holder's directive = %q, want it to say the owning session ended", text)
+		t.Fatalf("delivered %+v, want the reply on the earlier poster's watch naming the ended session", got)
 	}
 }
 

@@ -105,7 +105,7 @@ func TestEveryTopLevelKindReachesAProvenChannelOnce(t *testing.T) {
 				w := l.addWatch("1800000000.000400")
 				id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, BotID: "BBOT", BotUserID: "UBOT"}
 				m := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000401", ThreadTimestamp: w.ThreadTS, User: testUser, Text: "ship the fix"}}
-				d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, nil, true)
+				d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, cursorGroup{}, w, m, true)
 				if err != nil {
 					t.Fatal(err)
 				}

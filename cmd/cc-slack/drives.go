@@ -87,16 +87,3 @@ func (d driveMates) onAnotherSessionsCard(w watch, inThread []watch) bool {
 	}
 	return carded
 }
-
-func (d driveMates) takeOver(inThread []watch, holder watch) []watch {
-	kept := slices.DeleteFunc(slices.Clone(inThread), func(w watch) bool {
-		return w.Kind == kindDM && w.SubjectID != holder.SubjectID && w.PID != holder.PID && d.same(w.SubjectID, holder.SubjectID)
-	})
-	if len(kept) == len(inThread) || d.onAnotherSessionsCard(holder, kept) {
-		return inThread
-	}
-	if slices.ContainsFunc(kept, func(o watch) bool { return o.SubjectID == holder.SubjectID && o.Owner == holder.Owner }) {
-		return kept
-	}
-	return append(kept, holder)
-}

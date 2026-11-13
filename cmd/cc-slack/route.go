@@ -118,7 +118,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, w watch, m slack.Message, mates driveMates, steers bool) (delivery, error) {
+func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity, g cursorGroup, w watch, m slack.Message, steers bool) (delivery, error) {
 	thread := m.ThreadTimestamp
 	if thread == "" {
 		thread = m.Timestamp
@@ -143,7 +143,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		}
 	}
 	if w.ChannelID == id.DMChannelID && thread != m.Timestamp {
-		owner, err := p.threadOwner(ctx, w, thread, mates)
+		owner, err := p.threadOwner(ctx, w, thread, g)
 		if err != nil {
 			return delivery{}, err
 		}
@@ -158,7 +158,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 		base:   eventMessage,
 		origin: origin,
 		dedup:  messageDedup(w, m.Timestamp),
-		line:   messageLine(msg, mates.holds(w)),
+		line:   messageLine(msg, g.mates.holds(w)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)
@@ -196,7 +196,10 @@ func messageDedup(w watch, ts string) string {
 	return fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, ts)
 }
 
-func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates driveMates) (*threadOwner, error) {
+func (p *poller) threadOwner(ctx context.Context, w watch, thread string, g cursorGroup) (*threadOwner, error) {
+	if g.holder.ID != 0 {
+		return nil, nil
+	}
 	bound, err := p.threads.bound(ctx, w.ChannelID, []string{thread})
 	if err != nil {
 		return nil, err
@@ -206,7 +209,7 @@ func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates 
 		return nil, nil
 	}
 	subjectID := posters[len(posters)-1]
-	if subjectID == w.SubjectID || mates.same(subjectID, w.SubjectID) {
+	if subjectID == w.SubjectID || g.mates.same(subjectID, w.SubjectID) {
 		return nil, nil
 	}
 	var (
@@ -429,16 +432,16 @@ func agentEnded(ctx context.Context, db *sql.DB, subjectID, agentID string) (int
 	return endedAt.Int64, status == agent.StatusDone, nil
 }
 
-func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, sessions []watch, m slack.Message, mates driveMates) error {
-	if len(sessions) == 1 {
-		d, err := p.messageDelivery(ctx, api, id, sessions[0], m, mates, true)
+func (p *poller) routeRoot(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, m slack.Message) error {
+	if len(g.sessions) == 1 {
+		d, err := p.messageDelivery(ctx, api, id, g, g.sessions[0], m, true)
 		if err != nil {
 			return err
 		}
-		return p.deliver(ctx, db, sessions[0], d)
+		return p.deliver(ctx, db, g.sessions[0], d)
 	}
-	links := make([]string, 0, len(sessions))
-	for _, w := range sessions {
+	links := make([]string, 0, len(g.sessions))
+	for _, w := range g.sessions {
 		threads, err := p.threads.sessionThreads(ctx, w.ChannelID, w.SubjectID)
 		if err != nil {
 			return err

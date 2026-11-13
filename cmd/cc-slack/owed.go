@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/yasyf/cc-interact/store"
 )
@@ -101,14 +102,13 @@ func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
 type dmHold struct {
 	subject string
 	session string
-	pid     int
 }
 
 func dmHolder(ctx context.Context, db *sql.DB, dmChannelID string) (dmHold, error) {
 	var hold dmHold
-	err := db.QueryRowContext(ctx, `SELECT s.id, s.session_id, s.claude_pid FROM watches w JOIN subjects s ON s.id = w.subject_id
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.session_id FROM watches w JOIN subjects s ON s.id = w.subject_id
 		WHERE w.channel_id = ? AND w.thread_ts = '' AND w.kind = 'channel' AND w.status = 'active'
-		ORDER BY w.id LIMIT 1`, dmChannelID).Scan(&hold.subject, &hold.session, &hold.pid)
+		ORDER BY w.id LIMIT 1`, dmChannelID).Scan(&hold.subject, &hold.session)
 	if errors.Is(err, sql.ErrNoRows) {
 		return dmHold{}, nil
 	}
@@ -132,7 +132,10 @@ func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, 
 	return w, true, nil
 }
 
-func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold, mates driveMates) (map[string]bool, error) {
+func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold) (map[string]bool, error) {
+	if hold.subject != "" {
+		return nil, nil
+	}
 	owed := make([]string, 0, len(replies))
 	for _, r := range replies {
 		owed = append(owed, r.ThreadTS)
@@ -149,22 +152,13 @@ func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmCh
 	if err != nil {
 		return nil, err
 	}
-	pids := map[string]int{}
+	live := map[string]bool{}
 	for _, w := range subscribed {
-		pids[w.SubjectID] = w.PID
+		live[w.SubjectID] = true
 	}
 	others := map[string]bool{}
 	for thread, posters := range bound {
-		other, held := false, false
-		for _, subjectID := range posters {
-			pid, live := pids[subjectID]
-			if !live {
-				continue
-			}
-			other = true
-			held = held || subjectID == hold.subject || pid == hold.pid || mates.same(subjectID, hold.subject)
-		}
-		others[thread] = other && !held
+		others[thread] = slices.ContainsFunc(posters, func(subjectID string) bool { return live[subjectID] })
 	}
 	return others, nil
 }

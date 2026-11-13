@@ -5,24 +5,20 @@ app. A card or update lands as its own message at the DM root, unless the
 user wrote in a thread: pass the `thread_ts` their directive or channel tag
 names when it differs from the message's `ts`. It returns `{channel_id, thread_ts, ts}`,
 and `thread_ts` is that message's own timestamp. Receive the user's replies
-in that message's thread, and taps on it, as directives through the same
-receive protocol, deduplicate them, and post status back with
+in that message's thread while no other session holds the DM, and taps on it,
+as directives through the same receive protocol, deduplicate them, and post status back with
 `slack_dm_status`. A message the user types at the DM root reaches this
 session when it is the only one live; with several live, cc-slack answers
 with a link to each session's newest message.
 
 A session holds the DM by calling `slack_watch` with the DM's channel id and no
-`thread_ts`. Every reply the user writes in a DM thread then reaches it as well
-as any session watching that thread, and a message at the DM root goes to it
-without the session list. The exception is the thread of a status card or
-`slack_dm_status` update another live session posted: a reply there reaches only
-that session, the holder neither sees nor owes it, and any other session's watch
-on the thread stays quiet. Once the posting session ends, the holder has that
-thread back. A session of the holder's own drive is no other session: when the
-posting session's cards name the holder's drive (`drive` on a card), or a drive a
-session of it also posted under, the holder takes the thread over, sees and owes
-the reply, and the posting session no longer gets it. Other bots' messages stay
-out of it.
+`thread_ts`. Every reply the user writes in a DM thread then reaches it, whichever
+session posted in that thread, as well as any session watching that thread, and a
+message at the DM root goes to it without the session list. The holder sees and
+owes each reply, and the session that posted a status card or `slack_dm_status`
+update no longer gets the replies under it. In a DM no session holds, a reply
+under such a post reaches only the session that posted it. Other bots' messages
+stay out of it.
 
 The user's words in a channel steer only when they are to the bot: a message
 that mentions the bot, or one that mentions no one else and is a reply in a
@@ -37,9 +33,9 @@ message: a reply in a teammate's thread, or a line that mentions a teammate,
 channel or thread without `operator`, and never the holder.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
-no bot or agent has answered in its thread yet, leaving out another live session's
-card threads, from stored state with no Slack call, including replies written while
-no session was live, and the session that owes them as `holder_session`. A post in that thread answers every earlier reply there; a
+no bot or agent has answered in its thread yet, from stored state with no Slack call, including replies written while
+no session was live, and the session that owes them as `holder_session`. With no holder, it leaves out
+each thread a live session posted, since a reply there reaches that session. A post in that thread answers every earlier reply there; a
 post elsewhere answers none. The daemon posts nothing of its own in reply, so the
 session holding the DM acknowledges each reply itself. A DM message or card tap
 that needs nothing back gets a `+1` reaction on it and no reply, which also clears
