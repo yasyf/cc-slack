@@ -2710,7 +2710,7 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
-	id.Agent = b.Agent
+	id.Agent, id.Drive = b.Agent, b.Drive
 	if err := cmp.Or(a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive), a.uploadCardPictures(hc.Ctx, id, b)); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -2889,7 +2889,7 @@ func (a *app) drawCardsOnly(hc daemon.HandlerCtx, id identity, b opBody) daemon.
 	if err != nil {
 		return fail(err.Error())
 	}
-	id.Agent = b.Agent
+	id.Agent, id.Drive = b.Agent, b.Drive
 	if err := a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive); err != nil {
 		return fail(fallback(actionWrite, err))
 	}

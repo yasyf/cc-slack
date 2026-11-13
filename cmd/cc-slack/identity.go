@@ -52,6 +52,7 @@ type identity struct {
 	FetchedAt    int64  `json:"fetched_at"`
 	Config       config `json:"config"`
 	Agent        string `json:"-"`
+	Drive        string `json:"-"`
 
 	OperatorChannels []operatorChannel `json:"operator_channels"`
 }
@@ -89,7 +90,11 @@ func (id identity) name() string {
 }
 
 func (id identity) username() string {
-	return fmt.Sprintf("%s (%s)", id.name(), cmp.Or(id.Agent, defaultAgent))
+	who := cmp.Or(id.Agent, defaultAgent)
+	if id.Drive != "" {
+		who += " · " + id.Drive
+	}
+	return fmt.Sprintf("%s (%s)", id.name(), who)
 }
 
 func checkAgent(name string) error {
