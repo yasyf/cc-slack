@@ -141,20 +141,31 @@ asks GitHub about every candidate in one GraphQL query per repository, with a
 5 s limit; when a read fails, each PR the daemon read before links from that
 read, the rest stay as written, and the daemon logs why.
 
-A post or edit that links a Slack message, in its text or in its blocks, goes out
-with `unfurl_links` on, so Slack draws that message under the line: a card's
-permalink under words that name it, `<permalink|the lock card>`, shows those words
-and the card itself under them, in the engineer's DM too. Slack draws no link it showed in the
-same conversation within the past hour, so each Slack message link a post carries goes out with a
-`post` query parameter unique to that post, which Slack ignores when it opens the message. Every
-other post keeps unfurls off. The setting covers the whole post, so another link in it may unfurl
-too. A post that shows a posted card's link as its raw URL, bare or labeled with
+A post or edit draws a Slack message it links, in its text or in its blocks, only
+when that message is an open card, one whose `waits` is not answered, tapped or
+replaced, that the post's thread has not shown: the card is not in that thread,
+and no earlier message there drew it. `linkDrawIn` in `carddraw.go` decides it
+against the thread's card copies in `live-cards.json`, and records each card a
+post draws as a copy in the post's thread. Such a post goes out with
+`unfurl_links` on, so a card's permalink under words that name it,
+`<permalink|the lock card>`, shows those words and the card itself under them.
+Slack draws no link it showed in the same conversation within the past hour, so
+each link that draws carries a `post` query parameter unique to that post, which
+Slack ignores when it opens the message. Every other Slack message link stays
+plain, the engineer's own messages included. `unfurl_links` covers the whole post,
+so a post linking both a card that draws and a message that stays plain goes out
+plain, and each card that draws follows as its own reply in the post's thread; an
+edit that does so stays plain. A post to the engineer's DM that links a Sentry
+issue or a Datadog monitor goes out with unfurls on too, and a Slack message link
+beside it may then draw by Slack's own hour rule. A message the daemon writes
+for itself, such as the engineer's dashboard words relayed into the DM, keeps
+unfurls off. A post that shows a posted card's link as its raw URL, bare or labeled with
 text Slack reads as the URL itself, which it never previews, carries blocks copied
 from a card, or repeats an open card's title in the DM without its link, outside
 the card's own thread, is refused with the link to write instead.
 
 Slack draws at most five link previews a message. A post to the engineer's DM
-with no blocks and no card that links more than five distinct Slack messages,
+with no blocks and no card that links more than five distinct cards that draw,
 Sentry issues and Datadog monitors goes out as pages, each cut at the last blank
 line before the line holding its sixth such link, or at that line's start when
 no blank line comes before it, so every card draws. A link in a markdown table
