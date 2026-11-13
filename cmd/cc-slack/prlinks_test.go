@@ -1911,7 +1911,13 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.slack.fail("chat.postMessage", nil)
 	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "fatal_error"})
-	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": its card was not posted; the daemon log says why")
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent["warning"], "so do not post it again, but drew no card for tap_prs "+tapPR41[0]+": its card was not posted; the daemon log says why") || sent["permalink"] == "" {
+		t.Fatalf("reply = %+v, want the sent post's permalink and its undrawn card as a warning", sent)
+	}
 	eventually(t, "the card command asked for the card", func() bool { return len(cmd.requests(t)) > 0 })
 	eventually(t, "the failed post", func() bool { return l.slack.callCount("chat.postMessage") >= 2 })
 	if cards := prCards(l, testDM); len(cards) != 0 {

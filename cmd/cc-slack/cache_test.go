@@ -150,6 +150,84 @@ func TestThreadReadNamingAMessageTheCacheLacksAsksSlack(t *testing.T) {
 	}
 }
 
+func TestAFollowedThreadStaysFreshUntilANudgeNamesIt(t *testing.T) {
+	f := newFixture(t)
+	f.cache.live = func() bool { return true }
+	seedThread(f)
+	f.read(testThread)
+	f.now = f.now.Add(cacheFullRefresh - time.Second)
+	f.read(testThread)
+	if n := f.slack.callCount(methodReplies); n != 1 {
+		t.Fatalf("replies calls = %d, want 1: no nudge named the thread", n)
+	}
+
+	f.slack.add(testChannel, reply(secondReply, "second"))
+	f.cache.nudged(f.ctx, messageNudge{Channel: testChannel, TS: secondReply, ThreadTS: testThread})
+	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("nudged thread = %q, want the reply the nudge named", got)
+	}
+	f.read(testThread)
+	if got := f.slack.repliesOldest(); !slices.Equal(got, []string{"", firstReply}) {
+		t.Fatalf("replies oldest = %q, want one whole read, then one delta for the nudge", got)
+	}
+}
+
+func TestAThreadReadAsTheUserKeepsTheFifteenSecondWindow(t *testing.T) {
+	f := newFixture(t)
+	f.cache.live = func() bool { return true }
+	seedThread(f)
+	for range 2 {
+		if _, err := f.cache.replies(f.ctx, userReads{f.slack}, testChannel, testThread); err != nil {
+			t.Fatal(err)
+		}
+		f.now = f.now.Add(cacheFresh)
+	}
+	if n := f.slack.callCount(methodReplies); n != 2 {
+		t.Fatalf("replies calls = %d, want 2: no nudge follows a channel the bot is not in", n)
+	}
+}
+
+type nudgedMidRead struct {
+	slackAPI
+	nudge func()
+}
+
+func (n nudgedMidRead) GetConversationRepliesContext(ctx context.Context, params *slack.GetConversationRepliesParameters) ([]slack.Message, bool, string, error) {
+	msgs, more, next, err := n.slackAPI.GetConversationRepliesContext(ctx, params)
+	n.nudge()
+	return msgs, more, next, err
+}
+
+func TestANudgeDuringAThreadsFirstReadLeavesItForADelta(t *testing.T) {
+	f := newFixture(t)
+	f.cache.live = func() bool { return true }
+	seedThread(f)
+	api := nudgedMidRead{f.slack, func() {
+		f.slack.add(testChannel, reply(secondReply, "second"))
+		f.cache.nudged(f.ctx, messageNudge{Channel: testChannel, TS: secondReply, ThreadTS: testThread})
+	}}
+	if _, err := f.cache.replies(f.ctx, api, testChannel, testThread); err != nil {
+		t.Fatal(err)
+	}
+	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("thread = %q, want the reply nudged while the first read ran", got)
+	}
+}
+
+func TestAHelloWithNoReplayRereadsEveryFollowedThread(t *testing.T) {
+	f := newFixture(t)
+	f.cache.live = func() bool { return true }
+	seedThread(f)
+	f.read(testThread)
+	f.slack.add(testChannel, reply(secondReply, "second"))
+	if _, err := f.app.hello(); err != nil {
+		t.Fatal(err)
+	}
+	if got := texts(f.read(testThread).msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("thread = %q, want a reread once the socket could not replay what it missed", got)
+	}
+}
+
 func TestPollerKeepsAWatchedThreadsCacheCurrent(t *testing.T) {
 	f := newFixture(t)
 	seedThread(f)

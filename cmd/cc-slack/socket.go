@@ -132,6 +132,10 @@ func (c *socketClient) connect(parent context.Context, id identity) (bool, error
 		return false, fmt.Errorf("dial: %w", err)
 	}
 	defer func() { _ = conn.CloseNow() }()
+	hello, err := c.hello()
+	if err != nil {
+		return true, fmt.Errorf("hello: %w", err)
+	}
 	c.setState(socketConnected)
 	c.log.Printf("socket: connected as %s", id.UserID)
 	var pinger sync.WaitGroup
@@ -140,10 +144,6 @@ func (c *socketClient) connect(parent context.Context, id identity) (bool, error
 		cancel()
 		pinger.Wait()
 	}()
-	hello, err := c.hello()
-	if err != nil {
-		return true, fmt.Errorf("hello: %w", err)
-	}
 	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
 		return true, fmt.Errorf("hello: %w", err)
 	}

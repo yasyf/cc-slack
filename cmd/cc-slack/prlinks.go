@@ -379,7 +379,6 @@ func (a *app) askCardCommand(ctx context.Context, id identity, channelID, thread
 
 type tapDrawn struct {
 	cards []cardRef
-	err   error
 }
 
 func (d tapDrawn) named(id identity) (stamps, links string) {
@@ -408,10 +407,10 @@ func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identit
 		a.poller.log.Printf("tap PR %s drew no card beside %s: %s", raw, link, why)
 		said = append(said, raw+": "+why)
 	}
-	if len(said) == 0 {
-		return tapDrawn{cards: placed}
+	if len(said) > 0 {
+		notePostWarning(hc.Ctx, fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; ")))
 	}
-	return tapDrawn{cards: placed, err: fmt.Errorf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; "))}
+	return tapDrawn{cards: placed}
 }
 
 func cardStamps(cards []cardRef) []string {

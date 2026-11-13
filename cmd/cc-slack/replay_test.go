@@ -182,3 +182,19 @@ func mustHello(t *testing.T, f *fixture) helloFrame {
 	}
 	return frame
 }
+
+func TestTheReplayIsCurrentOnlyBetweenItsCatchUpAndTheNextHello(t *testing.T) {
+	r := openTestReplay(t)
+	if r.current() {
+		t.Fatal("current before any hello")
+	}
+	r.hello(time.Now())
+	r.caughtUp("001800000001000-a1b2c3")
+	if !r.current() {
+		t.Fatal("not current once caught up")
+	}
+	r.hello(time.Now())
+	if r.current() {
+		t.Fatal("current during a reconnect's replay")
+	}
+}

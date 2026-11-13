@@ -378,13 +378,6 @@ func ok(v any) daemon.Reply {
 
 func fail(msg string) daemon.Reply { return daemon.Reply{OK: false, Error: msg} }
 
-func okUnlessUndrawn(v any, undrawn error) daemon.Reply {
-	if undrawn != nil {
-		return fail(undrawn.Error())
-	}
-	return ok(v)
-}
-
 var sinceTSPattern = regexp.MustCompile(`^\d{10}(\.\d{1,6})?$`)
 
 var bodyFields = sync.OnceValue(func() []string {
@@ -735,7 +728,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
-			return okUnlessUndrawn(res, drawn.err)
+			return ok(res)
 		}
 		if r.WatchID, err = a.watchPostThread(hc.Ctx, hc.DB, sub.ID, res.ChannelID, res.ThreadTS, res.TS); err != nil {
 			r.WatchError = err.Error()
@@ -746,7 +739,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				res.WatchError = err.Error()
 			}
 		}
-		return okUnlessUndrawn(a.reportChannel(hc, sub.ID, res), drawn.err)
+		return ok(a.reportChannel(hc, sub.ID, res))
 	}
 }
 
@@ -2317,7 +2310,7 @@ func (a *app) userAPI(ctx context.Context, id identity) (slackAPI, error) {
 	user := a.user.api(tok.AccessToken)
 	switch err := checkUserSession(ctx, user, id); {
 	case err == nil:
-		return user, nil
+		return userReads{user}, nil
 	case staleSession(err):
 		if err := a.user.forget(); err != nil {
 			return nil, err
@@ -2655,7 +2648,7 @@ func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity
 	if len(drawn.cards) > 0 {
 		res["card_ts"], res["card_permalink"] = drawn.named(id)
 	}
-	return okUnlessUndrawn(res, drawn.err)
+	return ok(res)
 }
 
 func (a *app) rewordAnswered(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (daemon.Reply, bool) {
