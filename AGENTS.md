@@ -380,19 +380,25 @@ anywhere: the app's manifest turns on `pkce_enabled`, lists the redirect
 When a call needs the token and `user-token.json` in the state directory holds none for
 the logged-in user, the daemon serves `127.0.0.1:38427` and posts one consent card to the
 engineer's DM with the app: a link to `oauth/v2/authorize` with those scopes, a random
-`state`, and the S256 challenge of a random verifier. The call is refused with the card's
+`state`, and the S256 challenge of a random verifier. It keeps the `state`, the verifier
+and the card's `ts` in `user-consent.json` beside `user-token.json`, mode 0600, and a
+daemon that starts while that file exists serves the redirect again, so a restart
+between the card and the tap leaves the card's link working. The call is refused with the card's
 permalink, and every call until the tap points to the same card. The tap, on the Mac
 running cc-slack, lands on the loopback redirect; the daemon checks `state`, trades the
 code and verifier through `oauth.v2.access`, keeps the token only when `authed_user` and
 `team` name the logged-in user and team, writes it to `user-token.json` with mode 0600,
-and edits the card to say `Allowed` or why not. A denied or mismatched consent clears the
-card, so the next call posts a fresh one.
+and edits the card to say `Allowed` or why not. Every tap deletes `user-consent.json`, so a
+denied or mismatched consent clears the card, and the next call posts a fresh one.
 
 A token Slack issues with `expires_in`, a rotating one that lives 12 hours, is renewed
-by the next call within 5 minutes of `expires_at` with `grant_type=refresh_token` and no
-secret, storing the new access and refresh tokens. A refresh token Slack answers with
-`invalid_refresh_token`, such as one unused for the 30 days a PKCE app's refresh tokens
-last, deletes the file and posts the card again, as does a token `auth.test` answers with
+within 5 minutes of `expires_at` with `grant_type=refresh_token` and no secret, storing
+the new access and refresh tokens: the poller wakes at that time and renews it, as Slack's
+token rotation guide asks, and a call that finds it due first, such as after the Mac slept,
+renews it itself. Each renewal hands back a fresh refresh token, so the 30 days a PKCE
+app's refresh tokens last never run out on a running daemon. A refresh token Slack
+answers with `invalid_refresh_token`, such as one unused for those 30 days while the
+daemon was down, deletes the file and posts the card again, as does a token `auth.test` answers with
 `invalid_auth`, `token_expired`, or `token_revoked`. Any other `auth.test` failure keeps the file and names the cause.
 Without `[oauth] client_id`, reads stay the bot's, and an invite or `dm-peer` lookup
 that needs the token is refused naming that key.
@@ -589,14 +595,17 @@ create retry only a 429, since after a 5xx or a dropped connection Slack may
 already have acted, and an upload's file bytes are sent once. A 5xx or dropped
 connection that outlasts its retries says how many tries it took.
 
-Except for the private-channel invite refusal above, failures the bot cannot get
-past answer with text naming the tool to use from the user-level Slack server.
+Except for the private-channel invite refusal above, writes and lookups the bot cannot
+get past answer with text naming the tool to use from the user-level Slack server.
 Posts fall back to
-`mcp__slack__slack_send_message`, reads and watches to `mcp__slack__slack_get_thread`
-or `mcp__slack__slack_conversations_history`, reactions to
+`mcp__slack__slack_send_message`, reactions to
 `mcp__slack__slack_add_reaction` or `mcp__slack__slack_remove_reaction`, `users` to
 `mcp__slack__slack_users_search`, and `channels` to `mcp__slack__slack_list_conversations`.
 Those tools act as the engineer, so posts through them still need the engineer's permission.
+A failed read or watch names no such tool: `thread` and `history` already read as the
+engineer through the user token above, while that server reads with a browser session
+token that stops working whenever it expires. A watch the bot cannot hold points to one
+`slack_thread` or `slack_history` read instead.
 
 ## Ask Before Assuming
 
