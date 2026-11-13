@@ -91,7 +91,7 @@ func TestLiveStoreTransactionRollbackAndRetry(t *testing.T) {
 		t.Fatal("failed transaction lost its dirty keys")
 	}
 	var stale bool
-	if err := readLiveRows(l.st.DB(), "live_card_threads", func(_ string, data []byte) error {
+	if err := readLiveRows(l.st.DB(), liveThreadRows, func(_ string, data []byte) error {
 		var saved liveThread
 		if err := json.Unmarshal(data, &saved); err != nil {
 			return err

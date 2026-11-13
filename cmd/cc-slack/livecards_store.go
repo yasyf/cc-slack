@@ -28,6 +28,27 @@ CREATE TABLE live_card_import (
 );
 `}
 
+type liveTable struct {
+	name   string
+	read   string
+	remove string
+	write  string
+}
+
+var liveThreadRows = liveTable{
+	name:   "live_card_threads",
+	read:   "SELECT key, payload FROM live_card_threads",
+	remove: "DELETE FROM live_card_threads WHERE key = ?",
+	write:  "INSERT INTO live_card_threads(key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
+}
+
+var liveRefRows = liveTable{
+	name:   "live_card_refs",
+	read:   "SELECT key, payload FROM live_card_refs",
+	remove: "DELETE FROM live_card_refs WHERE key = ?",
+	write:  "INSERT INTO live_card_refs(key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
+}
+
 func (l *liveCards) load() (err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -52,7 +73,7 @@ func (l *liveCards) load() (err error) {
 		return err
 	}
 	threads := map[string]*liveThread{}
-	if err := readLiveRows(st.DB(), "live_card_threads", func(key string, data []byte) error {
+	if err := readLiveRows(st.DB(), liveThreadRows, func(key string, data []byte) error {
 		var t liveThread
 		if err := json.Unmarshal(data, &t); err != nil {
 			return err
@@ -66,7 +87,7 @@ func (l *liveCards) load() (err error) {
 		return err
 	}
 	refs := map[string]refState{}
-	if err := readLiveRows(st.DB(), "live_card_refs", func(key string, data []byte) error {
+	if err := readLiveRows(st.DB(), liveRefRows, func(key string, data []byte) error {
 		var ref refState
 		if err := json.Unmarshal(data, &ref); err != nil {
 			return err
@@ -84,20 +105,20 @@ func (l *liveCards) load() (err error) {
 	return l.persist()
 }
 
-func readLiveRows(db *sql.DB, table string, decode func(string, []byte) error) error {
-	rows, err := db.Query("SELECT key, payload FROM " + table)
+func readLiveRows(db *sql.DB, table liveTable, decode func(string, []byte) error) error {
+	rows, err := db.QueryContext(context.Background(), table.read)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", table, err)
+		return fmt.Errorf("read %s: %w", table.name, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var key string
 		var data []byte
 		if err := rows.Scan(&key, &data); err != nil {
-			return fmt.Errorf("read %s row: %w", table, err)
+			return fmt.Errorf("read %s row: %w", table.name, err)
 		}
 		if err := decode(key, data); err != nil {
-			return fmt.Errorf("decode %s %s: %w", table, key, err)
+			return fmt.Errorf("decode %s %s: %w", table.name, key, err)
 		}
 	}
 	return rows.Err()
@@ -116,57 +137,68 @@ func (l *liveCards) close() error {
 
 func (l *liveCards) importJSON() error {
 	var done int
-	if err := l.st.DB().QueryRow("SELECT count(*) FROM live_card_import").Scan(&done); err != nil {
+	if err := l.st.DB().QueryRowContext(context.Background(), "SELECT count(*) FROM live_card_import").Scan(&done); err != nil {
 		return fmt.Errorf("read live card import marker: %w", err)
 	}
 	paths := []string{filepath.Join(filepath.Dir(l.path), "live-cards.json"), filepath.Join(filepath.Dir(l.path), "live-refs.json")}
 	if done == 0 {
-		var populated int
-		if err := l.st.DB().QueryRow("SELECT (SELECT count(*) FROM live_card_threads) + (SELECT count(*) FROM live_card_refs)").Scan(&populated); err != nil {
-			return fmt.Errorf("inspect live card import target: %w", err)
-		}
-		if populated != 0 {
-			return errors.New("live card store has rows without an import marker")
-		}
-		var threads []*liveThread
-		var refs map[string]refState
-		for i, target := range []any{&threads, &refs} {
-			data, err := os.ReadFile(paths[i])
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("read legacy live card state %s: %w", paths[i], err)
-			}
-			if err := json.Unmarshal(data, target); err != nil {
-				return fmt.Errorf("decode legacy live card state %s: %w", paths[i], err)
-			}
-		}
-		tx, err := l.st.DB().Begin()
-		if err != nil {
-			return fmt.Errorf("begin live card import: %w", err)
-		}
-		defer func() { _ = tx.Rollback() }()
-		for _, t := range threads {
-			if t == nil {
-				return errors.New("legacy live card state contains a null thread")
-			}
-			if err := writeLiveRow(tx, "live_card_threads", threadKey(t.Channel, t.Thread), t, true); err != nil {
-				return err
-			}
-		}
-		for key, ref := range refs {
-			if err := writeLiveRow(tx, "live_card_refs", key, ref, true); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec("INSERT INTO live_card_import(id) VALUES (1)"); err != nil {
-			return fmt.Errorf("mark live card import: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit live card import: %w", err)
+		if err := l.importLegacyRows(paths); err != nil {
+			return err
 		}
 	}
+	return retireLegacyLiveFiles(paths)
+}
+
+func (l *liveCards) importLegacyRows(paths []string) error {
+	var populated int
+	if err := l.st.DB().QueryRowContext(context.Background(), "SELECT (SELECT count(*) FROM live_card_threads) + (SELECT count(*) FROM live_card_refs)").Scan(&populated); err != nil {
+		return fmt.Errorf("inspect live card import target: %w", err)
+	}
+	if populated != 0 {
+		return errors.New("live card store has rows without an import marker")
+	}
+	var threads []*liveThread
+	var refs map[string]refState
+	for i, target := range []any{&threads, &refs} {
+		data, err := os.ReadFile(paths[i])
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read legacy live card state %s: %w", paths[i], err)
+		}
+		if err := json.Unmarshal(data, target); err != nil {
+			return fmt.Errorf("decode legacy live card state %s: %w", paths[i], err)
+		}
+	}
+	tx, err := l.st.DB().BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("begin live card import: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, t := range threads {
+		if t == nil {
+			return errors.New("legacy live card state contains a null thread")
+		}
+		if err := writeLiveRow(tx, liveThreadRows, threadKey(t.Channel, t.Thread), t, true); err != nil {
+			return err
+		}
+	}
+	for key, ref := range refs {
+		if err := writeLiveRow(tx, liveRefRows, key, ref, true); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(context.Background(), "INSERT INTO live_card_import(id) VALUES (1)"); err != nil {
+		return fmt.Errorf("mark live card import: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit live card import: %w", err)
+	}
+	return nil
+}
+
+func retireLegacyLiveFiles(paths []string) error {
 	for _, path := range paths {
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			continue
@@ -186,19 +218,19 @@ func (l *liveCards) importJSON() error {
 	return nil
 }
 
-func writeLiveRow(tx *sql.Tx, table, key string, value any, exists bool) error {
+func writeLiveRow(tx *sql.Tx, table liveTable, key string, value any, exists bool) error {
 	if !exists {
-		if _, err := tx.Exec("DELETE FROM "+table+" WHERE key = ?", key); err != nil {
-			return fmt.Errorf("delete %s %s: %w", table, key, err)
+		if _, err := tx.ExecContext(context.Background(), table.remove, key); err != nil {
+			return fmt.Errorf("delete %s %s: %w", table.name, key, err)
 		}
 		return nil
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("encode %s %s: %w", table, key, err)
+		return fmt.Errorf("encode %s %s: %w", table.name, key, err)
 	}
-	if _, err := tx.Exec("INSERT INTO "+table+"(key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload", key, data); err != nil {
-		return fmt.Errorf("write %s %s: %w", table, key, err)
+	if _, err := tx.ExecContext(context.Background(), table.write, key, data); err != nil {
+		return fmt.Errorf("write %s %s: %w", table.name, key, err)
 	}
 	return nil
 }
@@ -219,20 +251,20 @@ func (l *liveCards) persist() error {
 	if len(l.dirtyThreads)+len(l.dirtyRefs) == 0 {
 		return nil
 	}
-	tx, err := l.st.DB().Begin()
+	tx, err := l.st.DB().BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("begin live card update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	for key := range l.dirtyThreads {
 		t, exists := l.threads[key]
-		if err := writeLiveRow(tx, "live_card_threads", key, t, exists); err != nil {
+		if err := writeLiveRow(tx, liveThreadRows, key, t, exists); err != nil {
 			return err
 		}
 	}
 	for key := range l.dirtyRefs {
 		ref, exists := l.refs[key]
-		if err := writeLiveRow(tx, "live_card_refs", key, ref, exists); err != nil {
+		if err := writeLiveRow(tx, liveRefRows, key, ref, exists); err != nil {
 			return err
 		}
 	}
