@@ -136,6 +136,27 @@ class PackTest(unittest.TestCase):
         self.assertEqual(result.message, text)
         self.assertFalse(result.approve)
 
+    def test_call_bin_execs_the_artifact_binrun_recorded(self) -> None:
+        for label, fresh, expected in (("fresh", True, "artifact"), ("stale", False, "launcher")):
+            with self.subTest(label):
+                artifact = self.stub(stdout="artifact")
+                plugin = Path(self.tmp.name) / label / "plugin"
+                (plugin / "bin").mkdir(parents=True)
+                launcher = plugin / "bin" / "cc-slack"
+                launcher.write_text("#!/bin/sh\necho launcher\n")
+                launcher.chmod(0o755)
+                descriptor = plugin / "bin" / "cc-slack.binrun"
+                descriptor.write_text("{}")
+                name = str(descriptor).replace("%", "%25").replace("/", "%2F")
+                record = self.home / ".daemonkit" / "binrun" / "resolved" / name
+                record.parent.mkdir(parents=True, exist_ok=True)
+                record.write_text(f"{artifact.with_name('stub')}\n")
+                stamp = descriptor.stat().st_mtime + (60 if fresh else -60)
+                os.utime(record, (stamp, stamp))
+                self.common.BIN = launcher
+                evt = mock_event(Event.PreToolUse, tool="Bash", command="go test ./...")
+                self.assertEqual((self.common.call_bin(evt, "agent-inject") or "").strip(), expected)
+
     def test_agent_inject_rejects_invalid_envelopes(self) -> None:
         evt = mock_event(Event.PreToolUse, tool="Bash", command="go test ./...")
         for label, envelope in (

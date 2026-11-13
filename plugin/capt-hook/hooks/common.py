@@ -26,6 +26,7 @@ PENDING_DIRECTIVE = (
     "WHERE directives.agent_id = ? AND directives.delivered_at IS NULL AND subjects.scope = ?)"
 )
 SUBJECT_IN_SCOPE = "SELECT EXISTS(SELECT 1 FROM subjects WHERE scope = ?)"
+RECORD_NAME_ESCAPES = str.maketrans({"%": "%25", "/": "%2F"})
 
 
 def real_home() -> Path:
@@ -61,14 +62,28 @@ def subject_in_scope() -> bool:
     return plane_may_match(SUBJECT_IN_SCOPE, SCOPE)
 
 
+def recorded_artifact() -> str | None:
+    descriptor = BIN.with_name(f"{BIN.name}.binrun")
+    record = real_home() / ".daemonkit" / "binrun" / "resolved" / str(descriptor).translate(RECORD_NAME_ESCAPES)
+    try:
+        if int(record.stat().st_mtime) <= int(descriptor.stat().st_mtime):
+            return None
+        target = record.read_text().strip()
+    except OSError:
+        return None
+    return target if os.access(target, os.X_OK) else None
+
+
 def call_bin(evt: BaseHookEvent, sub: str, *, timeout: int = 10) -> str | None:
     if daemon_is_down() or not BIN.exists():
         return None
+    artifact = recorded_artifact()
     try:
         return evt.ctx.call_cli(
-            [str(BIN), sub],
+            [artifact or str(BIN), sub],
             input=json.dumps(evt._raw),
             timeout=timeout,
+            env={"BINRUN_PLUGIN_ROOT": str(BIN.parent.parent)} if artifact else None,
             throw=False,
         )
     except UnicodeDecodeError:
