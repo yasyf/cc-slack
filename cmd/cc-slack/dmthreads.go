@@ -20,6 +20,10 @@ CREATE TABLE dm_threads (
   PRIMARY KEY (channel_id, thread_ts, subject_id)
 );
 CREATE INDEX idx_dm_threads_subject ON dm_threads(channel_id, subject_id);
+CREATE TABLE dm_drives (
+  subject_id TEXT PRIMARY KEY,
+  drive      TEXT NOT NULL
+);
 `}
 
 type dmThreads struct {
@@ -43,6 +47,35 @@ func (d *dmThreads) Close() error { return d.st.Close() }
 
 func (d *dmThreads) bind(ctx context.Context, channelID, threadTS, subjectID string) error {
 	return d.bindAll(ctx, [][3]string{{channelID, threadTS, subjectID}})
+}
+
+func (d *dmThreads) recordDrive(ctx context.Context, subjectID, drive string) error {
+	if _, err := d.st.DB().ExecContext(ctx, `INSERT INTO dm_drives(subject_id, drive) SELECT ?, ? WHERE ? <> ''
+		ON CONFLICT(subject_id) DO UPDATE SET drive = excluded.drive`, subjectID, drive, drive); err != nil {
+		return fmt.Errorf("record the drive of %s: %w", subjectID, err)
+	}
+	return nil
+}
+
+func (d *dmThreads) drives(ctx context.Context, subjectIDs []string) (map[string]string, error) {
+	rows, err := d.st.DB().QueryContext(ctx, `SELECT subject_id, drive FROM dm_drives WHERE subject_id IN (SELECT value FROM json_each(?))`,
+		string(mustJSON(subjectIDs)))
+	if err != nil {
+		return nil, fmt.Errorf("find the drives of %d sessions: %w", len(subjectIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+	drives := map[string]string{}
+	for rows.Next() {
+		var subjectID, drive string
+		if err := rows.Scan(&subjectID, &drive); err != nil {
+			return nil, fmt.Errorf("scan a session's drive: %w", err)
+		}
+		drives[subjectID] = drive
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sessions' drives: %w", err)
+	}
+	return drives, nil
 }
 
 func (d *dmThreads) unbind(ctx context.Context, channelID, threadTS, subjectID string) (bool, error) {

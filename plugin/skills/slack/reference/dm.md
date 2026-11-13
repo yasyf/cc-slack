@@ -17,12 +17,13 @@ as any session watching that thread, and a message at the DM root goes to it
 without the session list. The exception is the thread of a status card or
 `slack_dm_status` update another live session posted: a reply there reaches only
 that session, the holder neither sees nor owes it, and any other session's watch
-on the thread stays quiet. Once the posting session ends, the holder has that
-thread back. A session of the holder's own drive is no other session: when the
-posting session's cards name the holder's drive (`drive` on a card), or a drive a
-session of it also posted under, the holder takes the thread over, sees and owes
-the reply, and the posting session no longer gets it. Other bots' messages stay
-out of it.
+on the thread stays quiet. A session that names its drive with
+`cc-slack dm-status --drive`, as `drive say` does, keeps the replies under its
+posts even where a holder of that drive posted too. Once the posting session
+ends or stops hearing the DM, by `cc-slack unfollow --channel <DM>` with no
+thread, the holder has that thread back, and each reply of the user's the
+session never took goes to the holder at once. Other bots' messages stay out of
+it.
 
 The user's words in a channel steer only when they are to the bot: a message
 that mentions the bot, or one that mentions no one else and is a reply in a

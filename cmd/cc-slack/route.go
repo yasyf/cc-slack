@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -142,13 +143,17 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 			msg.Text = first + " " + repeatsParentMark
 		}
 	}
-	if w.ChannelID == id.DMChannelID && thread != m.Timestamp {
-		owner, err := p.threadOwner(ctx, w, thread, mates)
+	return p.messageTo(ctx, id, w, msg, mates)
+}
+
+func (p *poller) messageTo(ctx context.Context, id identity, w watch, msg messagePayload, mates driveMates) (delivery, error) {
+	if w.ChannelID == id.DMChannelID && msg.ThreadTS != msg.TS {
+		owner, err := p.threadOwner(ctx, w, msg.ThreadTS, mates)
 		if err != nil {
 			return delivery{}, err
 		}
 		msg.ThreadOwner = owner
-		msg.ThreadCard = p.cards.threadWaits(w.ChannelID, thread)
+		msg.ThreadCard = p.cards.threadWaits(w.ChannelID, msg.ThreadTS)
 	}
 	origin := event.OriginHuman
 	if msg.FromClaude {
@@ -157,7 +162,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 	return delivery{
 		base:   eventMessage,
 		origin: origin,
-		dedup:  messageDedup(w, m.Timestamp),
+		dedup:  messageDedup(w, msg.TS),
 		line:   messageLine(msg, mates.holds(w)),
 		payload: func(typ string) []byte {
 			msg.Type = typ
@@ -210,15 +215,17 @@ func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates 
 		return nil, nil
 	}
 	var (
-		owner threadOwner
-		pid   int
+		owner   threadOwner
+		pid     int
+		hearing bool
 	)
-	if err := p.plane.DB().QueryRowContext(ctx, `SELECT COALESCE(session_id, ''), claude_pid FROM subjects WHERE id = ?`, subjectID).
-		Scan(&owner.Session, &pid); err != nil {
+	if err := p.plane.DB().QueryRowContext(ctx, `SELECT COALESCE(s.session_id, ''), s.claude_pid,
+		EXISTS (SELECT 1 FROM watches w WHERE w.subject_id = s.id AND w.kind = 'dm' AND w.channel_id = ? AND w.status = 'active')
+		FROM subjects s WHERE s.id = ?`, w.ChannelID, subjectID).Scan(&owner.Session, &pid, &hearing); err != nil {
 		return nil, fmt.Errorf("find the session that owns %s/%s: %w", w.ChannelID, thread, err)
 	}
 	owner.Card, owner.Title = p.cards.threadCard(w.ChannelID, thread)
-	owner.Ended = pid == 0 || !p.alive(pid)
+	owner.Ended = !hearing || pid == 0 || !p.alive(pid)
 	return &owner, nil
 }
 
@@ -312,6 +319,59 @@ func (p *poller) deliver(ctx context.Context, db *sql.DB, w watch, d delivery) e
 		return fmt.Errorf("direct finished owner %s: %w", w.Owner, err)
 	}
 	return p.ownerStopped(ctx, db, w.SubjectID, w.Owner, endedAt)
+}
+
+func (p *poller) handBack(ctx context.Context, db *sql.DB, id identity, live []watch, left []string) error {
+	holder := dmHolderIn(live, id.DMChannelID)
+	left = slices.DeleteFunc(left, func(subjectID string) bool { return subjectID == holder.SubjectID })
+	if holder.ID == 0 || len(left) == 0 {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT e.payload FROM directives d JOIN events e ON e.subject_id = d.subject_id AND e.seq = d.event_seq
+		WHERE d.subject_id IN (SELECT value FROM json_each(?)) AND d.agent_id = ? AND d.delivered_at IS NULL AND e.type = ?
+		AND json_extract(e.payload, '$.channel_id') = ? AND json_extract(e.payload, '$.user') = ? AND NOT json_extract(e.payload, '$.from_claude')
+		AND NOT EXISTS (SELECT 1 FROM events o WHERE o.subject_id IN (SELECT value FROM json_each(?)) AND o.dedup_key = ? || json_extract(e.payload, '$.ts'))
+		ORDER BY d.id`, string(mustJSON(left)), agent.TopLevel, eventMessage, id.DMChannelID, id.UserID,
+		string(mustJSON(dmSubjects(live))), messageDedup(watch{Owner: agent.TopLevel, ChannelID: id.DMChannelID}, ""))
+	if err != nil {
+		return fmt.Errorf("find the replies %d sessions never took: %w", len(left), err)
+	}
+	var untaken []messagePayload
+	for rows.Next() {
+		var payload []byte
+		var msg messagePayload
+		if err := rows.Scan(&payload); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan an untaken reply: %w", err)
+		}
+		if err := json.Unmarshal(payload, &msg); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decode an untaken reply: %w", err)
+		}
+		untaken = append(untaken, msg)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close untaken replies: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate untaken replies: %w", err)
+	}
+	mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, left)
+	if err != nil {
+		return err
+	}
+	for _, msg := range untaken {
+		msg.WatchID, msg.Kind, msg.ChannelID, msg.Relayed = holder.ID, holder.Kind, holder.ChannelID, false
+		d, err := p.messageTo(ctx, id, holder, msg, mates)
+		if err != nil {
+			return err
+		}
+		p.holdAck(ctx, db, []watch{holder}, slack.Message{Msg: slack.Msg{Timestamp: msg.TS, ThreadTimestamp: msg.ThreadTS}})
+		if err := p.deliver(ctx, db, holder, d); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *poller) deliverTopLevel(ctx context.Context, w watch, d delivery) error {

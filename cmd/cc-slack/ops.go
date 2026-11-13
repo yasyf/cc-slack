@@ -126,6 +126,7 @@ type opBody struct {
 	Via       string   `json:"via"`
 	Surface   string   `json:"surface"`
 	About     string   `json:"about"`
+	Drive     string   `json:"drive"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
 	Plan      string   `json:"plan"`
@@ -1912,11 +1913,7 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	mates, err := loadDriveMates(hc.Ctx, a.poller.threads, a.cards, id.DMChannelID)
-	if err != nil {
-		return fail(err.Error())
-	}
-	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder, mates)
+	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2489,6 +2486,9 @@ func (a *app) stopWatches(hc daemon.HandlerCtx, subjectID string, b opBody) (boo
 	res, err := hc.DB.ExecContext(hc.Ctx, `UPDATE watches SET status = 'stopped' WHERE channel_id = ? AND thread_ts = ? AND `+mine,
 		channelID, b.ThreadTS, hc.Scope, subjectID, hc.Window.ClaudePID)
 	stopped, err := stoppedAny(res, err)
+	if stopped && channelID == id.DMChannelID && b.ThreadTS == "" {
+		a.poller.leave(subjectID)
+	}
 	return stopped || unbound, err
 }
 
@@ -2561,7 +2561,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	id.Agent = b.Agent
-	if err := a.uploadCardPictures(hc.Ctx, id, b); err != nil {
+	if err := cmp.Or(a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive), a.uploadCardPictures(hc.Ctx, id, b)); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	if b.Card != nil {

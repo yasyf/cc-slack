@@ -132,7 +132,7 @@ func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, 
 	return w, true, nil
 }
 
-func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold, mates driveMates) (map[string]bool, error) {
+func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold) (map[string]bool, error) {
 	owed := make([]string, 0, len(replies))
 	for _, r := range replies {
 		owed = append(owed, r.ThreadTS)
@@ -146,6 +146,10 @@ func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmCh
 		subjects = append(subjects, posters...)
 	}
 	subscribed, err := dmSubscriptions(ctx, db, dmChannelID, subjects)
+	if err != nil {
+		return nil, err
+	}
+	mates, err := loadDriveMates(ctx, threads, hold.subject, subjects)
 	if err != nil {
 		return nil, err
 	}

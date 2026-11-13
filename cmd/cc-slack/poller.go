@@ -74,6 +74,7 @@ type poller struct {
 	compact map[string]transcriptMark
 	held    []heldAck
 	edits   map[string]bool
+	left    []string
 }
 
 type messageNudge struct {
@@ -122,6 +123,21 @@ func (p *poller) wake() {
 	case p.wakeCh <- struct{}{}:
 	default:
 	}
+}
+
+func (p *poller) leave(subjectIDs ...string) {
+	p.mu.Lock()
+	p.left = append(p.left, subjectIDs...)
+	p.mu.Unlock()
+	p.wake()
+}
+
+func (p *poller) takeLeft() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	left := p.left
+	p.left = nil
+	return left
 }
 
 func (p *poller) reconcileAll() {
@@ -310,11 +326,12 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	watches, err := p.liveWatches(ctx, db)
+	watches, err := p.liveWatches(ctx, db, id)
 	if err != nil {
 		return time.Time{}, err
 	}
-	mates, err := loadDriveMates(ctx, p.threads, p.cards, id.DMChannelID)
+	holder := dmHolderIn(watches, id.DMChannelID)
+	mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, dmSubjects(watches))
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -407,7 +424,7 @@ func methodFor(key cursorKey) string {
 	return methodHistory
 }
 
-func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
+func (p *poller) liveWatches(ctx context.Context, db *sql.DB, id identity) ([]watch, error) {
 	rows, err := db.QueryContext(ctx, `SELECT w.id, w.subject_id, w.owner_agent_id, w.kind, w.channel_id, w.thread_ts, s.claude_pid
 		FROM watches w JOIN subjects s ON s.id = w.subject_id WHERE w.status = 'active' ORDER BY w.id`)
 	if err != nil {
@@ -437,7 +454,7 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB) ([]watch, error) {
 			return nil, fmt.Errorf("orphan watch %d: %w", w.ID, err)
 		}
 	}
-	return live, nil
+	return live, p.handBack(ctx, db, id, live, append(p.takeLeft(), dmSubjects(dead)...))
 }
 
 func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
@@ -488,10 +505,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	for i := range groups {
 		inThread := slices.Clone(groups[i].watches)
-		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return mates.onAnotherSessionsCard(w, inThread) })
-		if holder.ID != 0 && groups[i].key.channelID == dmChannelID && groups[i].key.threadTS != "" {
-			groups[i].watches = mates.takeOver(groups[i].watches, holder)
-		}
+		groups[i].watches = slices.DeleteFunc(groups[i].watches, func(w watch) bool { return mates.leaves(w, inThread) })
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
@@ -501,7 +515,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		g := group(key)
 		g.since = since[key]
 		for _, w := range channels[key.channelID] {
-			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !mates.onAnotherSessionsCard(w, g.watches) {
+			if !slices.ContainsFunc(g.watches, func(o watch) bool { return o.SubjectID == w.SubjectID && o.Owner == w.Owner }) && !mates.leaves(w, g.watches) {
 				g.covering = append(g.covering, w)
 			}
 		}
@@ -518,6 +532,16 @@ func dmHolderIn(watches []watch, dmChannelID string) watch {
 		return watch{}
 	}
 	return watches[i]
+}
+
+func dmSubjects(watches []watch) []string {
+	var subjects []string
+	for _, w := range watches {
+		if w.Kind == kindDM {
+			subjects = append(subjects, w.SubjectID)
+		}
+	}
+	return subjects
 }
 
 func dmSubscribers(watches []watch) ([]watch, map[string]watch) {
