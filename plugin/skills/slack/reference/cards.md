@@ -23,7 +23,6 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `prs` | any number of `{url, title, head, changed, review, refresher, surprise, hate_most, plan, show_me, pictures, port, blocks, lands}` pull requests, each drawn with its title, link and live CI, then the lines it has as fields, `changed` first as Changed since your answer, and its Show me on a row of its own; a missing line is left out. The PRs that would take the card past Slack's 50 blocks are named on it, one line each under "In full under Explain more", and drawn whole in the pages Explain more posts. Below the buttons, the first 3 also draw as GitHub Work Objects with Merge and CI tags and Open on GitHub. Its description, read from GitHub, posts in the thread on Explain more. Once every PR reads merged or closed, the card collapses to its title, a line per PR and its outcome, with no buttons |
 | `artifacts` | up to 5 `{title, kind, url, image, language, size}` things the reader opens at `url`, such as a diagram on the dashboard, each drawn as a Work Object with its language and size and an Open button when `url` is https, or http on the `[links]` tailnet; any other `url` posts the card with no Work Object and a warning; `image`, an absolute path to a PNG, JPEG, GIF, or WebP, is drawn as a picture on the card, from the `[pictures]` bucket when the config sets one, whether or not its Work Object draws; keep the link in `body` too, for a client that draws no card |
 | `replaces` | the Slack permalink of a posted card this one replaces in place: same message, new title and body, no buttons, nothing new posted |
-| `in_place` | with `waits`, draws the same question again on the card still waiting under that id, edited where it sits even when its words change, and posts nothing; for a redraw that is no new version of the question, such as a line saying it is being redone |
 | `supersedes` | with `waits`, up to 5 permalinks of the bot's earlier posts in the user's DM that asked the same question; when the card posts, each is edited to say the question is asked again on this card and link it, and when the card is answered, each shows the question and the answer; refused without `waits`, for a post outside the DM, or for a link that is not a Slack message |
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
@@ -133,20 +132,14 @@ which refuses unless the card shows that reply's words as its answer.
 Without `--reply` it takes back a button answer while the card shows Undo,
 as a tap on Undo does; a drive dashboard's Undo calls it.
 
-A card that reuses the `waits` id of a card still waiting, with the same
-words, edits that one card in place and posts nothing, and each copy that
-still has buttons is drawn again from the card, Other included. When its words
-change, the new version posts as the live card where a first ask with the same
-call would land: a drive's question at the DM root, with its link in the thread
-`thread_ts` names. The old card is edited in place to the new words, its
-buttons replaced by one line, Asked again with new words, linking the new card,
-and each older copy reads that line too, so only the new card asks. The reply's
-`ts` and `permalink` name the new card. A card with `in_place` set is the
-same question drawn again, so it is edited where it sits and posts nothing
-even when its words change; each older copy then reads Redrawn in place.
-A drive's question finds the card its `waits` id holds anywhere in your DM,
-whichever session posted it, so a redraw from a later handler replaces that
-card the same way. When two cards wait under one drive `waits` id, the
+A card that reuses the `waits` id of a card still waiting edits that one card
+in place, its buttons kept, and posts nothing, whether or not its words change.
+When its words change, each older copy of it loses its buttons and reads one
+line, Redrawn in place, linking the card, so only the card asks. When they stay
+the same, each copy that still has buttons is drawn again from the card, Other
+included. A drive's question finds the card its `waits` id holds anywhere in
+your DM, whichever session posted it, so a redraw from a later handler edits
+that card the same way. When two cards wait under one drive `waits` id, the
 redraw keeps the newest and each older one reads Asked again with new words,
 linking it.
 `text` that repeats the
