@@ -686,6 +686,71 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 }
 
+func TestAnUndoWhileItsAnswerIsStillRecordingRedrawsTheCardAtOnceAndReachesTheCardCommandAfterIt(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	dir := t.TempDir()
+	recorded, slow := filepath.Join(dir, "recorded"), filepath.Join(dir, "card")
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"undone\":false'*) until [ -e '%s' ]; do sleep 0.01; done ;;\nesac\nprintf '%%s\\n' \"$in\" | '%s'\n", recorded, cmd.argv[0])
+	if err := os.WriteFile(slow, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{slow}})
+	card := statusCard{Status: "needs_you", Title: "Delete the stale cards?", Waits: "demo:j2580-682984", Options: []string{"Delete", "Keep"}, Recommended: "Delete"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastEdit := func() string {
+		edits := editsOf(l.slack.edited(), reply.ts)
+		if len(edits) == 0 {
+			return ""
+		}
+		return edits[len(edits)-1]
+	}
+	picked, undone := time.Now(), time.Now().Add(time.Minute)
+	l.push(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Delete", Question: card.Title, Options: card.Options})),
+		ActionTS: fmt.Sprintf("%d.000100", picked.Unix()), Seq: "001800000100000-abcd0420"})
+	eventually(t, "his answer drawn as recording with its Undo", func() bool {
+		last := lastEdit()
+		return strings.Contains(last, "⏳ *Delete* · recording since") && strings.Contains(last, cardUndoAction+card.Waits)
+	})
+	l.push(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardUndoAction + card.Waits, ActionTS: fmt.Sprintf("%d.000900", undone.Unix()), Seq: "001800000100000-abcd0421"})
+	eventually(t, "the card offering its answers again while his answer is still recording", func() bool {
+		last := lastEdit()
+		return strings.Contains(last, cardWaitAction+"0:"+card.Waits) && !strings.Contains(last, "recording since")
+	})
+	if got := answersOf(cmd.requests(t)); len(got) != 0 {
+		t.Fatalf("card command took %v while his answer was still recording, want nothing until his answer's record finishes", got)
+	}
+	if err := os.WriteFile(recorded, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.app.poller.taps.busy.Wait()
+	answer := func(at string, undone bool) string {
+		return string(mustJSON(map[string]any{"answer": map[string]any{
+			"waits": card.Waits, "label": "Delete", "other": false, "undone": undone, "url": id.permalink(id.DMChannelID, reply.ts, reply.ts),
+			"action_ts": at, "source": "pressed the button",
+		}}))
+	}
+	want := []string{answer(fmt.Sprintf("%d.000100", picked.Unix()), false), answer(fmt.Sprintf("%d.000900", undone.Unix()), true)}
+	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %v, want his answer and then its undo, in tap order", got)
+	}
+	if last := lastEdit(); !strings.Contains(last, cardWaitAction+"0:"+card.Waits) || strings.Contains(last, "· answered") || strings.Contains(last, cardUndoAction) {
+		t.Fatalf("last card edit %s, want the card still offering its answers after his answer's record finished late", last)
+	}
+	if ans, done := l.app.cards.answer(id.DMChannelID, reply.ts, card.Waits); done {
+		t.Fatalf("answer = %+v, want none: he undid it", ans)
+	}
+	if got := l.inject(agent.TopLevel); !strings.Contains(got, "treat it as never given") || strings.Contains(got, `answered the waiting ask "demo:j2580-682984" with "Delete"`) {
+		t.Fatalf("directive = %q, want his undo alone: his answer was undone before it was recorded", got)
+	}
+}
+
 func TestATapTheCardCommandRefusesStaysRecordingAndIsOwedToTheCardCommand(t *testing.T) {
 	refusing := filepath.Join(t.TempDir(), "card")
 	if err := os.WriteFile(refusing, []byte("#!/bin/sh\ncase \"$(cat)\" in\n*'\"answer\"'*) exit 1 ;;\nesac\necho '{\"cards\":[],\"prs\":[]}'\n"), 0o700); err != nil {
