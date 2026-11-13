@@ -194,7 +194,8 @@ cannot add a page. A post to
 your DM that links a Sentry issue or a Datadog monitor asks Slack to unfurl it
 too; posts to channels do not. `thread`
 and `history` list what Slack unfurled for each message: Slack messages under
-`shares`, other links under `unfurls`. A post with `tap_prs` and a drive's
+`shares`, other links under `unfurls`. A message's `text` holds its own words
+alone, so a post copied from it carries none of Slack's previews. A post with `tap_prs` and a drive's
 question card put the card's link in the post's thread themselves, under the
 card's question.
 
