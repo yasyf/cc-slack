@@ -121,7 +121,7 @@ var (
 	optionByPosition = regexp.MustCompile(`(?i)\b(?:options?|choices?)\s+(?:#?[1-9]|one|two|three|four)\b(?:\s*(?:,|and|or|&)\s*(?:#?[1-9]|one|two|three|four)\b)*|` +
 		`\b(?:first|second|third|fourth|last|previous|next|above|top|bottom|1st|2nd|3rd|4th)\s+(?:options?|choices?)\b|\b(?:options?|choices?)\s+(?:above|below)\b`)
 	optionByNumber   = regexp.MustCompile(`(?i)\b(?:same\s+as|as\s+in|as|like|unlike|than|pick|choose|prefer)\s+[#(]?[1-9]\)?`)
-	optionNumberEnds = regexp.MustCompile(`(?i)^(?:[ \t]*(?:\n|$)|\s*[^\w\s%.,]|[.,](?:\D|$)|\s+(?:and|but|or|nor|plus|with|without|except|only|then|so|yet|in|on|at|to|for|from|by|is|are|was|does|did|has|adds|keeps|would|will|above|below|which|that|though|instead|minus|too|also)\b)`)
+	optionNumberEnds = regexp.MustCompile(`(?i)^(?:[ \t]*(?:\n|$)|\s*[^\w\s%.,:]|[.,:](?:\D|$)|\s+(?:and|but|or|nor|plus|with|without|except|only|then|so|yet|in|on|at|to|for|from|by|is|are|was|does|did|has|adds|keeps|would|will|above|below|which|that|though|instead|minus|too|also)\b)`)
 )
 
 type statusCard struct {

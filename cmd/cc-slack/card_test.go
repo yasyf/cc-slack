@@ -503,6 +503,13 @@ func TestACardNamesEachOptionInWordsNeverByNumberOrPosition(t *testing.T) {
 	if err := plain.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a card whose options stand alone: %v", err)
 	}
+	stamped := plain
+	stamped.Body = `Your "Drop the limit" pick 7:41 AM removed that limit, not the landing rule. Same as 9:05 AM (job start), it held.`
+	for _, check := range []func(time.Time, bool, string) error{stamped.check, stamped.checkMirrored} {
+		if err := check(time.Now(), false, ""); err != nil {
+			t.Fatalf("a clock time after a choice word: %v", err)
+		}
+	}
 	for name, tc := range map[string]struct {
 		title, body, option string
 		quoted              string
@@ -512,6 +519,7 @@ func TestACardNamesEachOptionInWordsNeverByNumberOrPosition(t *testing.T) {
 		"options in the body":      {plain.Title, "Option 2 is the only one; options 1 and 2 add a process.", plain.Options[1], `"Option 2"`},
 		"position in the title":    {"Take the first option?", plain.Body, plain.Options[1], `"first option"`},
 		"like a hash number":       {plain.Title, "Like #2, it waits.", plain.Options[1], `"Like #2"`},
+		"pick before a colon":      {plain.Title, "Pick 2: it costs less.", plain.Options[1], `"Pick 2"`},
 	} {
 		card := plain
 		card.Title, card.Body, card.Options = tc.title, tc.body, []string{plain.Options[0], tc.option}
