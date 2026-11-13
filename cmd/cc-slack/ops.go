@@ -1380,14 +1380,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
-	msgs := read.msgs
-	if b.SinceTS != "" {
-		msgs = slices.DeleteFunc(slices.Clone(msgs), func(m slack.Message) bool { return !tsLess(b.SinceTS, m.Timestamp) })
-	}
-	truncated := len(msgs) > limit
-	if truncated {
-		msgs = msgs[len(msgs)-limit:]
-	}
+	msgs, truncated := threadPage(read.msgs, b.SinceTS, limit)
 	var raw map[string]json.RawMessage
 	if b.Raw {
 		if raw, err = api.RawMessages(hc.Ctx, "conversations.replies", channelID, b.ThreadTS); err != nil {
@@ -1411,6 +1404,14 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		res.RetryAfter = int(math.Ceil(read.retryAfter.Seconds()))
 	}
 	return ok(res)
+}
+
+func threadPage(msgs []slack.Message, sinceTS string, limit int) ([]slack.Message, bool) {
+	if sinceTS == "" {
+		return msgs[max(len(msgs)-limit, 0):], len(msgs) > limit
+	}
+	msgs = slices.DeleteFunc(slices.Clone(msgs), func(m slack.Message) bool { return !tsLess(sinceTS, m.Timestamp) })
+	return msgs[:min(len(msgs), limit)], len(msgs) > limit
 }
 
 func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
