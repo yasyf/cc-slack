@@ -25,7 +25,7 @@ order.
    "Direction B", multi-agent terms such as desk, walker, parity, and fence,
    and order and job ids such as o308, but never inside a function,
    file, path, product or alert name or in a code span, zone
-   labels such as `PT` or `17:35Z`, an option named by number or position
+   labels such as `PT` or `17:35Z` outside a code span or block, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
    "Hi Andrew" where a mention belongs, an unbackticked `SNAKE_CASE`
    identifier, a paragraph past three sentences, a line outside a `>` quote
@@ -80,7 +80,8 @@ backticked SHA.
 
 State every clock time in the team's local time with no timezone label:
 `8pm tonight`, `5:25pm`, or `Sept 30 at 8pm`. Convert UTC times from logs,
-CI, and git before writing.
+CI, and git before writing. A time quoted as the tool printed it, in a code
+span or block such as a Datadog query, stays as printed.
 
 Write every post for the person reading the thread, in plain words. Never
 use internal shorthand: tracking ids, agent lane names, raw commit shas, or

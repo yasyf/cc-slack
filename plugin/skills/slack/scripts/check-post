@@ -86,6 +86,7 @@ RULES = (
         "zone-label",
         re.compile(r"\b(?:UTC|GMT|PST|PDT|PT)\b|\b\d{1,2}:\d{2}(?::\d{2})?Z\b"),
         "state the time in the team's local time with no zone label, such as 5:25pm",
+        reads_code=False,
         reads_labels=True,
     ),
     Rule(
