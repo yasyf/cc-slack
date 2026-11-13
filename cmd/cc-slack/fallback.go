@@ -132,8 +132,9 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 	case "thread_not_found":
 		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)
 	case "ratelimited":
-		rate, _ := errors.AsType[*slack.RateLimitedError](err)
-		return fmt.Sprintf("cc-slack can't read thread %s now (%s): Slack limits the read for %ds more, so read the thread again after that", thread, code, int(math.Ceil(rate.RetryAfter.Seconds())))
+		if rate, limited := errors.AsType[*slack.RateLimitedError](err); limited {
+			return fmt.Sprintf("cc-slack can't read thread %s now (%s): Slack limits the read for %ds more, so read the thread again after that", thread, code, int(math.Ceil(rate.RetryAfter.Seconds())))
+		}
 	}
 	return fallback(actionRead, err)
 }

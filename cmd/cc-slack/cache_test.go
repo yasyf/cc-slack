@@ -563,12 +563,33 @@ func TestThreadOpFailsUnderARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ratelimited") || !strings.Contains(err.Error(), "30s more") || strings.Contains(err.Error(), "mcp__slack__") {
 		t.Fatalf("rate-limited read of thread %s = %s, %v, want it refused with the 30s Slack limits it and no Slack MCP tool, never the 9 cached messages without %s", thread, answer.Body, err, his)
 	}
+}
 
-	l.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
-	raw, _ = json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000900"})
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw); err == nil ||
-		!strings.Contains(err.Error(), "ratelimited") || strings.Contains(err.Error(), "mcp__slack__") {
-		t.Fatalf("uncached rate-limited read: %v, want the rate limit and no Slack MCP tool", err)
+func TestEachRateLimitedSlackCallOfAThreadReadNamesTheThreadAndTheWait(t *testing.T) {
+	named := "cc-slack can't read thread " + testThread + " now (ratelimited): Slack limits the read for "
+	cases := []struct {
+		name   string
+		method string
+		err    error
+		raw    bool
+		want   string
+	}{
+		{"the replies fetch", methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second}, false, named + "30s more, so read the thread again after that"},
+		{"the raw refetch", rawOf(methodReplies), &slack.RateLimitedError{RetryAfter: 10 * time.Second}, true, named + "10s more, so read the thread again after that"},
+		{"an image block's files.info", "files.info", &slack.RateLimitedError{RetryAfter: time.Minute}, false, named + "60s more, so read the thread again after that"},
+		{"a ratelimited answer with no Retry-After", methodReplies, slack.SlackErrorResponse{Err: "ratelimited"}, false, "(ratelimited)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			chart := reply(firstReply, "the chart")
+			chart.Blocks = slack.Blocks{BlockSet: []slack.Block{&slack.ImageBlock{Type: slack.MBTImage, AltText: "chart.png", SlackFile: &slack.SlackFileObject{ID: "F2"}}}}
+			l.slack.add(testChannel, rootMessage(testThread, "root"))
+			l.slack.add(testChannel, chart)
+			l.slack.fail(tc.method, tc.err)
+			l.refused(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "raw": tc.raw}, tc.want)
+		})
 	}
 }
 
