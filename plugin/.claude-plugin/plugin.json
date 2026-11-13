@@ -16,8 +16,11 @@
   ],
   "mcpServers": {
     "channel": {
-      "command": "cc-slack",
+      "command": "python3",
       "args": [
+        "-I",
+        "-c",
+        "import json, os, pathlib, subprocess, sys\nconfig = pathlib.Path(os.environ.get(\"CLAUDE_CONFIG_DIR\") or pathlib.Path.home() / \".claude\")\ninstalls = json.loads((config / \"plugins\" / \"installed_plugins.json\").read_text())[\"plugins\"].get(\"cc-slack@cc-slack\")\nif not installs:\n    raise SystemExit(\"cc-slack: the cc-slack@cc-slack plugin is not installed\")\nnewest = max(installs, key=lambda entry: entry.get(\"lastUpdated\") or entry.get(\"installedAt\") or \"\")\nbinary = str(pathlib.Path(newest[\"installPath\"]) / \"bin\" / \"cc-slack\")\nsubprocess.run([binary, \"--version\"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nos.execv(binary, [binary, *sys.argv[1:]])\n",
         "channel",
         "--no-tools"
       ],
