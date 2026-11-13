@@ -22,8 +22,8 @@ order.
    a Slack message link included, which draws an open card under words that
    name it once a thread,
    one-letter codenames such as "D", but not a letter naming an option such as
-   "Direction B", multi-agent terms such as lane, desk, walker, parity, and
-   fence, and order and job ids such as o308, but never inside a function,
+   "Direction B", multi-agent terms such as desk, walker, parity, and fence,
+   and order and job ids such as o308, but never inside a function,
    file, path, product or alert name or in a code span, zone
    labels such as `PT` or `17:35Z`, an option named by number or position
    such as "same as 1" or "the first option", a greeting to a plain first name such as
