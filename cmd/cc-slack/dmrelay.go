@@ -22,12 +22,12 @@ func (a *app) handleDMRelay(hc daemon.HandlerCtx) daemon.Reply {
 	if words == "" {
 		return fail("dm-relay needs text, the words typed on the dashboard")
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := a.conversation(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.URL != "" && (b.ChannelID != id.DMChannelID || b.TS == "") {
-		return fail(fmt.Sprintf("dm-relay url %q is not a message in your DM with the app", b.URL))
+	if b.URL != "" && b.TS == "" {
+		return fail(fmt.Sprintf("dm-relay url %q is not a message in your conversation with the app", b.URL))
 	}
 	metadata := slack.MsgOptionMetadata(slack.SlackMetadata{EventType: dashboardEventType, EventPayload: map[string]any{"user_id": id.UserID, "text": words}})
 	ch, ts, err := publish(hc.Ctx, a.poller.newAPI(id.Token), nil, id, id.DMChannelID, b.ThreadTS, dashboardMark+mrkdwnEscapes.Replace(words), nil, nil, metadata)

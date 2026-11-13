@@ -174,7 +174,7 @@ func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Text == "" || b.FileID == "" && b.Name == "" {
 		return fail("canvas needs text, the page's markdown, and file_id, the canvas to redraw, or name, the title of a new one")
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := a.conversation(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -277,21 +277,22 @@ func driveCardsCmd(d cmd.Deps) *cobra.Command {
 
 func canvasCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
-	var title, canvas string
+	var title, canvas, channelID string
 	c := &cobra.Command{
 		Use:   "canvas",
-		Short: "Redraw a canvas from the markdown on stdin, or create one as a tab in your DM with the app",
+		Short: "Redraw a canvas from the markdown on stdin, or create one as a tab in your DM with the app, or in --channel",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			page, err := io.ReadAll(c.InOrStdin())
 			if err != nil {
 				return err
 			}
-			return runOp(c, d, f, opCanvas, map[string]any{"text": string(page), "name": title, "file_id": canvas})
+			return runOp(c, d, f, opCanvas, map[string]any{"text": string(page), "name": title, "file_id": canvas, "channel_id": channelID})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&title, "title", "", "the title a new canvas gets, and the tab it shows as")
 	c.Flags().StringVar(&canvas, "canvas", "", "the canvas to redraw; with --title, one Slack no longer has is created again, and this app's own tab of that title that Slack calls full is deleted and created again")
+	bindConversation(c, &channelID)
 	return c
 }

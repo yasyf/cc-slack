@@ -257,7 +257,7 @@ func TestAReplyACardRecordedAsItsAnswerIsNotOwed(t *testing.T) {
 	if len(owed.Replies) != 1 || owed.Replies[0].TS != after {
 		t.Fatalf("owed %+v, want only the reply after the card's answer", owed.Replies)
 	}
-	stored, err := l.app.owed.list(l.ctx)
+	stored, err := l.app.owed.list(l.ctx, testDM)
 	if err != nil {
 		t.Fatal(err)
 	}

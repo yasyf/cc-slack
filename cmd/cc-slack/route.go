@@ -366,7 +366,7 @@ func (p *poller) handBack(ctx context.Context, db *sql.DB, id identity, live []w
 		if err != nil {
 			return err
 		}
-		p.holdAck(ctx, db, []watch{holder}, slack.Message{Msg: slack.Msg{Timestamp: msg.TS, ThreadTimestamp: msg.ThreadTS}})
+		p.holdAck(ctx, db, id.DMChannelID, []watch{holder}, slack.Message{Msg: slack.Msg{Timestamp: msg.TS, ThreadTimestamp: msg.ThreadTS}})
 		if err := p.deliver(ctx, db, holder, d); err != nil {
 			return err
 		}

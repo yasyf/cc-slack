@@ -50,6 +50,7 @@ type write struct {
 	threadTS  string
 	text      string
 	users     []string
+	private   bool
 }
 
 type hookTicket struct {
@@ -135,6 +136,10 @@ func (w write) editsOwnersDM(id identity) bool {
 	return w.action == approveEdit && w.channelID == id.DMChannelID
 }
 
+func (w write) opensConversation() bool {
+	return w.action == approveCreate && w.private
+}
+
 func (w write) target() string {
 	where := w.named
 	if w.threadTS != "" {
@@ -197,7 +202,7 @@ func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, sessio
 
 func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticketSpend, w write) (hookTicket, *receipt, error) {
 	ctx, db := hc.Ctx, hc.DB
-	if s.TicketID == "" && (w.editsOwnersDM(id) || !a.mintsTickets(ctx, hc.Env.ClaudePID)) {
+	if s.TicketID == "" && (w.editsOwnersDM(id) || w.opensConversation() || !a.mintsTickets(ctx, hc.Env.ClaudePID)) {
 		return hookTicket{}, nil, nil
 	}
 	t, err := a.spendTicket(ctx, api, id, hc.Env.Session, s, w)

@@ -46,7 +46,7 @@ func ownerReplies(f *fixture, thread, ts, text string) {
 
 func owedStamps(t *testing.T, f *fixture) []string {
 	t.Helper()
-	replies, err := f.app.owed.list(f.ctx)
+	replies, err := f.app.owed.list(f.ctx, f.id.DMChannelID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
 	l.do(opReact, map[string]string{"channel_id": dm, "ts": liked, "name": ":+1:"})
 	l.do(opReact, map[string]string{"channel_id": testChannel, "ts": other, "name": "+1"})
 
-	replies, err := l.app.owed.list(l.ctx)
+	replies, err := l.app.owed.list(l.ctx, testDM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,7 +691,7 @@ func TestABareFileShareAnswersNoOwedReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	owedCount := func() int {
-		replies, err := f.app.owed.list(f.ctx)
+		replies, err := f.app.owed.list(f.ctx, f.id.DMChannelID)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -57,6 +57,7 @@ type poller struct {
 	owed      *owedReplies
 	feeds     *feedStore
 	threads   *dmThreads
+	convs     *conversations
 	replay    *replayCursor
 	shortcuts *shortcutHandler
 	cards     *liveCards
@@ -102,14 +103,15 @@ type cursorKey struct {
 }
 
 type cursorGroup struct {
-	key      cursorKey
-	root     bool
-	since    string
-	watches  []watch
-	sessions []watch
-	covering []watch
-	mates    driveMates
-	holder   watch
+	key          cursorKey
+	conversation string
+	root         bool
+	since        string
+	watches      []watch
+	sessions     []watch
+	covering     []watch
+	mates        driveMates
+	holder       watch
 }
 
 type cursorRow struct {
@@ -330,24 +332,16 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	holder := dmHolderIn(watches, id.DMChannelID)
-	mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, dmSubjects(watches))
-	if err != nil {
-		return time.Time{}, err
-	}
+	split := p.convs.split(id, watches)
 	api := p.newAPI(id.Token)
-	if p.reconcile.Swap(false) {
-		if err := p.markReconciled(ctx, db, api, id.DMChannelID, watches); err != nil {
-			p.reconcile.Store(true)
-			return time.Time{}, err
-		}
+	if err := p.reconcileConversations(ctx, db, api, split); err != nil {
+		return time.Time{}, err
 	}
 	seen, since := p.pendingMarks()
-	bound, err := p.threads.bound(ctx, id.DMChannelID, dmThreadKeys(id.DMChannelID, seen))
+	groups, err := p.conversationGroups(ctx, split, seen, since)
 	if err != nil {
 		return time.Time{}, err
 	}
-	groups := groupWatches(watches, id.DMChannelID, since, bound, mates)
 	p.keepWatched(groups, seen)
 	now := p.now()
 	var next time.Time
@@ -364,7 +358,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 			continue
 		}
 		p.settle(g.key)
-		c, err = p.poll(ctx, db, api, id, g, c)
+		c, err = p.poll(ctx, db, api, id.in(g.conversation), g, c)
 		if err != nil {
 			p.mark(g.key)
 			return time.Time{}, err
@@ -394,6 +388,36 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		return next, nil
 	}
 	return next, p.replay.save(seq)
+}
+
+func (p *poller) reconcileConversations(ctx context.Context, db *sql.DB, api slackAPI, split []conversationWatches) error {
+	if !p.reconcile.Swap(false) {
+		return nil
+	}
+	for _, c := range split {
+		if err := p.markReconciled(ctx, db, api, c.channelID, c.watches); err != nil {
+			p.reconcile.Store(true)
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *poller) conversationGroups(ctx context.Context, split []conversationWatches, seen map[cursorKey]uint64, since map[cursorKey]string) ([]cursorGroup, error) {
+	var groups []cursorGroup
+	for _, c := range split {
+		holder := dmHolderIn(c.watches, c.channelID)
+		mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, dmSubjects(c.watches))
+		if err != nil {
+			return nil, err
+		}
+		bound, err := p.threads.bound(ctx, c.channelID, dmThreadKeys(c.channelID, seen))
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, groupWatches(c.watches, c.channelID, since, bound, mates)...)
+	}
+	return groups, nil
 }
 
 func (p *poller) drained() bool {
@@ -454,7 +478,13 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB, id identity) ([]wa
 			return nil, fmt.Errorf("orphan watch %d: %w", w.ID, err)
 		}
 	}
-	return live, p.handBack(ctx, db, id, live, append(p.takeLeft(), dmSubjects(dead)...))
+	left := append(p.takeLeft(), dmSubjects(dead)...)
+	for _, c := range p.convs.split(id, live) {
+		if err := p.handBack(ctx, db, id.in(c.channelID), c.watches, left); err != nil {
+			return nil, err
+		}
+	}
+	return live, nil
 }
 
 func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
@@ -476,7 +506,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 		if !ok {
 			i = len(groups)
 			index[key] = i
-			groups = append(groups, cursorGroup{key: key, mates: mates, holder: holder})
+			groups = append(groups, cursorGroup{key: key, conversation: dmChannelID, mates: mates, holder: holder})
 		}
 		return &groups[i]
 	}
@@ -684,7 +714,7 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 		}
 	}
 	if arrived {
-		p.holdAck(ctx, db, reaching, m)
+		p.holdAck(ctx, db, id.DMChannelID, reaching, m)
 	}
 	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, steers); err != nil {
 		return err

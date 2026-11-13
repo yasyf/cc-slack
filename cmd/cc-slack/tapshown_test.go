@@ -501,7 +501,7 @@ func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAndOwesNothingTheCard
 	if got := l.inject(agent.TopLevel); !strings.Contains(got, `with "Merge"`) || !strings.Contains(got, "the session holding the DM") {
 		t.Fatalf("holder heard %q, want his pick and that it comes to the DM's holder", got)
 	}
-	owed, err := l.app.owed.list(l.ctx)
+	owed, err := l.app.owed.list(l.ctx, testDM)
 	if err != nil {
 		t.Fatal(err)
 	}

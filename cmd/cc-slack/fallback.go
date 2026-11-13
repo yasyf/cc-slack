@@ -61,8 +61,13 @@ func (e outsideDMError) Error() string {
 
 func (e outsideDMError) Unwrap() error { return e.cause }
 
+func explainsItself(err error) bool {
+	return errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(notConversationError)) ||
+		errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) || errors.As(err, new(userConsentError))
+}
+
 func fallback(a action, err error) string {
-	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) || errors.As(err, new(userConsentError)) {
+	if explainsItself(err) {
 		return err.Error()
 	}
 	if a == actionEdit {

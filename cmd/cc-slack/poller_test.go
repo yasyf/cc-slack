@@ -1004,7 +1004,7 @@ func TestAReplyUnderAnEndedSessionsPostWaitsUnclaimedWithNoHolder(t *testing.T) 
 	if len(f.plane.events) != 0 {
 		t.Fatalf("events = %+v, want no live session to get a reply under an ended session's post", f.plane.events)
 	}
-	owed, err := f.app.owed.list(f.ctx)
+	owed, err := f.app.owed.list(f.ctx, f.id.DMChannelID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1144,7 +1144,7 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	back, err := reviveWatches(f.ctx, f.db(), sub.ID, dm)
+	back, err := reviveWatches(f.ctx, f.db(), sub.ID, []string{dm})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1169,7 +1169,7 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 	if !slices.Equal(kinds, []string{kindChannel, kindDM}) || f.watchStatus(stopped) != "stopped" {
 		t.Fatalf("active kinds = %v, thread watch %s: want the channel watch and subscription back and the stopped watch left", kinds, f.watchStatus(stopped))
 	}
-	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, dm); err != nil || again != 0 {
+	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, []string{dm}); err != nil || again != 0 {
 		t.Fatalf("second pass = %d err=%v, want nothing", again, err)
 	}
 }
@@ -1185,7 +1185,7 @@ func TestARestartedSessionDoesNotTakeBackTheDMFromAnother(t *testing.T) {
 	}
 	orphanWatches(t, f, sub.ID)
 
-	back, err := reviveWatches(f.ctx, f.db(), sub.ID, dm)
+	back, err := reviveWatches(f.ctx, f.db(), sub.ID, []string{dm})
 	if err != nil {
 		t.Fatal(err)
 	}

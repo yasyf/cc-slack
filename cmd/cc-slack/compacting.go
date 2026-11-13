@@ -64,6 +64,7 @@ type transcriptMark struct {
 }
 
 type heldAck struct {
+	channel string
 	m       slack.Message
 	due     time.Time
 	watches []watch
@@ -110,7 +111,7 @@ func (p *poller) compacting(watches []watch) []watch {
 	})
 }
 
-func (p *poller) holdAck(ctx context.Context, db *sql.DB, watches []watch, m slack.Message) {
+func (p *poller) holdAck(ctx context.Context, db *sql.DB, channelID string, watches []watch, m slack.Message) {
 	compacting := p.compacting(watches)
 	fresh, err := p.newToAny(ctx, db, compacting, m)
 	if err != nil {
@@ -121,7 +122,7 @@ func (p *poller) holdAck(ctx context.Context, db *sql.DB, watches []watch, m sla
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	h := heldAck{m: m, due: p.now().Add(compactionAckWait), watches: compacting}
+	h := heldAck{channel: channelID, m: m, due: p.now().Add(compactionAckWait), watches: compacting}
 	for _, w := range compacting {
 		h.marks = append(h.marks, p.compact[w.SubjectID])
 	}
@@ -180,7 +181,7 @@ func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id ide
 		}
 	}
 	marked := slack.MsgOptionMetadata(slack.SlackMetadata{EventType: compactionAckEventType, EventPayload: map[string]any{"user_id": id.UserID}})
-	_, ts, err := postMessage(ctx, api, db, p.log, id, id.DMChannelID, cmp.Or(h.m.ThreadTimestamp, h.m.Timestamp), compactionAck, nil, nil, marked)
+	_, ts, err := postMessage(ctx, api, db, p.log, id.in(h.channel), h.channel, cmp.Or(h.m.ThreadTimestamp, h.m.Timestamp), compactionAck, nil, nil, marked)
 	if err != nil {
 		p.log.Printf("ack %s: %v", h.m.Timestamp, err)
 		return

@@ -463,6 +463,7 @@ func channelCmd(d cmd.Deps, op daemon.Op, action, short string) *cobra.Command {
 		f                           sessionFlags
 		channelID, url, name, topic string
 		users                       []string
+		private                     bool
 		spend                       ticketSpend
 	)
 	c := &cobra.Command{
@@ -470,7 +471,7 @@ func channelCmd(d cmd.Deps, op daemon.Op, action, short string) *cobra.Command {
 		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			body := map[string]any{"channel_id": channelID, "url": url, "name": name, "users": users, "topic": topic}
+			body := map[string]any{"channel_id": channelID, "url": url, "name": name, "users": users, "topic": topic, "private": private}
 			spend.fill(body)
 			return runOp(c, d, f, op, body)
 		},
@@ -478,6 +479,7 @@ func channelCmd(d cmd.Deps, op daemon.Op, action, short string) *cobra.Command {
 	f.bind(c)
 	if action == approveCreate {
 		c.Flags().StringVar(&name, "name", "", "name of the channel to create")
+		c.Flags().BoolVar(&private, "private", false, "make it a private channel holding only you and the app, one of your conversations with it as your DM is, where dm-status --channel posts; needs no ticket, and creating the same name again returns it")
 	} else {
 		c.Flags().StringVar(&channelID, "channel", "", "Slack channel id")
 		c.Flags().StringVar(&url, "url", "", "Slack channel or message permalink (fills channel)")
@@ -867,16 +869,20 @@ func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
 }
 
 func dmOwedCmd(d cmd.Deps) *cobra.Command {
-	var f sessionFlags
+	var (
+		f         sessionFlags
+		channelID string
+	)
 	c := &cobra.Command{
 		Use:   "dm-owed",
 		Short: "Print your DM replies that no bot or agent has answered in their thread yet, from stored state",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opDMOwed, map[string]any{})
+			return runOp(c, d, f, opDMOwed, map[string]any{"channel_id": channelID})
 		},
 	}
 	f.bind(c)
+	bindConversation(c, &channelID)
 	return c
 }
 
@@ -983,13 +989,14 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		about     string
 		drive     string
 		tapPRs    []string
+		channelID string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "tap_prs": tapPRs}
+			body := map[string]any{"channel_id": channelID, "thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "tap_prs": tapPRs}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1012,6 +1019,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for; while it hears the DM, a DM holder of that drive leaves replies under its posts to it")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. A link in the text or card draws none")
+	bindConversation(c, &channelID)
 	bindAgent(c, &agentName)
 	return c
 }
@@ -1063,21 +1071,26 @@ func cardReopenCmd(d cmd.Deps) *cobra.Command {
 
 func dmRelayCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f          sessionFlags
-		text, card string
+		f                     sessionFlags
+		text, card, channelID string
 	)
 	c := &cobra.Command{
 		Use:   "dm-relay",
 		Short: "Post words typed on a drive dashboard in your DM, marked as yours, and route them as your DM",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opDMRelay, map[string]any{"text": text, "url": card})
+			return runOp(c, d, f, opDMRelay, map[string]any{"text": text, "url": card, "channel_id": channelID})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&text, "text", "", "the words, as typed")
 	c.Flags().StringVar(&card, "under", "", "permalink of the DM message to reply under; empty starts a new message")
+	bindConversation(c, &channelID)
 	return c
+}
+
+func bindConversation(c *cobra.Command, channelID *string) {
+	c.Flags().StringVar(channelID, "channel", "", "a private channel `cc-slack channel-create --private` made, one of your conversations with the app, in place of your DM")
 }
 
 func bindAgent(c *cobra.Command, name *string) {

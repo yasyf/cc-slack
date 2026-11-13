@@ -143,7 +143,10 @@ func (a *app) drewLinks(ctx context.Context, db *sql.DB, id identity, d linkDraw
 	}
 }
 
-func (a *app) postCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, text string, blocks []slack.Block, extra ...slack.MsgOption) (postResult, error) {
+func (a *app) postCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, waits, text string, blocks []slack.Block, extra ...slack.MsgOption) (postResult, error) {
+	if waits != "" && a.convs.has(t.Channel) {
+		text = fmt.Sprintf("<@%s> %s", id.UserID, text)
+	}
 	d := a.cards.linkDrawIn(t.Channel, t.Thread, "", text, blocks, alertsUnfurl(id, t.Channel, text, blocks))
 	if !d.inline {
 		d = linkDraw{unfurled: d.unfurled}

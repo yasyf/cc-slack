@@ -78,7 +78,7 @@ func (o *owedReplies) forget(ctx context.Context, threadTS string) error {
 	return nil
 }
 
-func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
+func (o *owedReplies) list(ctx context.Context, channelID string) ([]owedReply, error) {
 	rows, err := o.st.DB().QueryContext(ctx, `SELECT thread_ts, ts, text, permalink FROM owed_replies ORDER BY ts`)
 	if err != nil {
 		return nil, fmt.Errorf("list owed replies: %w", err)
@@ -90,7 +90,9 @@ func (o *owedReplies) list(ctx context.Context) ([]owedReply, error) {
 		if err := rows.Scan(&r.ThreadTS, &r.TS, &r.Text, &r.Permalink); err != nil {
 			return nil, fmt.Errorf("scan owed reply: %w", err)
 		}
-		replies = append(replies, r)
+		if link, err := parsePermalink(r.Permalink); err == nil && link.channelID == channelID {
+			replies = append(replies, r)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate owed replies: %w", err)

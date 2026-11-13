@@ -87,6 +87,7 @@ type opBody struct {
 	TS        string            `json:"ts"`
 	Text      string            `json:"text"`
 	Name      string            `json:"name"`
+	Private   bool              `json:"private"`
 	Limit     int               `json:"limit"`
 	SinceTS   string            `json:"since_ts"`
 	Owner     string            `json:"owner"`
@@ -347,7 +348,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opWithdrawPRCard, a.handleWithdrawPRCard)
 	register(opRevoke, a.handleRevoke)
 	register(opAgentSubject, a.handleAgentSubject)
-	register(opChannelCreate, a.handleChannel(approveCreate, createChannel))
+	register(opChannelCreate, a.handleChannel(approveCreate, a.createChannel))
 	register(opChannelArchive, a.handleChannel(approveArchive, a.archiveChannel))
 	register(opChannelInvite, a.handleChannel(approveInvite, a.inviteToChannel))
 	register(opChannelTopic, a.handleChannel(approveTopic, a.setChannelTopic))
@@ -533,7 +534,7 @@ func (a *app) watchesBack(ctx context.Context, db *sql.DB, subjectID string) (in
 	if err != nil {
 		return 0, err
 	}
-	back, err := reviveWatches(ctx, db, subjectID, id.DMChannelID)
+	back, err := reviveWatches(ctx, db, subjectID, a.convs.all(id))
 	if err != nil || back == 0 {
 		return 0, err
 	}
@@ -541,15 +542,15 @@ func (a *app) watchesBack(ctx context.Context, db *sql.DB, subjectID string) (in
 	return back, nil
 }
 
-func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) (int64, error) {
+func reviveWatches(ctx context.Context, db *sql.DB, subjectID string, conversations []string) (int64, error) {
 	res, err := db.ExecContext(ctx, `UPDATE watches SET status = 'active' WHERE id IN (
 		SELECT MAX(o.id) FROM watches o
 		WHERE o.subject_id = ? AND o.owner_agent_id = ? AND o.status = 'orphaned'
 			AND NOT EXISTS (SELECT 1 FROM watches a WHERE a.subject_id = o.subject_id AND a.owner_agent_id = o.owner_agent_id
 				AND a.kind = o.kind AND a.channel_id = o.channel_id AND a.thread_ts = o.thread_ts AND a.status = 'active')
-			AND NOT (o.kind = 'channel' AND o.channel_id = ? AND EXISTS (SELECT 1 FROM watches h
+			AND NOT (o.kind = 'channel' AND o.channel_id IN (SELECT value FROM json_each(?)) AND EXISTS (SELECT 1 FROM watches h
 				WHERE h.channel_id = o.channel_id AND h.thread_ts = '' AND h.kind = 'channel' AND h.status = 'active'))
-		GROUP BY o.kind, o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, dmChannelID)
+		GROUP BY o.kind, o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, string(mustJSON(conversations)))
 	if err != nil {
 		return 0, fmt.Errorf("bring back watches: %w", err)
 	}
@@ -861,7 +862,7 @@ func (a *app) send(ctx context.Context, db *sql.DB, id identity, channelID, thre
 	res, err := postAs(ctx, a.newAPI(id.Token), db, a.avatar, a.poller.log, a.now(), id, channelID, threadTS, text, blocks, files, extra...)
 	if err == nil && threadTS != "" {
 		a.wrote(ctx, res.ChannelID, threadTS)
-		if res.ChannelID == id.DMChannelID {
+		if a.convs.is(id, res.ChannelID) {
 			if err := a.owed.answered(ctx, threadTS, res.TS); err != nil {
 				a.poller.log.Printf("%v", err)
 			}
@@ -1054,6 +1055,7 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionEdit, err))
 	}
+	id = a.convs.of(id, b.ChannelID)
 	if err := cmp.Or(a.refuseBlanking(id, b), refuseEditPastFive(id, b, a.cards.drawsIn(id.DMChannelID, cmp.Or(b.messageThread(), b.TS), b.TS)), a.refuseCardCopies(id, b.ChannelID, b)); err != nil {
 		return fail(err.Error())
 	}
@@ -1114,6 +1116,7 @@ func (a *app) changeOwnMessage(hc daemon.HandlerCtx, b opBody, verb string, act 
 	if err != nil {
 		return fail(fallback(act, err))
 	}
+	id = a.convs.of(id, channelID)
 	thread, err := messageThreadOf(hc.Ctx, api, channelID, b)
 	if err != nil {
 		return fail(fallback(act, err))
@@ -1157,7 +1160,7 @@ func channelWrite(action string, b opBody) (write, error) {
 		if b.Name == "" {
 			return w, errors.New("channel-create needs name")
 		}
-		w.named, w.text = b.Name, b.Name
+		w.named, w.text, w.private = b.Name, b.Name, b.Private
 		return w, nil
 	case approveInvite:
 		if len(b.Users) == 0 {
@@ -1221,12 +1224,25 @@ func (a *app) handleChannel(action string, call channelCall) daemon.HandlerFunc 
 	}
 }
 
-func createChannel(ctx context.Context, api slackAPI, _ identity, w write) (string, error) {
-	ch, err := api.CreateConversationContext(ctx, slack.CreateConversationParams{ChannelName: w.text})
+func (a *app) createChannel(ctx context.Context, api slackAPI, id identity, w write) (string, error) {
+	if !w.private {
+		ch, err := api.CreateConversationContext(ctx, slack.CreateConversationParams{ChannelName: w.text})
+		if err != nil {
+			return "", err
+		}
+		return ch.ID, nil
+	}
+	if channelID, found, err := a.convs.find(ctx, w.text); err != nil || found {
+		return channelID, err
+	}
+	ch, err := api.CreateConversationContext(ctx, slack.CreateConversationParams{ChannelName: w.text, IsPrivate: true})
 	if err != nil {
 		return "", err
 	}
-	return ch.ID, nil
+	if _, err := api.InviteUsersToConversationContext(ctx, ch.ID, id.UserID); err != nil && errorCode(err) != "already_in_channel" {
+		return "", err
+	}
+	return ch.ID, a.convs.add(ctx, ch.ID, w.text, a.now())
 }
 
 func (a *app) archiveChannel(ctx context.Context, api slackAPI, id identity, w write) (string, error) {
@@ -1331,7 +1347,7 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 		if err != nil && errorCode(err) != settled {
 			return fail(fallback(act, err))
 		}
-		if act == actionReact && answeringReactions[name] && channelID == id.DMChannelID {
+		if act == actionReact && answeringReactions[name] && a.convs.is(id, channelID) {
 			if err := a.owed.answer(hc.Ctx, b.TS); err != nil {
 				return fail(err.Error())
 			}
@@ -1901,11 +1917,15 @@ func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
-	replies, err := a.owed.list(hc.Ctx)
+	b, err := decodeBody(hc)
 	if err != nil {
 		return fail(err.Error())
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := a.conversation(hc.Ctx, hc.DB, b.ChannelID)
+	if err != nil {
+		return fail(err.Error())
+	}
+	replies, err := a.owed.list(hc.Ctx, id.DMChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2042,7 +2062,7 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWatch, err))
 	}
-	if kind == kindChannel && channelID == id.DMChannelID {
+	if kind == kindChannel && a.convs.is(id, channelID) {
 		holder, err := dmHolder(hc.Ctx, hc.DB, channelID)
 		if err != nil {
 			return fail(err.Error())
@@ -2477,6 +2497,7 @@ func (a *app) stopWatches(hc daemon.HandlerCtx, subjectID string, b opBody) (boo
 	if err != nil {
 		return false, err
 	}
+	id = a.convs.of(id, channelID)
 	unbound := false
 	if channelID == id.DMChannelID && b.ThreadTS != "" {
 		if unbound, err = a.poller.threads.unbind(hc.Ctx, channelID, b.ThreadTS, subjectID); err != nil {
@@ -2541,7 +2562,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.fill(b.Text)
 		b.Text = ""
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := a.conversation(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -3208,7 +3229,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.postCard(ctx, db, id, t, text, blocks, entities...)
+		res, err = a.postCard(ctx, db, id, t, placed.Card.Waits, text, blocks, entities...)
 		return err
 	}); err != nil {
 		return nil, err
@@ -3225,7 +3246,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
 		text, blocks := t.rootMessage(now, cards.canvas())
-		res, err := a.postCard(ctx, db, id, t, text, blocks, msg.card.entities()...)
+		res, err := a.postCard(ctx, db, id, t, msg.card.Waits, text, blocks, msg.card.entities()...)
 		if err != nil {
 			return "", false, err
 		}

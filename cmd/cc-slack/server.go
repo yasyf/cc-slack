@@ -28,6 +28,7 @@ type app struct {
 	user      *userSession
 	cache     *readCache
 	owed      *owedReplies
+	convs     *conversations
 	replay    *replayCursor
 	poller    *poller
 	cards     *liveCards
@@ -48,7 +49,7 @@ type app struct {
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
-func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, feeds *feedStore, threads *dmThreads, replay *replayCursor) *app {
+func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, feeds *feedStore, threads *dmThreads, convs *conversations, replay *replayCursor) *app {
 	newAPI = cache.expiring(newAPI)
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
@@ -87,6 +88,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		owed:      owed,
 		feeds:     feeds,
 		threads:   threads,
+		convs:     convs,
 		replay:    replay,
 		shortcuts: shortcuts,
 		cards:     cards,
@@ -105,6 +107,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		user:      newUserSession(),
 		cache:     cache,
 		owed:      owed,
+		convs:     convs,
 		replay:    replay,
 		captHook:  waitingForReinstall(captHookReinstallWait, captHookReinstallPoll, execCommand),
 		claudeCwd: claudeCwd,
@@ -222,11 +225,16 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = threads.Close() }()
+	convs, err := openConversations(ctx, conversationsPath())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = convs.Close() }()
 	replay, err := loadReplayCursor(replayPath())
 	if err != nil {
 		return err
 	}
-	a := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, feeds, threads, replay)
+	a := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, feeds, threads, convs, replay)
 	defer func() { _ = a.cards.close() }()
 	s, err := a.buildServer()
 	if err != nil {

@@ -84,6 +84,7 @@ type fakeSlack struct {
 	sequence  []string
 	joined    []string
 	created   []string
+	private   []string
 	archived  []string
 	invites   map[string][]string
 	topics    map[string]string
@@ -717,10 +718,10 @@ func (f *fakeSlack) CreateConversationContext(_ context.Context, params slack.Cr
 	if err := f.call("conversations.create"); err != nil {
 		return nil, err
 	}
-	if params.IsPrivate {
-		return nil, fmt.Errorf("conversations.create made %q private", params.ChannelName)
-	}
 	f.created = append(f.created, params.ChannelName)
+	if params.IsPrivate {
+		f.private = append(f.private, params.ChannelName)
+	}
 	ch := &slack.Channel{}
 	ch.ID, ch.Name = fmt.Sprintf("CNEW%d", len(f.created)), params.ChannelName
 	return ch, nil
@@ -813,6 +814,12 @@ func (f *fakeSlack) channelChanges() ([]string, []string, map[string][]string, m
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.created), slices.Clone(f.archived), maps.Clone(f.invites), maps.Clone(f.topics)
+}
+
+func (f *fakeSlack) privateChannels() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.private)
 }
 
 func (f *fakeSlack) completed() [][]slack.FileSummary {
@@ -920,7 +927,7 @@ func newFixture(t *testing.T) *fixture {
 	f.slack.users["UOTHER"] = &slack.User{ID: "UOTHER", Profile: slack.UserProfile{DisplayName: "teammate"}}
 	f.cache = openTestCache(t)
 	f.cache.now = func() time.Time { return f.now }
-	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t))
+	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestFeeds(t), openTestDMThreads(t), openTestConversations(t), openTestReplay(t))
 	f.app.cards.path = filepath.Join(t.TempDir(), "live-cards.db")
 	if err := f.app.cards.load(); err != nil {
 		t.Fatal(err)
@@ -991,6 +998,16 @@ func openTestDMThreads(t *testing.T) *dmThreads {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
+}
+
+func openTestConversations(t *testing.T) *conversations {
+	t.Helper()
+	c, err := openConversations(context.Background(), filepath.Join(t.TempDir(), "conversations.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }
 
 func openTestReplay(t *testing.T) *replayCursor {

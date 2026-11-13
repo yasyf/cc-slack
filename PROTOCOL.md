@@ -125,7 +125,8 @@ and forwards the tap.
 | `seq` | yes | The frame's sequence number |
 
 The daemon drops a tap by anyone but the logged-in engineer, or outside their
-DM with the app, and a tap on an ask whose `exp` is not after `action_ts`.
+conversations with the app, their DM and each private channel a private
+`channel-create` made, and a tap on an ask whose `exp` is not after `action_ts`.
 A second tap on a waiting card whose question is already answered is dropped.
 A waiting card's Other button, `cc-slack-card:other:<id>`, is the backend's
 to handle: it opens a modal with one text box, using the button's `{"id", "label",

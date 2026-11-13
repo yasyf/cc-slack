@@ -66,8 +66,8 @@ func TestDMRelayRefusesEmptyWordsAndAMessageOutsideTheDM(t *testing.T) {
 	f := newFixture(t)
 	before := len(f.slack.posts)
 	for refusal, body := range map[string]map[string]any{
-		"needs text":                  {"text": "  "},
-		"is not a message in your DM": {"text": "hi", "url": "https://acme.slack.com/archives/C0OTHER123/p1800000000000100"},
+		"needs text": {"text": "  "},
+		"is not one of your conversations with the app": {"text": "hi", "url": "https://acme.slack.com/archives/C0OTHER123/p1800000000000100"},
 	} {
 		if reply := f.relay(body); reply.OK || !strings.Contains(reply.Error, refusal) {
 			t.Fatalf("dm-relay %v = %+v, want a refusal that %s", body, reply, refusal)

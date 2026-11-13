@@ -59,6 +59,11 @@ func (id identity) name() string {
 	return id.DisplayName
 }
 
+func (id identity) in(conversation string) identity {
+	id.DMChannelID = conversation
+	return id
+}
+
 func (id identity) username() string {
 	return fmt.Sprintf("%s (%s)", id.name(), cmp.Or(id.Agent, defaultAgent))
 }

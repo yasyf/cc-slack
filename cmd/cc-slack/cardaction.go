@@ -220,7 +220,7 @@ func (a cardActionPush) ref() cardRef { return cardRef{a.Channel, a.ThreadTS, a.
 
 func (a cardActionPush) check(id identity) error {
 	if a.User != id.UserID || a.Channel != id.DMChannelID {
-		return fmt.Errorf("tap by %s in %s is not %s's own DM", a.User, a.Channel, id.UserID)
+		return fmt.Errorf("tap by %s in %s is not in a conversation of %s's with the app", a.User, a.Channel, id.UserID)
 	}
 	for _, ts := range []string{a.MessageTS, a.ThreadTS, a.ActionTS} {
 		if !slackTSPattern.MatchString(ts) {
@@ -444,6 +444,7 @@ func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap 
 func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 	due, next := p.cards.owedTaps(p.now(), 2*prCardPatience)
 	for _, owed := range due {
+		id := p.convs.of(id, owed.card.channel)
 		p.taps.run(context.WithoutCancel(ctx), owed.card.channel+"/"+owed.card.ts, func(ctx context.Context) {
 			if owed.tap.Question == nil {
 				p.applyPRTap(ctx, id, owed.card, owed.tap)
@@ -555,6 +556,7 @@ func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, ask
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
+	id = p.convs.of(id, a.Channel)
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
@@ -1241,8 +1243,9 @@ func (p *poller) reopenAnswer(ctx context.Context, id identity, card string) err
 		return err
 	}
 	ref, ok := p.cards.cardAt(link.channelID, link.ts)
+	id = p.convs.of(id, ref.channel)
 	if !ok || ref.channel != id.DMChannelID {
-		return fmt.Errorf("no card at %s in your DM", card)
+		return fmt.Errorf("no card at %s in your conversations with the app", card)
 	}
 	waits := p.cards.undoing(ref)
 	if waits == "" {
@@ -1276,8 +1279,9 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 		return err
 	}
 	ref, ok := p.cards.cardAt(cardLink.channelID, cardLink.ts)
+	id = p.convs.of(id, ref.channel)
 	if !ok || ref.channel != id.DMChannelID {
-		return fmt.Errorf("no card at %s in your DM", card)
+		return fmt.Errorf("no card at %s in your conversations with the app", card)
 	}
 	msgs, err := fetchReplies(ctx, p.newAPI(id.Token), ref.channel, ref.thread, justBefore(replyLink.ts))
 	if err != nil {
@@ -1380,8 +1384,9 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	if !ok {
 		ref = cardRef{link.channelID, cmp.Or(link.threadTS, link.ts), link.ts}
 	}
+	id = p.convs.of(id, ref.channel)
 	if ref.channel != id.DMChannelID {
-		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM", named, card)
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your conversations with the app", named, card)
 	}
 	thread := ref.thread
 	kind, surface, name := answeredFrom(from, via)
