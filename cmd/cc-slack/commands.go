@@ -1011,7 +1011,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for; while it hears the DM, a DM holder of that drive leaves replies under its posts to it")
-	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. A link in the text or card draws none")
+	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. With no text, it only draws: the card is redrawn where it sits, or first posted under --thread. A link in the text or card draws none")
 	bindAgent(c, &agentName)
 	return c
 }

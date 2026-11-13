@@ -2545,6 +2545,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
+	if len(b.TapPRs) > 0 && b.Card == nil && b.Text == "" && len(b.Blocks) == 0 && len(b.Files) == 0 && b.About == "" {
+		return a.drawTapCards(hc, id, b)
+	}
 	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, waitingPRs(id, id.DMChannelID, b)...)
 	texts, crowded := b.pagesIn(id, id.DMChannelID, a.cards.drawsIn(id.DMChannelID, b.ThreadTS, ""))
@@ -2597,6 +2600,52 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
+}
+
+func (a *app) drawTapCards(hc daemon.HandlerCtx, id identity, b opBody) daemon.Reply {
+	if why := tapCardsRefused(id, id.DMChannelID); why != "" {
+		return fail(fmt.Sprintf("drew no card for tap_prs %s: %s", strings.Join(b.TapPRs, ", "), why))
+	}
+	if b.ThreadTS != "" && !slackTSPattern.MatchString(b.ThreadTS) {
+		return fail(fmt.Sprintf("dm-status thread_ts %q is not a Slack ts", b.ThreadTS))
+	}
+	if err := a.missingDMThread(hc.Ctx, id, b.ThreadTS); err != nil {
+		return fail(err.Error() + "; nothing was sent")
+	}
+	t := tapCards{undrawn: map[string]string{}}
+	for _, pr := range a.tapPRs(hc.Ctx, id, hc.Env.Scope, b) {
+		if pr.state.terminal() {
+			return fail(fmt.Sprintf("drew no card for %s: it is %s; nothing was sent", prURL(pr.ref), pr.state.State))
+		}
+		t.ask = append(t.ask, pr.ref)
+	}
+	t.waiting = t.ask
+	a.askCardCommand(hc.Ctx, id, id.DMChannelID, b.ThreadTS, &t)
+	for i := range t.provided {
+		t.provided[i].reasks = true
+	}
+	if len(t.undrawn) > 0 {
+		var said []string
+		for _, pr := range t.ask {
+			if why, missed := t.undrawn[pr.key()]; missed {
+				said = append(said, prURL(pr)+": "+why)
+			}
+		}
+		return fail("drew no card for tap_prs " + strings.Join(said, "; ") + "; nothing was sent")
+	}
+	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
+	if err != nil {
+		return fail(err.Error())
+	}
+	id.Agent = b.Agent
+	if err := a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive); err != nil {
+		return fail(fallback(actionWrite, err))
+	}
+	placed := a.postPRCards(context.WithoutCancel(hc.Ctx), hc.DB, sub, id, id.DMChannelID, b.ThreadTS, cardBeside{}, t)
+	if missed := a.cards.uncarded(placed, t.waiting); len(missed) > 0 {
+		return fail(fmt.Sprintf("drew no card for tap_prs %s: its card was neither redrawn nor posted; the daemon log says why", prURLs(missed)))
+	}
+	return a.tappedReply(hc, sub, id, placed[0].thread, placed[0].ts, b, nil, tapDrawn{cards: placed})
 }
 
 func rootDriveQuestion(b *opBody) string {

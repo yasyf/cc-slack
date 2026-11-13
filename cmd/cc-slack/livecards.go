@@ -238,6 +238,11 @@ func (t *liveThread) revives(m *liveMessage, drawn statusCard) bool {
 	return t.withdrawn(m) && drawn.Waits != "" && drawn.Waits == m.Card.Waits
 }
 
+func (t *liveThread) reasks(m *liveMessage, drawn statusCard) bool {
+	ans, answered := t.Answers[m.Card.Waits]
+	return answered && !ans.Withdrawn && ans.Owed == nil && ans.Undelivered == "" && drawn.Waits != "" && drawn.Waits == m.Card.Waits
+}
+
 func (t *liveThread) shows(keys map[string]bool) bool {
 	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) && t.asks(m) })
 }
@@ -777,7 +782,7 @@ func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRe
 			continue
 		}
 		for _, m := range t.PRCards {
-			if !m.cites(keys) || t.retired(m) && !t.revives(m, card) || thread == "" && m.TS != t.Thread {
+			if !m.cites(keys) || t.retired(m) && !t.revives(m, card) {
 				continue
 			}
 			ref := cardRef{t.Channel, t.Thread, m.TS}
@@ -1881,7 +1886,7 @@ func (l *liveCards) cardsListing(pr refID) []cardRef {
 }
 
 // replacePRCard redraws a posted PR card in place from what its command says now.
-func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, now time.Time) error {
+func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, reasks bool, now time.Time) error {
 	key := threadKey(card.channel, card.thread)
 	defer l.drawLock(key)()
 	l.mu.Lock()
@@ -1901,7 +1906,7 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		l.mu.Unlock()
 		return nil
 	}
-	if revived {
+	if revived || reasks && t.reasks(m, drawn) {
 		delete(t.Answers, m.Card.Waits)
 		m.Tapped = ""
 	}

@@ -209,9 +209,15 @@ one stack, is the card of each of them: it is asked for and posted once, no
 PR it lists counts as uncarded, and any of them changing redraws it, asked for
 by its first PR. A redraw of a posted card asks with `"redraw": true` beside `prs`, and the
 program draws the card as the PR stands now, putting any reason it would draw no
-fresh card on the card itself. In the bot's DM the card opens at the root in
-its own thread, watched by the session whose post named the PR, wherever that
-post sits; a post lands in a DM thread only when its call names that thread.
+fresh card on the card itself. In the bot's DM a PR has one card, opened where
+the post naming it sits: at the root in its own thread, watched by the session
+whose post named the PR, for a post at the root, and in the thread for a post
+in a DM thread; a post lands in a DM thread only when its call names that
+thread. A later post naming the PR, in any thread, redraws that card where it
+sits. A call whose `tap_prs` comes with no text, card, blocks or files only
+draws: it asks the program for each PR's card, redraws a posted one in place,
+offering again an answer whose waits id the program still asks, and posts a
+first card under `thread_ts`, or at the root with none, and nothing else.
 Each PR's card, a pick card already offering it included, then shows with the
 post. A status card at the DM root carries each card inside itself, below its
 own words, with the card's answer buttons; a tap on one answers the card
@@ -232,7 +238,7 @@ the post's DM thread. A status card that carries cards is then read back from
 Slack, and the call's `warning` starts with NO APPROVE when the message holds no
 button answering a card it carries. In
 a listed channel the card is a reply in the post's thread. It keeps them in
-`live-cards.json`, so a PR at one head is carded once at the DM root, and once
+`live-cards.json`, so a PR at one head is carded once in the DM, and once
 per thread in a channel, and the ref poller redraws a card when any PR it
 carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
