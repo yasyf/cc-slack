@@ -77,6 +77,7 @@ LINKED_VERBS = {"post", "edit", "delete", "join"}
 SLACK_URL = re.compile(r"https://[\w.-]+\.slack\.com/archives/[^\s<>|)\"]+")
 PASTED = re.compile(r"<pasted_content\b.*?</pasted_content>", re.S)
 SLACK_ID = re.compile(r"[CDGU][A-Z0-9]{8,}")
+CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{8,}")
 BOARD_ANSWER = "board-answer"
 HIS_WORDS = frozenset({"prompt", "queued", "plan", "ask", "card", "board", "owner-ledger"})
 DM_ORDER = "dm-order"
@@ -406,7 +407,9 @@ def announced(conv: Conversation) -> set[str]:
 
 
 def incident_room(ctx: Context, room: str) -> Standing:
-    granted = {tag.removeprefix(GRANT_LABEL) for answer in live_answers(ctx, GRANT_LABEL) for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and "/" not in tag}
+    if not CHANNEL_ID.fullmatch(room):
+        return Standing()
+    granted = {tag.removeprefix(GRANT_LABEL) for answer in live_answers(ctx, GRANT_LABEL) for tag in answer.get("tags", ()) if tag.startswith(GRANT_LABEL) and CHANNEL_ID.fullmatch(tag.removeprefix(GRANT_LABEL))}
     for channel in sorted(granted - {room}):
         found = decided(ctx, channel, "")
         if not found.grants:
@@ -1506,6 +1509,8 @@ on(
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, REVOKED) | PAGES_HISTORY | room_opened(ROOM)) >> DENY,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM, answered=False)) >> DENY,
             case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT) | PAGES_HISTORY | room_opened(ROOM, by="Alex (claude)")) >> DENY,
+            case(ROOM_POST, tool="slack_send", **said("status?"), commands=ruled(LABELED_GRANT, EVERY_BUG_GRANT) | PAGES_HISTORY | room_opened("C0OTHER0001") | {f"{CC_SLACK} history --channel solved": (1, "channel_not_found")}) >> DENY,
+            case({"channel_id": "C0GROUPDM01", "thread_ts": PRIYA_THREAD["thread_ts"], "text": PRIYA_THREAD["text"]}, **said("status?"), commands=PRIYA_DM | {"ccn answer search slack-grant:": (1, "a DM write never sweeps the grants")}) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(LABELED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "fix is out"}, tool="slack_reply", **said("status?"), commands=ruled(KEPT_POSTING) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"channel_id": ROOM, "text": "fix is out"}, **said("status?"), commands=ruled(LABELED_GRANT) | PAGE_REPLY_READ | {"ccn answer search slack-grant:": (1, "a thread write never sweeps the grants")}) >> DENY,
