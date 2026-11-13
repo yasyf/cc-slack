@@ -436,6 +436,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 		agentName string
 		broadcast bool
 		noWatch   bool
+		key       string
 		spend     ticketSpend
 	)
 	c := &cobra.Command{
@@ -451,6 +452,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 			body["broadcast"] = broadcast
 			body["no_watch"] = noWatch
 			body["agent"] = agentName
+			putRequestKey(body, key)
 			if err := putBlocks(body, f.cwd, blocks); err != nil {
 				return err
 			}
@@ -463,6 +465,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 	c.Flags().BoolVar(&broadcast, "broadcast", false, "also send the thread reply to the channel")
 	c.Flags().BoolVar(&noWatch, "no-watch", false, "post without arming a watch on the message's thread")
 	bindAgent(c, &agentName)
+	bindRequestKey(c, &key)
 	bindTicket(c, &spend)
 	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
@@ -1064,6 +1067,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		drive     string
 		asHolder  bool
 		tapPRs    []string
+		key       string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
@@ -1074,6 +1078,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
+			putRequestKey(body, key)
 			if err := putBlocks(body, f.cwd, blocks); err != nil {
 				return err
 			}
@@ -1095,6 +1100,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM when it works for --drive, so the user's replies under the post reach that session; else as this session")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. A link in the text or card draws none")
 	bindAgent(c, &agentName)
+	bindRequestKey(c, &key)
 	return c
 }
 
@@ -1164,6 +1170,16 @@ func dmRelayCmd(d cmd.Deps) *cobra.Command {
 
 func bindAgent(c *cobra.Command, name *string) {
 	c.Flags().StringVar(name, "agent", "", "agent writing the post, shown after your name as <display name> (<agent>): claude, codex, cursor (default agent)")
+}
+
+func bindRequestKey(c *cobra.Command, key *string) {
+	c.Flags().StringVar(key, "request-key", "", "key naming this post on every call that makes it, opening with the unix milliseconds it was minted at, such as 1794595135624-mydrive.697167: Slack is read for the key first, and a post Slack already holds under it is answered instead of posted again")
+}
+
+func putRequestKey(body map[string]any, key string) {
+	if key != "" {
+		body["request_key"] = key
+	}
 }
 
 func putCard(body map[string]any, cwd, value string) error {
