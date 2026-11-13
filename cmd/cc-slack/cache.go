@@ -217,8 +217,7 @@ func (c *readCache) missedNudges(ctx context.Context) {
 func (c *readCache) generation(ctx context.Context, channelID, threadTS string) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, _, err := c.load(ctx, channelID, threadTS)
-	return entry.gen, err
+	return c.loadGeneration(ctx, channelID, threadTS)
 }
 
 func (c *readCache) after(ctx context.Context, channelID, threadTS, since string) (int, error) {
@@ -232,6 +231,28 @@ func (c *readCache) observe(ctx context.Context, channelID, threadTS, since stri
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
+	if len(fetched) == 0 {
+		var entry threadEntry
+		var fullAt int64
+		var newest string
+		err := c.st.DB().QueryRowContext(ctx, `SELECT gen, full_at, newest_ts FROM threads WHERE channel_id = ? AND thread_ts = ?`,
+			channelID, threadTS).Scan(&entry.gen, &fullAt, &newest)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("load cached thread %s/%s: %w", channelID, threadTS, err)
+		}
+		entry.fullAt = time.UnixMilli(fullAt)
+		if entry.gen != gen || !entry.whole(now) || tsLess(newest, since) {
+			return nil
+		}
+		if _, err := c.st.DB().ExecContext(ctx, `UPDATE threads SET synced_at = ?, used_at = ?, gen = gen + 1 WHERE channel_id = ? AND thread_ts = ?`,
+			now.UnixMilli(), c.now().UnixMilli(), channelID, threadTS); err != nil {
+			return fmt.Errorf("save cached thread %s/%s: %w", channelID, threadTS, err)
+		}
+		return nil
+	}
 	entry, found, err := c.load(ctx, channelID, threadTS)
 	if err != nil || !found || entry.gen != gen || !entry.whole(now) || tsLess(entry.newest(), since) {
 		return err
@@ -287,12 +308,25 @@ func (e expiringAPI) DeleteMessageContext(ctx context.Context, channelID, timest
 }
 
 func (c *readCache) commit(ctx context.Context, channelID, threadTS string, e threadEntry) error {
-	current, _, err := c.load(ctx, channelID, threadTS)
-	if err != nil || current.gen != e.gen {
+	current, err := c.loadGeneration(ctx, channelID, threadTS)
+	if err != nil || current != e.gen {
 		return err
 	}
 	e.gen++
 	return c.save(ctx, channelID, threadTS, e)
+}
+
+func (c *readCache) loadGeneration(ctx context.Context, channelID, threadTS string) (int64, error) {
+	var gen int64
+	err := c.st.DB().QueryRowContext(ctx, `SELECT gen FROM threads WHERE channel_id = ? AND thread_ts = ?`,
+		channelID, threadTS).Scan(&gen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("load cached thread %s/%s: %w", channelID, threadTS, err)
+	}
+	return gen, nil
 }
 
 func (c *readCache) load(ctx context.Context, channelID, threadTS string) (threadEntry, bool, error) {

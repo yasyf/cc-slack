@@ -295,6 +295,156 @@ func TestObserveDropsAPollSupersededByARead(t *testing.T) {
 	}
 }
 
+func TestEmptyPollUpdatesOnlyCacheFreshness(t *testing.T) {
+	for _, followed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("followed=%t", followed), func(t *testing.T) {
+			ctx := context.Background()
+			c := openTestCache(t)
+			now := time.Unix(1_800_000_100, 0)
+			c.now = func() time.Time { return now }
+			entry := threadEntry{
+				msgs:     []slack.Message{rootMessage(testThread, "root"), reply(firstReply, "first")},
+				syncedAt: time.UnixMilli(0), fullAt: now, gen: 7, followed: followed,
+			}
+			if err := c.save(ctx, testChannel, testThread, entry); err != nil {
+				t.Fatal(err)
+			}
+			type row struct {
+				body, newest                        string
+				syncedAt, fullAt, usedAt, size, gen int64
+				followed                            bool
+			}
+			readRow := func() row {
+				t.Helper()
+				var got row
+				err := c.st.DB().QueryRowContext(ctx, `SELECT messages, newest_ts, synced_at, full_at, used_at, bytes, gen, followed
+					FROM threads WHERE channel_id = ? AND thread_ts = ?`, testChannel, testThread).
+					Scan(&got.body, &got.newest, &got.syncedAt, &got.fullAt, &got.usedAt, &got.size, &got.gen, &got.followed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return got
+			}
+			want := readRow()
+			for _, stmt := range []string{
+				`CREATE TRIGGER no_body_rewrite BEFORE UPDATE OF messages, newest_ts, full_at, bytes, followed ON threads
+					BEGIN SELECT RAISE(ABORT, 'empty poll rewrote cached content'); END`,
+				`CREATE TRIGGER no_eviction BEFORE DELETE ON threads
+					BEGIN SELECT RAISE(ABORT, 'empty poll evicted a thread'); END`,
+			} {
+				if _, err := c.st.DB().ExecContext(ctx, stmt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.maxBytes = 0
+			for range 2 {
+				now = now.Add(time.Second)
+				if err := c.observe(ctx, testChannel, testThread, firstReply, want.gen, nil); err != nil {
+					t.Fatal(err)
+				}
+				want.syncedAt, want.usedAt, want.gen = now.UnixMilli(), now.UnixMilli(), want.gen+1
+				if got := readRow(); got != want {
+					t.Fatalf("cached row = %+v, want %+v", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestEmptyPollIgnoresUnusableCacheEntries(t *testing.T) {
+	for _, name := range []string{"missing", "stale generation", "expired", "invalidated", "newer cursor"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			c := openTestCache(t)
+			now := time.Unix(1_800_000_100, 0)
+			c.now = func() time.Time { return now }
+			entry := threadEntry{
+				msgs:     []slack.Message{rootMessage(testThread, "root"), reply(firstReply, "first")},
+				syncedAt: now, fullAt: now, gen: 7, followed: true,
+			}
+			gen, since := entry.gen, firstReply
+			switch name {
+			case "stale generation":
+				gen--
+			case "expired":
+				entry.fullAt = now.Add(-cacheFullRefresh)
+			case "invalidated":
+				entry.fullAt = time.UnixMilli(0)
+			case "newer cursor":
+				since = secondReply
+			}
+			if name != "missing" {
+				if err := c.save(ctx, testChannel, testThread, entry); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, stmt := range []string{
+				`CREATE TRIGGER no_update BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'ignored poll updated a thread'); END`,
+				`CREATE TRIGGER no_insert BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'ignored poll inserted a thread'); END`,
+				`CREATE TRIGGER no_delete BEFORE DELETE ON threads BEGIN SELECT RAISE(ABORT, 'ignored poll deleted a thread'); END`,
+			} {
+				if _, err := c.st.DB().ExecContext(ctx, stmt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.observe(ctx, testChannel, testThread, since, gen, []slack.Message{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCacheGenerationChecksDoNotScaleWithMessageBodies(t *testing.T) {
+	ctx := context.Background()
+	c := openTestCache(t)
+	now := time.Unix(1_800_000_100, 0)
+	c.now = func() time.Time { return now }
+	gen, err := c.generation(ctx, testChannel, testThread)
+	if err != nil || gen != 0 {
+		t.Fatalf("missing generation = %d, %v, want 0, nil", gen, err)
+	}
+	entry := threadEntry{msgs: []slack.Message{rootMessage(testThread, "root")}, syncedAt: now, fullAt: now}
+	if err := c.commit(ctx, testChannel, testThread, entry); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name string
+		run  func()
+	}{
+		{"generation", func() {
+			gen, err := c.generation(ctx, testChannel, testThread)
+			if err != nil || gen != 1 {
+				t.Fatalf("generation = %d, %v, want 1, nil", gen, err)
+			}
+		}},
+		{"stale commit", func() {
+			if err := c.commit(ctx, testChannel, testThread, entry); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	small := make([]float64, len(checks))
+	for i, check := range checks {
+		small[i] = testing.AllocsPerRun(5, check.run)
+	}
+	large := entry
+	large.msgs = slices.Clone(entry.msgs)
+	large.gen = 1
+	for i := range 128 {
+		large.msgs = append(large.msgs, reply(fmt.Sprintf("1800000000.%06d", 200+i), strings.Repeat("x", 1024)))
+	}
+	if err := c.save(ctx, testChannel, testThread, large); err != nil {
+		t.Fatal(err)
+	}
+	for i, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if got := testing.AllocsPerRun(5, check.run); got > small[i] {
+				t.Fatalf("allocations with 129 messages = %g, want no more than %g with 1 message", got, small[i])
+			}
+		})
+	}
+}
+
 func TestCacheEvictsTheLeastRecentlyReadThread(t *testing.T) {
 	f := newFixture(t)
 	threads := []string{"1800000000.000100", "1800000000.000200", "1800000000.000300"}
