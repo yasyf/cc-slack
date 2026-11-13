@@ -80,7 +80,9 @@ with your recommended answer, is a reply card with `options` and
 `recommended` and no `waits`. The card shows the recommended option first,
 marked (Recommended), keeps its Ack and Pause, and says nothing about a
 stopped lane. A tap on another option arrives as a `slack.action` like any
-reply card's, so change course when it comes.
+reply card's, so change course when it comes. When the user answers it in
+words instead, close it with `slack_card_answer` on its permalink, which
+shows their answer in place of its buttons.
 
 ## Ask the user with an ask card
 
