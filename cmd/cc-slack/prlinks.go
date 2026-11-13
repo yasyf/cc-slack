@@ -949,7 +949,9 @@ func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, 
 	cmd.WaitDelay = time.Second
 	var said bytes.Buffer
 	cmd.Stderr = &said
+	began := time.Now()
 	out, err := cmd.Output()
+	traced(ctx, strings.Join(command[:min(len(command), 3)], " "), time.Since(began))
 	if err != nil && ctx.Err() != nil {
 		return nil, "", fmt.Errorf("%s: %w in %s: %w", command[0], errCardCommandUnfinished, prCardPatience, ctx.Err())
 	}
