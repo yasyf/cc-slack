@@ -105,6 +105,15 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	if !stale.stale || stale.retryAfter != 30*time.Second || !slices.Equal(texts(stale.msgs), []string{"root", "first"}) {
 		t.Fatalf("rate-limited read = %+v, want the cached thread marked stale with Retry-After", stale)
 	}
+	calls := f.slack.callCount(methodReplies)
+	f.now = f.now.Add(10 * time.Second)
+	if held := f.read(testThread); !held.stale || held.retryAfter != 20*time.Second {
+		t.Fatalf("read inside the limit = %+v, want the cached thread stale for the 20s Slack still limits", held)
+	}
+	if n := f.slack.callCount(methodReplies); n != calls {
+		t.Fatalf("replies calls = %d, want %d: a cached thread asks Slack nothing until its Retry-After passes", n, calls)
+	}
+	f.now = f.now.Add(20 * time.Second)
 	if fresh := f.read(testThread); fresh.stale || !slices.Equal(texts(fresh.msgs), []string{"root", "first", "second"}) {
 		t.Fatalf("read after the limit = %+v, want a fresh merged thread", fresh)
 	}
@@ -113,6 +122,31 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	_, err := f.cache.replies(f.ctx, f.slack, testChannel, "1800000000.000900")
 	if !errors.As(err, new(*slack.RateLimitedError)) {
 		t.Fatalf("uncached read under a rate limit: %v, want the rate-limit error", err)
+	}
+}
+
+func TestThreadReadNamingAMessageTheCacheLacksAsksSlack(t *testing.T) {
+	f := newFixture(t)
+	seedThread(f)
+	f.read(testThread)
+	f.slack.add(testChannel, reply(secondReply, "second"))
+	f.now = f.now.Add(time.Second)
+	read, err := f.cache.repliesHolding(f.ctx, f.slack, testChannel, testThread, secondReply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := texts(read.msgs); !slices.Equal(got, []string{"root", "first", "second"}) {
+		t.Fatalf("thread read for its newest reply = %q, want it fetched though the cached copy is fresh", got)
+	}
+	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
+	f.now = f.now.Add(cacheFresh)
+	f.read(testThread)
+	calls := f.slack.callCount(methodReplies)
+	if _, err := f.cache.repliesHolding(f.ctx, f.slack, testChannel, testThread, "1800000000.000900"); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.slack.callCount(methodReplies); n != calls+1 {
+		t.Fatalf("replies calls = %d, want %d: a read naming a message the cache lacks asks Slack inside a rate limit", n, calls+1)
 	}
 }
 
