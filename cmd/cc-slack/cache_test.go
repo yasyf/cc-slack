@@ -105,6 +105,15 @@ func TestThreadReadServesTheCacheWhenSlackRateLimits(t *testing.T) {
 	if !stale.stale || stale.retryAfter != 30*time.Second || !slices.Equal(texts(stale.msgs), []string{"root", "first"}) {
 		t.Fatalf("rate-limited read = %+v, want the cached thread marked stale with Retry-After", stale)
 	}
+	calls := f.slack.callCount(methodReplies)
+	f.now = f.now.Add(10 * time.Second)
+	if held := f.read(testThread); !held.stale || held.retryAfter != 20*time.Second {
+		t.Fatalf("read inside the limit = %+v, want the cached thread stale for the 20s Slack still limits", held)
+	}
+	if n := f.slack.callCount(methodReplies); n != calls {
+		t.Fatalf("replies calls = %d, want %d: a cached thread asks Slack nothing until its Retry-After passes", n, calls)
+	}
+	f.now = f.now.Add(20 * time.Second)
 	if fresh := f.read(testThread); fresh.stale || !slices.Equal(texts(fresh.msgs), []string{"root", "first", "second"}) {
 		t.Fatalf("read after the limit = %+v, want a fresh merged thread", fresh)
 	}

@@ -122,7 +122,7 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS 
 	fetched, err := fetchReplies(fetchCtx, api, channelID, threadTS, since)
 	var rate *slack.RateLimitedError
 	if errors.As(err, &rate) {
-		c.limit(now.Add(rate.RetryAfter))
+		c.limit(c.now().Add(rate.RetryAfter))
 	}
 	if found && errors.As(err, &rate) {
 		return threadRead{msgs: entry.msgs, stale: true, syncedAt: entry.syncedAt, retryAfter: rate.RetryAfter}, c.touch(ctx, channelID, threadTS, now)
