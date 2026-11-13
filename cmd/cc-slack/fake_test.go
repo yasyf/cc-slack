@@ -571,6 +571,9 @@ func (f *fakeSlack) GetConversationHistoryContext(_ context.Context, params *sla
 	msgs := f.channels[params.ChannelID]
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
+		if !params.IncludeAllMetadata {
+			m.Metadata = slack.SlackMetadata{}
+		}
 		top := m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp
 		if top && (params.Oldest == "" || tsLess(params.Oldest, m.Timestamp)) {
 			m.LatestReply = cmp.Or(latestReply(msgs, m.Timestamp), m.LatestReply)

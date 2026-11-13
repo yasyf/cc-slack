@@ -1274,6 +1274,9 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 	if err != nil {
 		return err
 	}
+	for i, m := range msgs {
+		msgs[i] = dashboardWords(id, m)
+	}
 	at := slices.IndexFunc(msgs, func(m slack.Message) bool {
 		return replyLink.channelID == ref.channel && m.Timestamp == replyLink.ts && m.Timestamp != ref.thread && id.fromOperator(m)
 	})
