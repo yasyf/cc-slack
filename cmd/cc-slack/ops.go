@@ -1471,7 +1471,7 @@ func (a *app) readMessageOf(ctx, shareCtx context.Context, api slackAPI, id iden
 	}
 	return readMessage{
 		TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(ctx, api, m),
-		FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: messageText(m),
+		FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: ownText(m),
 		ReplyCount: m.ReplyCount, LatestReply: m.LatestReply, Files: files, Shares: a.sharedMessages(shareCtx, api, m),
 		Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw,
 	}, nil
@@ -1527,6 +1527,14 @@ func messageText(m slack.Message) string {
 		out = append(slices.DeleteFunc(out, func(o string) bool { return strings.Contains(p, o) }), p)
 	}
 	return strings.Join(out, "\n")
+}
+
+func ownText(m slack.Message) string {
+	m.Attachments = slices.DeleteFunc(slices.Clone(m.Attachments), func(at slack.Attachment) bool {
+		_, shared := shareRef(at)
+		return shared
+	})
+	return messageText(m)
 }
 
 func messageButtons(m slack.Message) []string {

@@ -75,7 +75,7 @@ func (a *app) sharedMessage(ctx context.Context, api slackAPI, at slack.Attachme
 		return share
 	}
 	share.User, share.UserName = cmp.Or(original.User, at.AuthorID), cmp.Or(a.cache.name(ctx, api, original), share.UserName)
-	share.Text, share.Files, share.Shares = messageText(original), files, a.sharedMessages(ctx, api, original)
+	share.Text, share.Files, share.Shares = ownText(original), files, a.sharedMessages(ctx, api, original)
 	return share
 }
 

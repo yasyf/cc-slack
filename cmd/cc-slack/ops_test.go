@@ -646,9 +646,34 @@ func TestAThreadShowsASharedMessageAsItsOriginalAuthorsReport(t *testing.T) {
 	if got, err := os.ReadFile(want[0].Files[0].Path); err != nil || string(got) != "\x89PNG" {
 		t.Fatalf("screenshot %q, %v", got, err)
 	}
-	if text := res.Messages[0].Text; text != sharerText+"\nShared from Josh in <#C0ORIGIN>: "+originalText {
-		t.Fatalf("text = %q, want the shared words attributed to their author", text)
+	if text := res.Messages[0].Text; text != sharerText {
+		t.Fatalf("text = %q, want the sharer's own words, the shared message under shares alone", text)
 	}
+}
+
+func TestARepostOfAReadMessageCarriesOnlyItsOwnWords(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	lock := postWaiting(t, l, mergeCard())
+	image := postWaiting(t, l, statusCard{Status: "needs_you", Title: "Approve the image.sh fix?", Body: "CI is green.", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "step-4:image"})
+	linked := "https://example.slack.com/archives/" + testDM + "/p1800000400000100"
+	words := "Catch-up, page 8:\n<" + linked + "|your card on the clock>"
+	page := slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000500.000100", BotID: "B0CLAUDE", Text: words,
+		Attachments: []slack.Attachment{{FromURL: linked, AuthorName: "PlatClaude", Text: "Approve the clock?\n<" + lock.url() + ">\n<" + image.url() + ">"}},
+	}}
+	l.slack.add(testDM, page)
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"thread_ts": page.Timestamp}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	read := res.Messages[0]
+	if read.Text != words || len(read.Shares) != 1 || !strings.Contains(read.Shares[0].Text, image.url()) {
+		t.Fatalf("read = %+v, want its own words as text and Slack's preview of the card it links under shares", read)
+	}
+	l.refused(opReply, map[string]string{"channel_id": testUser, "thread_ts": lock.thread, "text": messageText(page)}, cardLinkNamed)
+	l.post(opReply, map[string]string{"channel_id": testUser, "thread_ts": lock.thread, "text": read.Text})
 }
 
 func TestACardLinkedIntoAThreadReadsItsBodyOnceAndItsShowMeTable(t *testing.T) {
