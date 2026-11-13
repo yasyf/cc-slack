@@ -2590,7 +2590,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	shown, err := a.postLinkPages(hc, sub, id, under, thread, ts, pages)
+	shown, err := a.postLinkPages(hc, sub, id, thread, ts, pages)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2732,21 +2732,21 @@ func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []sl
 	return pages, ready
 }
 
-func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, under, thread, ts string, pages []dmPage) ([]string, error) {
+func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, pages []dmPage) ([]string, error) {
 	if err := a.postPages(atStep(hc.Ctx, "status"), hc.DB, sub, id, thread, ts, pages[0].msg.text, pages[0].later); err != nil {
 		return nil, err
 	}
 	shown := make([]string, 0, len(pages)-1)
 	for n, page := range pages[1:] {
 		ctx := atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1))
-		pageThread, pageTS, _, err := a.dmStatus(ctx, hc.DB, sub, id, under, page.msg)
+		_, pageTS, _, err := a.dmStatus(ctx, hc.DB, sub, id, thread, page.msg)
 		if err == nil {
-			err = a.postPages(ctx, hc.DB, sub, id, pageThread, pageTS, page.msg.text, page.later)
+			err = a.postPages(ctx, hc.DB, sub, id, thread, pageTS, page.msg.text, page.later)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("posted the start of this post at %s, so do not post it again, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
 		}
-		shown = append(shown, id.permalink(id.DMChannelID, pageTS, pageThread))
+		shown = append(shown, id.permalink(id.DMChannelID, pageTS, thread))
 	}
 	return shown, nil
 }
