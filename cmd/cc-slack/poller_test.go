@@ -1220,7 +1220,7 @@ func TestPollerSendsTheOperatorsChannelWordsOnlyToTheSessionHoldingTheDM(t *test
 	watchChannel(t, f)
 	f.tick()
 
-	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", User: testUser, Text: "ship the fix"}})
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", User: testUser, Text: "<@UBOT> ship the fix"}})
 	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000400", User: "UOTHER", Text: "on it"}})
 	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000000.000300"})
 	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000000.000400"})
@@ -1273,7 +1273,8 @@ func TestTheOperatorsWordsInAWatchedChannelSteerOnlyWhenTheyAreToTheBot(t *testi
 		"a reply in a thread this daemon posted in":               {teammates, "ship it", true, true},
 		"a reply to a teammate in a thread this daemon posted in": {teammates, "<@UOTHER> on it after lunch", true, false},
 		"a reply that mentions the bot":                           {teammates, "<@UBOT> try this on the eval set", false, true},
-		"a new top-level message":                                 {"", "ship the fix", false, true},
+		"a new top-level message":                                 {"", "ship the fix", false, false},
+		"a new top-level message to the bot":                      {"", "<@UBOT> ship the fix", false, true},
 		"a new top-level message to a teammate":                   {"", "<@UOTHER> can you try this", false, false},
 		"a new top-level message to the channel":                  {"", "<!here> deploys are frozen until 3", false, false},
 	} {
@@ -1310,5 +1311,37 @@ func TestTheOperatorsWordsInAWatchedChannelSteerOnlyWhenTheyAreToTheBot(t *testi
 				}
 			}
 		})
+	}
+}
+
+func TestHisLinesToATeammateAtAChannelsRootReachTheChannelsFeedAndNeverTheDMHolder(t *testing.T) {
+	f := newFixture(t)
+	holder, _ := dmHeldElsewhere(t, f)
+	subscribeFeed(t, f, feedAlerts, feedReleases, feedPosts)
+	f.tick()
+
+	lines := []slack.Msg{
+		{Timestamp: "1800000010.000000", User: "UOTHER", Text: "want me to rerun the eval against the new sandbox?"},
+		{Timestamp: "1800000020.000000", User: testUser, Text: "nice"},
+		{Timestamp: "1800000030.000000", User: testUser, Text: "do it"},
+		{Timestamp: "1800000040.000000", User: testUser, Text: "this is tested against that run I sent u?"},
+	}
+	for _, m := range lines {
+		f.post(slack.Message{Msg: m})
+	}
+
+	got := feedLines(t, f)
+	if len(got) != len(lines) {
+		t.Fatalf("feed lines = %q, want one POST line for each of the %d messages", got, len(lines))
+	}
+	for i, m := range lines {
+		if want := m.Text + " " + f.id.permalink(testChannel, m.Timestamp, m.Timestamp); !strings.HasPrefix(got[i], "POST ") || !strings.HasSuffix(got[i], want) {
+			t.Fatalf("feed line %d = %q, want a POST line ending %q", i, got[i], want)
+		}
+	}
+	for _, e := range f.plane.events {
+		if e.SubjectID == holder.ID {
+			t.Fatalf("the session holding the DM got %s, want none of his words to a teammate", e.Payload)
+		}
 	}
 }
