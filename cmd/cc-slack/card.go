@@ -778,6 +778,13 @@ func (c statusCard) refIDs() []refID {
 	return ids
 }
 
+func (c statusCard) tapPRs() []refID {
+	if c.driveQuestion() {
+		return nil
+	}
+	return c.refIDs()
+}
+
 func (c statusCard) prKeys() map[string]bool {
 	keys := map[string]bool{}
 	for _, id := range c.refIDs() {

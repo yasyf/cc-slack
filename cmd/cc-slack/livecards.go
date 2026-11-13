@@ -214,7 +214,7 @@ func (t *liveThread) cites(keys map[string]bool) bool {
 }
 
 func (t *liveThread) carded(keys map[string]bool) bool {
-	return t.cites(keys) || slices.ContainsFunc(t.PRCards, func(m *liveMessage) bool { return m.cites(keys) })
+	return t.Root.cites(keys) || slices.ContainsFunc(t.messages(), func(m *liveMessage) bool { return m.cites(keys) })
 }
 
 func (t *liveThread) open(m *liveMessage) bool {
@@ -1519,7 +1519,7 @@ func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool,
 	var expiry time.Time
 	for _, t := range l.threads {
 		expiry = earliest(expiry, t.nextExpiry(now))
-		for _, m := range slices.Concat([]*liveMessage{t.Root, t.Reply}, t.PRCards) {
+		for _, m := range slices.Concat([]*liveMessage{t.Root}, t.messages()) {
 			if m == nil {
 				continue
 			}
@@ -1757,13 +1757,13 @@ func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, c
 		changed = merged
 	}
 	whole := t.Stale || t.cites(changed) || t.expiredSinceDrawn(now)
-	var writes, prCards []cardWrite
+	var writes, kept []cardWrite
 	if whole {
 		writes = l.plan(t, now, "")
 	}
-	for _, m := range t.PRCards {
-		if m.cites(changed) && !m.Edited {
-			prCards = append(prCards, l.write(t, m, now, false))
+	for _, m := range t.messages() {
+		if m != t.Reply && m.cites(changed) && !m.Edited {
+			kept = append(kept, l.write(t, m, now, false))
 		}
 	}
 	l.mu.Unlock()
@@ -1774,8 +1774,8 @@ func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, c
 			errs = append(errs, err)
 		}
 	}
-	if len(prCards) > 0 {
-		if _, err := l.flush(ctx, api, t, prCards, now, false); err != nil {
+	if len(kept) > 0 {
+		if _, err := l.flush(ctx, api, t, kept, now, false); err != nil {
 			l.log.Printf("live card %v", err)
 			errs = append(errs, err)
 		}
@@ -1986,7 +1986,7 @@ func (l *liveCards) waitingPR(channel, thread, waits string) (refID, bool) {
 	if !ok || t.Waiting[waits] == nil {
 		return refID{}, false
 	}
-	if ids := t.Waiting[waits].Card.refIDs(); len(ids) > 0 {
+	if ids := t.Waiting[waits].Card.tapPRs(); len(ids) > 0 {
 		return ids[0], true
 	}
 	return refID{}, false

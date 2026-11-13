@@ -238,6 +238,36 @@ func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 	}
 }
 
+func TestADriveQuestionCardKeepsItsPRsLiveStateAfterALaterPostTakesItsThread(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	refs, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 11, 13, 19, 0, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	const asked = "1800000000.000200"
+	question := statusCard{Status: "needs_you", Title: "Land the scan fix?", Drive: "demo", Waits: "demo:j3833-1", Options: []string{"Land it", "Keep the scan"}, Recommended: "Land it",
+		Refs: []cardLink{{URL: testPRURL, Label: "the scan fix"}}}
+	seedLiveThread(cards, statusCard{Status: "info", Title: "The scan order"}, clock.now())
+	thread := cards.threads[threadKey("D"+testUser, "1800000000.000100")]
+	thread.apply(question, cardTag{}, clock.now(), false)
+	thread.Reply.TS = asked
+	thread.keep(question, thread.Reply)
+	thread.apply(statusCard{Status: "info", Title: "A later line"}, cardTag{}, clock.now(), false)
+	thread.Reply.TS = "1800000000.000300"
+
+	cards.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), asked); len(edits) != 1 || !strings.Contains(edits[0], "the scan fix") || !strings.Contains(edits[0], "🔄 CI running") {
+		t.Fatalf("question card edits after the first poll = %v, want its PR's state drawn though a later post is its thread's reply", edits)
+	}
+	refs.set(prJSON("MERGED", "SUCCESS", false), "passed")
+	clock.advance(refPollEvery)
+	cards.tick(l.ctx)
+	if edits := editsOf(l.slack.edited(), asked); !strings.Contains(edits[len(edits)-1], "🟣 landed") {
+		t.Fatalf("question card after its PR merged = %s, want it drawn landed", edits[len(edits)-1])
+	}
+}
+
 func TestARestartRedrawsNoCardWhoseRefsStayed(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)
@@ -683,6 +713,30 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	want := []string{answer(fmt.Sprintf("%d.000100", picked.Unix()), false), answer(fmt.Sprintf("%d.000900", undone.Unix()), true)}
 	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
 		t.Fatalf("card command asked %v, want his pick and then its undo, each with the card's waits id and link", got)
+	}
+}
+
+func TestADriveQuestionCardLinkingAPRTakesHisTapAsHisAnswerToItsQuestion(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	card := statusCard{Status: "needs_you", Title: "Land the scan fix?", Drive: "demo", Waits: "demo:j3833-1", Options: []string{"Land it", "Keep the scan"}, Recommended: "Land it",
+		Refs: []cardLink{{URL: testPRURL, Label: "the scan fix"}}}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := fmt.Sprintf("%d.000100", time.Now().Unix())
+	l.tap(id, cardActionPush{User: testUser, Channel: id.DMChannelID, MessageTS: reply.ts, ThreadTS: reply.ts,
+		ActionID: cardWaitAction + "0:" + card.Waits, Value: string(mustJSON(askTap{ID: card.Waits, Label: "Land it", Question: card.Title, Options: card.Options})),
+		ActionTS: at, Seq: "001800000100000-abcd0410"})
+	want := []string{string(mustJSON(map[string]any{"answer": map[string]any{
+		"waits": card.Waits, "label": "Land it", "other": false, "undone": false, "url": id.permalink(id.DMChannelID, reply.ts, reply.ts),
+		"action_ts": at, "source": "pressed the button",
+	}}))}
+	if got := answersOf(cmd.requests(t)); !slices.Equal(got, want) {
+		t.Fatalf("card command asked %v, want his pick as the answer to the card's question, never a tap on the PR it links", got)
 	}
 }
 
