@@ -275,6 +275,7 @@ func TestAPRCardWhosePRsEndedBeforeItsBuildCollapsesOnceAndARestartRedrawsItNoMo
 	cards.threads[threadKey("D"+testUser, thread)] = &liveThread{Channel: "D" + testUser, Thread: thread, Updated: clock.now(), PRCards: []*liveMessage{{TS: ts, At: clock.now(), Card: card}}}
 	id, _ := parseRef(testPRURL)
 	cards.refs[id.key()] = refState{State: "merged"}
+	cards.save([]string{threadKey("D"+testUser, thread)}, []string{id.key()})
 
 	cards.tick(l.ctx)
 	if edits := editsOf(l.slack.edited(), ts); len(edits) != 1 || !strings.Contains(edits[0], "🟣 Merged") || strings.Contains(edits[0], `"type":"button"`) {

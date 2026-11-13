@@ -921,6 +921,11 @@ func newFixture(t *testing.T) *fixture {
 	f.cache = openTestCache(t)
 	f.cache.now = func() time.Time { return f.now }
 	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t))
+	f.app.cards.path = filepath.Join(t.TempDir(), "live-cards.db")
+	if err := f.app.cards.load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.app.cards.close() })
 	f.app.now = func() time.Time { return f.now }
 	f.app.avatar = agentAvatar
 	f.user = newFakeUserToken(t)
