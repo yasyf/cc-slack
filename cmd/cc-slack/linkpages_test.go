@@ -140,9 +140,17 @@ func TestADMPostPastFiveLinksGoesOutAsPagesThatEachDrawTheirCards(t *testing.T) 
 		if len(sent) != 2 {
 			t.Fatalf("thread %q: posts = %+v, want two pages", thread, sent)
 		}
+		pageThread := thread
+		if thread == "" {
+			pageThread = sent[0].ts
+		}
 		for i, page := range sent {
-			if page.unfurlLinks != "true" || thread != "" && page.threadTS != thread || thread == "" && page.threadTS != "" {
-				t.Fatalf("thread %q: page %d = %+v, want it unfurled where the post goes", thread, i+1, page)
+			want := pageThread
+			if i == 0 {
+				want = thread
+			}
+			if page.unfurlLinks != "true" || page.threadTS != want {
+				t.Fatalf("thread %q: page %d = %+v, want it unfurled in thread %q: the first page where the post goes, each later page in the first page's thread", thread, i+1, page, want)
 			}
 			if links := len(drawnLinks(page.text, everyLinkDraws)); links > slackMaxPreviews {
 				t.Fatalf("thread %q: page %d links %d messages, want at most five", thread, i+1, links)
@@ -151,8 +159,8 @@ func TestADMPostPastFiveLinksGoesOutAsPagesThatEachDrawTheirCards(t *testing.T) 
 		if !strings.Contains(sent[0].text, "card 3") || strings.Contains(sent[0].text, "card 4") || !strings.Contains(sent[1].text, "card 7") {
 			t.Fatalf("thread %q: pages %q and %q, want the cut at the blank line after card 3", thread, sent[0].text, sent[1].text)
 		}
-		if !strings.Contains(res["page_permalink"], strings.ReplaceAll(sent[1].ts, ".", "")) {
-			t.Fatalf("thread %q: dm-status = %v, want it to name the second page", thread, res)
+		if !strings.Contains(res["page_permalink"], strings.ReplaceAll(sent[1].ts, ".", "")+"?thread_ts="+pageThread) {
+			t.Fatalf("thread %q: dm-status = %v, want it to name the second page in thread %q", thread, res, pageThread)
 		}
 	}
 }

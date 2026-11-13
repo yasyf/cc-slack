@@ -185,8 +185,8 @@ message's fifth, so such a link shows only its words. A post to your DM with no
 `blocks` that links more than five cards that draw, Sentry issues and Datadog
 monitors goes out as pages, each cut at the last blank line before
 the line holding its sixth link, or at that line's start, so every card draws;
-the pages go where the post goes, and the result's `page_permalink` names each
-page after the first. A link in a table row counts toward none of the five,
+the first page goes where the post goes, each later page goes in the first page's
+thread, and the result's `page_permalink` names each page after the first. A link in a table row counts toward none of the five,
 since Slack previews no link in a table cell, so a table of cards stays one
 message. Put each card on its own line or in a table row: a line linking six or more
 is refused, and so is an edit in your DM linking six or more, since an edit

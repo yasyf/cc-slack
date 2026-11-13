@@ -170,9 +170,11 @@ line before the line holding its sixth such link, or at that line's start when
 no blank line comes before it, so every card draws. A link in a markdown table
 row counts toward none of the five, since the row draws as a cell of a Slack
 table block, which Slack never previews, so a table of cards stays one message
-with its header once. `linkPages` in `linkpages.go` cuts them. Every page goes where the post goes, at the root or in
-the thread its call names; a root page is watched as the first is, and the
-result's `page_permalink` names each page after the first, space-separated. A
+with its header once. `linkPages` in `linkpages.go` cuts them. The first page goes where the post goes, at the root or in
+the thread its call names, and `postLinkPages` posts every page after it in the first
+page's thread, so a root post's later pages are replies under its first page and
+never more messages at the root. The result's `page_permalink` names each page after
+the first, space-separated. A
 line that links six or more is refused before anything posts, since no cut
 splits it, and so is an edit in the DM that links six or more, since an edit
 cannot add a page. `check-post` flags such a line as `links-past-five`.
