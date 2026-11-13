@@ -587,9 +587,10 @@ nudge covers, and any thread while the socket is down or replaying, answers
 from the cache within 15 s of its last sync. Otherwise, it fetches only
 messages newer than the cached newest one, and every 10 minutes it refetches
 the whole thread to pick up edits and deletions. A thread read never waits out
-a 429: `thread` returns the cached copy at once with `stale: true` and
-`retry_after` in seconds, and a thread never read before fails with the
-fallback below. A shared message's original comes from the cache alone, since
+a 429 and never answers the cached copy in place of Slack's: `thread` fails at
+once, saying how many seconds Slack still limits the read, and a cached thread
+asks Slack nothing until they pass, since the cached copy can lack the thread's
+newest messages. A thread never read before fails the same way. A shared message's original comes from the cache alone, since
 a thread holding dozens of shares would otherwise read each one's thread: a
 share whose thread is not cached keeps its link and the author and text Slack
 attached to it. A fetch that runs past 1,000
