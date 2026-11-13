@@ -164,6 +164,9 @@ func TestWallsCountSentencesOnlyInProseAsCCSlackDrawsIt(t *testing.T) {
 			[]string{`6:1 wall-of-text "One. *Two.* Three. Four.": 4 sentences in one paragraph`}},
 		"a dense ask": {"Hi Anubhav, Yasyf asked me to ask you for one thing on our litestream fork. Could you create a fine-grained personal access token with access to only the repository Forge-AI/litestream. Then save it as a repository secret named FORGE_REBASE_TOKEN. It lets the nightly job rebase our patches onto upstream. Please do not send the token to anyone, me included.",
 			[]string{`1:1 wall-of-text "Hi Anubhav, Yasyf asked me to": 5 sentences in one paragraph`}},
+		"three short lines Slack draws as three paragraphs": {"*Drive fix live: `drive job add` no longer refuses a builder over a design question you already answered.*\nBefore, a research job's design choice blocked every later builder, even after you answered it on cards and the work was built.\n<https://github.com/yasyf/cc-skills/pull/4836|The fix> is live in long-running 1.0.693; its reproduction passes. Nothing waits on you.\n", nil},
+		"a line of four sentences between short lines": {"It is merged.\nThe build is red. The cause is a flaky test. A retry is running. It ends at 5:25pm.\nIt needs nothing.",
+			[]string{`2:1 wall-of-text "The build is red. The cause": 4 sentences in one paragraph`}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

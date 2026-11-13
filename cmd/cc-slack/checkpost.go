@@ -163,18 +163,15 @@ func wallsIn(text string) []fmt.Stringer {
 		if piece.table != nil || piece.picture != nil || strings.HasPrefix(piece.text, "```") {
 			continue
 		}
-		start, sentences := 0, 0
-		for at, line := range append(strings.Split(piece.text, "\n"), "- ") {
-			if !listItem.MatchString(line) && !blockQuote.MatchString(line) {
-				start = cmp.Or(start, piece.line+at)
-				sentences += len(sentenceEnd.FindAllString(quoted.ReplaceAllString(codeSpan.ReplaceAllString(slackToken.ReplaceAllString(line, " "), " "), " "), -1))
+		for at, line := range strings.Split(piece.text, "\n") {
+			if listItem.MatchString(line) || blockQuote.MatchString(line) {
 				continue
 			}
+			sentences := len(sentenceEnd.FindAllString(quoted.ReplaceAllString(codeSpan.ReplaceAllString(slackToken.ReplaceAllString(line, " "), " "), " "), -1))
 			if sentences > paragraphSentences {
-				opening := strings.Fields(lines[start-1])
-				walls = append(walls, wallOfText{start, strings.Join(opening[:min(len(opening), 6)], " "), sentences})
+				opening := strings.Fields(lines[piece.line+at-1])
+				walls = append(walls, wallOfText{piece.line + at, strings.Join(opening[:min(len(opening), 6)], " "), sentences})
 			}
-			start, sentences = 0, 0
 		}
 	}
 	return walls
