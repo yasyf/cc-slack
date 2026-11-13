@@ -72,6 +72,7 @@ type fakeSlack struct {
 	channels  map[string][]slack.Message
 	listed    []slack.Channel
 	dms       map[string][]string
+	private   map[string][]string
 	errs      map[string][]error
 	calls     map[string]int
 	oldest    []string
@@ -105,6 +106,7 @@ func newFakeSlack() *fakeSlack {
 		users:     map[string]*slack.User{},
 		channels:  map[string][]slack.Message{},
 		dms:       map[string][]string{},
+		private:   map[string][]string{},
 		errs:      map[string][]error{},
 		calls:     map[string]int{},
 		uploads:   map[string][]byte{},
@@ -293,6 +295,7 @@ func (f *fakeSlack) GetConversationInfoContext(_ context.Context, input *slack.G
 			ch.User = users[0]
 		}
 	}
+	_, ch.IsPrivate = f.private[input.ChannelID]
 	return ch, nil
 }
 
@@ -301,6 +304,9 @@ func (f *fakeSlack) GetUsersInConversationContext(_ context.Context, params *sla
 	defer f.mu.Unlock()
 	if err := f.call("conversations.members"); err != nil {
 		return nil, "", err
+	}
+	if members, found := f.private[params.ChannelID]; found {
+		return slices.Clone(members), "", nil
 	}
 	return append([]string{f.auth.UserID}, f.dms[params.ChannelID]...), "", nil
 }
@@ -717,11 +723,13 @@ func (f *fakeSlack) CreateConversationContext(_ context.Context, params slack.Cr
 	if err := f.call("conversations.create"); err != nil {
 		return nil, err
 	}
+	ch := &slack.Channel{}
 	if params.IsPrivate {
-		return nil, fmt.Errorf("conversations.create made %q private", params.ChannelName)
+		ch.ID, ch.Name, ch.IsPrivate = fmt.Sprintf("GNEW%d", len(f.private)+1), params.ChannelName, true
+		f.private[ch.ID] = []string{f.auth.UserID}
+		return ch, nil
 	}
 	f.created = append(f.created, params.ChannelName)
-	ch := &slack.Channel{}
 	ch.ID, ch.Name = fmt.Sprintf("CNEW%d", len(f.created)), params.ChannelName
 	return ch, nil
 }
@@ -1189,6 +1197,12 @@ func (f *fakeSlack) setUser(u *slack.User) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.users[u.ID] = u
+}
+
+func (f *fakeSlack) setPrivate(channelID string, members ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.private[channelID] = members
 }
 
 func (f *fakeSlack) setDM(channelID string, users ...string) {

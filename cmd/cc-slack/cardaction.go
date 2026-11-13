@@ -555,6 +555,15 @@ func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, ask
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
+	if a.Channel != id.DMChannelID {
+		own, err := ownChannel(ctx, p.newAPI(id.Token), id, a.Channel)
+		if err != nil {
+			return err
+		}
+		if own {
+			id = id.at(a.Channel)
+		}
+	}
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil

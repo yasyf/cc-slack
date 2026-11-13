@@ -341,6 +341,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opFollows, a.handleFollows)
 	register(opThreadSeen, a.handleThreadSeen)
 	register(opDMStatus, a.handleDMStatus)
+	register(opOwnChannel, a.handleOwnChannel)
 	register(opCardAnswer, a.handleCardAnswer)
 	register(opCardReopen, a.handleCardReopen)
 	register(opDMRelay, a.handleDMRelay)
@@ -1954,11 +1955,18 @@ func (a *app) handleDMPeer(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
+	own := b.ChannelID == id.DMChannelID
 	if peer == "" {
-		return ok(dmPeerResult{ChannelID: b.ChannelID})
+		if own, err = ownChannel(hc.Ctx, api, id, b.ChannelID); err != nil {
+			return fail(fallback(actionRead, err))
+		}
+		if !own {
+			return ok(dmPeerResult{ChannelID: b.ChannelID})
+		}
+		peer = id.UserID
 	}
 	name := a.cache.name(hc.Ctx, api, slack.Message{Msg: slack.Msg{User: peer}})
-	return ok(dmPeerResult{ChannelID: b.ChannelID, Peer: peer, PeerName: name, PeerNames: peerNames(hc.Ctx, api, peer, name), Own: b.ChannelID == id.DMChannelID})
+	return ok(dmPeerResult{ChannelID: b.ChannelID, Peer: peer, PeerName: name, PeerNames: peerNames(hc.Ctx, api, peer, name), Own: own})
 }
 
 func (a *app) handleChannelInfo(hc daemon.HandlerCtx) daemon.Reply {
@@ -2541,9 +2549,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.fill(b.Text)
 		b.Text = ""
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := a.postingIdentity(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
-		return fail(fallback(actionWrite, err))
+		return fail(err.Error())
 	}
 	asked := slices.Clone(b.TapPRs)
 	b.TapPRs = append(b.TapPRs, waitingPRs(id, id.DMChannelID, b)...)
@@ -3280,6 +3288,9 @@ func (a *app) openSessionThread(ctx context.Context, db *sql.DB, sub subject.Sub
 	}
 	if err := claimCursor(ctx, tx, dmChannelID, threadTS, threadTS, now, true); err != nil {
 		return err
+	}
+	if !strings.HasPrefix(dmChannelID, "D") {
+		return tx.Commit()
 	}
 	if err := subscribeDM(ctx, tx, sub.ID, dmChannelID, now); err != nil {
 		return err

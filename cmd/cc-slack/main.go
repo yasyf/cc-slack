@@ -105,6 +105,7 @@ func root() *cobra.Command {
 		followsCmd(d),
 		threadSeenCmd(d),
 		dmStatusCmd(d),
+		ownChannelCmd(d),
 		cardAnswerCmd(d),
 		cardReopenCmd(d),
 		dmRelayCmd(d),
