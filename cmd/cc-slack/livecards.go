@@ -592,23 +592,32 @@ func (l *liveCards) retire(posts []string, by, line string) []string {
 func (l *liveCards) prune() []string {
 	var removed []string
 	cutoff := l.now().Add(-liveCardIdle)
+	var settled []string
 	for k, t := range l.threads {
-		if t.Updated.Before(cutoff) {
+		switch {
+		case t.asking():
+		case t.Updated.Before(cutoff):
 			delete(l.threads, k)
 			removed = append(removed, k)
+		default:
+			settled = append(settled, k)
 		}
 	}
-	for len(l.threads) > liveMaxThreads {
-		oldest := ""
-		for k, t := range l.threads {
-			if oldest == "" || t.Updated.Before(l.threads[oldest].Updated) {
-				oldest = k
-			}
-		}
-		delete(l.threads, oldest)
-		removed = append(removed, oldest)
+	slices.SortFunc(settled, func(a, b string) int { return l.threads[a].Updated.Compare(l.threads[b].Updated) })
+	for _, k := range settled[:max(0, min(len(settled), len(l.threads)-liveMaxThreads))] {
+		delete(l.threads, k)
+		removed = append(removed, k)
 	}
 	return removed
+}
+
+func (t *liveThread) asking() bool {
+	for _, m := range t.Waiting {
+		if t.asks(m) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(t.PRCards, t.asks)
 }
 
 func (l *liveCards) draft(channel, thread string) *liveThread {
