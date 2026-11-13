@@ -29,8 +29,9 @@ OLD_READ = (
     " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `since_ts` {since}, then retry."
 )
 TRUNCATED_READ = (
-    "This agent's last read of the thread was truncated, so it skipped the thread's older messages."
-    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `since_ts` {since}, then retry."
+    "This agent's last read of the thread was truncated, so it did not reach every message."
+    " Call `slack_thread` with `channel_id` {channel}, `thread_ts` {thread} and `since_ts` {since},"
+    " and while a read is truncated, again with `since_ts` set to the last `ts` it returned, then retry."
 )
 CUT_READ = (
     "This agent's last read of the thread was truncated, and it has no whole read to start from."
@@ -173,7 +174,7 @@ class ReadsThread:
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[reads(THREAD["thread_ts"], age=timedelta(minutes=12), through=PICKED)], commands=seen(NEWER, delivered=False, after=1)): Block(pattern=r"and 1 message behind"),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[gapped("truncated")], commands=UNSEEN): Block(pattern=r"was truncated, and it has no whole read.*a `limit` above"),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[reads(THREAD["thread_ts"], age=timedelta(minutes=11), through=PICKED, gap="truncated")], commands=UNSEEN): Block(
-            pattern=r"was truncated, so it skipped.*`since_ts` 1790210300\.000001,"
+            pattern=r"was truncated, so it did not reach every message.*`since_ts` 1790210300\.000001,.*the last `ts` it returned"
         ),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[gapped("stale")], commands=UNSEEN): Block(pattern=r"stale copy.*`retry_after`"),
         Input(tool=P + "slack_reply", tool_input=REPLY, state=[reads(THREAD["thread_ts"], age=timedelta(minutes=2), gap="truncated")], commands=UNSEEN): Allow(),

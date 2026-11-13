@@ -561,13 +561,49 @@ func TestThreadOpSinceTSReadsOnlyWhatIsNewer(t *testing.T) {
 	if res := readSince(secondReply, 0); res.Messages == nil || len(res.Messages) != 0 || res.Truncated {
 		t.Fatalf("read since the newest reply = %+v, want an empty, whole read", res)
 	}
-	if res := readSince(testThread, 1); len(res.Messages) != 1 || res.Messages[0].TS != secondReply || !res.Truncated {
-		t.Fatalf("read since the root with limit 1 = %+v, want the newest reply, marked truncated", res)
+	if res := readSince(testThread, 1); len(res.Messages) != 1 || res.Messages[0].TS != firstReply || !res.Truncated {
+		t.Fatalf("read since the root with limit 1 = %+v, want the first reply, marked truncated", res)
 	}
 
 	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "thread_ts": testThread, "since_ts": "yesterday"})
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw); err == nil || !strings.Contains(err.Error(), `since_ts "yesterday"`) {
 		t.Fatalf("read since a bad ts: %v, want it refused", err)
+	}
+}
+
+func TestThreadOpSinceTSWithALimitPagesForwardFromTheOldest(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	const thread, since, his = "1794352034.047459", "1794354480.000000", "1794354488.276359"
+	msg := func(ts, user string) slack.Message {
+		return slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: user, Text: ts}}
+	}
+	l.slack.add(testChannel, msg(thread, testUser))
+	l.slack.add(testChannel, msg("1794352100.000001", "UBOT"))
+	newer := []string{his, "1794354500.000001", "1794354600.000001", "1794407891.335679", "1794407892.657149", "1794477108.255259"}
+	for i, ts := range newer {
+		l.slack.add(testChannel, msg(ts, []string{testUser, "UBOT"}[i%2]))
+	}
+
+	var read []string
+	for from, pages := since, 0; ; pages++ {
+		var res threadResult
+		if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testChannel, "thread_ts": thread, "since_ts": from, "limit": 3}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		if pages == 0 && (len(res.Messages) == 0 || res.Messages[0].TS != his || !res.Messages[0].FromUser || !res.Truncated) {
+			t.Fatalf("read since %s with limit 3 = %+v, want his %s first, marked truncated", since, res, his)
+		}
+		for _, m := range res.Messages {
+			read = append(read, m.TS)
+		}
+		if !res.Truncated || pages > len(newer) {
+			break
+		}
+		from = read[len(read)-1]
+	}
+	if !slices.Equal(read, newer) {
+		t.Fatalf("paging from %s by the last ts read = %v, want every newer message once, in order: %v", since, read, newer)
 	}
 }
 

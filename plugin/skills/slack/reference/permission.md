@@ -160,7 +160,9 @@ Read before you reply. A post into a thread, through `slack_reply`,
 `slack_send` with a thread, the CLI, or `mcp__slack__slack_send_message`, is
 refused unless this agent read that thread through its newest message in the
 last 10 minutes with `slack_thread`. Pass `since_ts` as the newest ts you have already read, and
-the read returns only what is newer, so a long thread is never read again whole.
+the read returns only what is newer, so a long thread is never read again whole. With `since_ts`,
+a read past its `limit` returns the oldest of the newer messages and reads `truncated`, so read
+again with `since_ts` set to the last `ts` it returned until a read is not truncated.
 A `truncated` or `stale` read does not count, and neither does a subagent's read
 for its parent or a parent's for its subagent. A thread whose newest message is
 this agent's own reply counts as read through it, so the agent's next reply
