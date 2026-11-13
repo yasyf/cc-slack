@@ -208,8 +208,8 @@ names. The call asks the program for its cards before it posts anything. When an
 open PR its `tap_prs` names gets no card, such as the program's `skipped` reason,
 no card in its answer, or a card that fails the card checks, the call fails with
 each such PR and its reason and sends nothing. A card the program answered that
-still fails to post fails the call after the post went out, with the post's
-permalink so the caller does not post it again. The result's `card_ts` and
+still fails to post leaves the sent post answering ok, its `warning` naming
+each PR whose card it did not draw, so the caller does not post it again. The result's `card_ts` and
 `card_permalink` name the cards the post drew, space-separated, since the post's
 own `ts` and `permalink` are its text line, and each card's link is already in
 the post's DM thread. A status card that carries cards is then read back from
@@ -555,15 +555,21 @@ is a message from the engineer, in a watched thread or their direct message (kin
 
 The daemon keeps every thread it reads in `read-cache.db` under its state
 directory, apart from `state.db`, so a cache schema change never forces a
-`login`. A read within 15 s of the last sync answers from the cache without
-calling Slack. Otherwise, it fetches only messages newer than the cached
-newest one, and every 10 minutes it refetches the whole thread to pick up
-edits and deletions. A thread read never waits out a 429: `thread` returns
-the cached copy at once with `stale: true` and `retry_after` in seconds, and a
-thread never read before fails with the fallback below. A shared message's
-original comes from the cache alone, since a thread holding dozens of shares
-would otherwise read each one's thread: a share whose thread is not cached
-keeps its link and the author and text Slack attached to it. A fetch that runs past 1,000
+`login`. While the socket is connected and its replay has caught up, a thread
+the bot reads itself answers from the cache until a nudge names it: every
+nudge marks its thread's cached copy for a fresh read, watched or not, and so
+does a nudge that lands while that thread is being fetched. A hello with no
+saved `seq` marks every cached thread. A thread read as the user, which no
+nudge covers, and any thread while the socket is down or replaying, answers
+from the cache within 15 s of its last sync. Otherwise, it fetches only
+messages newer than the cached newest one, and every 10 minutes it refetches
+the whole thread to pick up edits and deletions. A thread read never waits out
+a 429: `thread` returns the cached copy at once with `stale: true` and
+`retry_after` in seconds, and a thread never read before fails with the
+fallback below. A shared message's original comes from the cache alone, since
+a thread holding dozens of shares would otherwise read each one's thread: a
+share whose thread is not cached keeps its link and the author and text Slack
+attached to it. A fetch that runs past 1,000
 messages fails instead of caching only the oldest of them.
 
 The poller merges each poll of a watched thread into its cached copy, so

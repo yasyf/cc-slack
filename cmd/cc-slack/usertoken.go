@@ -183,6 +183,8 @@ func (a *app) renewUserToken(ctx context.Context, id identity, tok userToken) (u
 	return renewed, nil
 }
 
+type userReads struct{ slackAPI }
+
 func readAsUser(id identity, err error) bool {
 	return id.Config.OAuth.enabled() && err != nil && (errorCode(err) == "channel_not_found" || errorCode(err) == "not_in_channel")
 }

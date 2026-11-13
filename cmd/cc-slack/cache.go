@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -37,6 +38,7 @@ CREATE TABLE threads (
   used_at    INTEGER NOT NULL,
   bytes      INTEGER NOT NULL,
   gen        INTEGER NOT NULL,
+  followed   INTEGER NOT NULL,
   PRIMARY KEY (channel_id, thread_ts)
 );
 CREATE INDEX idx_threads_used ON threads(used_at);
@@ -54,6 +56,8 @@ type readCache struct {
 	st           *store.Store
 	maxBytes     int64
 	now          func() time.Time
+	live         func() bool
+	inflight     map[cursorKey]*inflightRead
 	log          *log.Logger
 	limitedUntil time.Time
 }
@@ -63,6 +67,12 @@ type threadEntry struct {
 	syncedAt time.Time
 	fullAt   time.Time
 	gen      int64
+	followed bool
+}
+
+type inflightRead struct {
+	reads  int
+	nudged bool
 }
 
 type threadRead struct {
@@ -81,7 +91,7 @@ func openReadCache(ctx context.Context, path string) (*readCache, error) {
 		return nil, fmt.Errorf("open read cache %s: %w", path, err)
 	}
 	return &readCache{
-		st: st, maxBytes: cacheMaxBytes, now: time.Now,
+		st: st, maxBytes: cacheMaxBytes, now: time.Now, inflight: map[cursorKey]*inflightRead{},
 		log: log.New(os.Stderr, "["+binaryName+" cache] ", log.LstdFlags),
 	}, nil
 }
@@ -89,14 +99,14 @@ func openReadCache(ctx context.Context, path string) (*readCache, error) {
 func (c *readCache) Close() error { return c.st.Close() }
 
 func (c *readCache) replies(ctx context.Context, api slackAPI, channelID, threadTS string) (threadRead, error) {
-	return c.read(ctx, api, channelID, threadTS, cacheFresh, "")
+	return c.read(ctx, api, channelID, threadTS, "")
 }
 
 func (c *readCache) repliesHolding(ctx context.Context, api slackAPI, channelID, threadTS, ts string) (threadRead, error) {
-	return c.read(ctx, api, channelID, threadTS, cacheFresh, ts)
+	return c.read(ctx, api, channelID, threadTS, ts)
 }
 
-func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS string, freshFor time.Duration, want string) (threadRead, error) {
+func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS, want string) (threadRead, error) {
 	now := c.now()
 	c.mu.Lock()
 	entry, found, err := c.load(ctx, channelID, threadTS)
@@ -105,7 +115,7 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS 
 		return threadRead{}, err
 	}
 	held := found && (want == "" || slices.ContainsFunc(entry.msgs, func(m slack.Message) bool { return m.Timestamp == want }))
-	if held && entry.fresh(now, freshFor) {
+	if held && entry.fresh(now, c.live()) {
 		return threadRead{msgs: entry.msgs}, c.touch(ctx, channelID, threadTS, now)
 	}
 	if until := c.limited(); held && now.Before(until) {
@@ -119,7 +129,7 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS 
 	if held {
 		fetchCtx = withoutRateWait(ctx)
 	}
-	fetched, err := fetchReplies(fetchCtx, api, channelID, threadTS, since)
+	fetched, nudged, err := c.fetch(fetchCtx, api, cursorKey{channelID, threadTS}, since)
 	var rate *slack.RateLimitedError
 	if errors.As(err, &rate) {
 		c.limit(c.now().Add(rate.RetryAfter))
@@ -130,7 +140,11 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS 
 	if err != nil {
 		return threadRead{}, err
 	}
-	next := threadEntry{msgs: fetched, syncedAt: now, fullAt: now, gen: entry.gen}
+	_, asUser := api.(userReads)
+	next := threadEntry{msgs: fetched, syncedAt: now, fullAt: now, gen: entry.gen, followed: !asUser}
+	if nudged {
+		next.syncedAt = time.UnixMilli(0)
+	}
 	if since != "" {
 		next.msgs, next.fullAt = mergeMessages(entry.msgs, fetched), entry.fullAt
 	}
@@ -158,6 +172,46 @@ func (c *readCache) cached(ctx context.Context, channelID, threadTS string) ([]s
 	defer c.mu.Unlock()
 	entry, _, err := c.load(ctx, channelID, threadTS)
 	return entry.msgs, err
+}
+
+func (c *readCache) fetch(ctx context.Context, api slackAPI, key cursorKey, since string) ([]slack.Message, bool, error) {
+	c.mu.Lock()
+	read := c.inflight[key]
+	if read == nil {
+		read = &inflightRead{}
+		c.inflight[key] = read
+	}
+	read.reads++
+	c.mu.Unlock()
+	fetched, err := fetchReplies(ctx, api, key.channelID, key.threadTS, since)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	read.reads--
+	if read.reads == 0 {
+		delete(c.inflight, key)
+	}
+	return fetched, read.nudged, err
+}
+
+func (c *readCache) nudged(ctx context.Context, n messageNudge) {
+	key := cursorKey{n.Channel, cmp.Or(n.ThreadTS, n.TS)}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if read := c.inflight[key]; read != nil {
+		read.nudged = true
+	}
+	if _, err := c.st.DB().ExecContext(ctx, `UPDATE threads SET synced_at = 0, gen = gen + 1 WHERE channel_id = ? AND thread_ts = ?`,
+		key.channelID, key.threadTS); err != nil {
+		c.log.Printf("nudge %s/%s: its cached thread stays as it was: %v", key.channelID, key.threadTS, err)
+	}
+}
+
+func (c *readCache) missedNudges(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.st.DB().ExecContext(ctx, `UPDATE threads SET synced_at = 0, gen = gen + 1`); err != nil {
+		c.log.Printf("socket replays no nudges, but the cached threads stay as they were: %v", err)
+	}
 }
 
 func (c *readCache) generation(ctx context.Context, channelID, threadTS string) (int64, error) {
@@ -246,16 +300,17 @@ func (c *readCache) load(ctx context.Context, channelID, threadTS string) (threa
 		body             []byte
 		syncedAt, fullAt int64
 		gen              int64
+		followed         bool
 	)
-	err := c.st.DB().QueryRowContext(ctx, `SELECT messages, synced_at, full_at, gen FROM threads WHERE channel_id = ? AND thread_ts = ?`,
-		channelID, threadTS).Scan(&body, &syncedAt, &fullAt, &gen)
+	err := c.st.DB().QueryRowContext(ctx, `SELECT messages, synced_at, full_at, gen, followed FROM threads WHERE channel_id = ? AND thread_ts = ?`,
+		channelID, threadTS).Scan(&body, &syncedAt, &fullAt, &gen, &followed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return threadEntry{}, false, nil
 	}
 	if err != nil {
 		return threadEntry{}, false, fmt.Errorf("load cached thread %s/%s: %w", channelID, threadTS, err)
 	}
-	e := threadEntry{syncedAt: time.UnixMilli(syncedAt), fullAt: time.UnixMilli(fullAt), gen: gen}
+	e := threadEntry{syncedAt: time.UnixMilli(syncedAt), fullAt: time.UnixMilli(fullAt), gen: gen, followed: followed}
 	if err := json.Unmarshal(body, &e.msgs); err != nil {
 		return threadEntry{}, false, fmt.Errorf("decode cached thread %s/%s: %w", channelID, threadTS, err)
 	}
@@ -268,11 +323,12 @@ func (c *readCache) save(ctx context.Context, channelID, threadTS string, e thre
 		return fmt.Errorf("encode cached thread %s/%s: %w", channelID, threadTS, err)
 	}
 	db := c.st.DB()
-	if _, err := db.ExecContext(ctx, `INSERT INTO threads(channel_id, thread_ts, messages, newest_ts, synced_at, full_at, used_at, bytes, gen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	if _, err := db.ExecContext(ctx, `INSERT INTO threads(channel_id, thread_ts, messages, newest_ts, synced_at, full_at, used_at, bytes, gen, followed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(channel_id, thread_ts) DO UPDATE SET messages = excluded.messages, newest_ts = excluded.newest_ts,
-		synced_at = excluded.synced_at, full_at = excluded.full_at, used_at = excluded.used_at, bytes = excluded.bytes, gen = excluded.gen`,
-		channelID, threadTS, body, e.newest(), e.syncedAt.UnixMilli(), e.fullAt.UnixMilli(), c.now().UnixMilli(), len(body), e.gen); err != nil {
+		synced_at = excluded.synced_at, full_at = excluded.full_at, used_at = excluded.used_at, bytes = excluded.bytes, gen = excluded.gen,
+		followed = excluded.followed`,
+		channelID, threadTS, body, e.newest(), e.syncedAt.UnixMilli(), e.fullAt.UnixMilli(), c.now().UnixMilli(), len(body), e.gen, e.followed); err != nil {
 		return fmt.Errorf("save cached thread %s/%s: %w", channelID, threadTS, err)
 	}
 	if _, err := db.ExecContext(ctx, `DELETE FROM threads WHERE rowid IN (
@@ -336,8 +392,14 @@ func (e threadEntry) newest() string { return newestTS(e.msgs) }
 
 func (e threadEntry) whole(now time.Time) bool { return now.Sub(e.fullAt) < cacheFullRefresh }
 
-func (e threadEntry) fresh(now time.Time, within time.Duration) bool {
-	return e.whole(now) && now.Sub(e.syncedAt) < within
+func (e threadEntry) fresh(now time.Time, live bool) bool {
+	if !e.whole(now) {
+		return false
+	}
+	if e.followed && live {
+		return e.syncedAt.UnixMilli() != 0
+	}
+	return now.Sub(e.syncedAt) < cacheFresh
 }
 
 func newestTS(msgs []slack.Message) string {

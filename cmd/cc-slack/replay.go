@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,7 @@ type replayCursor struct {
 	saved    string
 	received string
 	held     bool
+	caught   bool
 }
 
 func loadReplayCursor(path string) (*replayCursor, error) {
@@ -48,7 +50,7 @@ func loadReplayCursor(path string) (*replayCursor, error) {
 func (c *replayCursor) hello(now time.Time) helloFrame {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.held = true
+	c.held, c.caught = true, false
 	millis, _, _ := strings.Cut(c.saved, "-")
 	at, err := strconv.ParseInt(millis, 10, 64)
 	if err != nil || now.Sub(time.UnixMilli(at)) > nudgeRetention-replayMargin {
@@ -68,10 +70,16 @@ func (c *replayCursor) nudged(seq string) {
 func (c *replayCursor) caughtUp(seq string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.held = false
+	c.held, c.caught = false, true
 	if seq > c.received {
 		c.received = seq
 	}
+}
+
+func (c *replayCursor) current() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.caught
 }
 
 func (c *replayCursor) latest() string {
@@ -101,6 +109,7 @@ func (a *app) hello() ([]byte, error) {
 	frame := a.replay.hello(a.now())
 	if frame.Since == "" {
 		a.poller.reconcileAll()
+		a.cache.missedNudges(context.Background())
 	}
 	return json.Marshal(frame)
 }

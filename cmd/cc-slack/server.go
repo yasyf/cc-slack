@@ -127,6 +127,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 	}
 	a.prRedraws.wake = make(chan struct{}, 1)
 	a.socket.hello = a.hello
+	cache.live = func() bool { return a.socket.status() == socketConnected && replay.current() }
 	p.recard, cards.recard = a.recardPR, a.recardPR
 	return a
 }

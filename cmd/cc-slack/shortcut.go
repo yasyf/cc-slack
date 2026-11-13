@@ -152,6 +152,7 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 			if err := json.Unmarshal(push.EventPayload, &n); err != nil {
 				return fmt.Errorf("decode nudge %q: %w", clip(string(frame)), err)
 			}
+			p.cache.nudged(ctx, n)
 			p.nudged(n)
 			r.nudged(n.Seq)
 			p.wake()
