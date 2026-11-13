@@ -534,6 +534,17 @@ func TestACardNamesEachOptionInWordsNeverByNumberOrPosition(t *testing.T) {
 	if err := info.check(time.Now(), false, ""); err != nil {
 		t.Fatalf("a card with no options draws no numbers: %v", err)
 	}
+	quoted := `"PROVISIONAL by recommendation: option 1. A workflow run with no agent is a session of its own"`
+	answered := plain
+	answered.Options = []string{plain.Options[0], plain.Options[1], cardAnsweredLabel}
+	answered.Hints = map[string]string{cardAnsweredLabel: quoted}
+	if err := answered.check(time.Now(), false, ""); err != nil {
+		t.Fatalf("an answer the drive quotes under %s: %v", cardAnsweredLabel, err)
+	}
+	answered.Hints = map[string]string{plain.Options[0]: quoted}
+	if err := answered.check(time.Now(), false, ""); err == nil || !strings.Contains(err.Error(), `hint for option "Own process"`) {
+		t.Fatalf("a job's own hint naming option 1: want a refusal, got %v", err)
+	}
 }
 
 func TestACardListsLongOptionsOnceEachBesideItsOwnButton(t *testing.T) {

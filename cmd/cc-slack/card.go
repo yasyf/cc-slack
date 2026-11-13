@@ -44,6 +44,7 @@ const (
 	cardUndoAction    = cardActionPrefix + ":undo:"
 	cardExplainLabel  = "Explain more"
 	cardOtherLabel    = "Other"
+	cardAnsweredLabel = "Already answered"
 	cardGitHubLabel   = "Open on GitHub"
 	cardAnswerLabel   = "Answer"
 	cardRecommended   = "(Recommended)"
@@ -324,7 +325,10 @@ func (c statusCard) checkOptionRefs() error {
 	}
 	shown := []struct{ where, text string }{{"title", c.Title}, {"body", c.Body}}
 	for _, o := range c.Options {
-		shown = append(shown, struct{ where, text string }{fmt.Sprintf("option %q", o), o}, struct{ where, text string }{fmt.Sprintf("hint for option %q", o), c.Hints[o]})
+		shown = append(shown, struct{ where, text string }{fmt.Sprintf("option %q", o), o})
+		if o != cardAnsweredLabel {
+			shown = append(shown, struct{ where, text string }{fmt.Sprintf("hint for option %q", o), c.Hints[o]})
+		}
 	}
 	var errs []error
 	for _, s := range shown {
