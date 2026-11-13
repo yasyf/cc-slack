@@ -558,9 +558,12 @@ directory, apart from `state.db`, so a cache schema change never forces a
 `login`. A read within 15 s of the last sync answers from the cache without
 calling Slack. Otherwise, it fetches only messages newer than the cached
 newest one, and every 10 minutes it refetches the whole thread to pick up
-edits and deletions. When Slack rate-limits the read, `thread` returns the
-cached copy with `stale: true` and `retry_after` in seconds; a thread never
-read before fails with the fallback below. A fetch that runs past 1,000
+edits and deletions. A thread read never waits out a 429: `thread` returns
+the cached copy at once with `stale: true` and `retry_after` in seconds, and a
+thread never read before fails with the fallback below. A shared message's
+original comes from the cache alone, since a thread holding dozens of shares
+would otherwise read each one's thread: a share whose thread is not cached
+keeps its link and the author and text Slack attached to it. A fetch that runs past 1,000
 messages fails instead of caching only the oldest of them.
 
 The poller merges each poll of a watched thread into its cached copy, so

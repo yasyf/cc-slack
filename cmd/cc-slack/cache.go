@@ -153,6 +153,13 @@ func (c *readCache) limit(until time.Time) {
 	}
 }
 
+func (c *readCache) cached(ctx context.Context, channelID, threadTS string) ([]slack.Message, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, _, err := c.load(ctx, channelID, threadTS)
+	return entry.msgs, err
+}
+
 func (c *readCache) generation(ctx context.Context, channelID, threadTS string) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -1376,10 +1376,11 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
 	}
-	read, err := a.cache.repliesHolding(hc.Ctx, api, channelID, b.ThreadTS, b.TS)
+	reads := withoutRateWait(hc.Ctx)
+	read, err := a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 	if readAsUser(id, err) {
 		if api, err = a.userAPI(hc.Ctx, id); err == nil {
-			read, err = a.cache.repliesHolding(hc.Ctx, api, channelID, b.ThreadTS, b.TS)
+			read, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
 		}
 	}
 	if err != nil {
@@ -1408,7 +1409,7 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 		out = append(out, threadMessage{
 			TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(hc.Ctx, api, m),
 			FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Text: messageText(m), Files: files,
-			Shares: a.sharedMessages(hc.Ctx, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw[m.Timestamp],
+			Shares: a.sharedMessages(reads, api, m), Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw[m.Timestamp],
 		})
 	}
 	res := threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated, Stale: read.stale}
