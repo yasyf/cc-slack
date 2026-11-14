@@ -825,6 +825,7 @@ type fakePlane struct {
 	directives []directed
 	appendErr  error
 	directErr  error
+	now        func() time.Time
 }
 
 func (f *fakePlane) DB() *sql.DB { return f.st.DB() }
@@ -853,7 +854,7 @@ func (f *fakePlane) direct(ctx context.Context, subjectID, agentID, origin, text
 	if f.directErr != nil {
 		return agent.Directive{}, f.directErr
 	}
-	d, _, err := f.st.EnqueueDirective(ctx, subjectID, agentID, origin, text, eventSeq, time.Now())
+	d, _, err := f.st.EnqueueDirective(ctx, subjectID, agentID, origin, text, eventSeq, f.now())
 	if err != nil {
 		return agent.Directive{}, err
 	}
@@ -923,6 +924,7 @@ func newFixture(t *testing.T) *fixture {
 	f.poller = f.app.poller
 	f.poller.plane = f.plane
 	f.poller.now = func() time.Time { return f.now }
+	f.plane.now = func() time.Time { return f.now }
 	f.poller.log.SetOutput(testWriter{t})
 	sh := f.app.shortcuts
 	sh.plane = f.plane

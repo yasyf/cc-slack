@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/yasyf/cc-interact/store"
 )
@@ -132,7 +133,7 @@ func dmHolderWatch(ctx context.Context, db *sql.DB, dmChannelID string) (watch, 
 	return w, true, nil
 }
 
-func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold) (map[string]bool, error) {
+func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmChannelID string, replies []owedReply, hold dmHold, now time.Time) (map[string]bool, error) {
 	owed := make([]string, 0, len(replies))
 	for _, r := range replies {
 		owed = append(owed, r.ThreadTS)
@@ -153,6 +154,10 @@ func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmCh
 	if err != nil {
 		return nil, err
 	}
+	untaken, err := loadUntaken(ctx, db, subjects)
+	if err != nil {
+		return nil, err
+	}
 	pids := map[string]int{}
 	for _, w := range subscribed {
 		pids[w.SubjectID] = w.PID
@@ -162,7 +167,7 @@ func othersCardThreads(ctx context.Context, db *sql.DB, threads *dmThreads, dmCh
 		other, held := false, false
 		for _, subjectID := range posters {
 			pid, live := pids[subjectID]
-			if !live {
+			if !live || untaken.deaf(subjectID, now) {
 				continue
 			}
 			other = true

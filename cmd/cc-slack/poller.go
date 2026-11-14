@@ -326,7 +326,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	watches, err := p.liveWatches(ctx, db, id)
+	watches, takeDue, err := p.liveWatches(ctx, db, id)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -376,6 +376,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if due := p.ackHeld(ctx, db, api, id); !due.IsZero() {
 		next = earliest(next, due)
 	}
+	next = earliest(next, takeDue)
 	if due := p.retryTaps(ctx, id); !due.IsZero() {
 		next = earliest(next, due)
 	}
@@ -411,6 +412,9 @@ func (p *poller) dueAt(key cursorKey, c cursorRow) time.Time {
 }
 
 func earliest(a, b time.Time) time.Time {
+	if b.IsZero() {
+		return a
+	}
 	if a.IsZero() || b.Before(a) {
 		return b
 	}
@@ -424,18 +428,18 @@ func methodFor(key cursorKey) string {
 	return methodHistory
 }
 
-func (p *poller) liveWatches(ctx context.Context, db *sql.DB, id identity) ([]watch, error) {
+func (p *poller) liveWatches(ctx context.Context, db *sql.DB, id identity) ([]watch, time.Time, error) {
 	rows, err := db.QueryContext(ctx, `SELECT w.id, w.subject_id, w.owner_agent_id, w.kind, w.channel_id, w.thread_ts, s.claude_pid
 		FROM watches w JOIN subjects s ON s.id = w.subject_id WHERE w.status = 'active' ORDER BY w.id`)
 	if err != nil {
-		return nil, fmt.Errorf("load watches: %w", err)
+		return nil, time.Time{}, fmt.Errorf("load watches: %w", err)
 	}
 	var live, dead []watch
 	for rows.Next() {
 		var w watch
 		if err := rows.Scan(&w.ID, &w.SubjectID, &w.Owner, &w.Kind, &w.ChannelID, &w.ThreadTS, &w.PID); err != nil {
 			_ = rows.Close()
-			return nil, fmt.Errorf("scan watch: %w", err)
+			return nil, time.Time{}, fmt.Errorf("scan watch: %w", err)
 		}
 		if w.PID == 0 || !p.alive(w.PID) {
 			dead = append(dead, w)
@@ -444,17 +448,69 @@ func (p *poller) liveWatches(ctx context.Context, db *sql.DB, id identity) ([]wa
 		live = append(live, w)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close watches: %w", err)
+		return nil, time.Time{}, fmt.Errorf("close watches: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate watches: %w", err)
+		return nil, time.Time{}, fmt.Errorf("iterate watches: %w", err)
 	}
 	for _, w := range dead {
 		if _, err := db.ExecContext(ctx, `UPDATE watches SET status = 'orphaned' WHERE id = ?`, w.ID); err != nil {
-			return nil, fmt.Errorf("orphan watch %d: %w", w.ID, err)
+			return nil, time.Time{}, fmt.Errorf("orphan watch %d: %w", w.ID, err)
 		}
 	}
-	return live, p.handBack(ctx, db, id, live, append(p.takeLeft(), dmSubjects(dead)...))
+	holder := dmHolderIn(live, id.DMChannelID)
+	untaken, err := loadUntaken(ctx, db, dmSubjects(live))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	now := p.now()
+	var (
+		deaf []string
+		due  time.Time
+	)
+	for subjectID, since := range untaken {
+		switch {
+		case subjectID == holder.SubjectID:
+		case untaken.deaf(subjectID, now):
+			deaf = append(deaf, subjectID)
+		default:
+			due = earliest(due, since.Add(ackWait))
+		}
+	}
+	live = slices.DeleteFunc(live, func(w watch) bool { return w.Kind == kindDM && slices.Contains(deaf, w.SubjectID) })
+	return live, due, p.handBack(ctx, db, id, live, slices.Concat(p.takeLeft(), dmSubjects(dead), deaf))
+}
+
+type untaken map[string]time.Time
+
+func loadUntaken(ctx context.Context, db *sql.DB, subjectIDs []string) (untaken, error) {
+	rows, err := db.QueryContext(ctx, `SELECT subject_id, MIN(created_at) FROM directives
+		WHERE subject_id IN (SELECT value FROM json_each(?)) AND agent_id = ? AND delivered_at IS NULL GROUP BY subject_id`,
+		string(mustJSON(subjectIDs)), agent.TopLevel)
+	if err != nil {
+		return nil, fmt.Errorf("find the messages %d sessions have not taken: %w", len(subjectIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+	u := untaken{}
+	for rows.Next() {
+		var (
+			subjectID string
+			created   int64
+		)
+		if err := rows.Scan(&subjectID, &created); err != nil {
+			return nil, fmt.Errorf("scan an untaken message: %w", err)
+		}
+		u[subjectID] = time.Unix(created, 0)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate untaken messages: %w", err)
+	}
+	return u, nil
+}
+
+func (u untaken) deaf(subjectID string, now time.Time) bool {
+	since, ok := u[subjectID]
+	return ok && !now.Before(since.Add(ackWait))
 }
 
 func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {

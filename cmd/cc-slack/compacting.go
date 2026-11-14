@@ -31,7 +31,7 @@ const opPreCompact daemon.Op = "pre-compact"
 const (
 	compactionAck          = "Got it, back in a minute."
 	compactionAckEventType = "cc_slack_compaction_ack"
-	compactionAckWait      = 8 * time.Second
+	ackWait                = 8 * time.Second
 )
 
 const transcriptTailChunk = 64 << 10
@@ -121,7 +121,7 @@ func (p *poller) holdAck(ctx context.Context, db *sql.DB, watches []watch, m sla
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	h := heldAck{m: m, due: p.now().Add(compactionAckWait), watches: compacting}
+	h := heldAck{m: m, due: p.now().Add(ackWait), watches: compacting}
 	for _, w := range compacting {
 		h.marks = append(h.marks, p.compact[w.SubjectID])
 	}
@@ -185,7 +185,7 @@ func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id ide
 		p.log.Printf("ack %s: %v", h.m.Timestamp, err)
 		return
 	}
-	p.log.Printf("acked %s with %s: it was not in its session's transcript %s after it arrived while the session compacted", h.m.Timestamp, ts, compactionAckWait)
+	p.log.Printf("acked %s with %s: it was not in its session's transcript %s after it arrived while the session compacted", h.m.Timestamp, ts, ackWait)
 	for _, w := range h.watches {
 		if err := p.deliver(ctx, db, w, ackedDelivery(w, h.m, ts)); err != nil {
 			p.log.Printf("tell subject %s that %s is acked: %v", w.SubjectID, h.m.Timestamp, err)
@@ -209,7 +209,7 @@ func ackedDelivery(w watch, m slack.Message, acked string) delivery {
 		origin: event.OriginSystem,
 		dedup:  fmt.Sprintf("slack-acked:%s:%s:%s", w.Owner, w.ChannelID, m.Timestamp),
 		line: fmt.Sprintf("cc-slack acked your operator's message ts %s in its thread (ts %s), since this session had not picked it up %s after it arrived, so do not ack it again.",
-			m.Timestamp, acked, compactionAckWait),
+			m.Timestamp, acked, ackWait),
 		payload: func(typ string) []byte {
 			msg.Type = typ
 			return mustJSON(msg)
@@ -245,7 +245,7 @@ func (a *app) handlePreCompact(hc daemon.HandlerCtx) daemon.Reply {
 		return ok(preCompactResult{})
 	}
 	a.poller.startCompacting(sub.ID, mark)
-	a.poller.log.Printf("session %s is compacting at %d of %d tokens (%s): until a compact_boundary record lands in its transcript, an operator DM message not in it %s after it arrives gets an ack", hc.Env.Session, b.Context, b.Point, b.Trigger, compactionAckWait)
+	a.poller.log.Printf("session %s is compacting at %d of %d tokens (%s): until a compact_boundary record lands in its transcript, an operator DM message not in it %s after it arrives gets an ack", hc.Env.Session, b.Context, b.Point, b.Trigger, ackWait)
 	return ok(preCompactResult{Compacting: sub.ID})
 }
 
