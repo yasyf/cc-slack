@@ -224,8 +224,12 @@ func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates 
 		FROM subjects s WHERE s.id = ?`, w.ChannelID, subjectID).Scan(&owner.Session, &pid, &hearing); err != nil {
 		return nil, fmt.Errorf("find the session that owns %s/%s: %w", w.ChannelID, thread, err)
 	}
+	untaken, err := loadUntaken(ctx, p.plane.DB(), []string{subjectID})
+	if err != nil {
+		return nil, err
+	}
 	owner.Card, owner.Title = p.cards.threadCard(w.ChannelID, thread)
-	owner.Ended = !hearing || pid == 0 || !p.alive(pid)
+	owner.Ended = !hearing || pid == 0 || !p.alive(pid) || untaken.deaf(subjectID, p.now())
 	return &owner, nil
 }
 
@@ -238,7 +242,7 @@ func (o threadOwner) line() string {
 		card += " (card " + o.Card + ")"
 	}
 	if o.Ended {
-		return fmt.Sprintf(" It replies under %s, which session %s posted; that session has ended, so no session acts on this reply unless you do.", card, o.Session)
+		return fmt.Sprintf(" It replies under %s, which session %s posted; that session has ended or has left a message untaken for %s, so no session acts on this reply unless you do.", card, o.Session, ackWait)
 	}
 	return fmt.Sprintf(" It replies under %s, which session %s posted: the reply is that session's to act on.", card, o.Session)
 }
@@ -332,7 +336,7 @@ func (p *poller) handBack(ctx context.Context, db *sql.DB, id identity, live []w
 		AND json_extract(e.payload, '$.channel_id') = ? AND json_extract(e.payload, '$.user') = ? AND NOT json_extract(e.payload, '$.from_claude')
 		AND NOT EXISTS (SELECT 1 FROM events o WHERE o.subject_id IN (SELECT value FROM json_each(?)) AND o.dedup_key = ? || json_extract(e.payload, '$.ts'))
 		ORDER BY d.id`, string(mustJSON(left)), agent.TopLevel, eventMessage, id.DMChannelID, id.UserID,
-		string(mustJSON(dmSubjects(live))), messageDedup(watch{Owner: agent.TopLevel, ChannelID: id.DMChannelID}, ""))
+		string(mustJSON(append(dmSubjects(live), holder.SubjectID))), messageDedup(watch{Owner: agent.TopLevel, ChannelID: id.DMChannelID}, ""))
 	if err != nil {
 		return fmt.Errorf("find the replies %d sessions never took: %w", len(left), err)
 	}

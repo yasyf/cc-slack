@@ -20,10 +20,12 @@ that session, the holder neither sees nor owes it, and any other session's watch
 on the thread stays quiet. A session that names its drive with
 `cc-slack dm-status --drive`, as `drive say` does, keeps the replies under its
 posts even where a holder of that drive posted too. Once the posting session
-ends or stops hearing the DM, by `cc-slack unfollow --channel <DM>` with no
-thread, the holder has that thread back, and each reply of the user's the
-session never took goes to the holder at once. Other bots' messages stay out of
-it.
+ends, stops hearing the DM by `cc-slack unfollow --channel <DM>` with no thread,
+or leaves a reply of the user's untaken for 8 seconds, as a session idle at its
+prompt with no cc-slack channel does, the holder has that thread back, and each
+reply of the user's the session never took goes to the holder at once. The
+session has the thread again once it takes what it was sent. Other bots'
+messages stay out of it.
 
 `cc-slack dm-status --drive <drive> --as-holder` posts as the holder instead of
 the calling session when the holder works for that drive, so the replies under

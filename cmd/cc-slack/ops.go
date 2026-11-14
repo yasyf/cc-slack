@@ -1965,7 +1965,7 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder)
+	others, err := othersCardThreads(hc.Ctx, hc.DB, a.poller.threads, id.DMChannelID, replies, holder, a.now())
 	if err != nil {
 		return fail(err.Error())
 	}

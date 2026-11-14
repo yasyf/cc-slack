@@ -59,7 +59,7 @@ func TestAMessageInTheSessionsTranscriptWithinEightSecondsOfArrivingGetsNoAck(t 
 
 	ownerReplies(f, thread, compactingReply, "ship it")
 	logToTranscript(t, transcript, `{"type":"user","message":{"content":"<channel source=\"plugin:cc-slack:cc-slack\">{\"ts\":\"`+compactingReply+`\"}</channel>"}}`)
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
 
 	if got := compactionAcks(f); len(got) != 0 {
@@ -73,16 +73,16 @@ func TestAMessageMissingFromTheSessionsTranscriptEightSecondsAfterArrivingGetsOn
 
 	ownerReplies(f, thread, compactingReply, "ship it")
 	logToTranscript(t, transcript, `{"type":"assistant","message":{"content":"still compacting someone else's work"}}`)
-	if next := f.tick(); next.IsZero() || next.After(f.now.Add(compactionAckWait)) {
-		t.Fatalf("next tick at %v, want one by %v to settle the held ack", next, f.now.Add(compactionAckWait))
+	if next := f.tick(); next.IsZero() || next.After(f.now.Add(ackWait)) {
+		t.Fatalf("next tick at %v, want one by %v to settle the held ack", next, f.now.Add(ackWait))
 	}
 	if got := compactionAcks(f); len(got) != 0 {
-		t.Fatalf("acks = %+v, want none before %s pass", got, compactionAckWait)
+		t.Fatalf("acks = %+v, want none before %s pass", got, ackWait)
 	}
 
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
 
 	posted := compactionAcks(f)
@@ -115,7 +115,7 @@ func TestAMessageAfterTheSessionStartsAgainGetsNoAck(t *testing.T) {
 	}
 
 	ownerReplies(f, thread, compactingReply, "ship it")
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
 
 	if got := compactionAcks(f); len(got) != 0 {
@@ -191,9 +191,9 @@ func TestAMessageAfterTheSessionsCompactBoundaryGetsNoAckAndEndsTheMark(t *testi
 	if next := f.tick(); next.IsZero() {
 		t.Fatal("no ack held for a message that arrived while the session was marked compacting")
 	}
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
-	f.now = f.now.Add(compactionAckWait)
+	f.now = f.now.Add(ackWait)
 	f.tick()
 
 	if got := compactionAcks(f); len(got) != 0 {
