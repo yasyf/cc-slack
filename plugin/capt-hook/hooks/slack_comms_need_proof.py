@@ -6,7 +6,7 @@ from fnmatch import fnmatchcase
 
 from captain_hook import CONFIRMED, UNCONFIRMED, Allow, Block, Confirm, Event, HookResult, Input, PreToolUseEvent, on
 
-from .permission import CC_SLACK, Conversation, Message, read_thread
+from .permission import CC_SLACK, THREAD_LINES, Conversation, Message, read_thread
 from .plain_words import DISABLED, ENABLED, P, THREAD, WritesSlack, block_text
 from .writes import Write, capture, pending, permissions
 
@@ -88,7 +88,7 @@ def reply(text: str, channel: str = THREAD["channel_id"], root: str | tuple[int,
         env=ENABLED,
         tool=P + "slack_reply",
         tool_input=THREAD | {"channel_id": channel, "text": text},
-        commands=CHANNELS | {f"{CC_SLACK} thread": root},
+        commands=CHANNELS | {f"{CC_SLACK} thread": THREAD_LINES, f"{CC_SLACK} thread --json": root},
         **extra,
     )
 
