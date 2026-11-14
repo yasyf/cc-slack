@@ -348,14 +348,11 @@ class PackTest(unittest.TestCase):
         self.assertTrue(self.refused(session))
         self.assertFalse(self.refused(session, agent_id="a1"))
 
-    def test_the_cli_and_the_user_fallback_reads_count(self) -> None:
+    def test_the_cli_read_counts(self) -> None:
         cli = Path(self.tmp.name) / "cli"
         command = f"cc-slack thread --channel {THREAD['channel_id']} --thread {THREAD['thread_ts']} --since-ts 1790210300.000001"
         self.read_guard.thread_reads_are_recorded(mock_tool_event(event=Event.PostToolUse, command=command, output=json.dumps({"messages": []}), session_dir=cli))
         self.assertFalse(self.refused(cli))
-        fallback = Path(self.tmp.name) / "fallback"
-        self.read_guard.thread_reads_are_recorded(mock_tool_event("mcp__slack__slack_get_thread", event=Event.PostToolUse, tool_input=THREAD, output="a formatted thread", session_dir=fallback))
-        self.assertFalse(self.refused(fallback))
 
 
 if __name__ == "__main__":

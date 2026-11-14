@@ -51,26 +51,28 @@ commands record the decision in the marker file. When `offer` is false,
 skip the question. Setup arms no Monitor; a session arms one only when
 it subscribes.
 
-## Fall back when the bot cannot act
+## When Slack refuses the bot
 
-Use the matching tool below for posts and reactions the bot cannot make.
-Reads have no fallback tool: `slack_thread` and `slack_history` read a
-conversation the bot is not in as the user once they tap Allow on cc-slack's
-consent card, which the refusal links. A write in the
+When Slack refuses the bot a post, reply, or reaction, cc-slack sends it
+again as the user, under the same ticket, through the Slack user token its
+own app grants once they tap Allow on cc-slack's consent card. Each such post
+opens with `_(<Firstname>'s Claude)_`, and the result reads `as_user`.
+Until the tap, the refusal links the card. The same token lets
+`slack_thread` and `slack_history` read a conversation the bot is not in.
+A post with files or one too long for one message is never sent as the
+user. A write in the
 user's 1:1 DM with someone else, which the bot cannot join, goes to the
 group DM of that person, the user and the app: post it as usual with
 `channel_id` set to that person's user id, which the refusal names, and
 cc-slack opens that group DM with `conversations.open`. A private-channel
-write the bot cannot invite itself to waits for the user's invite.
-If the user declines, leave the write unsent. Prefix every MCP post with
-`_(<Firstname>'s Claude)_` and quote that exact text in the approval question.
+write the bot cannot invite itself to waits for the user's invite and is
+never sent as the user. If the user declines, leave the write unsent.
 
 | Failure | Next step |
 |---|---|
-| Post or reply fails | `mcp__slack__slack_send_message` |
-| Read refused with a consent card | Ask the user to tap Allow on the card the refusal links, on the Mac running cc-slack, then read again |
-| Reaction fails | `mcp__slack__slack_add_reaction` |
+| Refused with a consent card | Ask the user to tap Allow on the card the refusal links, on the Mac running cc-slack, then retry the same call |
+| Refused as the bot and as the user | Report both causes the refusal names; retry the same write once one is fixed |
 | Private channel excludes the bot and the self-invite failed | Report the cause the refusal names, then retry the same write once it is fixed; never ask the user to `/invite` the app |
-| Personal 1:1 DM excludes the bot | Post as usual to the person's user id, which the refusal names; never the Slack MCP |
+| Personal 1:1 DM excludes the bot | Post as usual to the person's user id, which the refusal names |
 | No identity | Run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack" login` and `whoami` |
 | The daemon runs a newer build and its executable is unreadable | Run `/mcp` and reconnect cc-slack, or start a new session |

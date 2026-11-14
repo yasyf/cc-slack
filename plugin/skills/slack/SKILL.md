@@ -5,7 +5,7 @@ description: Post, reply, or react in Slack through cc-slack with the user's per
 
 # Work in Slack
 
-Prefer `cc-slack` for every post and reaction so Claude acts visibly. The bot posts as `<display name> (<agent>)` with the user's avatar. Pass `agent` on `slack_send`, `slack_reply`, and `slack_dm_status` (or `--agent` on the CLI): `claude` from Claude Code, `codex` from Codex, and `cursor` from Cursor. Tool names use prefix `mcp__plugin_cc-slack_cc-slack__`; the CLI binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack"`. The user-level Slack MCP (`mcp__slack__*`) posts as the user; use it only as the fallback in [reference/setup.md](reference/setup.md).
+Prefer `cc-slack` for every post and reaction so Claude acts visibly. The bot posts as `<display name> (<agent>)` with the user's avatar. Pass `agent` on `slack_send`, `slack_reply`, and `slack_dm_status` (or `--agent` on the CLI): `claude` from Claude Code, `codex` from Codex, and `cursor` from Cursor. Tool names use prefix `mcp__plugin_cc-slack_cc-slack__`; the CLI binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-slack"`. When Slack refuses the bot a post or reaction, cc-slack sends it again as the user, marked `_(<Firstname>'s Claude)_`; [reference/setup.md](reference/setup.md) covers the one consent tap that needs.
 
 ## Get permission before writing
 

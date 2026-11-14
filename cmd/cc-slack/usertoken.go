@@ -30,7 +30,7 @@ const (
 
 var (
 	consentRedirect = "http://localhost:38427" + consentPath
-	userScopes      = []string{"channels:history", "files:read", "groups:history", "groups:read", "groups:write", "im:history", "im:read", "mpim:history", "mpim:read"}
+	userScopes      = []string{"channels:history", "chat:write", "files:read", "groups:history", "groups:read", "groups:write", "im:history", "im:read", "mpim:history", "mpim:read", "reactions:write"}
 	errNoUserToken  = errors.New("cc-slack holds no Slack user token on this machine")
 	errNoClientID   = errors.New("the cc-slack config names no [oauth] client_id, the Slack app's client ID its consent link carries")
 )
@@ -180,7 +180,7 @@ func dropFile(path string) error {
 type userConsentError struct{ permalink string }
 
 func (e userConsentError) Error() string {
-	return fmt.Sprintf("cc-slack reads as you only with your one-time consent: tap Allow on the card it posted to your DM with the app (%s) on the Mac that runs cc-slack, then retry", e.permalink)
+	return fmt.Sprintf("cc-slack acts as you only with your one-time consent: tap Allow on the card it posted to your DM with the app (%s) on the Mac that runs cc-slack, then retry", e.permalink)
 }
 
 func (a *app) renewUserToken(ctx context.Context, id identity, tok userToken) (userToken, error) {
@@ -253,7 +253,7 @@ func (a *app) askConsent(ctx context.Context, id identity) error {
 		"team":                  {id.TeamID},
 	}.Encode()
 	text := fmt.Sprintf("*cc-slack needs your one-time consent to act in Slack as you*\nIt reads conversations the app is not in, such as your DMs, "+
-		"and invites the app to private channels you are in. Open this link on the Mac that runs cc-slack, since Slack hands your answer to it at localhost: "+
+		"invites the app to private channels you are in, and sends as you a post or reaction Slack refuses the app, each post marked with your agent's name. Open this link on the Mac that runs cc-slack, since Slack hands your answer to it at localhost: "+
 		"<%s|Allow cc-slack>", link)
 	_, ts, err := a.newAPI(id.Token).PostMessageContext(ctx, id.DMChannelID, id.postOptions(text, "")...)
 	if err != nil {
@@ -264,6 +264,12 @@ func (a *app) askConsent(ctx context.Context, id identity) error {
 		return fmt.Errorf("keep the consent card's link: %w", err)
 	}
 	return userConsentError{permalink: id.permalink(id.DMChannelID, ts, "")}
+}
+
+func (a *app) consentAgain(ctx context.Context, id identity) error {
+	a.user.mu.Lock()
+	defer a.user.mu.Unlock()
+	return a.askConsent(ctx, id)
 }
 
 func (a *app) serveConsentRedirect(ctx context.Context) error {
@@ -323,7 +329,7 @@ func (a *app) serveConsent(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) finishConsent(ctx context.Context, id identity, verifier string, q url.Values) (string, int) {
 	if e := q.Get("error"); e != "" {
-		return fmt.Sprintf("Not allowed: Slack answered %s, so cc-slack still cannot read as you", e), http.StatusForbidden
+		return fmt.Sprintf("Not allowed: Slack answered %s, so cc-slack still cannot act as you", e), http.StatusForbidden
 	}
 	got, err := a.user.oauth(ctx, url.Values{"client_id": {id.Config.OAuth.ClientID}, "code": {q.Get("code")}, "code_verifier": {verifier}, "redirect_uri": {consentRedirect}})
 	if err != nil {
@@ -336,6 +342,6 @@ func (a *app) finishConsent(ctx context.Context, id identity, verifier string, q
 		return fmt.Sprintf("Not allowed: saving the token failed (%v)", err), http.StatusInternalServerError
 	}
 	a.poller.wake()
-	a.poller.log.Printf("%s allowed cc-slack to read Slack as them", id.UserID)
-	return "Allowed: cc-slack now reads Slack as you on this Mac. You can close this tab.", http.StatusOK
+	a.poller.log.Printf("%s allowed cc-slack to act in Slack as them", id.UserID)
+	return "Allowed: cc-slack now acts in Slack as you on this Mac. You can close this tab.", http.StatusOK
 }

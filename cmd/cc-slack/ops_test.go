@@ -442,11 +442,11 @@ func TestDocCardsAskTheServiceWithTheBotToken(t *testing.T) {
 	}
 }
 
-func TestOpsRefuseWithoutLoginAndNameTheFallback(t *testing.T) {
+func TestOpsRefuseWithoutLoginAndNameTheLogin(t *testing.T) {
 	l := startDaemon(t)
 	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "text": "hi"})
 	_, err := invoke(l.ctx, l.deps, testSession, "/any", opSend, raw)
-	if err == nil || !strings.Contains(err.Error(), "cc-slack login") || !strings.Contains(err.Error(), mcpSend) {
+	if err == nil || !strings.Contains(err.Error(), "cc-slack login") {
 		t.Fatalf("send before login: %v", err)
 	}
 }
@@ -909,7 +909,7 @@ func TestUsersFindsAnIDOrExactEmailWhileUsersListFails(t *testing.T) {
 
 	l.slack.fail("users.list", fatal)
 	got := refusal("lovelace")
-	for _, want := range []string{"Slack's users.list answered fatal_error", "users.info", "users.lookupByEmail", mcpUsers} {
+	for _, want := range []string{"Slack's users.list answered fatal_error", "users.info", "users.lookupByEmail"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("users.list refusal = %q, want it to contain %q", got, want)
 		}
@@ -952,7 +952,7 @@ func TestChannelsNamesConversationsListWhenItFails(t *testing.T) {
 	l.slack.fail("conversations.list", slack.SlackErrorResponse{Err: "fatal_error"})
 	raw, _ := json.Marshal(map[string]string{})
 	_, err := invoke(l.ctx, l.deps, testSession, "/any", opChannels, raw)
-	if err == nil || !strings.Contains(err.Error(), "Slack's conversations.list answered fatal_error") || !strings.Contains(err.Error(), mcpChannels) {
+	if err == nil || !strings.Contains(err.Error(), "Slack's conversations.list answered fatal_error") {
 		t.Fatalf("conversations.list refusal = %v", err)
 	}
 }
@@ -1251,7 +1251,7 @@ func TestPostToAHiddenPrivateChannelRefusesWithoutAnAsk(t *testing.T) {
 	raw, _ := json.Marshal(body)
 	_, err := invoke(l.ctx, l.deps, testSession, "/any", opSend, raw)
 	if err == nil || !strings.Contains(err.Error(), "<#"+testChannel+"> is private") || !strings.Contains(err.Error(), errNoClientID.Error()) ||
-		strings.Contains(err.Error(), mcpSend) || strings.Contains(err.Error(), "/invite") {
+		strings.Contains(err.Error(), "/invite") {
 		t.Fatalf("send to a hidden private channel: %v", err)
 	}
 	if n := len(l.slack.sentTo(testChannel)); n != 0 {
@@ -1296,6 +1296,58 @@ func TestPostToAPrivateChannelInvitesTheBotAsTheUser(t *testing.T) {
 	}
 }
 
+func TestPostSlackRefusesTheBotIsSentAgainAsTheUser(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	user := l.user.as(testUser)
+
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "restricted_action"})
+	body := l.hooked(opSend, map[string]string{"channel_id": testChannel, "text": "deploy is out"})
+	var res postResult
+	if err := json.Unmarshal(l.do(opSend, body).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	posts := user.sentTo(testChannel)
+	if !res.Posted || !res.AsUser || len(posts) != 1 || posts[0].text != "_(yasyf's Agent)_ deploy is out" || len(l.slack.sentTo(testChannel)) != 0 {
+		t.Fatalf("send = %+v, posts as the user %+v, want one marked post as the user and none as the bot", res, posts)
+	}
+	if spends := l.tickets.committed(field(body, "ticket_id")); len(spends) != 1 {
+		t.Fatalf("committed spends = %+v, want the post as the user to spend the ticket", spends)
+	}
+}
+
+func TestReactionSlackRefusesTheBotIsAddedAgainAsTheUser(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	user := l.user.as(testUser)
+
+	l.slack.fail("reactions.add", slack.SlackErrorResponse{Err: "restricted_action"})
+	l.do(opReact, map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "name": "eyes"})
+	if got := user.reactedTo("1800000000.000100"); !slices.Equal(got, []string{"eyes"}) || len(l.slack.reactedTo("1800000000.000100")) != 0 {
+		t.Fatalf("reactions as the user = %v, want eyes added as the user", got)
+	}
+}
+
+func TestUserTokenWithoutWriteScopesAsksForConsentAgain(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithOAuth(t, l)
+	user := l.user.as(testUser)
+
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "restricted_action"})
+	user.fail("chat.postMessage", slack.SlackErrorResponse{Err: "missing_scope"})
+	body := l.hooked(opSend, map[string]string{"channel_id": testChannel, "text": "deploy is out"})
+	raw, _ := json.Marshal(body)
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opSend, raw); err == nil || !strings.Contains(err.Error(), "tap Allow on the card") || !strings.Contains(err.Error(), "still covers it") {
+		t.Fatalf("send with a read-only user token = %v, want a consent card and the ticket handed back", err)
+	}
+	if scopes := consentLink(t, l.slack).Query().Get("user_scope"); !strings.Contains(scopes, "chat:write") || !strings.Contains(scopes, "reactions:write") {
+		t.Fatalf("consent scopes %q, want chat:write and reactions:write", scopes)
+	}
+	if _, ok := l.user.stored(); !ok {
+		t.Fatal("the read-only token was dropped before the new consent")
+	}
+}
+
 func TestSelfInviteNeedsTheLoggedInUsersCredential(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1313,7 +1365,7 @@ func TestSelfInviteNeedsTheLoggedInUsersCredential(t *testing.T) {
 	}
 }
 
-func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *testing.T) {
+func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDM(t *testing.T) {
 	for name, tc := range map[string]struct {
 		credential bool
 		want       string
@@ -1335,8 +1387,8 @@ func TestPostToAPersonsDMTheBotCannotJoinNamesTheirGroupDMNotTheSlackMCP(t *test
 			body := l.spending(l.tickets.mint(fakeTicket{tree: testTree, place: place, reach: reachOnce, rule: "asked-owner", fingerprint: fingerprintOf(fields)}), fields)
 			raw, _ := json.Marshal(body)
 			_, err := invoke(l.ctx, l.deps, testSession, "/any", opReply, raw)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), mcpSend) {
-				t.Fatalf("reply in D0THEIRDM = %v, want the group DM route %q and no %s", err, tc.want, mcpSend)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("reply in D0THEIRDM = %v, want the group DM route %q", err, tc.want)
 			}
 		})
 	}
@@ -1594,7 +1646,7 @@ func TestReactInAPrivateChannelNamesChannelJoinNotTheMCP(t *testing.T) {
 	user := l.user.as(testUser)
 	raw, _ := json.Marshal(map[string]string{"channel_id": testChannel, "ts": "1800000000.000100", "name": "eyes"})
 	_, err := invoke(l.ctx, l.deps, testSession, "/any", opReact, raw)
-	if err == nil || !strings.Contains(err.Error(), "channel-join") || strings.Contains(err.Error(), mcpReaction) {
+	if err == nil || !strings.Contains(err.Error(), "channel-join") {
 		t.Fatalf("react in a private channel: %v", err)
 	}
 	if n := user.callCount("conversations.invite"); n != 0 {

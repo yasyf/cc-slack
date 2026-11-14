@@ -166,6 +166,7 @@ type postResult struct {
 	CardTS        string              `json:"card_ts,omitempty"`
 	CardPermalink string              `json:"card_permalink,omitempty"`
 	PagePermalink string              `json:"page_permalink,omitempty"`
+	AsUser        bool                `json:"as_user,omitempty"`
 }
 
 func (r receipt) result(replayed bool) postResult {
@@ -696,7 +697,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return err
 		})
 		if err != nil {
-			return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, a.outsideDM(hc.Ctx, id, channelID, err)))
+			return a.failedPost(hc, sub.ID, id, b, ticket, channelID, pages, text, blocks, a.outsideDM(hc.Ctx, id, channelID, err))
 		}
 		res.Posted = true
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
@@ -731,6 +732,38 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		return ok(a.reportChannel(hc, sub.ID, res))
 	}
+}
+
+func (a *app) failedPost(hc daemon.HandlerCtx, subjectID string, id identity, b opBody, ticket hookTicket, channelID string, pages []linkedPage, text string, blocks []slack.Block, botErr error) daemon.Reply {
+	if !resendsAsUser(botErr) || len(b.Files) > 0 || len(pages) > 1 || len(pages[0].more) > 0 {
+		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, botErr))
+	}
+	tool := cmp.Or(id.Agent, defaultAgent)
+	mark := fmt.Sprintf("_(%s's %s)_", cmp.Or(id.FirstName, id.name()), strings.ToUpper(tool[:1])+tool[1:])
+	opts := []slack.MsgOption{textOption(mark + " " + withoutHidden(text)), slack.MsgOptionDisableLinkUnfurl()}
+	if b.ThreadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(b.ThreadTS))
+	}
+	if len(blocks) > 0 {
+		opts = append(opts, slack.MsgOptionBlocks(append([]slack.Block{slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, mark, false, false))}, blocks...)...))
+	}
+	var ch, ts string
+	err := a.asUser(hc.Ctx, id, botErr, func(user slackAPI) (err error) {
+		ch, ts, err = user.PostMessageContext(hc.Ctx, channelID, opts...)
+		return err
+	})
+	if err != nil {
+		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, err))
+	}
+	postRecorder(hc.Ctx, hc.DB, a.poller.log)(ch, ts)
+	res := postResult{ChannelID: ch, TS: ts, ThreadTS: cmp.Or(b.ThreadTS, ts), Permalink: id.permalink(ch, ts, b.ThreadTS), TicketID: ticket.ID, Posted: true, AsUser: true}
+	a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
+	if ticket.once() {
+		if err := a.saveReceipt(hc.Ctx, hc.DB, receipt{TicketID: ticket.ID, ChannelID: ch, TS: ts, Permalink: res.Permalink}); err != nil {
+			return fail(fmt.Sprintf("posted %s as you but could not record its receipt, so do not resend: %v", res.Permalink, err))
+		}
+	}
+	return ok(a.reportChannel(hc, subjectID, res))
 }
 
 type linkedPage struct {
@@ -1327,9 +1360,11 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 		if err != nil {
 			return fail(fallback(act, err))
 		}
-		err = a.joinAndRetry(hc.Ctx, api, channelID, func() error {
-			return apply(api, hc.Ctx, name, slack.ItemRef{Channel: channelID, Timestamp: b.TS})
-		})
+		ref := slack.ItemRef{Channel: channelID, Timestamp: b.TS}
+		err = a.joinAndRetry(hc.Ctx, api, channelID, func() error { return apply(api, hc.Ctx, name, ref) })
+		if resendsAsUser(err) && errorCode(err) != settled {
+			err = a.asUser(hc.Ctx, id, err, func(user slackAPI) error { return apply(user, hc.Ctx, name, ref) })
+		}
 		if err != nil && errorCode(err) != settled {
 			return fail(fallback(act, err))
 		}
@@ -2311,6 +2346,27 @@ func (a *app) inviteBot(ctx context.Context, id identity, channelID string) erro
 		return fmt.Errorf("conversations.invite: %w", err)
 	}
 	return nil
+}
+
+func resendsAsUser(err error) bool {
+	resp, refused := errors.AsType[slack.SlackErrorResponse](err)
+	return refused && !slices.Contains(maybeApplied, resp.Err) && !errors.As(err, new(outsideDMError))
+}
+
+func (a *app) asUser(ctx context.Context, id identity, botErr error, call func(slackAPI) error) error {
+	user, err := a.userAPI(ctx, id)
+	if err != nil {
+		return asUserError{botErr: botErr, userErr: err}
+	}
+	err = call(user)
+	if err == nil {
+		a.poller.log.Printf("acted as %s after Slack refused the bot (%s)", id.UserID, failureCode(botErr))
+		return nil
+	}
+	if errorCode(err) == "missing_scope" {
+		return asUserError{botErr: botErr, userErr: a.consentAgain(ctx, id)}
+	}
+	return asUserError{botErr: botErr, userErr: err, called: true}
 }
 
 func (a *app) userAPI(ctx context.Context, id identity) (slackAPI, error) {

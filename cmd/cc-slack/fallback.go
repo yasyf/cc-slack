@@ -26,14 +26,6 @@ const (
 	actionChannels
 )
 
-const (
-	mcpSend     = "mcp__slack__slack_send_message"
-	mcpReaction = "mcp__slack__slack_add_reaction"
-	mcpUnreact  = "mcp__slack__slack_remove_reaction"
-	mcpUsers    = "mcp__slack__slack_users_search"
-	mcpChannels = "mcp__slack__slack_list_conversations"
-)
-
 type slackCallError struct {
 	method string
 	err    error
@@ -61,47 +53,64 @@ func (e outsideDMError) Error() string {
 
 func (e outsideDMError) Unwrap() error { return e.cause }
 
+type asUserError struct {
+	botErr  error
+	userErr error
+	called  bool
+}
+
+func (e asUserError) Error() string {
+	return fmt.Sprintf("Slack refused the bot (%s), and sending it as you failed: %v", failureCode(e.botErr), e.userErr)
+}
+
+func (e asUserError) Unwrap() error { return e.userErr }
+
 func fallback(a action, err error) string {
-	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) || errors.As(err, new(blockLimitError)) || errors.As(err, new(userConsentError)) {
+	if explained(err) {
 		return err.Error()
 	}
 	if a == actionEdit {
-		return fmt.Sprintf("cc-slack can't edit this message (%s); only the bot can edit its own posts, so no Slack MCP tool stands in", errorCode(err))
+		return fmt.Sprintf("cc-slack can't edit this message (%s); only the bot can edit its own posts", errorCode(err))
 	}
 	if a == actionDelete {
-		return fmt.Sprintf("cc-slack can't delete this message (%s); only the bot can delete its own posts, so no Slack MCP tool stands in", errorCode(err))
+		return fmt.Sprintf("cc-slack can't delete this message (%s); only the bot can delete its own posts", errorCode(err))
 	}
 	if a == actionChannel {
-		return fmt.Sprintf("cc-slack can't change this channel (%s); no Slack MCP tool creates, archives, invites to, or sets the topic of a channel, so ask the user to do it in Slack", errorCode(err))
+		return fmt.Sprintf("cc-slack can't change this channel (%s), so ask the user to do it in Slack", errorCode(err))
 	}
 	if a == actionFile {
-		return fmt.Sprintf("cc-slack can't download this file (%s); the bot reads only files shared where it is a member, so no Slack MCP tool stands in", errorCode(err))
+		return fmt.Sprintf("cc-slack can't download this file (%s); the bot reads only files shared where it is a member", errorCode(err))
 	}
 	if errors.Is(err, errNoIdentity) {
-		return withFallback(fmt.Sprintf("%v: run `cc-slack login`", err), ", or fall back to ", a)
+		return fmt.Sprintf("%v: run `cc-slack login`", err)
 	}
 	if errors.Is(err, daemon.ErrIncumbentNewer) || errors.Is(err, errStaleProcess) {
-		return withFallback(err.Error(), "; until then, fall back to ", a)
+		return err.Error()
 	}
 	code := failureCode(err)
 	switch a {
 	case actionWrite:
-		return fmt.Sprintf("cc-slack can't post here (%s); fall back to %s (posts as you, still needs permission)", code, mcpSend)
+		return fmt.Sprintf("cc-slack can't post here (%s)", code)
 	case actionReact:
-		return fmt.Sprintf("cc-slack can't react here (%s); fall back to %s (reacts as you)", code, mcpReaction)
+		return fmt.Sprintf("cc-slack can't react here (%s)", code)
 	case actionUnreact:
-		return fmt.Sprintf("cc-slack can't remove a reaction here (%s); fall back to %s (removes yours)", code, mcpUnreact)
+		return fmt.Sprintf("cc-slack can't remove a reaction here (%s)", code)
 	case actionWatch:
 		return fmt.Sprintf("cc-slack can't watch this conversation (%s): the bot watches only conversations it is a member of, "+
 			"so invite it there, or read it once with slack_thread or slack_history, which read it as you with [oauth] client_id set", code)
 	case actionUsers:
 		return fmt.Sprintf("cc-slack can't look people up (%s); a user id such as U0123ABCDE resolves through users.info, "+
-			"an exact email through users.lookupByEmail and any other query through users.list, or search as you with %s", code, mcpUsers)
+			"an exact email through users.lookupByEmail and any other query through users.list", code)
 	case actionChannels:
-		return fmt.Sprintf("cc-slack can't list channels (%s); fall back to %s (lists as you)", code, mcpChannels)
+		return fmt.Sprintf("cc-slack can't list channels (%s)", code)
 	default:
 		return fmt.Sprintf("cc-slack can't read this conversation (%s)", code)
 	}
+}
+
+func explained(err error) bool {
+	return errors.As(err, new(inviteNeededError)) || errors.As(err, new(outsideDMError)) || errors.As(err, new(sharedError)) ||
+		errors.As(err, new(blockLimitError)) || errors.As(err, new(userConsentError)) || errors.As(err, new(asUserError))
 }
 
 func failureCode(err error) string {
@@ -141,28 +150,4 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 		}
 	}
 	return fallback(actionRead, err)
-}
-
-func withFallback(msg, join string, a action) string {
-	if tool := fallbackTool(a); tool != "" {
-		return msg + join + tool
-	}
-	return msg
-}
-
-func fallbackTool(a action) string {
-	switch a {
-	case actionWrite:
-		return mcpSend
-	case actionReact:
-		return mcpReaction
-	case actionUnreact:
-		return mcpUnreact
-	case actionUsers:
-		return mcpUsers
-	case actionChannels:
-		return mcpChannels
-	default:
-		return ""
-	}
 }
