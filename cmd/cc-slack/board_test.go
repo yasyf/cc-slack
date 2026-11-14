@@ -326,7 +326,7 @@ func TestAWithdrawnCardShowsItsReasonInPlaceOfTheButtonsOnce(t *testing.T) {
 		t.Fatalf("a withdrawn card steered the session: %q", got)
 	}
 	edits := editsOf(l.slack.edited(), c.ts)
-	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Withdrawn:* superseded by step 4") ||
+	if len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "*Withdrawn:* ") || !strings.Contains(edits[len(edits)-1], "http://127.0.0.1:7000/p/asks--ab12|superseded by step 4") ||
 		!strings.Contains(edits[len(edits)-1], "Merge #41 now?") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
 		t.Fatalf("card edits %v, want the title kept and the reason in place of the buttons", edits)
 	}

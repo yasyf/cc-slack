@@ -151,6 +151,7 @@ var (
 	errNoStatusSession = errors.New("no session on " + hostName() + " posted that message")
 	errCardMoved       = errors.New("the card was redrawn with another question after this answer was drawn")
 	errUndoClosed      = errors.New("the ten minutes to undo this answer had passed")
+	errNoAnswers       = errors.New("its message offers no answers")
 )
 
 func hostName() string {
@@ -1071,17 +1072,38 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 }
 
 func (p *poller) withdrawWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	reason := clipRunes(mrkdwnEscapes.Replace(w.tap.Label), cardMaxReasonLen) + " · " + clock(w.at, p.now())
-	line := "*Withdrawn:* " + reason
-	if ref, err := parsePermalink(w.via); err == nil && ref.ts != "" && ref.ts != w.card.ts {
-		line = "*Replaced:* " + reason + " · " + slackLink(w.via, "what replaced it")
-	}
+	line := withdrawnLine(w.tap.Label, w.via, w.card.ts, clock(w.at, p.now()))
 	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
 		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 		return cardAnswerResult{}, err
 	}
 	p.react(ctx, id, w.card, cardWithdrawnReaction)
 	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: true, At: w.at}, nil
+}
+
+func (p *poller) redrawWithdrawn(ctx context.Context, id identity, r cardRef, label, line string) (cardAnswerResult, error) {
+	at := p.now()
+	if err := p.tapDrawn(r, at, p.markOption(ctx, id, r, line)); err != nil {
+		return cardAnswerResult{}, err
+	}
+	return cardAnswerResult{Answered: true, Label: label, Other: true, At: at}, nil
+}
+
+func withdrawnLine(reason, via, card, at string) string {
+	shown := clipRunes(mrkdwnEscapes.Replace(reason), cardMaxReasonLen)
+	switch ref, err := parsePermalink(via); {
+	case via == "" || err == nil && ref.ts == card:
+		return "*Withdrawn:* " + shown + " · " + at
+	case err == nil && ref.ts != "":
+		return "*Replaced:* " + shown + " · " + at + " · " + slackLink(via, "what replaced it")
+	}
+	return "*Withdrawn:* " + slackLink(via, clipRunes(reason, cardMaxReasonLen)) + " · " + at
+}
+
+func withdrawnAgain(drawn, reason, via, card string) (string, bool) {
+	at, unlinked := strings.CutPrefix(drawn, "*Withdrawn:* "+clipRunes(mrkdwnEscapes.Replace(reason), cardMaxReasonLen)+" · ")
+	line := withdrawnLine(reason, via, card, at)
+	return line, unlinked && line != drawn
 }
 
 func (p *poller) settleWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
@@ -1400,6 +1422,12 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	if err != nil {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM: %w", named, card, err)
 	}
+	if line, again := withdrawnAgain(m.Tapped, label, via, m.TS); withdrawn && again {
+		return p.redrawWithdrawn(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, label, line)
+	}
+	if waits == "" && m.Tapped != "" {
+		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM: %w", named, card, errNoAnswers)
+	}
 	answers := m.Card.answers()
 	if !other && !withdrawn && !slices.Contains(answers, label) {
 		return cardAnswerResult{}, fmt.Errorf("%q is not one of waiting card %q's answers %q; pass other for a write-in", label, cmp.Or(waits, card), answers)
@@ -1484,7 +1512,10 @@ func (p *poller) waitingCard(ctx context.Context, id identity, r cardRef) (strin
 	if len(options) > 0 {
 		return "", liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: post.Text, Options: options}}, nil
 	}
-	return "", liveMessage{}, errors.New("its message offers no answers")
+	if tapped := outcomeLine(post.Blocks.BlockSet); tapped != "" {
+		return "", liveMessage{TS: r.ts, At: slackTime(r.ts), Card: statusCard{Title: post.Text}, Tapped: tapped}, nil
+	}
+	return "", liveMessage{}, errNoAnswers
 }
 
 func (p *poller) dashboardUndoKey(id identity, a waitsAnswer, from string) string {
@@ -1684,7 +1715,9 @@ func (p *poller) confirmTap(ctx context.Context, id identity, r cardRef, blockID
 		}
 		text, blocks := m.Text, tappedBlocks(m.Blocks.BlockSet, blockID, line)
 		if blockID == cardActionsBlock {
-			text, blocks = settledMessage(m.Blocks.BlockSet, line)
+			if title, settled := settledMessage(m.Blocks.BlockSet, line); settled != nil {
+				text, blocks = title, settled
+			}
 		}
 		if blocks == nil {
 			return nil
@@ -1712,6 +1745,14 @@ func settledMessage(blocks []slack.Block, line string) (string, []slack.Block) {
 		}
 	}
 	return title, append(settled, mrkdwn(cardTappedBlock+cardActionsBlock, line))
+}
+
+func outcomeLine(blocks []slack.Block) string {
+	at := slices.IndexFunc(blocks, func(b slack.Block) bool { return b.ID() == cardTappedBlock+cardActionsBlock })
+	if at < 0 {
+		return ""
+	}
+	return strings.Join(blockTexts(slack.Blocks{BlockSet: blocks[at : at+1]}), "")
 }
 
 func tappedBlocks(blocks []slack.Block, blockID, line string) []slack.Block {

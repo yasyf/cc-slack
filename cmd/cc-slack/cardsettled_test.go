@@ -84,7 +84,7 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 		}, "https://github.com/acme/app/pull/41|Landed as 5480445", false},
 		"withdrawn": {func(l *liveDaemon, c postedCard) {
 			answer(l, c, map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board})
-		}, "*Withdrawn:* superseded by step 4", false},
+		}, board + "|superseded by step 4", false},
 	}
 	for name, route := range routes {
 		t.Run(name, func(t *testing.T) {
@@ -225,6 +225,91 @@ func TestAWithdrawalNamingAnotherPostSaysReplacedAndLinksIt(t *testing.T) {
 	if len(edits) == 0 || strings.Contains(edits[len(edits)-1], "what replaced it") || !strings.Contains(edits[len(edits)-1], "*Withdrawn:* removed from the board") {
 		t.Fatalf("card edits %v, want it withdrawn with no link to the card itself", edits)
 	}
+}
+
+func TestAWithdrawalForAMergeOrReleaseLinksIt(t *testing.T) {
+	for name, via := range map[string]string{
+		"a release build": "https://buildkite.com/forge/release/builds/15682",
+		"a merged PR":     "https://github.com/acme/app/pull/41",
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := postWaiting(t, l, mergeCard())
+			l.do(opCardAnswer, map[string]any{"waits": "step-3:merge", "url": c.url(), "label": "shipped to production", "withdrawn": true, "via": via})
+			edits := editsOf(l.slack.edited(), c.ts)
+			if len(edits) == 0 || !strings.HasPrefix(drawnOutcome(t, edits[len(edits)-1]), "*Withdrawn:* <"+via+"|shipped to production> · ") {
+				t.Fatalf("card edits %v, want the reason linking %s", edits, via)
+			}
+		})
+	}
+}
+
+func TestAWithdrawalAgainLinksItsEventOnACardWithdrawnWithoutTheLink(t *testing.T) {
+	const reason, build = "Release build 15682 shipped it", "https://buildkite.com/forge/release/builds/15682"
+	for name, forget := range map[string]bool{"in the live store": false, "forgotten by the live store": true} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := postWaiting(t, l, mergeCard())
+			withdraw := func(label, via string) (cardAnswerResult, error) {
+				reply, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{"waits": "step-3:merge", "url": c.url(), "label": label, "withdrawn": true, "via": via}))
+				var res cardAnswerResult
+				if err == nil {
+					err = json.Unmarshal(reply.Body, &res)
+				}
+				return res, err
+			}
+			if _, err := withdraw(reason, c.url()); err != nil {
+				t.Fatal(err)
+			}
+			edits := editsOf(l.slack.edited(), c.ts)
+			at, unlinked := strings.CutPrefix(drawnOutcome(t, edits[len(edits)-1]), "*Withdrawn:* "+reason+" · ")
+			if !unlinked {
+				t.Fatalf("card edits %v, want it withdrawn with no link", edits)
+			}
+			if forget {
+				forgetCard(l, c)
+			}
+
+			if res, err := withdraw(reason, build); err != nil || !res.Answered {
+				t.Fatalf("withdraw again = %+v, %v; want the card redrawn", res, err)
+			}
+			edits = editsOf(l.slack.edited(), c.ts)
+			last := edits[len(edits)-1]
+			if got := drawnOutcome(t, last); got != "*Withdrawn:* <"+build+"|"+reason+"> · "+at || !strings.Contains(last, "Merge #41 now?") || strings.Contains(last, cardWaitAction) {
+				t.Fatalf("card = %s, want its title and %q linking %s, at the time it was withdrawn", last, reason, build)
+			}
+			drawn := len(edits)
+			for _, again := range [][2]string{{reason, build}, {"another reason", "https://github.com/acme/app/pull/41"}} {
+				if res, _ := withdraw(again[0], again[1]); res.Answered {
+					t.Fatalf("withdraw %q via %s = %+v, want the card left as drawn", again[0], again[1], res)
+				}
+			}
+			if got := len(editsOf(l.slack.edited(), c.ts)); got != drawn {
+				t.Fatalf("%d edits after withdrawing it again, want %d", got, drawn)
+			}
+		})
+	}
+}
+
+func drawnOutcome(t *testing.T, edit string) string {
+	t.Helper()
+	type block struct {
+		ID       string `json:"block_id"`
+		Elements []struct {
+			Text string `json:"text"`
+		} `json:"elements"`
+	}
+	var blocks []block
+	if err := json.Unmarshal([]byte(edit), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	at := slices.IndexFunc(blocks, func(b block) bool { return b.ID == cardTappedBlock+cardActionsBlock })
+	if at < 0 {
+		t.Fatalf("card %s draws no outcome line", edit)
+	}
+	return blocks[at].Elements[0].Text
 }
 
 func TestAnAnsweredRowFoldsToItsPRLine(t *testing.T) {
