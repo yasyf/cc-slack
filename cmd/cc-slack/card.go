@@ -1007,7 +1007,7 @@ func bulleted(head string, lines []string) string {
 }
 
 func slackLink(target, label string) string {
-	return "<" + target + "|" + mrkdwnEscapes.Replace(label) + ">"
+	return "<" + target + "|" + mrkdwnEscapes.Replace(strings.Join(strings.Fields(label), " ")) + ">"
 }
 
 func (c statusCard) context(tag cardTag, now time.Time, stamp string) slack.Block {
