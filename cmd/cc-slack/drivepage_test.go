@@ -243,7 +243,7 @@ func TestDriveCardsPrintALinePerCardAndOneCardWholeByItsWaitsIDOrPermalink(t *te
 	s := postWaiting(t, l, settled)
 	reply := s.id.permalink(s.id.DMChannelID, "1800000009.000100", "")
 	l.do(opCardAnswer, map[string]any{"waits": settled.Waits, "url": s.url(), "label": "hold it\nuntil the stack lands", "other": true, "settled": true, "via": reply})
-	if edits := editsOf(l.slack.edited(), s.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "<"+reply+"|hold it until the stack lands>") {
+	if edits := editsOf(l.slack.edited(), s.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], reply+"|hold it until the stack lands") {
 		t.Errorf("card edits %v, want his words linked on one line", edits)
 	}
 	raw := l.do(opDriveCards, map[string]any{"name": "brook"}).Body
