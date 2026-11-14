@@ -19,7 +19,8 @@ without the session list. The exception is the thread of a status card or
 that session, the holder neither sees nor owes it, and any other session's watch
 on the thread stays quiet. A session that names its drive with
 `cc-slack dm-status --drive`, as `drive say` does, keeps the replies under its
-posts even where a holder of that drive posted too. Once the posting session
+posts even where a holder of that drive posted too, unless it adds
+`--coordinator`: a reply under a coordinator's post reaches the holder as well. Once the posting session
 ends, stops hearing the DM by `cc-slack unfollow --channel <DM>` with no thread,
 or leaves a reply of the user's untaken for 8 seconds, as a session idle at its
 prompt with no cc-slack channel does, the holder has that thread back, and each

@@ -116,30 +116,31 @@ type opBody struct {
 	Broadcast bool              `json:"broadcast"`
 	NoWatch   bool              `json:"no_watch"`
 
-	Raw       bool     `json:"raw"`
-	Agent     string   `json:"agent"`
-	Mirrored  bool     `json:"mirrored"`
-	Waits     string   `json:"waits"`
-	Label     string   `json:"label"`
-	Other     bool     `json:"other"`
-	Settled   bool     `json:"settled"`
-	Withdrawn bool     `json:"withdrawn"`
-	Reason    string   `json:"reason"`
-	Via       string   `json:"via"`
-	Surface   string   `json:"surface"`
-	About     string   `json:"about"`
-	Drive     string   `json:"drive"`
-	TapPRs    []string `json:"tap_prs"`
-	PR        string   `json:"pr"`
-	Plan      string   `json:"plan"`
-	Tasks     []task   `json:"tasks"`
-	Stop      bool     `json:"stop"`
-	Done      bool     `json:"done"`
-	State     string   `json:"state"`
-	Recipient string   `json:"recipient"`
-	Verdict   string   `json:"verdict"`
-	Kinds     []string `json:"kinds"`
-	Match     string   `json:"match"`
+	Raw         bool     `json:"raw"`
+	Agent       string   `json:"agent"`
+	Mirrored    bool     `json:"mirrored"`
+	Waits       string   `json:"waits"`
+	Label       string   `json:"label"`
+	Other       bool     `json:"other"`
+	Settled     bool     `json:"settled"`
+	Withdrawn   bool     `json:"withdrawn"`
+	Reason      string   `json:"reason"`
+	Via         string   `json:"via"`
+	Surface     string   `json:"surface"`
+	About       string   `json:"about"`
+	Drive       string   `json:"drive"`
+	Coordinator bool     `json:"coordinator"`
+	TapPRs      []string `json:"tap_prs"`
+	PR          string   `json:"pr"`
+	Plan        string   `json:"plan"`
+	Tasks       []task   `json:"tasks"`
+	Stop        bool     `json:"stop"`
+	Done        bool     `json:"done"`
+	State       string   `json:"state"`
+	Recipient   string   `json:"recipient"`
+	Verdict     string   `json:"verdict"`
+	Kinds       []string `json:"kinds"`
+	Match       string   `json:"match"`
 
 	RequestKey    string `json:"request_key"`
 	RequestResend bool   `json:"request_resend"`
@@ -2633,7 +2634,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	id.Agent = b.Agent
-	if err := cmp.Or(a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive), a.uploadCardPictures(hc.Ctx, id, b)); err != nil {
+	if err := cmp.Or(a.poller.threads.recordDrive(hc.Ctx, sub.ID, b.Drive, b.Coordinator), a.uploadCardPictures(hc.Ctx, id, b)); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	if b.Card != nil {

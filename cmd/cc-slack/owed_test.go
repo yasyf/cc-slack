@@ -171,7 +171,7 @@ func TestTheHolderGetsACardThreadBackWhenItsSessionEnds(t *testing.T) {
 
 func onDrive(t *testing.T, f *fixture, subjectID, drive string) {
 	t.Helper()
-	if err := f.poller.threads.recordDrive(f.ctx, subjectID, drive); err != nil {
+	if err := f.poller.threads.recordDrive(f.ctx, subjectID, drive, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -295,6 +295,27 @@ func TestAReplyAHandlerTookStaysWithItWhenItStopsHearingTheDM(t *testing.T) {
 
 	if got := receivers(t, f, "1800000090.000000"); !slices.Equal(got, []string{handler.ID}) {
 		t.Fatalf("delivered to %v, want the reply left with the handler that took it", got)
+	}
+}
+
+func TestAReplyUnderACoordinatorsPostAlsoReachesTheDMHolder(t *testing.T) {
+	f := newFixture(t)
+	holdDM(t, f)
+	onDrive(t, f, testSubject, "durable-agents")
+	coordinator := handlerOf(t, f, 1, "durable-agents")
+	if err := f.poller.threads.recordDrive(f.ctx, coordinator.ID, "durable-agents", true); err != nil {
+		t.Fatal(err)
+	}
+	thread := dmMessageOf(t, f, coordinator)
+	f.tick()
+
+	ownerReplies(f, thread, "1800000090.000000", "go ahead with the rollout")
+
+	if got := receivers(t, f, "1800000090.000000"); !slices.Equal(got, []string{coordinator.ID, testSubject}) {
+		t.Fatalf("delivered to %v, want the coordinator and the DM holder", got)
+	}
+	if owed := owedToHolder(t, f); len(owed) != 1 {
+		t.Fatalf("the DM holder owes %+v, want the reply", owed)
 	}
 }
 

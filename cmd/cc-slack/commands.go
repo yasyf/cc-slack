@@ -1052,24 +1052,25 @@ func renderFollows(w io.Writer, res followsResult) {
 
 func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f         sessionFlags
-		thread    string
-		blocks    string
-		card      string
-		agentName string
-		files     []string
-		rootOnly  bool
-		mirrored  bool
-		about     string
-		drive     string
-		tapPRs    []string
+		f           sessionFlags
+		thread      string
+		blocks      string
+		card        string
+		agentName   string
+		files       []string
+		rootOnly    bool
+		mirrored    bool
+		about       string
+		drive       string
+		coordinator bool
+		tapPRs      []string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "tap_prs": tapPRs}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "coordinator": coordinator, "tap_prs": tapPRs}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1091,6 +1092,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for; while it hears the DM, a DM holder of that drive leaves replies under its posts to it")
+	c.Flags().BoolVar(&coordinator, "coordinator", false, "with --drive, this session coordinates that drive: a DM holder of the drive hears replies under its posts too")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. A link in the text or card draws none")
 	bindAgent(c, &agentName)
 	return c

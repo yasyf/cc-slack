@@ -4,8 +4,13 @@ import (
 	"context"
 )
 
+type sessionDrive struct {
+	name        string
+	coordinator bool
+}
+
 type driveMates struct {
-	drives map[string]string
+	drives map[string]sessionDrive
 	holder string
 }
 
@@ -21,7 +26,7 @@ func (d driveMates) holds(w watch) bool {
 
 func (d driveMates) same(a, b string) bool {
 	drive, ok := d.drives[a]
-	return ok && drive == d.drives[b]
+	return ok && drive.name == d.drives[b].name
 }
 
 func (d driveMates) leaves(w watch, inThread []watch) bool {
@@ -33,7 +38,7 @@ func (d driveMates) leaves(w watch, inThread []watch) bool {
 			posted = true
 		case !d.same(o.SubjectID, w.SubjectID):
 			foreign = true
-		case w.SubjectID == d.holder:
+		case w.SubjectID == d.holder && !d.drives[o.SubjectID].coordinator:
 			return true
 		}
 	}

@@ -319,8 +319,8 @@ func TestOnlyTheDMHolderOfADriveIsToldToAckThenStartAHandler(t *testing.T) {
 		said, not string
 	}{
 		"a DM holder on no drive":         {driveMates{holder: l.subID}, "Act on it as operator steering", "start a handler"},
-		"a DM holder on a drive":          {driveMates{drives: map[string]string{l.subID: "brook"}, holder: l.subID}, "Ack it in one sentence, then start a handler", "Act on it"},
-		"a handler of the holder's drive": {driveMates{drives: map[string]string{l.subID: "brook", "holder": "brook"}, holder: "holder"}, "Act on it as operator steering", "start a handler"},
+		"a DM holder on a drive":          {driveMates{drives: map[string]sessionDrive{l.subID: {name: "brook"}}, holder: l.subID}, "Ack it in one sentence, then start a handler", "Act on it"},
+		"a handler of the holder's drive": {driveMates{drives: map[string]sessionDrive{l.subID: {name: "brook"}, "holder": {name: "brook"}}, holder: "holder"}, "Act on it as operator steering", "start a handler"},
 	} {
 		d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, want.mates, true)
 		if err != nil {
