@@ -27,6 +27,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `rollup` | a drive's `lanes` (`{name, status, detail}`) and `prs` (`{url, label, status}`), on the root card |
 | `waits` | a question id; makes the card an ask card the asking lane stops on, as the next section describes |
 | `recommended` | the one option you recommend, on an ask card or a reply card; the card shows it first, marked (Recommended). An ask card needs one; on a reply card nothing waits on it |
+| `meanwhile` | with `waits`, one line of up to 300 characters saying what is done while the user decides, such as `Being built on a branch while you decide, paused on your pick.`; the card draws it above its buttons in place of the line saying the asking lane is stopped |
 | `group`, `rows` | a cc-present board's group of pull requests: up to 20 `{id, text, buttons}` rows, or 8 carrying a `pr` shaped as in `prs`, each with up to 4 buttons |
 | `key` | an id for a reply card that is neither waiting nor a group: posting a card with the same `key` again edits that card in place |
 
@@ -102,8 +103,9 @@ in `body`, the answers as `options`, and the answer you recommend as
 `recommended`. The card shows the recommended answer first, marked
 (Recommended), then the other answers, numbered in that order, then fixed Other and Explain more
 buttons, with no Ack or Pause. It tells the user the lane is stopped until
-they answer, except a card carrying `prs`, which says only what its buttons
-do, and it takes no `asks`.
+they answer, or what its `meanwhile` says is done while they decide, except
+a card carrying `prs`, which says only what its buttons do, and it takes no
+`asks`.
 
 Every ask card has a recommendation and an Other. A card without
 `recommended` is refused. Never write (Recommended) into a label or add

@@ -85,8 +85,8 @@ const (
 	cardSessionPrefix = 8
 	cardTimeLayout    = "3:04pm"
 	cardPermission    = "slack-"
-	cardWaitHint      = "⏸ *The lane that asked is stopped until you answer.* Tap an option or reply with its number, or tap Other to write your own answer."
-	cardWriteHint     = "⏸ *The lane that asked is stopped until you answer.* Tap Answer to write it."
+	cardStopped       = "The lane that asked is stopped until you answer."
+	cardWriteTap      = "Tap Answer to write it."
 	cardOpenLabel     = "Open"
 	cardChanged       = "Changed since your answer"
 	cardSummary       = "Summary"
@@ -151,6 +151,7 @@ type statusCard struct {
 	Hints       map[string]string `json:"hints,omitempty"`
 	Replaces    string            `json:"replaces,omitempty"`
 	Siblings    bool              `json:"siblings,omitempty"`
+	Meanwhile   string            `json:"meanwhile,omitempty"`
 
 	Pictures   []string    `json:"pictures,omitempty"`
 	Images     []cardImage `json:"images,omitempty"`
@@ -302,6 +303,7 @@ func (c statusCard) checkMirrored(now time.Time, rootOnly bool, tailnet string) 
 		c.checkLinks(tailnet),
 		c.checkOptions(rootOnly),
 		c.checkWaits(rootOnly),
+		c.checkMeanwhile(),
 		c.checkKey(rootOnly),
 		c.checkRefs(),
 		c.checkAsks(now),
@@ -590,6 +592,18 @@ func (c statusCard) checkWaits(rootOnly bool) error {
 	return nil
 }
 
+func (c statusCard) checkMeanwhile() error {
+	switch {
+	case c.Meanwhile == "":
+		return nil
+	case c.Waits == "":
+		return errors.New("meanwhile says what is done while a waiting card waits; set waits too")
+	case strings.Contains(c.Meanwhile, "\n") || runes(c.Meanwhile) > cardMaxNoteLen:
+		return fmt.Errorf("card meanwhile is one line of up to %d characters", cardMaxNoteLen)
+	}
+	return nil
+}
+
 func (c statusCard) checkKey(rootOnly bool) error {
 	switch {
 	case c.Key == "":
@@ -862,7 +876,7 @@ func (c statusCard) merged(next statusCard) statusCard {
 		c.Rollup = next.Rollup
 	}
 	c.Options, c.Asks, c.Waits, c.Recommended, c.Group, c.Rows, c.Images = nil, nil, "", "", "", nil, nil
-	c.PRs, c.Hints, c.Replaces = nil, nil, ""
+	c.PRs, c.Hints, c.Replaces, c.Meanwhile = nil, nil, "", ""
 	return c
 }
 
@@ -1186,10 +1200,11 @@ func (c statusCard) waitHint() string {
 	if len(c.allPRs()) > 0 {
 		return cardPRHint
 	}
+	tap := cardPRHint
 	if len(c.Options) == 0 {
-		return cardWriteHint
+		tap = cardWriteTap
 	}
-	return cardWaitHint
+	return "⏸ *" + cmp.Or(c.Meanwhile, cardStopped) + "* " + tap
 }
 
 func (c statusCard) progress(now time.Time) []slack.Block {
@@ -1489,7 +1504,7 @@ func (c statusCard) gainsRows(previous statusCard) bool {
 }
 
 func (c statusCard) unworded() statusCard {
-	c.Title, c.Body, c.Drive, c.Phase = "", "", "", ""
+	c.Title, c.Body, c.Drive, c.Phase, c.Meanwhile = "", "", "", "", ""
 	c.Links, c.Refs, c.Facts, c.Artifacts, c.Hints = nil, nil, nil, nil, nil
 	c.Progress, c.StartedAt, c.ETA, c.Rollup = nil, nil, nil, nil
 	c.PRs = slices.Clone(c.PRs)
