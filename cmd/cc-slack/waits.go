@@ -17,7 +17,7 @@ const (
 )
 
 const (
-	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post; outside your DM with the app, name who decides with a <@U…> mention instead"
+	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or, on a line waiting on his tap or approval of a PR, link the URL of the PR he taps, and cc-slack draws its tap card with the post; a line waiting on his pick, answer, call or decision links its open question card, which no PR's tap card stands in for; outside your DM with the app, name who decides with a <@U…> mention instead"
 	cardLinkNamed  = "link a card under words that name it, as <permalink|the lock card>, and Slack draws the card under the line; a bare permalink, or one labeled with its own URL, shows him a raw URL"
 )
 
@@ -43,12 +43,15 @@ var (
 	reader       = wordSet("you", "your", "you'll")
 	readerAct    = wordSet("pick", "tap", "taps", "answer", "approval", "approve", "go", "go-ahead", "ok", "okay", "call",
 		"decision", "word", "review", "yes", "sign-off", "signoff", "input", "choice", "say-so", "nod", "ruling", "reply",
-		"response", "confirmation", "feedback", "eyes", "look", "click", "vote", "move", "turn", "steer", "verdict")
-	readerNext = wordSet("to", "now", "here", "first", "again", "in", "on", "for", "at", "alone", "today", "tonight",
+		"response", "confirmation", "feedback", "eyes", "look", "click", "vote", "move", "turn", "steer", "verdict", "card", "question")
+	readerUndone = wordSet("picked", "answered", "approved", "decided", "chosen", "tapped")
+	readerPicks  = wordSet("pick", "picks", "picked", "answer", "answers", "answered", "call", "decision", "decide", "decided", "choice", "choose", "chosen", "ruling", "question")
+	readerNext   = wordSet("to", "now", "here", "first", "again", "in", "on", "for", "at", "alone", "today", "tonight",
 		"tomorrow", "please", "still")
 	readerMust = wordSet("need", "have", "got")
 	clauseJoin = wordSet("and", "but", "or", "so", "then", "while", "because", "once", "after", "before", "until", "when", "if", "since")
 	negates    = wordSet("not", "no", "never", "nothing", "none", "nobody", "without", "neither", "nor")
+	notYet     = wordSet("still", "yet")
 	decides    = wordSet("call", "move", "turn")
 	itIs       = wordSet("it's", "its", "is", "that's")
 	whatWaits  = wordSet("what", "what's", "whatever")
@@ -67,27 +70,32 @@ func wordSet(words ...string) map[string]bool {
 type waitsLine struct {
 	line     int
 	sentence string
+	pick     bool
 }
 
 func (w waitsLine) String() string {
 	return fmt.Sprintf("%d:1 waits-without-card %q: %s", w.line, w.sentence, waitsNeedsCard)
 }
 
-func waitsWithoutCard(text string, card func(permalinkRef) bool) (waitsLine, bool) {
-	said, found := waitsOnReader(text)
-	if !found || slices.ContainsFunc(messageLink.FindAllString(text, -1), func(link string) bool {
+func waitsWithoutCard(text string, card func(permalinkRef) bool, prs bool) (waitsLine, bool) {
+	if slices.ContainsFunc(messageLink.FindAllString(text, -1), func(link string) bool {
 		ref, err := parsePermalink(link)
 		return err == nil && ref.ts != "" && card(ref)
 	}) {
 		return waitsLine{}, false
 	}
-	return said, true
+	for _, said := range waitsOnReader(text) {
+		if !prs || said.pick {
+			return said, true
+		}
+	}
+	return waitsLine{}, false
 }
 
 func dmCard(ref permalinkRef) bool { return dmCardLink.MatchString(ref.channelID) }
 
 func (w waitsLine) refusal() string {
-	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post", w.sentence)
+	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or, on a line waiting on his tap or approval of a PR, link the URL of the PR he taps, and cc-slack draws its tap card with the post; a line waiting on his pick, answer, call or decision links its open question card, which no PR's tap card stands in for", w.sentence)
 }
 
 type rawCardLink struct {
@@ -180,7 +188,7 @@ func waitingPRs(id identity, channelID string, b opBody) []string {
 	if channelID != id.DMChannelID || tapCardsRefused(id, channelID) != "" {
 		return nil
 	}
-	if _, found := waitsOnReader(b.Text); !found {
+	if len(waitsOnReader(b.Text)) == 0 {
 		return nil
 	}
 	named := map[string]bool{}
@@ -199,16 +207,17 @@ func waitingPRs(id identity, channelID string, b opBody) []string {
 }
 
 func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) error {
-	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || len(b.TapPRs) > 0 || tapCardsRefused(id, channelID) != "" && len(linkedPRRefs(b.Text)) > 0 || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
+	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
 		return nil
 	}
-	if said, found := waitsWithoutCard(b.Text, a.openCardIn(id)); found {
+	if said, found := waitsWithoutCard(b.Text, a.openCardIn(id), len(b.TapPRs) > 0 || len(linkedPRRefs(b.Text)) > 0); found {
 		return errors.New(said.refusal())
 	}
 	return nil
 }
 
-func waitsOnReader(text string) (waitsLine, bool) {
+func waitsOnReader(text string) []waitsLine {
+	var found []waitsLine
 	for number, line := range strings.Split(text, "\n") {
 		shown := withoutStateLists(waitsUnread.ReplaceAllString(waitsLabel.ReplaceAllString(waitsMention.ReplaceAllString(line, mentioned), "$1"), " "))
 		for _, sentence := range strings.FieldsFunc(shown, func(r rune) bool { return r == '.' || r == '!' || r == '?' }) {
@@ -216,24 +225,40 @@ func waitsOnReader(text string) (waitsLine, bool) {
 				continue
 			}
 			for _, clause := range waitsClause.Split(sentence, -1) {
-				if waitsOn(waitsWord.FindAllString(strings.ReplaceAll(waitsThankYou.ReplaceAllString(strings.ToLower(clause), "thanks"), "’", "'"), -1)) {
-					return waitsLine{number + 1, strings.TrimSpace(sentence)}, true
+				words := waitsWord.FindAllString(strings.ReplaceAll(waitsThankYou.ReplaceAllString(strings.ToLower(clause), "thanks"), "’", "'"), -1)
+				if at, waits := waitsOn(words); waits {
+					found = append(found, waitsLine{number + 1, strings.TrimSpace(sentence), slices.ContainsFunc(words[max(0, at-3):min(len(words), at+6)], func(w string) bool { return readerPicks[w] })})
+					break
 				}
 			}
 		}
 	}
-	return waitsLine{}, false
+	return found
 }
 
 func withoutStateLists(line string) string {
 	return strings.ReplaceAll(waitsStates.ReplaceAllString(waitsLinking.ReplaceAllString(line, "${0}"+linksAState), " $1"), linksAState, "")
 }
 
-func waitsOn(words []string) bool {
+func waitsOn(words []string) (int, bool) {
 	for i, w := range words {
-		if reader[w] && waitedOnFrom(words, i) && !negated(words, i) {
-			return true
+		if reader[w] && (undone(words, i) || waitedOnFrom(words, i) && !negated(words, i)) {
+			return i, true
 		}
+	}
+	return 0, false
+}
+
+func undone(words []string, at int) bool {
+	if words[at] != "you" {
+		return false
+	}
+	rest := slices.DeleteFunc(slices.Clone(words[at+1:min(len(words), at+6)]), func(w string) bool { return notYet[w] })
+	switch {
+	case len(rest) > 2 && rest[0] == "have" && rest[1] == "not":
+		return readerUndone[rest[2]]
+	case len(rest) > 1 && rest[0] == "haven't":
+		return readerUndone[rest[1]]
 	}
 	return false
 }
