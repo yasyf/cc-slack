@@ -218,6 +218,7 @@ func TestLiveStorePruningKeepsAskingCards(t *testing.T) {
 	asking := []*liveThread{
 		{Channel: "D1", Thread: "pr", Updated: idle, PRCards: []*liveMessage{{TS: "pr", Card: statusCard{Waits: "pr-card"}}}},
 		{Channel: "D1", Thread: "question", Updated: idle, Waiting: map[string]*liveMessage{"ask": {TS: "question", Card: statusCard{Waits: "ask"}}}},
+		{Channel: "D1", Thread: "owed", Updated: idle, Answers: map[string]askAnswer{"ask": {Label: "Hold", Drawn: true, Owed: &owedTap{Card: "owed", Question: &questionAnswer{Label: "Hold"}, Due: idle}}}},
 	}
 	tapped := &liveThread{Channel: "D1", Thread: "tapped", Updated: idle, PRCards: []*liveMessage{{TS: "tapped", Card: statusCard{Waits: "tapped-card"}, Tapped: "Approved"}}}
 	var keys []string
@@ -240,10 +241,10 @@ func TestLiveStorePruningKeepsAskingCards(t *testing.T) {
 		}
 		for _, thread := range asking {
 			if l.threads[threadKey(thread.Channel, thread.Thread)] == nil {
-				t.Fatalf("pruning forgot thread %s, whose card still asks", thread.Thread)
+				t.Fatalf("pruning forgot thread %s, whose card still asks or owes a tap", thread.Thread)
 			}
 		}
-		if l.threads[threadKey(tapped.Channel, tapped.Thread)] != nil || l.threads[threadKey("D1", "2")] != nil || l.threads[threadKey("D1", "3")] == nil {
+		if l.threads[threadKey(tapped.Channel, tapped.Thread)] != nil || l.threads[threadKey("D1", "3")] != nil || l.threads[threadKey("D1", "4")] == nil {
 			t.Fatal("pruning kept a settled thread past the limit or forgot a newer one")
 		}
 	}

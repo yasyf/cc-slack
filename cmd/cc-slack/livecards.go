@@ -595,7 +595,7 @@ func (l *liveCards) prune() []string {
 	var settled []string
 	for k, t := range l.threads {
 		switch {
-		case t.asking():
+		case t.asking(), t.owesTap():
 		case t.Updated.Before(cutoff):
 			delete(l.threads, k)
 			removed = append(removed, k)
@@ -618,6 +618,15 @@ func (t *liveThread) asking() bool {
 		}
 	}
 	return slices.ContainsFunc(t.PRCards, t.asks)
+}
+
+func (t *liveThread) owesTap() bool {
+	for _, ans := range t.Answers {
+		if ans.Owed != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *liveCards) draft(channel, thread string) *liveThread {
