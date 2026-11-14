@@ -109,10 +109,14 @@ func failureCode(err error) string {
 	if call, ok := errors.AsType[slackCallError](err); ok {
 		code = "Slack's " + call.method + " answered " + errorCode(call.err)
 	}
+	return code + slackSaid(err)
+}
+
+func slackSaid(err error) string {
 	if resp, ok := errors.AsType[slack.SlackErrorResponse](err); ok && len(resp.ResponseMetadata.Messages) > 0 {
-		code += ": " + strings.Join(resp.ResponseMetadata.Messages, "; ")
+		return ": " + strings.Join(resp.ResponseMetadata.Messages, "; ")
 	}
-	return code
+	return ""
 }
 
 func threadReadFailure(err error, named string, id identity, thread string) string {

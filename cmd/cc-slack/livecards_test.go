@@ -320,6 +320,40 @@ func TestARateLimitedCardSweepStopsThenRedrawsWhatItSkippedOnceTheLimitPasses(t 
 	}
 }
 
+func TestAPRCardRedrawSlackRefusedIsDrawnAgainOnTheNextRefreshPass(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	_, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 11, 13, 17, 34, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	const thread, ts = "1800000000.000100", "1800000000.000300"
+	card := statusCard{Status: "needs_you", Title: "Fix: approve the chat list?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits, PRs: []cardPR{{URL: testPRURL}}}
+	cards.threads[threadKey("D"+testUser, thread)] = &liveThread{Channel: "D" + testUser, Thread: thread, Updated: clock.now(), PRCards: []*liveMessage{{TS: ts, At: clock.now(), Card: card}}}
+	cards.tick(l.ctx)
+	drawn := len(editsOf(l.slack.edited(), ts))
+
+	l.slack.fail("chat.update", slack.SlackErrorResponse{Err: "invalid_blocks", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] downloading image failed [json-pointer:/blocks/19/image_url]"}}})
+	restacked := card
+	restacked.Title = "Fix: approve the chat list at its restacked head?"
+	err := cards.replacePRCard(l.ctx, l.slack, cardRef{"D" + testUser, thread, ts}, restacked, clock.now())
+	if err == nil || !strings.HasSuffix(err.Error(), "invalid_blocks: [ERROR] downloading image failed [json-pointer:/blocks/19/image_url]") {
+		t.Fatalf("refused redraw = %v, want Slack's code and the block its answer names", err)
+	}
+
+	clock.advance(refPollEvery)
+	cards.tick(l.ctx)
+	edits := editsOf(l.slack.edited(), ts)
+	if len(edits) != drawn+1 || !strings.Contains(edits[len(edits)-1], "restacked head") {
+		t.Fatalf("edits after the next refresh pass = %v, want the refused card drawn once more as it stands now", edits[drawn:])
+	}
+	clock.advance(refPollEvery)
+	cards.tick(l.ctx)
+	if got := len(editsOf(l.slack.edited(), ts)); got != drawn+1 {
+		t.Fatalf("a pass after Slack took the redraw edited the card %d more times, want none", got-drawn-1)
+	}
+}
+
 func TestARefusedGitHubReadKeepsTheCardsLastStateAndBacksOff(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)
