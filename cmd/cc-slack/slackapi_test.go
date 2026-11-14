@@ -95,7 +95,7 @@ func TestSlackCallsRetryWhatSlackRefusedAndNeverRepostWhatMayHaveLanded(t *testi
 	}
 }
 
-func TestRawMessagesFollowSlacksCursorFromTheOldestMessage(t *testing.T) {
+func TestRawMessageFollowsSlacksCursorToTheMessage(t *testing.T) {
 	var queries []url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries = append(queries, r.URL.Query())
@@ -106,14 +106,14 @@ func TestRawMessagesFollowSlacksCursorFromTheOldestMessage(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true,"messages":[{"ts":"1800000000.000200"}]}`))
 	}))
 	defer srv.Close()
-	raw, err := newSlackClient("xoxb-test", srv.URL+"/", srv.Client()).RawMessages(context.Background(), methodReplies, testChannel, testThread, "1800000000.000100")
+	raw, err := newSlackClient("xoxb-test", srv.URL+"/", srv.Client()).RawMessage(context.Background(), testChannel, testThread, "1800000000.000200")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) != 2 || raw["1800000000.000200"] == nil {
-		t.Fatalf("raw = %v, want both pages' messages", raw)
+	if !strings.Contains(string(raw), "1800000000.000200") {
+		t.Fatalf("raw = %s, want the second page's message", raw)
 	}
-	if len(queries) != 2 || queries[0].Get("oldest") != "1800000000.000100" || queries[0].Get("inclusive") != "true" || queries[1].Get("cursor") != "page2" {
-		t.Fatalf("queries = %v, want two pages from the oldest message on, the second at Slack's cursor", queries)
+	if len(queries) != 2 || queries[0].Get("oldest") != "1800000000.000200" || queries[0].Get("latest") != "1800000000.000200" || queries[1].Get("cursor") != "page2" {
+		t.Fatalf("queries = %v, want two pages bounded to the message, the second at Slack's cursor", queries)
 	}
 }

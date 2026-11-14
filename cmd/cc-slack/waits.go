@@ -17,7 +17,7 @@ const (
 )
 
 const (
-	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post; outside your DM with the app, name who decides with a <@U…> mention instead"
+	waitsNeedsCard = "a line that says something waits on the reader links the open card it means: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post; outside your DM with the app, name who decides with a <@U…> mention instead"
 	cardLinkNamed  = "link a card under words that name it, as <permalink|the lock card>, and Slack draws the card under the line; a bare permalink, or one labeled with its own URL, shows him a raw URL"
 )
 
@@ -87,7 +87,7 @@ func waitsWithoutCard(text string, card func(permalinkRef) bool) (waitsLine, boo
 func dmCard(ref permalinkRef) bool { return dmCardLink.MatchString(ref.channelID) }
 
 func (w waitsLine) refusal() string {
-	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from `cc-slack drive-cards` under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post", w.sentence)
+	return fmt.Sprintf("this post says %q, which waits on him, and links no open card in your DM with the app: link the card's permalink from its line in `cc-slack drive-cards --drive <drive>`, or `--waits <its waits id>`, under words that name it, as <permalink|the lock card>, and Slack draws the card under the line, or link the URL of the PR he taps, and cc-slack draws its tap card with the post", w.sentence)
 }
 
 type rawCardLink struct {

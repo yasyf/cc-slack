@@ -575,7 +575,7 @@ func TestEachRateLimitedSlackCallOfAThreadReadNamesTheThreadAndTheWait(t *testin
 		want   string
 	}{
 		{"the replies fetch", methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second}, false, named + "30s more, so read the thread again after that"},
-		{"the raw refetch", rawOf(methodReplies), &slack.RateLimitedError{RetryAfter: 10 * time.Second}, true, named + "10s more, so read the thread again after that"},
+		{"the raw refetch", methodRawMessage, &slack.RateLimitedError{RetryAfter: 10 * time.Second}, true, named + "10s more, so read the thread again after that"},
 		{"an image block's files.info", "files.info", &slack.RateLimitedError{RetryAfter: time.Minute}, false, named + "60s more, so read the thread again after that"},
 		{"a ratelimited answer with no Retry-After", methodReplies, slack.SlackErrorResponse{Err: "ratelimited"}, false, "(ratelimited)"},
 	}
@@ -588,8 +588,26 @@ func TestEachRateLimitedSlackCallOfAThreadReadNamesTheThreadAndTheWait(t *testin
 			l.slack.add(testChannel, rootMessage(testThread, "root"))
 			l.slack.add(testChannel, chart)
 			l.slack.fail(tc.method, tc.err)
-			l.refused(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "raw": tc.raw}, tc.want)
+			l.refused(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "ts": firstReply, "raw": tc.raw}, tc.want)
 		})
+	}
+}
+
+func TestRawReadsPrintOnlyTheMessageTheyName(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, rootMessage(testThread, "root"))
+	l.slack.add(testChannel, reply(firstReply, "first"))
+	l.refused(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "raw": true}, rawNeedsTS)
+	l.refused(opHistory, map[string]any{"channel_id": testChannel, "raw": true}, rawNeedsTS)
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "ts": firstReply, "raw": true}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range res.Messages {
+		if (m.Raw != nil) != (m.TS == firstReply) {
+			t.Errorf("message %s raw = %s, want raw only on %s", m.TS, m.Raw, firstReply)
+		}
 	}
 }
 

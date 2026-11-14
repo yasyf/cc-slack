@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -260,19 +261,96 @@ func (c *apiClient) TabCanvasContext(ctx context.Context, channelID, title strin
 
 func driveCardsCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
-	var drive string
+	var drive, waits string
+	var closed, asJSON bool
 	c := &cobra.Command{
 		Use:   "drive-cards",
-		Short: "Print the open question cards that name a drive and the PR cards still waiting on a tap, and every closed one with what closed it, from stored state",
+		Short: "Print a line per open question card that names a drive and per PR card still waiting on a tap, oldest first, from stored state",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opDriveCards, map[string]any{"name": drive})
+			body := map[string]any{"name": drive}
+			if waits == "" {
+				return renderOp(c, d, f, opDriveCards, body, asJSON, func(w io.Writer, res driveCardsResult) { renderDriveCards(w, res, closed) })
+			}
+			raw, err := callOp(c, d, f, opDriveCards, body)
+			if err != nil {
+				return err
+			}
+			card, err := driveCard(raw, waits)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(c.OutOrStdout(), string(card))
+			return err
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&drive, "drive", "", "the drive whose question cards to list")
 	_ = c.MarkFlagRequired("drive")
+	c.Flags().StringVar(&waits, "waits", "", "print the one card, open or closed, with this waits id or permalink whole as JSON")
+	c.Flags().BoolVar(&closed, "closed", false, "print a line per closed card with what closed it, in place of the open ones")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result, every card whole")
 	return c
+}
+
+func renderDriveCards(w io.Writer, res driveCardsResult, closed bool) {
+	line := func(waits string, asked time.Time, url, what string) {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", waits, asked.In(pacific).Format(pacificLayout), url, what)
+	}
+	if closed {
+		for _, c := range res.Closed {
+			line(c.Waits, c.Asked, c.URL, c.Title+": "+howClosed(c))
+		}
+		return
+	}
+	for _, q := range res.Questions {
+		line(q.Card.Waits, q.Asked, q.URL, q.Question)
+	}
+	for _, p := range res.PRCards {
+		line(p.Card.Waits, p.Asked, p.URL, strings.Join(p.PRs, " "))
+	}
+}
+
+func howClosed(c driveClosedCard) string {
+	switch {
+	case c.ReplacedBy != "":
+		return "replaced by " + c.ReplacedBy
+	case c.Answer == nil:
+		return c.Tapped
+	case c.Answer.Withdrawn:
+		return "withdrawn: " + c.Answer.Label
+	case c.Answer.Other:
+		return "answered in words"
+	}
+	return strings.TrimSpace("answered " + cmp.Or(c.Answer.Label, c.Answer.Tap))
+}
+
+func driveCard(raw json.RawMessage, waits string) (json.RawMessage, error) {
+	var res driveCardsResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, err
+	}
+	link, _, _ := strings.Cut(waits, "?")
+	names := func(id, url string) bool {
+		at, _, _ := strings.Cut(url, "?")
+		return id == waits || at == link
+	}
+	for _, q := range res.Questions {
+		if names(q.Card.Waits, q.URL) {
+			return json.Marshal(q)
+		}
+	}
+	for _, p := range res.PRCards {
+		if names(p.Card.Waits, p.URL) {
+			return json.Marshal(p)
+		}
+	}
+	for _, c := range res.Closed {
+		if names(c.Waits, c.URL) {
+			return json.Marshal(c)
+		}
+	}
+	return nil, fmt.Errorf("no card of this drive, open or closed, has waits id or permalink %s", waits)
 }
 
 func canvasCmd(d cmd.Deps) *cobra.Command {

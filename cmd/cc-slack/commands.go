@@ -79,13 +79,24 @@ func renderOp[T any](c *cobra.Command, d cmd.Deps, f sessionFlags, op daemon.Op,
 	if err != nil {
 		return err
 	}
-	var res T
-	if err := json.Unmarshal(raw, &res); err != nil {
+	text, err := linesOf(raw, render)
+	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
+	_, err = io.WriteString(c.OutOrStdout(), text)
+	return err
+}
+
+func linesOf[T any](raw json.RawMessage, render func(io.Writer, T)) (string, error) {
+	var res T
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	w := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
 	render(w, res)
-	return w.Flush()
+	err := w.Flush()
+	return out.String(), err
 }
 
 func sessionStartCmd(d cmd.Deps) *cobra.Command {
@@ -650,24 +661,25 @@ func reactionCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int
-	var raw bool
+	var asJSON, raw bool
 	var since string
 	c := &cobra.Command{
 		Use:   "thread",
-		Short: "Print a Slack thread's messages",
+		Short: "Print a Slack thread's messages, oldest first, a line each with its text whole",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
 			body["limit"] = limit
 			body["raw"] = raw
 			body["since_ts"] = since
-			return runOp(c, d, f.sessionFlags, opThread, body)
+			return renderOp(c, d, f.sessionFlags, opThread, body, asJSON || raw, renderThread)
 		},
 	}
 	f.bind(c)
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "messages to print: the oldest newer than --since-ts, else the most recent")
 	c.Flags().StringVar(&since, "since-ts", "", "print only messages newer than this Slack ts, or whole epoch seconds")
-	c.Flags().BoolVar(&raw, "raw", false, "also print each message as Slack sends it, with its blocks, attachments and metadata")
+	c.Flags().BoolVar(&raw, "raw", false, "print JSON with the message --url names as Slack sends it, with its blocks, attachments and metadata")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result")
 	return c
 }
 
@@ -690,26 +702,94 @@ func historyCmd(d cmd.Deps) *cobra.Command {
 	f.bind(c)
 	c.Flags().StringVar(&channelID, "channel", "", "Slack channel id, or a user id: yours for your DM with the app, anyone else's for the group DM of that person, you and the app")
 	c.Flags().StringVar(&url, "url", "", "Slack channel or message permalink (fills channel)")
-	c.Flags().BoolVar(&raw, "raw", false, "print JSON with each message as Slack sends it, with its blocks, attachments and metadata")
+	c.Flags().BoolVar(&raw, "raw", false, "print JSON with the message --url names as Slack sends it, with its blocks, attachments and metadata")
 	c.Flags().IntVar(&limit, "limit", defaultHistoryLimit, "most recent top-level messages to print")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result")
 	return c
 }
 
 func renderHistory(w io.Writer, res historyResult) {
-	defer func() {
-		if res.Partial {
-			_, _ = fmt.Fprintf(w, "partial: ran out of time after the newest %d messages; ask for fewer\n", len(res.Messages))
-		}
-	}()
 	for _, m := range res.Messages {
-		replies := ""
-		if m.ReplyCount > 0 {
-			replies = fmt.Sprintf("%d replies", m.ReplyCount)
-		}
 		text, _, _ := strings.Cut(m.Text, "\n")
-		sec, _ := splitTS(m.TS)
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", time.Unix(sec, 0).In(pacific).Format(pacificLayout), m.TS, m.UserName, replies, text)
+		readLine(w, m, text)
+	}
+	if res.Partial {
+		_, _ = fmt.Fprintf(w, "partial: ran out of time after the newest %d messages; ask for fewer\n", len(res.Messages))
+	}
+}
+
+func renderThread(w io.Writer, res threadResult) {
+	_, _ = fmt.Fprintf(w, "thread %s in %s\n", res.ThreadTS, res.ChannelID)
+	for _, m := range res.Messages {
+		text, rest, _ := strings.Cut(m.Text, "\n")
+		readLine(w, m, text)
+		indented(w, "  ", rest)
+		for _, f := range m.Files {
+			fileLine(w, "  ", f)
+		}
+		for _, s := range m.Shares {
+			shareLines(w, "  ", s)
+		}
+		for _, u := range m.Unfurls {
+			_, _ = fmt.Fprintf(w, "  unfurl: %s\n", u)
+		}
+		if len(m.Buttons) > 0 {
+			_, _ = fmt.Fprintf(w, "  buttons: %s\n", strings.Join(m.Buttons, " | "))
+		}
+	}
+	if res.Truncated {
+		_, _ = fmt.Fprintln(w, "truncated: the thread holds more messages than these; read the rest with since_ts set to the last ts above, or a higher limit")
+	}
+}
+
+func readLine(w io.Writer, m readMessage, text string) {
+	sec, _ := splitTS(m.TS)
+	cells := []string{time.Unix(sec, 0).In(pacific).Format(pacificLayout), m.TS}
+	if m.Permalink != "" {
+		cells = append(cells, m.Permalink)
+	}
+	sender := m.UserName
+	for _, flag := range []struct {
+		name string
+		set  bool
+	}{{"from_claude", m.FromClaude}, {"from_bot", m.FromBot && !m.FromClaude}, {"from_user", m.FromUser}, {"dashboard", m.Dashboard}} {
+		if flag.set {
+			sender += " [" + flag.name + "]"
+		}
+	}
+	replies := ""
+	if m.ReplyCount > 0 {
+		replies = fmt.Sprintf("%d replies", m.ReplyCount)
+	}
+	_, _ = fmt.Fprintln(w, strings.Join(append(cells, sender, replies, text), "\t"))
+}
+
+func indented(w io.Writer, indent, text string) {
+	for line := range strings.Lines(text) {
+		_, _ = fmt.Fprintf(w, "%s%s\n", indent, strings.TrimRight(line, "\n"))
+	}
+}
+
+func fileLine(w io.Writer, indent string, f messageFile) {
+	where := cmp.Or(f.Path, f.Permalink)
+	if f.PathError != "" {
+		where += " (not downloaded: " + f.PathError + ")"
+	}
+	_, _ = fmt.Fprintf(w, "%sfile %s %s %s: %s\n", indent, f.ID, f.Name, f.Mimetype, where)
+}
+
+func shareLines(w io.Writer, indent string, s sharedMessage) {
+	if s.Unreadable != "" {
+		_, _ = fmt.Fprintf(w, "%sshared %s, unreadable: %s\n", indent, s.Permalink, s.Unreadable)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%sshared %s from %s:\n", indent, s.Permalink, s.UserName)
+	indented(w, indent+"  ", s.Text)
+	for _, f := range s.Files {
+		fileLine(w, indent+"  ", f)
+	}
+	for _, inner := range s.Shares {
+		shareLines(w, indent+"  ", inner)
 	}
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,10 @@ CUT_READ = (
 )
 REPLY = THREAD | {"text": "On it."}
 FULL_READ = json.dumps(THREAD | {"messages": [], "truncated": False})
+LINES_READ = f"thread {THREAD['thread_ts']} in {THREAD['channel_id']}\n2026-09-24 10:00  1790210300.000001  Ada [from_user]    on it\n"
+THREAD_HEADER = re.compile(r"^thread \S+ in \S+$", re.M)
+MESSAGE_TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d +(\d+\.\d+) ", re.M)
+TRUNCATED_LINE = re.compile(r"^truncated:", re.M)
 SEEN = f"{BIN} thread-seen"
 PICKED = "1790210300.000001"
 POSTED = "1790210350.000001"
@@ -131,9 +136,21 @@ def json_objects(value: object) -> Iterator[dict[str, Any]]:
             return
 
 
+def strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict | list):
+        for inner in value.values() if isinstance(value, dict) else value:
+            yield from strings(inner)
+
+
 def thread_read(evt: PostToolUseEvent) -> dict[str, Any] | None:
     if evt.tool_name == FALLBACK_READ:
         return {}
+    for text in strings(evt.tool_response):
+        if header := THREAD_HEADER.search(text):
+            lines = text[header.end() :]
+            return {"messages": [{"ts": ts} for ts in MESSAGE_TS.findall(lines)], "truncated": bool(TRUNCATED_LINE.search(lines))}
     return next((found for found in json_objects(evt.tool_response) if "messages" in found), None)
 
 
@@ -205,6 +222,7 @@ def replies_read_their_thread_first(evt: PreToolUseEvent) -> HookResult | None:
     only_if=[ReadsThread()],
     tests={
         Input(tool=P + "slack_thread", tool_input=THREAD, output=FULL_READ): Allow(),
+        Input(tool=P + "slack_thread", tool_input=THREAD, output=LINES_READ): Allow(),
         Input(tool=P + "slack_thread", tool_input=THREAD | {"since_ts": PICKED}, output=FULL_READ): Allow(),
         Input(tool=P + "slack_reply", tool_input=REPLY, output=FULL_READ): Allow(),
     },

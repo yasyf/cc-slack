@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -114,8 +115,8 @@ func TestBothReadToolsShowAQuestionCardsButtonsAndItsBlocksRaw(t *testing.T) {
 		} `json:"accessory"`
 	}
 	for name, args := range map[string]map[string]any{
-		"slack_thread":  {"channel_id": card.id.DMChannelID, "thread_ts": card.ts, "raw": true},
-		"slack_history": {"channel_id": card.id.DMChannelID, "raw": true},
+		"slack_thread":  {"channel_id": card.id.DMChannelID, "thread_ts": card.ts, "ts": card.ts, "raw": true},
+		"slack_history": {"channel_id": card.id.DMChannelID, "ts": card.ts, "raw": true},
 	} {
 		at := slices.IndexFunc(tools, func(tool channel.Tool) bool { return tool.Name == name })
 		out, failed := tools[at].Handler(l.ctx, mustJSON(args), func(string) {})
@@ -143,6 +144,23 @@ func TestBothReadToolsShowAQuestionCardsButtonsAndItsBlocksRaw(t *testing.T) {
 		if ring < 0 || raw.Blocks[ring].Accessory.ActionID != cardWaitAction+"0:w1" || raw.Blocks[ring].Accessory.Style != "primary" {
 			t.Errorf("%s raw blocks = %+v, want %s0 holding Ring's primary Pick", name, raw.Blocks, cardOptionBlock)
 		}
+	}
+}
+
+func TestSlackThreadReadsALinePerMessageWithItsTextWhole(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.add(testChannel, rootMessage(testThread, "root"))
+	l.slack.add(testChannel, reply(firstReply, "first\nsecond line"))
+	tools, _, _, err := channelTools(l.deps, testSession, "/any/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := slices.IndexFunc(tools, func(tool channel.Tool) bool { return tool.Name == "slack_thread" })
+	out, failed := tools[at].Handler(l.ctx, mustJSON(map[string]any{"channel_id": testChannel, "thread_ts": testThread}), func(string) {})
+	if header := fmt.Sprintf("thread %s in %s\n", testThread, testChannel); failed || !strings.HasPrefix(out, header) || !strings.Contains(out, firstReply) ||
+		!strings.Contains(out, "first\n  second line\n") || strings.Contains(out, "{") {
+		t.Fatalf("slack_thread = %q, want %q then a line per message with its later lines indented", out, header)
 	}
 }
 

@@ -330,6 +330,18 @@ class PackTest(unittest.TestCase):
         self.assertEqual((read.through, read.gap), ("1790210300.000001", "truncated"))
         self.assertFalse(self.refused(session))
 
+    def test_a_read_printed_as_lines_records_the_last_ts_it_reached(self) -> None:
+        lines = f"thread {THREAD['thread_ts']} in {THREAD['channel_id']}\n2026-09-24 10:00  1790210300.000001  Ada [from_user]    on it\n  2026-09-24 10:01  1790210999.000001 quoted\n"
+        whole = Path(self.tmp.name) / "whole"
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=THREAD, output=lines, session_dir=whole))
+        read = SessionStore(whole)[self.read_guard.ThreadReads].get().reads[f"main/{THREAD['thread_ts']}"]
+        self.assertEqual((read.through, read.gap), ("1790210300.000001", ""))
+        self.assertFalse(self.refused(whole))
+        cut = Path(self.tmp.name) / "cut"
+        truncated = lines + "truncated: the thread holds more messages than these\n"
+        self.read_guard.thread_reads_are_recorded(mock_tool_event(TOOLS + "slack_thread", event=Event.PostToolUse, tool_input=THREAD, output=truncated, session_dir=cut))
+        self.assertTrue(self.refused(cut))
+
     def test_a_read_clears_only_the_agent_that_read(self) -> None:
         session = Path(self.tmp.name) / "session"
         self.read(session, agent_id="a1")

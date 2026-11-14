@@ -92,6 +92,7 @@ type toolSpec struct {
 	failure     action
 	properties  map[string]any
 	required    []string
+	lines       func(json.RawMessage) (string, error)
 }
 
 var (
@@ -300,6 +301,7 @@ var (
 				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this Slack ts, such as 1790210144.444179, or whole epoch seconds"},
 				"raw":      rawProp,
 			},
+			lines: func(body json.RawMessage) (string, error) { return linesOf(body, renderThread) },
 		},
 		{
 			name:        "slack_history",
@@ -310,6 +312,7 @@ var (
 				"limit": map[string]any{"type": "integer", "description": "default 20"},
 				"raw":   rawProp,
 			},
+			lines: func(body json.RawMessage) (string, error) { return linesOf(body, renderHistory) },
 		},
 		{
 			name:        "slack_file",
@@ -460,6 +463,16 @@ func (t toolSpec) tool(d cmd.Deps, session, scope string) channel.Tool {
 					return reply.Error, true
 				}
 				return fallback(t.failure, err), true
+			}
+			var asked struct {
+				Raw bool `json:"raw"`
+			}
+			if t.lines != nil && json.Unmarshal(args, &asked) == nil && !asked.Raw {
+				text, err := t.lines(reply.Body)
+				if err != nil {
+					return err.Error(), true
+				}
+				return text, false
 			}
 			return withReceiveSteps(reply.Body, session), false
 		},
