@@ -451,7 +451,7 @@ func TestStageAttachmentsLeavesABodyWithoutFiles(t *testing.T) {
 func TestPollerSkipsItsOwnImagePost(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
-	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, "the map", nil, []string{writeFile(t, "a.png", pngBytes)})
+	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, linkedPage{text: "the map"}, []string{writeFile(t, "a.png", pngBytes)}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

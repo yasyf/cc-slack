@@ -223,7 +223,7 @@ func TestPollerOrphansWatchesOfDeadWindows(t *testing.T) {
 func TestPollerSkipsItsOwnPosts(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
-	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, "on it", nil, nil)
+	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, linkedPage{text: "on it"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestPostSucceedsWhenRecordingItFails(t *testing.T) {
 	if _, err := f.db().ExecContext(f.ctx, `CREATE TRIGGER posts_locked BEFORE INSERT ON posts BEGIN SELECT RAISE(ABORT, 'database is locked'); END`); err != nil {
 		t.Fatal(err)
 	}
-	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, "on it", nil, nil)
+	res, err := f.app.post(f.ctx, f.db(), f.id, testChannel, testThread, linkedPage{text: "on it"}, nil, false)
 	if err != nil {
 		t.Fatalf("post failed after Slack accepted it: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestPollerTellsTheParentOncePerStopThatAnOwnerStoppedWithLiveWatches(t *tes
 func TestPollerRoutesDMsFromTheOperatorOnly(t *testing.T) {
 	f := newFixture(t)
 	dm := f.id.DMChannelID
-	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "working on the migration", nil, nil)
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "working on the migration"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestPollerFramesTheOperatorsThreadRepliesAsSteering(t *testing.T) {
 func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 	f := newFixture(t)
 	dm := f.id.DMChannelID
-	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "status", nil, nil)
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "status"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func TestPollerPollsTheDMRootOnceForAChannelWatchOnIt(t *testing.T) {
 
 func postIn(t *testing.T, f *fixture, thread string) {
 	t.Helper()
-	if _, err := f.app.post(f.ctx, f.db(), f.id, testChannel, thread, "on it", nil, nil); err != nil {
+	if _, err := f.app.post(f.ctx, f.db(), f.id, testChannel, thread, linkedPage{text: "on it"}, nil, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -697,7 +697,7 @@ func TestPollerListsSessionsForAnAmbiguousDM(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "status", nil, nil)
+		status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "status"}, nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -775,7 +775,7 @@ func TestPostsRefreshAStaleProfileByUserID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", text, nil, nil); err != nil {
+		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", linkedPage{text: text}, nil, false); err != nil {
 			t.Fatal(err)
 		}
 		sent := f.slack.sent()
@@ -803,7 +803,7 @@ func TestAFailedProfileRefreshKeepsTheSavedProfileForADay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", text, nil, nil); err != nil {
+		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", linkedPage{text: text}, nil, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -833,7 +833,7 @@ func secondSession(t *testing.T, f *fixture) subject.Subject {
 func dmMessageOf(t *testing.T, f *fixture, sub subject.Subject) string {
 	t.Helper()
 	dm := f.id.DMChannelID
-	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "an update", nil, nil)
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "an update"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -915,7 +915,7 @@ func TestEveryDMPostOfASessionSharesOneWatch(t *testing.T) {
 func legacyDMWatch(t *testing.T, f *fixture, sub subject.Subject, status string) string {
 	t.Helper()
 	dm := f.id.DMChannelID
-	posted, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "an update", nil, nil)
+	posted, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "an update"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

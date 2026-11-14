@@ -181,10 +181,11 @@ func openAsks(asks []cardAsk, answers map[string]askAnswer, now time.Time) []car
 type canvas struct {
 	refs     map[string]refState
 	pictures pictureConfig
+	links    linkDraw
 }
 
 func (t *liveThread) view(m *liveMessage, now time.Time, d canvas) cardView {
-	v := cardView{tag: m.Tag, at: m.At, now: now, refs: d.refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint, final: m.Final, unfolded: m.Unfolded, pictures: d.pictures}
+	v := cardView{tag: m.Tag, at: m.At, now: now, refs: d.refs, answers: t.Answers, tapped: m.Tapped, hint: m.Hint, final: m.Final, unfolded: m.Unfolded, pictures: d.pictures, links: d.links}
 	if m == t.Root {
 		v.asks, v.timeline = t.openAsks(now), t.Timeline
 	}

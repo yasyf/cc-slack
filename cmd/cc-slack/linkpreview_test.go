@@ -432,7 +432,7 @@ func legacyCopy(t *testing.T, l *liveDaemon, link, thread string) postResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := l.app.post(l.ctx, l.srv.DB(), id, id.DMChannelID, thread, cardCopyLead, blocks, nil)
+	res, err := l.app.post(l.ctx, l.srv.DB(), id, id.DMChannelID, thread, linkedPage{text: cardCopyLead, blocks: blocks}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ func TestAnAvatarInAnOlderStyleIsRebuiltOnTheNextProfileRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", "hello", nil, nil); err != nil {
+	if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", linkedPage{text: "hello"}, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.slack.sent()[0].iconURL; got != "https://avatars/ym.png?agent-badge" {

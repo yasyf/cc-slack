@@ -150,7 +150,9 @@ post draws as a copy in the post's thread. Such a post goes out with
 `<permalink|the lock card>`, shows those words and the card itself under them.
 Slack draws no link it showed in the same conversation within the past hour, so
 each link that draws carries a `post` query parameter unique to that post, which
-Slack ignores when it opens the message. Every other Slack message link stays
+Slack ignores when it opens the message. The parameter goes into the post's text,
+or a card's fields, before the layout cuts them into sections, so every section
+the layout cuts stays within Slack's 3,000 characters. Every other Slack message link stays
 plain, the engineer's own messages included. `unfurl_links` covers the whole post,
 so a post linking both a card that draws and a message that stays plain goes out
 plain, and each card that draws follows as its own reply in the post's thread; an

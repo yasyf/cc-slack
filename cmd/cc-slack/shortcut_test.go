@@ -257,7 +257,7 @@ func TestShortcutDMOpensAWorkspaceAndRepliesInTheDMThread(t *testing.T) {
 func TestShortcutNeverReachesASubscribedSession(t *testing.T) {
 	f := newFixture(t)
 	dm := f.id.DMChannelID
-	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "working", nil, nil)
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "working"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

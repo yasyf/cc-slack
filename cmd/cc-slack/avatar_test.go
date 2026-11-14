@@ -120,7 +120,7 @@ func TestAFailedAvatarRebuildKeepsTheOldAvatarAndRetriesNextRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", text, nil, nil); err != nil {
+		if _, err := f.app.post(f.ctx, f.db(), id, testChannel, "", linkedPage{text: text}, nil, false); err != nil {
 			t.Fatal(err)
 		}
 		sent := f.slack.sent()

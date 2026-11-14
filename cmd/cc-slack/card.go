@@ -891,40 +891,41 @@ func withoutHidden(text string) string {
 	return strings.TrimSpace(htmlComment.ReplaceAllString(text, ""))
 }
 
-func (c statusCard) visible() statusCard {
-	c.Title, c.Body = withoutHidden(c.Title), withoutHidden(c.Body)
+func (c statusCard) visible(links linkDraw) statusCard {
+	shown := func(text string) string { return links.marked(withoutHidden(text)) }
+	c.Title, c.Body = withoutHidden(c.Title), shown(c.Body)
 	hints := make(map[string]string, len(c.Hints))
 	for option, hint := range c.Hints {
-		hints[option] = withoutHidden(hint)
+		hints[option] = shown(hint)
 	}
 	c.Hints = hints
 	c.Facts = slices.Clone(c.Facts)
 	for i := range c.Facts {
-		c.Facts[i].Value = withoutHidden(c.Facts[i].Value)
+		c.Facts[i].Value = shown(c.Facts[i].Value)
 	}
 	c.Asks = slices.Clone(c.Asks)
 	for i := range c.Asks {
-		c.Asks[i].Description = withoutHidden(c.Asks[i].Description)
+		c.Asks[i].Description = shown(c.Asks[i].Description)
 	}
 	c.PRs = slices.Clone(c.PRs)
 	for i := range c.PRs {
-		c.PRs[i] = c.PRs[i].visible()
+		c.PRs[i] = c.PRs[i].visible(shown)
 	}
 	c.Rows = slices.Clone(c.Rows)
 	for i := range c.Rows {
-		c.Rows[i].Text = withoutHidden(c.Rows[i].Text)
+		c.Rows[i].Text = shown(c.Rows[i].Text)
 		if pr := c.Rows[i].PR; pr != nil {
-			shown := pr.visible()
-			c.Rows[i].PR = &shown
+			visible := pr.visible(shown)
+			c.Rows[i].PR = &visible
 		}
 	}
 	return c
 }
 
-func (p cardPR) visible() cardPR {
-	p.Title, p.Changed, p.Review, p.Surprise = withoutHidden(p.Title), withoutHidden(p.Changed), withoutHidden(p.Review), withoutHidden(p.Surprise)
-	p.Plan, p.Refresher, p.Blocks, p.Lands = withoutHidden(p.Plan), withoutHidden(p.Refresher), withoutHidden(p.Blocks), withoutHidden(p.Lands)
-	p.ShowMe, p.HateMost, p.Port, p.Summary = withoutHidden(p.ShowMe), withoutHidden(p.HateMost), withoutHidden(p.Port), withoutHidden(p.Summary)
+func (p cardPR) visible(shown func(string) string) cardPR {
+	p.Title, p.Changed, p.Review, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Review), shown(p.Surprise)
+	p.Plan, p.Refresher, p.Blocks, p.Lands = shown(p.Plan), shown(p.Refresher), shown(p.Blocks), shown(p.Lands)
+	p.ShowMe, p.HateMost, p.Port, p.Summary = shown(p.ShowMe), shown(p.HateMost), shown(p.Port), shown(p.Summary)
 	return p
 }
 
@@ -968,6 +969,7 @@ type cardView struct {
 	final    bool
 	unfolded bool
 	pictures pictureConfig
+	links    linkDraw
 }
 
 type timelineEntry struct {
@@ -1557,7 +1559,7 @@ func (c statusCard) ended(refs map[string]refState) string {
 }
 
 func (c statusCard) layout(v cardView) ([]slack.Block, [][]slack.Block) {
-	c = c.visible()
+	c = c.visible(v.links)
 	if ended := c.ended(v.refs); v.tapped != "" || ended != "" {
 		outcome := ended
 		if v.tapped != "" {
@@ -1679,7 +1681,7 @@ func (c statusCard) refsOnly() bool {
 }
 
 func (c statusCard) rootBlocks(v cardView) []slack.Block {
-	c = c.visible()
+	c = c.visible(v.links)
 	name := c.Drive
 	switch {
 	case name != "":

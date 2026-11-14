@@ -180,6 +180,57 @@ func TestACardDrawsOncePerThreadByALinkSlackHasNotShownThisHour(t *testing.T) {
 	}
 }
 
+func TestAMessageLinkingOpenCardsMarksEachLinkBeforeItsSectionsAreCut(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	text := openCardsNearTheSectionLimit(t, l)
+
+	l.do(opDMStatus, map[string]any{"text": text})
+	status := lastPost(l)
+	l.post(opSend, map[string]any{"channel_id": testChannel, "text": text})
+	sent := lastPost(l)
+	l.post(opEdit, map[string]any{"channel_id": testChannel, "ts": sent.ts, "text": text})
+	edits := l.slack.edited()
+	card := postWaiting(t, l, statusCard{Status: "needs_you", Title: "Land the stack?", Body: text, Options: []string{"Land", "Hold"}, Recommended: "Land", Waits: "land:stack"})
+	drawn := slices.IndexFunc(l.slack.sentTo(testDM), func(p fakePost) bool { return p.ts == card.ts })
+	if drawn < 0 || len(edits) != 1 {
+		t.Fatalf("card at %d, edits %+v, want the card posted and the post edited once", drawn, edits)
+	}
+	for _, tc := range []struct{ what, blocks string }{
+		{"the dm-status post", status.blocks},
+		{"the post", sent.blocks},
+		{"the edit", edits[0].blocks},
+		{"the card", l.slack.sentTo(testDM)[drawn].blocks},
+	} {
+		marks := 0
+		for _, section := range sectionTexts(postedBlocks(t, tc.blocks)) {
+			if runes(section) > cardMaxSectionLen {
+				t.Fatalf("%s has a section of %d characters, past Slack's %d", tc.what, runes(section), cardMaxSectionLen)
+			}
+			marks += strings.Count(section, freshLinkParam+"=")
+		}
+		if marks != slackMaxPreviews {
+			t.Fatalf("%s marks %d links, want each of the %d open cards it links marked to draw", tc.what, marks, slackMaxPreviews)
+		}
+	}
+}
+
+func openCardsNearTheSectionLimit(t *testing.T, l *liveDaemon) string {
+	t.Helper()
+	links := make([]string, 0, slackMaxPreviews)
+	for n := range slackMaxPreviews {
+		card := postWaiting(t, l, statusCard{Status: "needs_you", Title: fmt.Sprintf("Merge #%d now?", 41+n), Body: "CI is green.", Options: []string{"Merge", "Hold"}, Recommended: "Hold", Waits: fmt.Sprintf("merge:%d", n)})
+		links = append(links, "<"+card.url()+fmt.Sprintf("|card %d>", n+1))
+	}
+	lead, filler := "**Waiting on your tap:** "+strings.Join(links, ", ")+".", " The runner keeps waiting."
+	text := lead + strings.Repeat(filler, (cardMaxSectionLen-runes(lead))/len(filler))
+	_, pages := textPages(text, cardMaxPageBlock)
+	if sections := sectionTexts(pages[0]); len(sections) != 1 || runes(sections[0]) <= cardMaxSectionLen-slackMaxPreviews*len("?"+freshLinkParam+"=") {
+		t.Fatalf("sections %q, want one section closer to Slack's %d characters than its links' marks", sections, cardMaxSectionLen)
+	}
+	return text
+}
+
 func TestOneThreadDrawsEachCardOnceWhateverItsPostsLink(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

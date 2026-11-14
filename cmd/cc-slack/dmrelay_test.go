@@ -18,7 +18,7 @@ func (f *fixture) relay(body map[string]any) daemon.Reply {
 func TestWordsTypedOnTheDashboardReachTheSessionAsTheOperatorsDMAndShowInTheThread(t *testing.T) {
 	f := newFixture(t)
 	dm := f.id.DMChannelID
-	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", "working on the migration", nil, nil)
+	status, err := f.app.post(f.ctx, f.db(), f.id, dm, "", linkedPage{text: "working on the migration"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -684,26 +684,26 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks, render, len(b.Files))
+		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks)
 		b.TapPRs = append(b.TapPRs, ready...)
 		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
 		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
-		draw := a.linkDraw(id, channelID, b.ThreadTS, pages[0].text, pages[0].blocks, b.Files)
-		text, blocks, extra := draw.marked(pages[0].text, pages[0].blocks, append(extra, slack.MsgOptionAttachments(pages[0].previews...)))
+		pages[0] = a.laidOut(id, channelID, b.ThreadTS, pages[0], b.Files, render)
+		first := pages[0]
 		var res postResult
 		err = a.writeAndRetry(hc.Ctx, api, id, channelID, func() (err error) {
-			res, err = postAs(atStep(hc.Ctx, "post"), api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, text, blocks, b.Files, extra...)
+			res, err = postAs(atStep(hc.Ctx, "post"), api, hc.DB, a.avatar, a.poller.log, a.now(), id, channelID, b.ThreadTS, first.text, first.blocks, b.Files, first.options(extra)...)
 			return err
 		})
 		if err != nil {
-			return a.failedPost(hc, sub.ID, id, b, ticket, channelID, pages, text, blocks, a.outsideDM(hc.Ctx, id, channelID, err))
+			return a.failedPost(hc, sub.ID, id, b, ticket, channelID, pages, a.outsideDM(hc.Ctx, id, channelID, err))
 		}
 		res.Posted = true
 		res.ThreadTS = cmp.Or(b.ThreadTS, res.TS)
 		a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
-		a.drewLinks(hc.Ctx, hc.DB, id, draw, res)
+		a.drewLinks(hc.Ctx, hc.DB, id, first.draw, res)
 		res.TicketID = ticket.ID
 		r := receipt{TicketID: ticket.ID, ChannelID: res.ChannelID, TS: res.TS, Permalink: res.Permalink}
 		if ticket.once() {
@@ -711,7 +711,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 				return fail(fmt.Sprintf("posted %s but could not record its receipt, so do not resend: %v", res.Permalink, err))
 			}
 		}
-		shown, err := a.sendLinkPages(hc, sub.ID, id, res, b, pages)
+		shown, err := a.sendLinkPages(hc, sub.ID, id, res, b, pages, render)
 		if err != nil {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
@@ -735,10 +735,11 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 	}
 }
 
-func (a *app) failedPost(hc daemon.HandlerCtx, subjectID string, id identity, b opBody, ticket hookTicket, channelID string, pages []linkedPage, text string, blocks []slack.Block, botErr error) daemon.Reply {
+func (a *app) failedPost(hc daemon.HandlerCtx, subjectID string, id identity, b opBody, ticket hookTicket, channelID string, pages []linkedPage, botErr error) daemon.Reply {
 	if !resendsAsUser(botErr) || len(b.Files) > 0 || len(pages) > 1 || len(pages[0].more) > 0 {
 		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, botErr))
 	}
+	text, blocks := pages[0].text, pages[0].blocks
 	tool := cmp.Or(id.Agent, defaultAgent)
 	mark := fmt.Sprintf("_(%s's %s)_", cmp.Or(id.FirstName, id.name()), strings.ToUpper(tool[:1])+tool[1:])
 	opts := []slack.MsgOption{textOption(mark + " " + withoutHidden(text)), slack.MsgOptionDisableLinkUnfurl()}
@@ -772,9 +773,10 @@ type linkedPage struct {
 	blocks   []slack.Block
 	more     [][]slack.Block
 	previews []slack.Attachment
+	draw     linkDraw
 }
 
-func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string, blocks []slack.Block, render bool, files int) ([]linkedPage, []string) {
+func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string, blocks []slack.Block) ([]linkedPage, []string) {
 	texts, _ = a.linkPRs(ctx, id, scope, texts...)
 	pages := make([]linkedPage, len(texts))
 	pages[0].blocks = blocks
@@ -783,37 +785,43 @@ func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID str
 		var more []string
 		pages[i].text, pages[i].previews, more = a.linkPreviews(ctx, id, channelID, text, nil)
 		ready = append(ready, more...)
-		if render {
-			var rendered [][]slack.Block
-			pages[i].text, rendered = textPages(withoutHidden(pages[i].text), cardMaxPageBlock-files)
-			pages[i].blocks, pages[i].more = rendered[0], rendered[1:]
-		}
-		files = 0
 	}
 	return pages, ready
 }
 
+func (a *app) laidOut(id identity, channelID, threadTS string, page linkedPage, files []string, render bool) linkedPage {
+	page.draw = a.linkDraw(id, channelID, threadTS, page.text, page.blocks, files)
+	page.text, page.blocks = eachText(page.text, page.blocks, page.draw.marked)
+	if !render {
+		return page
+	}
+	var rendered [][]slack.Block
+	page.text, rendered = textPages(withoutHidden(page.text), cardMaxPageBlock-len(files))
+	page.blocks, page.more = rendered[0], rendered[1:]
+	return page
+}
+
+func (p linkedPage) options(extra []slack.MsgOption) []slack.MsgOption {
+	return p.draw.options(append(extra, slack.MsgOptionAttachments(p.previews...)))
+}
+
 func (a *app) postMore(ctx context.Context, db *sql.DB, id identity, channelID, thread string, page linkedPage) error {
 	for n, blocks := range page.more {
-		if _, err := a.post(substep(ctx, fmt.Sprintf("more:%d", n+1)), db, id, channelID, thread, page.text, blocks, nil); err != nil {
+		if _, err := a.send(substep(ctx, fmt.Sprintf("more:%d", n+1)), db, id, channelID, thread, page.text, blocks, nil, page.draw.options(nil)...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, first postResult, b opBody, pages []linkedPage) ([]string, error) {
+func (a *app) sendLinkPages(hc daemon.HandlerCtx, subjectID string, id identity, first postResult, b opBody, pages []linkedPage, render bool) ([]string, error) {
 	if err := a.postMore(atStep(hc.Ctx, "post"), hc.DB, id, first.ChannelID, first.ThreadTS, pages[0]); err != nil {
 		return nil, err
 	}
 	shown := make([]string, 0, len(pages)-1)
 	for n, page := range pages[1:] {
-		ctx := atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1))
-		res, err := a.post(ctx, hc.DB, id, first.ChannelID, b.ThreadTS, page.text, page.blocks, nil, slack.MsgOptionAttachments(page.previews...))
+		res, err := a.post(atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1)), hc.DB, id, first.ChannelID, b.ThreadTS, page, nil, render)
 		if err != nil {
-			return shown, err
-		}
-		if err := a.postMore(ctx, hc.DB, id, res.ChannelID, cmp.Or(b.ThreadTS, res.TS), page); err != nil {
 			return shown, err
 		}
 		if b.ThreadTS == "" && !b.NoWatch {
@@ -878,14 +886,16 @@ func (a *app) watchPostThread(ctx context.Context, db *sql.DB, subjectID, channe
 	return watchID, nil
 }
 
-func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, threadTS, text string, blocks []slack.Block, files []string, extra ...slack.MsgOption) (postResult, error) {
-	d := a.linkDraw(id, channelID, threadTS, text, blocks, files)
-	text, blocks, extra = d.marked(text, blocks, extra)
-	res, err := a.send(ctx, db, id, channelID, threadTS, text, blocks, files, extra...)
+func (a *app) post(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string, page linkedPage, files []string, render bool) (postResult, error) {
+	page = a.laidOut(id, channelID, threadTS, page, files, render)
+	res, err := a.send(ctx, db, id, channelID, threadTS, page.text, page.blocks, files, page.options(nil)...)
 	if err != nil {
 		return res, err
 	}
-	a.drewLinks(ctx, db, id, d, res)
+	a.drewLinks(ctx, db, id, page.draw, res)
+	if err := a.postMore(ctx, db, id, channelID, cmp.Or(threadTS, res.TS), page); err != nil {
+		return res, fmt.Errorf("posted the start of this reply at %s, but its next page failed: %w", res.Permalink, err)
+	}
 	return res, nil
 }
 
@@ -1095,24 +1105,23 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID, thread string) error {
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
-		text, blocks := texts[0], blocks
+		key := cmp.Or(thread, b.TS)
+		a.cards.mu.Lock()
+		draw := a.cards.linkDrawIn(channelID, key, b.TS, texts[0], blocks, false)
+		a.cards.mu.Unlock()
+		if !draw.inline {
+			draw.cards = nil
+		}
+		text, blocks := eachText(texts[0], blocks, draw.marked)
 		if len(blocks) == 0 {
 			var pages [][]slack.Block
 			text, pages = textPages(text, cardMaxBlocks)
 			blocks = slices.Concat(pages...)
 		}
-		key := cmp.Or(thread, b.TS)
-		a.cards.mu.Lock()
-		draw := a.cards.linkDrawIn(channelID, key, b.TS, text, blocks, false)
-		a.cards.mu.Unlock()
-		if !draw.inline {
-			draw.cards = nil
-		}
-		text, blocks, extra := draw.marked(text, blocks, nil)
 		text, blocks = eachText(text, blocks, func(t string) string { return threadParentAsWords(t, channelID, thread) })
 		err := a.cards.editByHand(channelID, b.TS, func() error {
 			if draw.inline {
-				return changeMessage(ctx, api, channelID, b.TS, text, blocks, extra...)
+				return changeMessage(ctx, api, channelID, b.TS, text, blocks, draw.options(nil)...)
 			}
 			return updateMessage(ctx, api, channelID, b.TS, text, blocks)
 		})
@@ -2641,7 +2650,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
 	}
 	pages, ready := a.dmPagesOf(hc, id, b, blocks, texts)
-	msg := pages[0].msg
+	msg := pages[0]
 	b.TapPRs = append(b.TapPRs, ready...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag)
@@ -2807,34 +2816,22 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	return under, taps, nil
 }
 
-type dmPage struct {
-	msg   dmMessage
-	later [][]slack.Block
-}
-
-func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block, texts []string) ([]dmPage, []string) {
-	pages := make([]dmPage, len(texts))
+func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block, texts []string) ([]dmMessage, []string) {
+	pages := make([]dmMessage, len(texts))
 	var ready []string
 	for i, text := range texts {
 		b.Text = text
-		pages[i].msg, pages[i].later = a.dmMessageOf(hc, id, b, blocks)
-		ready = append(ready, pages[i].msg.tapPRs...)
+		pages[i] = a.dmMessageOf(hc, id, b, blocks)
+		ready = append(ready, pages[i].tapPRs...)
 		b.Files, blocks = nil, nil
 	}
 	return pages, ready
 }
 
-func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, pages []dmPage) ([]string, error) {
-	if err := a.postPages(atStep(hc.Ctx, "status"), hc.DB, sub, id, thread, ts, pages[0].msg.text, pages[0].later); err != nil {
-		return nil, err
-	}
+func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, pages []dmMessage) ([]string, error) {
 	shown := make([]string, 0, len(pages)-1)
 	for n, page := range pages[1:] {
-		ctx := atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1))
-		_, pageTS, _, err := a.dmStatus(ctx, hc.DB, sub, id, thread, page.msg)
-		if err == nil {
-			err = a.postPages(ctx, hc.DB, sub, id, thread, pageTS, page.msg.text, page.later)
-		}
+		_, pageTS, _, err := a.dmStatus(atStep(hc.Ctx, fmt.Sprintf("page:%d", n+1)), hc.DB, sub, id, thread, page)
 		if err != nil {
 			return nil, fmt.Errorf("posted the start of this post at %s, so do not post it again, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
 		}
@@ -2843,33 +2840,18 @@ func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identi
 	return shown, nil
 }
 
-func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) (dmMessage, [][]slack.Block) {
+func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block) dmMessage {
 	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
 		msg.text, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
-		if len(blocks) > 0 {
-			return msg, nil
-		}
-		var pages [][]slack.Block
-		msg.text, pages = textPages(msg.text, cardMaxPageBlock-len(b.Files))
-		msg.blocks = pages[0]
-		return msg, pages[1:]
+		return msg
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
 	b.Card.Body, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], b.Card.refIDs())
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
-	return msg, nil
-}
-
-func (a *app) postPages(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, thread, ts, text string, pages [][]slack.Block) error {
-	for n, page := range pages {
-		if _, _, _, err := a.dmStatus(substep(ctx, fmt.Sprintf("more:%d", n+1)), db, sub, id, thread, dmMessage{text: text, blocks: page}); err != nil {
-			return fmt.Errorf("posted the start of this reply at %s, but its next page failed: %w", id.permalink(id.DMChannelID, ts, thread), err)
-		}
-	}
-	return nil
+	return msg
 }
 
 func (a *app) replacedCard(id identity, replaces string) (cardRef, error) {
@@ -3085,23 +3067,20 @@ func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if msg.card != nil {
 		thread, ts, posted, err := a.cardStatus(ctx, db, sub, id, under, msg)
 		if err == nil && posted && len(msg.previews) > 0 {
-			if _, err := a.post(substep(ctx, "previews"), db, id, id.DMChannelID, thread, linkPreviewsLead, nil, nil, slack.MsgOptionAttachments(msg.previews...)); err != nil {
+			if _, err := a.post(substep(ctx, "previews"), db, id, id.DMChannelID, thread, linkedPage{text: linkPreviewsLead, previews: msg.previews}, nil, false); err != nil {
 				a.poller.log.Printf("previews under card %s: %v", ts, err)
 			}
 		}
 		return thread, ts, posted, err
 	}
-	res, err := a.post(ctx, db, id, id.DMChannelID, under, msg.text, msg.blocks, msg.files, slack.MsgOptionAttachments(msg.previews...))
-	if err != nil {
+	res, err := a.post(ctx, db, id, id.DMChannelID, under, linkedPage{text: msg.text, blocks: msg.blocks, previews: msg.previews}, msg.files, len(msg.blocks) == 0)
+	if res.TS == "" {
 		return "", "", false, err
 	}
-	if under != "" {
-		return under, res.TS, true, nil
+	if under == "" {
+		err = cmp.Or(err, a.bindSessionThread(ctx, db, sub, id, res.TS))
 	}
-	if err := a.bindSessionThread(ctx, db, sub, id, res.TS); err != nil {
-		return "", res.TS, true, err
-	}
-	return res.TS, res.TS, true, nil
+	return cmp.Or(under, res.TS), res.TS, true, err
 }
 
 func (a *app) cardStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {
@@ -3300,7 +3279,7 @@ func (a *app) placeCard(ctx context.Context, db *sql.DB, id identity, t *liveThr
 	}
 	var res postResult
 	if err := write(func() (err error) {
-		res, err = a.postCard(ctx, db, id, t, text, blocks, entities...)
+		res, err = a.postCard(ctx, db, id, t, func(d canvas) (string, []slack.Block) { return t.replyMessage(placed, a.now(), d) }, entities...)
 		return err
 	}); err != nil {
 		return nil, err
@@ -3316,8 +3295,7 @@ func (a *app) rootCard(ctx context.Context, db *sql.DB, sub subject.Subject, id 
 	if prior == nil {
 		t := &liveThread{Channel: id.DMChannelID}
 		t.apply(*msg.card, msg.tag, now, true)
-		text, blocks := t.rootMessage(now, cards.canvas())
-		res, err := a.postCard(ctx, db, id, t, text, blocks, msg.card.entities()...)
+		res, err := a.postCard(ctx, db, id, t, func(d canvas) (string, []slack.Block) { return t.rootMessage(now, d) }, msg.card.entities()...)
 		if err != nil {
 			return "", false, err
 		}

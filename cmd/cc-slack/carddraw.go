@@ -14,9 +14,9 @@ import (
 )
 
 type linkDraw struct {
-	channel, thread  string
-	cards            []cardRef
-	inline, unfurled bool
+	channel, thread, post string
+	cards                 []cardRef
+	inline, unfurled      bool
 }
 
 func (l *liveCards) linkDrawIn(channel, thread, at, text string, blocks []slack.Block, unfurled bool) linkDraw {
@@ -39,6 +39,9 @@ func (l *liveCards) linkDrawIn(channel, thread, at, text string, blocks []slack.
 		return t
 	})
 	d.inline = len(d.cards) > 0 && (!plain || unfurled)
+	if d.inline {
+		d.post = strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36)
+	}
 	return d
 }
 
@@ -71,18 +74,10 @@ func (l *liveCards) drawsIn(channel, thread, at string) func(permalinkRef) bool 
 	}
 }
 
-func (d linkDraw) marked(text string, blocks []slack.Block, extra []slack.MsgOption) (string, []slack.Block, []slack.MsgOption) {
-	if !d.inline && !d.unfurled {
-		return text, blocks, extra
+func (d linkDraw) marked(text string) string {
+	if !d.inline {
+		return text
 	}
-	if d.inline {
-		post := strconv.FormatInt(time.Now().UnixNano()+freshPosts.Add(1), 36)
-		text, blocks = eachText(text, blocks, func(t string) string { return d.fresh(t, post) })
-	}
-	return text, blocks, append(slices.Clone(extra), slack.MsgOptionEnableLinkUnfurl())
-}
-
-func (d linkDraw) fresh(text, post string) string {
 	return messageLink.ReplaceAllStringFunc(text, func(link string) string {
 		ref, err := parsePermalink(link)
 		if err != nil || !slices.ContainsFunc(d.cards, func(c cardRef) bool { return c.channel == ref.channelID && c.ts == ref.ts }) {
@@ -92,8 +87,15 @@ func (d linkDraw) fresh(text, post string) string {
 		if strings.Contains(link, "?") {
 			joint = "&"
 		}
-		return link + joint + freshLinkParam + "=" + post
+		return link + joint + freshLinkParam + "=" + d.post
 	})
+}
+
+func (d linkDraw) options(extra []slack.MsgOption) []slack.MsgOption {
+	if !d.inline && !d.unfurled {
+		return extra
+	}
+	return append(slices.Clone(extra), slack.MsgOptionEnableLinkUnfurl())
 }
 
 func (t *liveThread) drew(ts string, cards []cardRef) {
@@ -143,15 +145,17 @@ func (a *app) drewLinks(ctx context.Context, db *sql.DB, id identity, d linkDraw
 	}
 }
 
-func (a *app) postCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, text string, blocks []slack.Block, extra ...slack.MsgOption) (postResult, error) {
-	d := a.cards.linkDrawIn(t.Channel, t.Thread, "", text, blocks, alertsUnfurl(id, t.Channel, text, blocks))
-	if !d.inline {
-		d = linkDraw{unfurled: d.unfurled}
+func (a *app) postCard(ctx context.Context, db *sql.DB, id identity, t *liveThread, draw func(canvas) (string, []slack.Block), extra ...slack.MsgOption) (postResult, error) {
+	d := a.cards.canvas()
+	text, blocks := draw(d)
+	links := a.cards.linkDrawIn(t.Channel, t.Thread, "", text, blocks, alertsUnfurl(id, t.Channel, text, blocks))
+	if links.inline {
+		d.links = links
+		text, blocks = draw(d)
 	}
-	text, blocks, extra = d.marked(text, blocks, extra)
-	res, err := a.send(ctx, db, id, t.Channel, t.Thread, text, blocks, nil, extra...)
+	res, err := a.send(ctx, db, id, t.Channel, t.Thread, text, blocks, nil, links.options(extra)...)
 	if err == nil {
-		t.drew(res.TS, d.cards)
+		t.drew(res.TS, d.links.cards)
 	}
 	return res, err
 }

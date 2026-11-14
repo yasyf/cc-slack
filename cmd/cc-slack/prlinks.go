@@ -581,8 +581,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 			delete(t.Answers, p.Card.Waits)
 		}
 		m := &liveMessage{Card: p.Card, At: now, Final: p.Card.Waits == ""}
-		text, blocks := t.replyMessage(m, now, cards.canvas())
-		res, err := a.postCard(atStep(ctx, fmt.Sprintf("tap:%s#%d:%s", p.Repo, p.Number, p.Card.Waits)), db, id, t, text, blocks, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
+		res, err := a.postCard(atStep(ctx, fmt.Sprintf("tap:%s#%d:%s", p.Repo, p.Number, p.Card.Waits)), db, id, t, func(d canvas) (string, []slack.Block) { return t.replyMessage(m, now, d) }, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
 			a.tellRefused(ctx, id, p, fmt.Errorf("post card in %s: %w%s", channelID, err, slackSaid(err)))
@@ -648,7 +647,7 @@ func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread 
 }
 
 func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, channel, under string, card cardRef) error {
-	res, err := a.post(atStep(ctx, "link:"+card.ts+":"+under), db, id, channel, under, slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts)), nil, nil)
+	res, err := a.post(atStep(ctx, "link:"+card.ts+":"+under), db, id, channel, under, linkedPage{text: slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts))}, nil, false)
 	if err != nil {
 		return err
 	}
@@ -706,7 +705,7 @@ func (a *app) linesCarried(ctx context.Context, id identity, post cardRef, pages
 }
 
 func (p cardPR) lines() []cardFact {
-	shown := p.visible()
+	shown := p.visible(withoutHidden)
 	var lines []cardFact
 	for _, f := range shown.fields(cardView{}) {
 		if strings.TrimSpace(f.Value) != "" {

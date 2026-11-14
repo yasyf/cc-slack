@@ -31,7 +31,7 @@ func holdDM(t *testing.T, f *fixture) {
 
 func postDMThread(t *testing.T, f *fixture) string {
 	t.Helper()
-	posted, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, "", "which one?", nil, nil)
+	posted, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, "", linkedPage{text: "which one?"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestAPostInTheThreadAnswersOnlyEarlierRepliesThere(t *testing.T) {
 	ownerReplies(f, first, "1800000002.100000", "A")
 	ownerReplies(f, second, "1800000002.200000", "B")
 
-	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, first, "Seen: A is applied.", nil, nil); err != nil {
+	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, first, linkedPage{text: "Seen: A is applied."}, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000002.200000"}) {
