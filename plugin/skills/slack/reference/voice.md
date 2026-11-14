@@ -35,7 +35,9 @@ order.
    "Nothing new", which a post leaves out or a :+1: reaction replaces, and a
    sentence that says something waits on the reader, though not a list of
    states that ends in "or waiting on you", in a post that links no
-   card in your DM with the app and no PR, a link to a message in your DM
+   card in your DM with the app, where a linked PR carries any such sentence
+   but one waiting on a pick, answer, call or decision, "you have not
+   picked yet" included, which needs its question card, a link to a message in your DM
    with the app shown as its raw URL, bare or labeled with its own URL, and a
    line outside a table that links more than five Slack messages or alerts,
    since Slack draws five a message: put each on its own line or in a table

@@ -49,6 +49,12 @@ func TestWaitsOnYouReadsPlainVariantsAndLeavesOtherLines(t *testing.T) {
 		"You need to approve the release first.":     true,
 		"This waits on your answer.":                 true,
 		"What I need is your pick on the cache key.": true,
+		"The cutover plan's step 7b, a design-lane recommendation you have not picked yet, deletes the session target.": true,
+		"You haven't answered either card.":                                                                         true,
+		"You still have not chosen a route.":                                                                        true,
+		"The SandSQL view fix is waiting on your card.":                                                             true,
+		"It waits only on your card about handing SandSQL's primaries over, which has not drawn yet.":               true,
+		"The import fix waits on your question about the cache key.":                                                true,
 		"Checking now: a list of what's still waiting on you, biggest first, with links, coming in a minute or two": false,
 		"Looking at what still needs your tap, back shortly.":                                                       false,
 		"Pulling up what you need to approve.":                                                                      false,
@@ -66,12 +72,34 @@ func TestWaitsOnYouReadsPlainVariantsAndLeavesOtherLines(t *testing.T) {
 		"Here is all that still needs your tap.":                                                                    false,
 		"A list of whichever needs your approval.":                                                                  false,
 		"Reading what that still waits on you now.":                                                                 false,
+		"You have not missed anything since the release.":                                                           false,
+		"You never ruled on the cache key, so the old default holds.":                                               false,
+		"Your card on the cache key is answered.":                                                                   false,
 	}
 	for text, want := range cases {
-		if _, got := waitsOnReader(text); got != want {
+		if got := len(waitsOnReader(text)) > 0; got != want {
 			t.Errorf("waitsOnReader(%q) = %v, want %v", text, got, want)
 		}
 	}
+}
+
+func TestAPRsTapCardCarriesOnlyALineWaitingOnHisTapAndAPickLineNeedsItsQuestionCard(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	question := postWaiting(t, l, mergeCard())
+	linked := "<" + tapPR41[0] + "|#41>"
+	for _, body := range []map[string]any{
+		{"text": "#41 waits on your pick of the cache key.", "tap_prs": tapPR41},
+		{"text": linked + " waits on your pick of the cache key."},
+		{"text": linked + " is a design-lane recommendation you have not picked yet."},
+		{"text": linked + " waits on your tap.\nThe cache key is your call."},
+	} {
+		l.refused(opDMStatus, body, "no PR's tap card stands in for")
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap.", "tap_prs": tapPR41})
+	l.do(opDMStatus, map[string]any{"text": "#41 still waits on you.", "tap_prs": tapPR41})
+	l.do(opDMStatus, map[string]any{"text": linked + " waits on your approval."})
+	l.do(opDMStatus, map[string]any{"text": linked + " waits on your pick: <" + question.url() + "|the merge card>", "tap_prs": tapPR41})
 }
 
 func TestAListOfStatesEndingInWaitingOnYouWaitsOnNothing(t *testing.T) {
@@ -83,7 +111,7 @@ func TestAListOfStatesEndingInWaitingOnYouWaitsOnNothing(t *testing.T) {
 		"Tests passed, release is open or waiting on you.":                                                         true,
 	}
 	for text, want := range cases {
-		if _, got := waitsOnReader(text); got != want {
+		if got := len(waitsOnReader(text)) > 0; got != want {
 			t.Errorf("waitsOnReader(%q) = %v, want %v", text, got, want)
 		}
 	}

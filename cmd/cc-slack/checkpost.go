@@ -81,7 +81,7 @@ newest installed plugin, which a session's PATH may not hold.`,
 				status = exited.ExitCode()
 			}
 			var findings []fmt.Stringer
-			if said, found := waitsWithoutCard(text, dmCard); found && len(linkedPRRefs(text)) == 0 {
+			if said, found := waitsWithoutCard(text, dmCard, len(linkedPRRefs(text)) > 0); found {
 				findings = append(findings, said)
 			}
 			for _, raw := range rawCardLinks(text, dmCard) {
