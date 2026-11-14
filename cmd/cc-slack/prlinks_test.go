@@ -1925,11 +1925,11 @@ func linksIn(l *liveDaemon, card fakePost, thread string) bool {
 	return slices.ContainsFunc(cardLinks(l, card), func(p fakePost) bool { return p.threadTS == thread })
 }
 
-func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) {
+func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneTellsWhySlackRefusedIt(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.slack.fail("chat.postMessage", nil)
-	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "fatal_error"})
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "invalid_blocks", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] must be less than 3001 characters [json-pointer:/blocks/7/text]"}}})
 	var sent map[string]string
 	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
 		t.Fatal(err)
@@ -1941,6 +1941,11 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneDoesNot(t *testing.T) 
 	eventually(t, "the failed post", func() bool { return l.slack.callCount("chat.postMessage") >= 2 })
 	if cards := prCards(l, testDM); len(cards) != 0 {
 		t.Fatalf("cards = %+v, want the failed post to leave none", cards)
+	}
+	eventually(t, "the card command told of the refused post", func() bool { return len(cmd.refused(t)) > 0 })
+	want := `{"refused":[{"number":41,"reason":"post card in ` + testDM + `: invalid_blocks: [ERROR] must be less than 3001 characters [json-pointer:/blocks/7/text]","repo":"acme/app"}]}`
+	if refused := cmd.refused(t); !slices.Equal(refused, []string{want}) {
+		t.Fatalf("refusals told = %v, want %s, naming the block Slack's answer names", refused, want)
 	}
 	l.do(opDMStatus, map[string]any{"text": "#41 again", "tap_prs": tapPR41})
 	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {

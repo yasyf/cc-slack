@@ -1470,7 +1470,7 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 			l.log.Printf("live card %s/%s: %s; no longer tracking it", t.Channel, w.ts, errorCode(err))
 			gone = append(gone, w.m)
 		case err != nil:
-			errs = append(errs, fmt.Errorf("redraw card %s/%s: %w", t.Channel, w.ts, err))
+			errs = append(errs, fmt.Errorf("redraw card %s/%s: %w%s", t.Channel, w.ts, err, slackSaid(err)))
 		default:
 			redrawn[w.ts] = true
 		}
@@ -1486,8 +1486,9 @@ func (l *liveCards) flush(ctx context.Context, api slackAPI, t *liveThread, writ
 		t.Continued = continued
 	}
 	if whole {
-		t.Drawn, t.Stale = now, len(errs) > 0
+		t.Drawn = now
 	}
+	t.Stale = len(errs) > 0 || t.Stale && !whole
 	l.save([]string{threadKey(t.Channel, t.Thread)}, nil)
 	carriers := l.carriersOf(t, redrawn)
 	l.mu.Unlock()
@@ -1771,7 +1772,7 @@ func (l *liveCards) redrawMoved(ctx context.Context, api slackAPI, key string, c
 		writes = l.plan(t, now, "")
 	}
 	for _, m := range t.PRCards {
-		if m.cites(changed) && !m.Edited {
+		if (t.Stale || m.cites(changed)) && !m.Edited {
 			prCards = append(prCards, l.write(t, m, now, false))
 		}
 	}

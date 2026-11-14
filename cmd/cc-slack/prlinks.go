@@ -585,6 +585,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		res, err := a.postCard(atStep(ctx, fmt.Sprintf("tap:%s#%d:%s", p.Repo, p.Number, p.Card.Waits)), db, id, t, text, blocks, m.Card.entities(m.Card.prEntities(t.view(m, now, cards.canvas()))...)...)
 		if err != nil {
 			a.poller.log.Printf("PR card for %s#%d in %s/%s not posted: %v", p.Repo, p.Number, channelID, thread, err)
+			a.tellRefused(ctx, id, p, fmt.Errorf("post card in %s: %w%s", channelID, err, slackSaid(err)))
 			return placed, shown, replaced
 		}
 		m.TS = res.TS
