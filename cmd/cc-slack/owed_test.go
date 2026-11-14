@@ -298,6 +298,54 @@ func TestAReplyAHandlerTookStaysWithItWhenItStopsHearingTheDM(t *testing.T) {
 	}
 }
 
+func TestAReplyItsOwnerLeavesUntakenGoesToTheDMHolderAfterTheAckWait(t *testing.T) {
+	for _, drive := range []string{"durable-agents", "long-running rewrite"} {
+		t.Run(drive, func(t *testing.T) {
+			f := newFixture(t)
+			holdDM(t, f)
+			onDrive(t, f, testSubject, "durable-agents")
+			owner := handlerOf(t, f, 1, drive)
+			thread := dmMessageOf(t, f, owner)
+			f.tick()
+
+			ownerReplies(f, thread, "1800000090.000000", "ship it")
+			if next, due := f.tick(), f.now.Add(ackWait); next.IsZero() || next.After(due) {
+				t.Fatalf("next tick at %v, want it by %v when the owner's take is due", next, due)
+			}
+			if got := receivers(t, f, "1800000090.000000"); !slices.Equal(got, []string{owner.ID}) {
+				t.Fatalf("delivered to %v, want only the owner within %v", got, ackWait)
+			}
+
+			f.now = f.now.Add(ackWait)
+			f.tick()
+
+			if got := receivers(t, f, "1800000090.000000"); !slices.Equal(got, []string{owner.ID, testSubject}) {
+				t.Fatalf("delivered to %v, want the DM holder to get the reply its owner left untaken", got)
+			}
+			held := deliveredTo(t, f)[testSubject]
+			if len(held) != 1 || held[0].Kind != kindChannel || held[0].Text != "ship it" || held[0].ThreadOwner != nil && !held[0].ThreadOwner.Ended {
+				t.Fatalf("the DM holder got %+v, want his reply once on its channel watch with no owner that hears it", held)
+			}
+			if owed := owedToHolder(t, f); len(owed) != 1 {
+				t.Fatalf("the DM holder owes %+v, want the untaken reply", owed)
+			}
+
+			ownerReplies(f, thread, "1800000091.000000", "and this one?")
+			if got := receivers(t, f, "1800000091.000000"); !slices.Equal(got, []string{testSubject}) {
+				t.Fatalf("delivered to %v, want his next reply on the DM holder alone while the owner leaves one untaken", got)
+			}
+
+			if _, err := f.db().ExecContext(f.ctx, `UPDATE directives SET delivered_at = ? WHERE subject_id = ?`, f.now.Unix(), owner.ID); err != nil {
+				t.Fatal(err)
+			}
+			ownerReplies(f, thread, "1800000092.000000", "thanks")
+			if got := receivers(t, f, "1800000092.000000"); !slices.Equal(got, []string{owner.ID}) {
+				t.Fatalf("delivered to %v, want the owner back once it took what it had", got)
+			}
+		})
+	}
+}
+
 func TestAReplyOnACardFromTheHoldersOwnProcessStillReachesTheHolder(t *testing.T) {
 	f := newFixture(t)
 	holdDM(t, f)
