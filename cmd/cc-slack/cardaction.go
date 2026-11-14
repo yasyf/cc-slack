@@ -540,6 +540,7 @@ func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef
 		p.wake()
 		p.log.Printf("waiting card %s: %q not recorded yet, recorded again at %s: %v", answer.Waits, answer.Label, tap.Due.Format(time.RFC3339), err)
 	case tapUnrecorded:
+		p.cards.oweTap(card.channel, card.thread, answer.Waits, nil)
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command does not record it: %v", answer.Waits, answer.Label, err)
 	}
 	return rec

@@ -487,6 +487,28 @@ func TestAQuestionTapTheCardCommandDidNotFinishShowsRecordingUntilItsRetryRecord
 	})
 }
 
+func TestAnOwedQuestionTapTheCardCommandDisownsOnItsRetryIsOwedNoMore(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	dir := t.TempDir()
+	cmd := cardCommand{argv: []string{filepath.Join(dir, "card")}, asked: filepath.Join(dir, "asked"), resolved: filepath.Join(dir, "resolved")}
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\necho \"$in\" >> '%[1]s'\ncase \"$in\" in\n*'\"answer\"'*) [ -e '%[2]s' ] || { : > '%[2]s'; exit 1; }; echo '{\"ok\":false,\"why\":\"no drive asked\"}' ;;\n*'\"numbers\"'*) echo '{\"prs\":[]}' ;;\n*) echo '{\"cards\":[]}' ;;\nesac\n", cmd.asked, filepath.Join(dir, "refused"))
+	if err := os.WriteFile(cmd.argv[0], []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	c := postWaiting(t, l, mergeCard())
+	endWatches(t, l, c.thread)
+
+	l.tap(c.id, mergeTap(c, 2))
+
+	within(t, 10*time.Second, "the retried tap owed no more once the card command disowned it", func() bool {
+		ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge")
+		return len(answersOf(cmd.requests(t))) == 2 && (!done || ans.Owed == nil)
+	})
+}
+
 func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAndOwesNothingTheCardRecorded(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
