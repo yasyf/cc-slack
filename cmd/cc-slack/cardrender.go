@@ -44,7 +44,9 @@ and an artifact's uploaded picture, which need them, stay out of the output.
 A body line holding only ![caption](<absolute path or url>) draws that picture
 where the line sits. Render reads each one and refuses a picture it cannot read
 or that is no PNG, JPEG, GIF or WebP image; its image block names the path or
-url as written, where dm-status draws it from the [pictures] bucket.`,
+url as written, where dm-status draws it from the [pictures] bucket. A picture
+a stored card carries by its bucket key draws that key as written, since render
+holds no [pictures] credentials to sign its link.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			dir := cwdOr(f.cwd)

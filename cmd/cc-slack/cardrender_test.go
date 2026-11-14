@@ -119,6 +119,18 @@ func TestRenderDrawsABodyPictureWhereItsLineSits(t *testing.T) {
 	}
 }
 
+func TestRenderDrawsAStoredPictureByItsBucketKey(t *testing.T) {
+	key := picturePrefix + "T1/0f3c.png"
+	card := statusCard{Title: "Two queues", Body: "Two layouts.", Images: []cardImage{{Key: key, Title: "go code"}}}
+	got, err := renderCardFile(t, string(mustJSON(card)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocks := renderedBlocks(got.Blocks); !strings.Contains(blocks, `"`+key+`"`) || !strings.Contains(blocks, "go code") {
+		t.Errorf("blocks %s, want the picture drawn from its key %s, captioned", blocks, key)
+	}
+}
+
 func TestRenderRefusesABodyPictureItCannotDraw(t *testing.T) {
 	words := writeFile(t, "notes.png", "plain words")
 	for line, want := range map[string]string{
