@@ -148,6 +148,9 @@ func drawablePicture(body []byte, name string) ([]byte, error) {
 }
 
 func (p pictureConfig) link(key string) string {
+	if !p.enabled() {
+		return key
+	}
 	signed, err := s3.NewPresignClient(p.client()).PresignGetObject(context.Background(),
 		&s3.GetObjectInput{Bucket: aws.String(p.Bucket), Key: aws.String(key)}, s3.WithPresignExpires(pictureLife))
 	if err != nil {
