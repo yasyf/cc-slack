@@ -252,7 +252,7 @@ def conversation(write: Write) -> Conversation:
 def message_thread(write: Write) -> str:
     if not write.ts:
         return ""
-    if not (out := capture([CC_SLACK, "thread", "--channel", write.channel, "--thread", write.ts], timeout=5)):
+    if not (out := capture([CC_SLACK, "thread", "--json", "--channel", write.channel, "--thread", write.ts], timeout=5)):
         return ""
     message = next((found for found in json.loads(out)["messages"] if found.get("ts") == write.ts), {})
     parent = str(message.get("thread_ts") or "")
@@ -262,7 +262,7 @@ def message_thread(write: Write) -> str:
 def read_thread(conv: Conversation) -> Thread:
     if not conv.thread:
         return Thread()
-    if not (out := capture([CC_SLACK, "thread", "--channel", conv.channel, "--thread", conv.thread], timeout=5)):
+    if not (out := capture([CC_SLACK, "thread", "--json", "--channel", conv.channel, "--thread", conv.thread], timeout=5)):
         return Thread(readable=False)
     read = json.loads(out)
     return Thread(
@@ -925,7 +925,8 @@ NOT_DM = {
     f"{CC_SLACK} dm-peer": json.dumps({"peer": "", "peer_name": ""}),
     f"{CC_SLACK} channel-info": (1, "channel_not_found"),
     f"{CC_SLACK} channel-info --channel {FOLLOWERS}": json.dumps({"id": FOLLOWERS, "name": "app-followers"}),
-    f"{CC_SLACK} thread": json.dumps({"messages": [DANA_OPENED]}),
+    f"{CC_SLACK} thread": f"thread {DANA_THREAD} in {FOLLOWERS}\n2026-10-12 19:47  {DANA_THREAD}  Dana    {DANA_OPENED['text']}\n",
+    f"{CC_SLACK} thread --json": json.dumps({"messages": [DANA_OPENED]}),
     f"{CC_SLACK} history": json.dumps({"channel_id": FOLLOWERS, "messages": []}),
     "ccn answer search": "[]",
     "cc-present outcomes": "{}",
@@ -1010,7 +1011,7 @@ def ruled(*answers: dict[str, Any]) -> dict[str, str]:
 
 
 def thread_read(*messages: dict[str, Any]) -> dict[str, str]:
-    return {f"{CC_SLACK} thread": json.dumps({"messages": list(messages)})}
+    return {f"{CC_SLACK} thread --json": json.dumps({"messages": list(messages)})}
 
 
 def owner_answered(question: str, options: list[str] | dict[str, str], label: str, *, notes: str = "", id: str | None = None, described: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -1210,7 +1211,7 @@ def order_url(ts: str = ORDER_TS) -> str:
 def owner_dm(text: str = ORDER_TEXT, *, ts: str = ORDER_TS, own: bool = True, from_user: bool = True) -> dict[str, str | tuple[int, str]]:
     peer = {"peer": "U0OWNER0001", "peer_name": "Wren", "own": own}
     message = {"ts": ts, "user": "U0OWNER0001", "user_name": "Wren", "text": text, "from_user": from_user}
-    return NOT_DM | {f"{CC_SLACK} dm-peer --channel {OWNER_DM}": json.dumps(peer), f"{CC_SLACK} thread --channel {OWNER_DM}": json.dumps({"messages": [message]})}
+    return NOT_DM | {f"{CC_SLACK} dm-peer --channel {OWNER_DM}": json.dumps(peer), f"{CC_SLACK} thread --json --channel {OWNER_DM}": json.dumps({"messages": [message]})}
 
 
 def dm_arrived(ts: str = ORDER_TS, *, text: str = ORDER_TEXT, operator: bool = True, channel: str = OWNER_DM, thread: str | None = None, server: str = CHANNEL_SERVER) -> list[dict[str, Any]]:
@@ -1253,7 +1254,7 @@ def fixture_stubs(line: dict[str, Any]) -> dict[str, str | tuple[int, str]]:
         del commands[f"{CC_SLACK} channel-info --channel {FOLLOWERS}"]
         commands |= {f"{CC_SLACK} channel-info --channel {channel['id']}": json.dumps(channel) for channel in line["channels"]}
     if "thread" in line:
-        commands[f"{CC_SLACK} thread"] = json.dumps({"messages": line["thread"]})
+        commands[f"{CC_SLACK} thread --json"] = json.dumps({"messages": line["thread"]})
     if "board" in line:
         commands["cc-present outcomes"] = json.dumps(line["board"])
     return commands
@@ -1347,7 +1348,7 @@ on(
                 + re.escape(f'{DANA_OPENED["text"]}\\n\\n{DANA_TEXT}",\n  "options": [\n    "Yes",\n    "No"\n  ],\n  "recommended": "Yes",\n  "waits": "{DANA_CARD_ID}"')
             ),
             case(commands=NOT_DM | {f"{CC_SLACK} channel-info --channel {FOLLOWERS}": (1, "ratelimited")}) >> Block(pattern=re.escape(f'"title": "Post this in the {FOLLOWERS} thread Dana started?"')),
-            case(commands=NOT_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern=re.escape('"title": "Post this in the #app-followers thread?"')),
+            case(commands=NOT_DM | {f"{CC_SLACK} thread --json": (1, "thread_not_found")}) >> Block(pattern=re.escape('"title": "Post this in the #app-followers thread?"')),
             case({"channel_id": PRIYA_USER, "text": PRIYA_DM_TEXT}, tool="slack_send", commands=PRIYA_DM) >> Block(pattern=re.escape('"title": "Post this in a direct message to priya?",\n  "body": "Hey Priya')),
             case() >> Block(pattern=re.escape(f'then retry once they tap Yes.\n```json\n{{\n  "id": "{DANA_CARD_ID}",\n  "type": "card",\n  "title": "{DANA_CARD}",\n  "children": [\n    {{\n      "id": "{DANA_CARD_ID}-context"')),
             case(**said(f"answer this reply too {DANA_URL.replace(DANA_THREAD.replace('.', ''), DANA_FOLLOWED_UP['ts'].replace('.', ''))}"), commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP)) >> ALLOW,
@@ -1405,7 +1406,7 @@ on(
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "This is fixed now, and your chats open again."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED)) >> DENY,
-            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | {f"{CC_SLACK} thread": (1, "ratelimited")}) >> DENY,
+            case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | {f"{CC_SLACK} thread --json": (1, "ratelimited")}) >> DENY,
             case(DANA | {"text": f"{SOLVED_TEXT} Does it work for you now?"}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": f"{SOLVED_TEXT} Please retry and let me know."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> DENY,
@@ -1465,9 +1466,9 @@ on(
             case({"url": DANA_URL}, tool="slack_delete") >> Block(pattern="Delete the bot's Slack message"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": DANA_THREAD})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Rewrite(ticket_id="0123456789ab"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[posted_once({"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Delete the bot's Slack message"),
-            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | {f"{CC_SLACK} thread": ""}) >> Rewrite(ticket_id="0123456789ab"),
-            case(PRIYA_EDIT, tool="slack_edit", tickets=[retrying(PRIYA_EDIT, verb="edit", place={"channel": PRIYA_USER, "thread": ""})], commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Rewrite(ticket_id="0123456789ab"),
-            case(PRIYA_EDIT, tool="slack_edit", commands=PRIYA_DM | {f"{CC_SLACK} thread": (1, "thread_not_found")}) >> Block(pattern="Edit the bot's message to this"),
+            case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": ""})], commands=NOT_DM | {f"{CC_SLACK} thread --json": ""}) >> Rewrite(ticket_id="0123456789ab"),
+            case(PRIYA_EDIT, tool="slack_edit", tickets=[retrying(PRIYA_EDIT, verb="edit", place={"channel": PRIYA_USER, "thread": ""})], commands=PRIYA_DM | {f"{CC_SLACK} thread --json": (1, "thread_not_found")}) >> Rewrite(ticket_id="0123456789ab"),
+            case(PRIYA_EDIT, tool="slack_edit", commands=PRIYA_DM | {f"{CC_SLACK} thread --json": (1, "thread_not_found")}) >> Block(pattern="Edit the bot's message to this"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
             case({"channel_id": FOLLOWERS, "ts": DANA_FOLLOWED_UP["ts"], "text": "edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
