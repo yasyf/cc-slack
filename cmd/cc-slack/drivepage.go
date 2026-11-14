@@ -295,7 +295,7 @@ func driveCardsCmd(d cmd.Deps) *cobra.Command {
 
 func renderDriveCards(w io.Writer, res driveCardsResult, closed bool) {
 	line := func(waits string, asked time.Time, url, what string) {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", waits, asked.In(pacific).Format(pacificLayout), url, what)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", waits, asked.In(pacific).Format(pacificLayout), url, strings.Join(strings.Fields(what), " "))
 	}
 	if closed {
 		for _, c := range res.Closed {
@@ -319,8 +319,6 @@ func howClosed(c driveClosedCard) string {
 		return c.Tapped
 	case c.Answer.Withdrawn:
 		return "withdrawn: " + c.Answer.Label
-	case c.Answer.Other:
-		return "answered in words"
 	}
 	return strings.TrimSpace("answered " + cmp.Or(c.Answer.Label, c.Answer.Tap))
 }

@@ -241,9 +241,13 @@ func TestDriveCardsPrintALinePerCardAndOneCardWholeByItsWaitsIDOrPermalink(t *te
 	settled := mergeCard()
 	settled.Drive, settled.Waits, settled.Title = "brook", "step-4:cache", "Grow the cache disk?"
 	s := postWaiting(t, l, settled)
-	answerOnBoard(t, l, s, "Hold")
+	reply := s.id.permalink(s.id.DMChannelID, "1800000009.000100", "")
+	l.do(opCardAnswer, map[string]any{"waits": settled.Waits, "url": s.url(), "label": "hold it\nuntil the stack lands", "other": true, "settled": true, "via": reply})
+	if edits := editsOf(l.slack.edited(), s.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "<"+reply+"|hold it until the stack lands>") {
+		t.Errorf("card edits %v, want his words linked on one line", edits)
+	}
 	raw := l.do(opDriveCards, map[string]any{"name": "brook"}).Body
-	for closed, want := range map[bool][]string{false: {open.Waits, o.url(), open.Title}, true: {settled.Waits, s.url(), settled.Title + ": answered Hold"}} {
+	for closed, want := range map[bool][]string{false: {open.Waits, o.url(), open.Title}, true: {settled.Waits, s.url(), settled.Title + ": answered hold it until the stack lands"}} {
 		out, err := linesOf(raw, func(w io.Writer, res driveCardsResult) { renderDriveCards(w, res, closed) })
 		if err != nil || strings.Count(out, "\n") != 1 || !strings.HasPrefix(out, want[0]+" ") || !strings.Contains(out, want[1]) || !strings.HasSuffix(out, "  "+want[2]+"\n") {
 			t.Errorf("closed=%v lines = %q, %v, want one line holding %q", closed, out, err, want)
