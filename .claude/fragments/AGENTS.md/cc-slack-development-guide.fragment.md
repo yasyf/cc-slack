@@ -423,8 +423,10 @@ app's refresh tokens last never run out on a running daemon. A refresh token Sla
 answers with `invalid_refresh_token`, such as one unused for those 30 days while the
 daemon was down, deletes the file and posts the card again, as does a token `auth.test` answers with
 `invalid_auth`, `token_expired`, or `token_revoked`. Any other `auth.test` failure keeps the file and names the cause.
-Without `[oauth] client_id`, reads stay the bot's, and an invite or `dm-peer` lookup
-that needs the token is refused naming that key.
+Without `[oauth] client_id`, reads stay the bot's, and a read Slack refuses the bot with
+`not_in_channel` or `channel_not_found`, an invite, or a `dm-peer` lookup that needs the
+token is refused naming that key; a `not_in_channel` read also names `slack_channel_join`,
+which adds the bot to that public channel.
 
 ## Channel route
 

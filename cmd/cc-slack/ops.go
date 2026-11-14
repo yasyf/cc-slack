@@ -1485,7 +1485,7 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 		}
 	}
 	if err != nil {
-		return fail(fallback(actionRead, err))
+		return fail(readFailure(err, id))
 	}
 	raw := map[string]json.RawMessage{}
 	if b.Raw {

@@ -1433,6 +1433,18 @@ func TestRevokedUserTokenAsksForConsentOnce(t *testing.T) {
 	}
 }
 
+func TestAReadRefusedTheBotWithNoClientIDNamesTheKeyAndTheJoin(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.refused(opHistory, map[string]string{"channel_id": "C9"}, "as the bot (not_in_channel), and reads it as you only once the cc-slack config sets [oauth] client_id")
+	l.slack.fail(repliesOf("C9", testThread), slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.refused(opThread, map[string]string{"channel_id": "C9", "thread_ts": testThread}, "add the bot to this public channel with slack_channel_join")
+	if cards := l.slack.sentTo("D" + testUser); len(cards) != 0 {
+		t.Fatalf("DM posts = %+v, want no consent card with no client ID", cards)
+	}
+}
+
 func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithOAuth(t, l)

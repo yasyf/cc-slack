@@ -141,7 +141,7 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 		if id.Config.OAuth.enabled() {
 			return fmt.Sprintf("%s is not a conversation the bot or you can read (%s); your DM with the app is %s, which channel_id may omit", named, code, dm)
 		}
-		return fmt.Sprintf("%s is not a conversation the bot can read (%s); one the bot is not in reads as you once the cc-slack config sets [oauth] client_id, and your DM with the app is %s, which channel_id may omit", named, code, dm)
+		return fmt.Sprintf("%s; your DM with the app is %s, which channel_id may omit", readFailure(err, id), dm)
 	case "thread_not_found":
 		return fmt.Sprintf("thread %s is not in %s (%s); pass its channel_id", thread, searched, code)
 	case "ratelimited":
@@ -149,5 +149,17 @@ func threadReadFailure(err error, named string, id identity, thread string) stri
 			return fmt.Sprintf("cc-slack can't read thread %s now (%s): Slack limits the read for %ds more, so read the thread again after that", thread, code, int(math.Ceil(rate.RetryAfter.Seconds())))
 		}
 	}
-	return fallback(actionRead, err)
+	return readFailure(err, id)
+}
+
+func readFailure(err error, id identity) string {
+	if id.Config.OAuth.enabled() || !outsideBot(err) {
+		return fallback(actionRead, err)
+	}
+	refusal := fmt.Sprintf("cc-slack can't read this conversation as the bot (%s), and reads it as you only once the cc-slack config sets [oauth] client_id, "+
+		"the client ID of the Slack app the bot belongs to", failureCode(err))
+	if errorCode(err) == "not_in_channel" {
+		return refusal + "; or add the bot to this public channel with slack_channel_join"
+	}
+	return refusal
 }
