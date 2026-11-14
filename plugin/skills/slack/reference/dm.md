@@ -25,6 +25,11 @@ thread, the holder has that thread back, and each reply of the user's the
 session never took goes to the holder at once. Other bots' messages stay out of
 it.
 
+`cc-slack dm-status --drive <drive> --as-holder` posts as the holder instead of
+the calling session when the holder works for that drive, so the replies under
+that post reach the holder alone. With no holder of that drive it posts as the
+calling session.
+
 The user's words in a channel steer only when they are to the bot: a message
 that mentions the bot, or one that mentions no one else and is a reply in a
 thread this machine's cc-slack posted in. Those carry `operator: true` and

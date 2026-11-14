@@ -129,6 +129,7 @@ type opBody struct {
 	Surface   string   `json:"surface"`
 	About     string   `json:"about"`
 	Drive     string   `json:"drive"`
+	AsHolder  bool     `json:"as_holder"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
 	Plan      string   `json:"plan"`
@@ -2628,7 +2629,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	sub, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
+	sub, err := a.dmPoster(hc, id, b)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2669,6 +2670,25 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
+}
+
+func (a *app) dmPoster(hc daemon.HandlerCtx, id identity, b opBody) (subject.Subject, error) {
+	caller, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
+	if err != nil || !b.AsHolder {
+		return caller, err
+	}
+	hold, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID)
+	if err != nil || hold.subject == "" {
+		return caller, err
+	}
+	drives, err := a.poller.threads.drives(hc.Ctx, []string{hold.subject})
+	if err != nil {
+		return caller, err
+	}
+	if held, ok := drives[hold.subject]; !ok || held != b.Drive {
+		return caller, nil
+	}
+	return hc.Subjects.Store.Get(hc.Ctx, hold.subject)
 }
 
 func rootDriveQuestion(b *opBody) string {
