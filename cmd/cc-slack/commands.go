@@ -1062,6 +1062,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		mirrored  bool
 		about     string
 		drive     string
+		asHolder  bool
 		tapPRs    []string
 	)
 	c := &cobra.Command{
@@ -1069,7 +1070,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "tap_prs": tapPRs}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1091,6 +1092,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for; while it hears the DM, a DM holder of that drive leaves replies under its posts to it")
+	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM when it works for --drive, so the user's replies under the post reach that session; else as this session")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. A link in the text or card draws none")
 	bindAgent(c, &agentName)
 	return c

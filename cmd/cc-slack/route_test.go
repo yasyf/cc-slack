@@ -19,6 +19,7 @@ import (
 	"github.com/yasyf/cc-interact/consume"
 	"github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/event"
+	"github.com/yasyf/cc-interact/store"
 )
 
 const sentinelType = "test.sentinel"
@@ -329,6 +330,60 @@ func TestOnlyTheDMHolderOfADriveIsToldToAckThenStartAHandler(t *testing.T) {
 		if !strings.Contains(d.line, want.said) || strings.Contains(d.line, want.not) {
 			t.Fatalf("%s was told %q, want %q and not %q", name, d.line, want.said, want.not)
 		}
+	}
+}
+
+func TestHisReplyUnderAPostMadeAsTheHolderReachesTheHolderOfItsDriveAlone(t *testing.T) {
+	const holder = "c0ffee0123456789c0ffee0123456789"
+	for name, want := range map[string]struct {
+		asHolder    bool
+		holderDrive string
+		toHolder    bool
+	}{
+		"posted as the holder of its drive":     {true, "demo", true},
+		"posted as the holder of another drive": {true, "other", false},
+		"posted as the session itself":          {false, "demo", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			id, err := loadIdentity(l.ctx, l.srv.DB())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.NewSubjectStore(l.srv.DB()).Create(l.ctx, holder, "", "sess-communicator", scopeName, testPID+7, statusOpen); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := insertWatch(l.ctx, l.srv.DB(), holder, agent.TopLevel, kindChannel, id.DMChannelID, "", beforeEveryPost, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.app.poller.threads.recordDrive(l.ctx, holder, want.holderDrive); err != nil {
+				t.Fatal(err)
+			}
+			var posted map[string]string
+			if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "the fix is up", "drive": "demo", "as_holder": want.asHolder}).Body, &posted); err != nil {
+				t.Fatal(err)
+			}
+			thread := posted["ts"]
+			ts := fmt.Sprintf("%d.000100", slackTime(thread).Unix()+1)
+			l.slack.add(id.DMChannelID, slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: testUser, Text: "why is this still open?"}})
+			l.app.poller.nudged(messageNudge{Channel: id.DMChannelID, TS: ts, ThreadTS: thread})
+
+			held, steered := "", ""
+			eventually(t, "his reply to reach a session", func() bool {
+				if err := l.srv.DB().QueryRowContext(l.ctx, `SELECT COALESCE(group_concat(text, char(10)), '') FROM directives WHERE subject_id = ?`, holder).Scan(&held); err != nil {
+					t.Fatal(err)
+				}
+				steered += l.inject(agent.TopLevel)
+				return held != "" || steered != ""
+			})
+			if want.toHolder && (!strings.Contains(held, "why is this still open?") || !strings.Contains(held, "Ack it in one sentence, then start a handler") || steered != "") {
+				t.Fatalf("the holder was told %q and the posting session %q, want the holder alone told to ack his reply and start a handler", held, steered)
+			}
+			if !want.toHolder && (!strings.Contains(steered, "why is this still open?") || held != "") {
+				t.Fatalf("the holder was told %q and the posting session %q, want his reply with the posting session alone", held, steered)
+			}
+		})
 	}
 }
 
