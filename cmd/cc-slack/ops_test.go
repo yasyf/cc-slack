@@ -1308,7 +1308,7 @@ func TestPostSlackRefusesTheBotIsSentAgainAsTheUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	posts := user.sentTo(testChannel)
-	if !res.Posted || !res.AsUser || len(posts) != 1 || posts[0].text != "_(yasyf's Agent)_ deploy is out" || len(l.slack.sentTo(testChannel)) != 0 {
+	if !res.Posted || !res.AsUser || len(posts) != 1 || posts[0].text != "_(Yasyf's Agent)_ deploy is out" || len(l.slack.sentTo(testChannel)) != 0 {
 		t.Fatalf("send = %+v, posts as the user %+v, want one marked post as the user and none as the bot", res, posts)
 	}
 	if spends := l.tickets.committed(field(body, "ticket_id")); len(spends) != 1 {
