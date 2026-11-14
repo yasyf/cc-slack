@@ -88,7 +88,7 @@ def reply(text: str, channel: str = THREAD["channel_id"], root: str | tuple[int,
         env=ENABLED,
         tool=P + "slack_reply",
         tool_input=THREAD | {"channel_id": channel, "text": text},
-        commands=CHANNELS | {f"{CC_SLACK} thread": root},
+        commands=CHANNELS | {f"{CC_SLACK} thread --json": root},
         **extra,
     )
 
