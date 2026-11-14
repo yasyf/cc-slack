@@ -770,6 +770,7 @@ func (p *poller) dmMessage(ctx context.Context, api slackAPI, id identity, m sla
 		p.eyes(ctx, api, id, m)
 		return true, p.cardAction(ctx, id, tap)
 	}
+	p.holdPRCards(ctx, id, m)
 	return false, p.trackOwed(ctx, id, m)
 }
 

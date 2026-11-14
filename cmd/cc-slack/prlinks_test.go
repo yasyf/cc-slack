@@ -1086,6 +1086,36 @@ func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
 	}
 }
 
+func TestHisWordsUnderAPRCardHeTappedGoToTheCardCommandAsWordsAndATapTheyTakeBackOffersItsButtonsAgain(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	taking := filepath.Join(t.TempDir(), "card")
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"label\":%q'*) echo \"$in\" >> '%s'; echo '{\"ok\":true,\"taken\":[\"acme/app#41\"]}' ;;\n*) echo \"$in\" | '%s' ;;\nesac\n", wordsLabel, cmd.asked, cmd.argv[0])
+	if err := os.WriteFile(taking, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := cardingDaemon(t, []string{taking}, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	thread := cmp.Or(card.threadTS, card.ts)
+	tapMerge(t, l, card)
+	eventually(t, "his Merge to reach the card command", func() bool { return len(answersOf(cmd.requests(t))) == 1 })
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); !done {
+		t.Fatal("his Merge left the card unanswered")
+	}
+	words := fmt.Sprintf("%d.000200", time.Now().Unix()+1)
+	l.slack.add(testDM, slack.Message{Msg: slack.Msg{Timestamp: words, ThreadTimestamp: thread, User: testUser, Text: "this is hacky"}})
+	l.app.poller.nudged(messageNudge{Channel: testDM, TS: words, ThreadTS: thread})
+	eventually(t, "his words to reach the card command", func() bool {
+		return slices.ContainsFunc(answersOf(cmd.requests(t)), func(r string) bool {
+			return strings.Contains(r, `"label":"`+wordsLabel+`"`) && strings.Contains(r, `"action_ts":"`+words+`"`) && strings.Contains(r, `"number":41`)
+		})
+	})
+	eventually(t, "the card to offer its buttons again", func() bool {
+		_, done := l.app.cards.answer(testDM, thread, testWaits)
+		return !done
+	})
+}
+
 func refusingCardCommand(t *testing.T, reason string, cards ...providedCard) (cardCommand, string) {
 	t.Helper()
 	dir := t.TempDir()

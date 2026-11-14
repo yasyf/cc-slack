@@ -124,8 +124,11 @@ written from it answers the card.
 Any other reply the user writes in a card's thread, a waiting question card
 included, is their message: the daemon puts eyes and the working line on it
 and delivers it as a `slack.message` whose `thread_card` names the card's
-`waits` id, and the card keeps its buttons. Only their tap or your
-`slack_card_answer` answers the card. When their words pick an option or
+`waits` id, and the card keeps its buttons. Under a PR card the daemon also
+sends the reply to the `[pr_links] card_command` with the label `Words`,
+which takes back each tap they gave there before writing it, and the card
+offers its buttons again. Only their tap or your `slack_card_answer` answers
+the card. When their words pick an option or
 answer the question, call `slack_card_answer` with them; when they ask
 something, answer it in that thread and leave the card waiting. A card
 closed on their words that answered nothing waits again after

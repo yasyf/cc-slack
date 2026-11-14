@@ -404,6 +404,8 @@ type questionAnswer struct {
 	Waits     string    `json:"waits"`
 }
 
+const wordsLabel = "Words"
+
 type tapRecord int
 
 const (
@@ -428,17 +430,46 @@ func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap 
 		p.log.Printf("PR card %s: %q not applied yet, applied again at %s: %v", tap.Answer.Waits, tap.Answer.Label, tap.Due.Format(time.RFC3339), err)
 		return true
 	}
-	p.cards.release(card.channel, card.thread, tap.Answer.Waits)
 	p.log.Printf("PR card %s: %q not applied: %v", tap.Answer.Waits, tap.Answer.Label, err)
-	if tap.Row || p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" }) {
+	p.reopenPRCard(ctx, id, card, tap.Answer.Waits, tap.Row)
+	return false
+}
+
+func (p *poller) reopenPRCard(ctx context.Context, id identity, card cardRef, waits string, row bool) {
+	p.cards.release(card.channel, card.thread, waits)
+	if row || p.cards.markReply(card.channel, card.thread, card.ts, func(m *liveMessage) { m.Tapped = "" }) {
 		if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), card.channel, card.thread, card.ts, p.now()); err != nil {
-			p.log.Printf("PR card %s: the card still shows %q: %v", tap.Answer.Waits, tap.Answer.Label, err)
+			p.log.Printf("PR card %s: the card still shows its answer: %v", waits, err)
 		}
 	}
-	if pr, ok := p.cards.prCard(card.channel, card.thread, tap.Answer.Waits); ok && !tap.Row {
+	if pr, ok := p.cards.prCard(card.channel, card.thread, waits); ok && !row {
 		p.recard(ctx, id, card, pr)
 	}
-	return false
+}
+
+func (p *poller) holdPRCards(ctx context.Context, id identity, m slack.Message) {
+	if !id.fromOperator(m) || !routedSubtypes[m.SubType] || m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp || len(id.Config.PRLinks.CardCommand) == 0 {
+		return
+	}
+	press := cardPress{m.Timestamp, id.permalink(id.DMChannelID, m.Timestamp, m.ThreadTimestamp)}
+	for _, c := range p.cards.threadPRCards(id.DMChannelID, m.ThreadTimestamp) {
+		p.taps.run(context.WithoutCancel(ctx), c.ref.channel+"/"+c.ref.ts, func(ctx context.Context) {
+			inTurn(ctx)
+			out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": newPRAnswer(c.pr, c.waits, wordsLabel, press, nil)})
+			var held struct {
+				Taken []string `json:"taken"`
+			}
+			if err == nil {
+				err = json.Unmarshal(out, &held)
+			}
+			switch {
+			case err != nil:
+				p.log.Printf("PR card %s: his words %s took back no Approve: %v", c.waits, m.Timestamp, err)
+			case len(held.Taken) > 0:
+				p.reopenPRCard(ctx, id, c.ref, c.waits, false)
+			}
+		})
+	}
 }
 
 func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {

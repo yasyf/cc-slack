@@ -1998,6 +1998,22 @@ func (l *liveCards) prCard(channel, thread, waits string) (refID, bool) {
 	return refID{}, false
 }
 
+func (l *liveCards) threadPRCards(channel, thread string) []offeredCard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return nil
+	}
+	var cards []offeredCard
+	for _, m := range t.PRCards {
+		if ids := m.Card.refIDs(); m.Card.Waits != "" && len(ids) > 0 {
+			cards = append(cards, offeredCard{ref: cardRef{channel, thread, m.TS}, waits: m.Card.Waits, pr: ids[0]})
+		}
+	}
+	return cards
+}
+
 func (l *liveCards) waitingPR(channel, thread, waits string) (refID, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
