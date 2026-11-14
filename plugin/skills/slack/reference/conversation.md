@@ -80,7 +80,7 @@ write every post so a person can answer it, and answer each reply as it lands.
   person, answerable in a word where possible. Never bury the ask
   mid-paragraph.
 - A message telling its reader something waits on them links the card. In your
-  DM with the app, link the open card's permalink from `cc-slack drive-cards`
+  DM with the app, link the open card's permalink from its line in `cc-slack drive-cards --drive <drive>`
   under words that name it, as `<permalink|the lock card>`, and Slack draws the
   card under the line the first time its thread links it; the post copies nothing and shows no raw URL, so the card
   stays one message. A PR's tap card comes from `tap_prs`, or from linking the

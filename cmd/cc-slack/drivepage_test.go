@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -227,5 +229,34 @@ func TestDriveCardsListOneCardWhereACardLinkedWithoutItsThreadIsReplacedInPlace(
 
 	if listed := driveCards(t, l, "brook").Questions; len(listed) != 1 || listed[0].URL != c.url() || listed[0].Question != again.Title {
 		t.Fatalf("questions = %+v, want the one card at %s, now asking %q", listed, c.url(), again.Title)
+	}
+}
+
+func TestDriveCardsPrintALinePerCardAndOneCardWholeByItsWaitsIDOrPermalink(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	open := mergeCard()
+	open.Drive = "brook"
+	o := postWaiting(t, l, open)
+	settled := mergeCard()
+	settled.Drive, settled.Waits, settled.Title = "brook", "step-4:cache", "Grow the cache disk?"
+	s := postWaiting(t, l, settled)
+	answerOnBoard(t, l, s, "Hold")
+	raw := l.do(opDriveCards, map[string]any{"name": "brook"}).Body
+	for closed, want := range map[bool][]string{false: {open.Waits, o.url(), open.Title}, true: {settled.Waits, s.url(), settled.Title + ": answered Hold"}} {
+		out, err := linesOf(raw, func(w io.Writer, res driveCardsResult) { renderDriveCards(w, res, closed) })
+		if err != nil || strings.Count(out, "\n") != 1 || !strings.HasPrefix(out, want[0]+" ") || !strings.Contains(out, want[1]) || !strings.HasSuffix(out, "  "+want[2]+"\n") {
+			t.Errorf("closed=%v lines = %q, %v, want one line holding %q", closed, out, err, want)
+		}
+	}
+	for _, name := range []string{settled.Waits, s.url() + "?thread_ts=" + s.thread} {
+		card, err := driveCard(raw, name)
+		var c driveClosedCard
+		if err != nil || json.Unmarshal(card, &c) != nil || c.Waits != settled.Waits || c.Answer == nil {
+			t.Errorf("--waits %s = %s, %v, want the answered card whole", name, card, err)
+		}
+	}
+	if card, err := driveCard(raw, "step-9:gone"); err == nil {
+		t.Errorf("--waits step-9:gone = %s, want it refused", card)
 	}
 }

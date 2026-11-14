@@ -78,6 +78,8 @@ const (
 	defaultThreadLimit  = 50
 	defaultHistoryLimit = 20
 	historyBudget       = 25 * time.Second
+
+	rawNeedsTS = "raw prints one message as Slack sends it: name it with ts, or url as its permalink"
 )
 
 type opBody struct {
@@ -1354,6 +1356,9 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if b.SinceTS != "" && !sinceTSPattern.MatchString(b.SinceTS) {
 		return fail(fmt.Sprintf("since_ts %q is not a Slack ts such as 1790210144.444179, or whole seconds such as 1790210144", b.SinceTS))
 	}
+	if b.Raw && b.TS == "" {
+		return fail(rawNeedsTS)
+	}
 	limit := b.Limit
 	if limit <= 0 {
 		limit = defaultThreadLimit
@@ -1386,9 +1391,9 @@ func (a *app) readThread(ctx context.Context, id identity, b opBody, limit int) 
 		return threadResult{}, err
 	}
 	msgs, truncated := threadPage(msgs, b.SinceTS, limit)
-	var raw map[string]json.RawMessage
-	if b.Raw && len(msgs) > 0 {
-		if raw, err = api.RawMessages(ctx, "conversations.replies", channelID, b.ThreadTS, msgs[0].Timestamp); err != nil {
+	raw := map[string]json.RawMessage{}
+	if b.Raw {
+		if raw[b.TS], err = api.RawMessage(ctx, channelID, b.ThreadTS, b.TS); err != nil {
 			return threadResult{}, err
 		}
 	}
@@ -1419,6 +1424,9 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	if b.ChannelID == "" {
 		return fail("history needs channel_id (or a Slack url)")
 	}
+	if b.Raw && b.TS == "" {
+		return fail(rawNeedsTS)
+	}
 	limit := b.Limit
 	if limit <= 0 {
 		limit = defaultHistoryLimit
@@ -1443,9 +1451,9 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionRead, err))
 	}
-	var raw map[string]json.RawMessage
-	if b.Raw && len(msgs) > 0 {
-		if raw, err = api.RawMessages(ctx, "conversations.history", channelID, "", msgs[len(msgs)-1].Timestamp); err != nil {
+	raw := map[string]json.RawMessage{}
+	if b.Raw {
+		if raw[b.TS], err = api.RawMessage(ctx, channelID, b.TS, b.TS); err != nil {
 			return fail(fallback(actionRead, err))
 		}
 	}

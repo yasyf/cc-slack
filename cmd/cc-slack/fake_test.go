@@ -140,21 +140,6 @@ func (f *fakeSlack) DocCardsContext(_ context.Context, serviceURL, channelID, te
 	return f.cards, nil
 }
 
-func (f *fakeSlack) RawMessages(_ context.Context, method, _, _, _ string) (map[string]json.RawMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.call(rawOf(method)); err != nil {
-		return nil, err
-	}
-	found := map[string]json.RawMessage{}
-	for _, p := range f.posts {
-		found[p.ts] = mustJSON(map[string]any{"ts": p.ts, "blocks": json.RawMessage(cmp.Or(p.blocks, "[]")), "metadata": json.RawMessage(cmp.Or(p.metadata, "{}"))})
-	}
-	return found, nil
-}
-
-func rawOf(method string) string { return method + " raw" }
-
 const methodRawMessage = methodReplies + " one message"
 
 func (f *fakeSlack) RawMessage(_ context.Context, channelID, _, ts string) (json.RawMessage, error) {

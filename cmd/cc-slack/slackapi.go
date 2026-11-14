@@ -56,7 +56,6 @@ type slackAPI interface {
 	DeleteCanvasContext(ctx context.Context, canvasID string) error
 	ShareFilesContext(ctx context.Context, share fileShare) error
 	DocCardsContext(ctx context.Context, serviceURL, channelID, text string) ([]slack.WorkObjectEntity, error)
-	RawMessages(ctx context.Context, method, channelID, threadTS, oldest string) (map[string]json.RawMessage, error)
 	RawMessage(ctx context.Context, channelID, threadTS, ts string) (json.RawMessage, error)
 }
 
@@ -351,16 +350,8 @@ func workObjectBody(form []byte) (map[string]any, bool, error) {
 	return body, true, nil
 }
 
-// RawMessages reads every message from oldest on as Slack sends them, by timestamp, since slack-go's Message drops what it has no field for.
-func (c *apiClient) RawMessages(ctx context.Context, method, channelID, threadTS, oldest string) (map[string]json.RawMessage, error) {
-	query := url.Values{"channel": {channelID}, "oldest": {oldest}, "inclusive": {"true"}, "include_all_metadata": {"true"}, "limit": {"200"}}
-	if threadTS != "" {
-		query.Set("ts", threadTS)
-	}
-	return c.rawMessages(ctx, method, query)
-}
-
-// RawMessage reads the one message ts in the thread threadTS as Slack sends it, or errMessageGone when the thread no longer holds it.
+// RawMessage reads the one message ts in the thread threadTS as Slack sends it, since slack-go's Message drops what it has no field for,
+// or errMessageGone when the thread no longer holds it.
 func (c *apiClient) RawMessage(ctx context.Context, channelID, threadTS, ts string) (json.RawMessage, error) {
 	found, err := c.rawMessages(ctx, methodReplies, url.Values{
 		"channel": {channelID}, "ts": {threadTS}, "oldest": {ts}, "latest": {ts}, "inclusive": {"true"},
