@@ -171,7 +171,7 @@ func TestACloseOnACardCCSlackForgotSettlesItFromTheMessageSlackHolds(t *testing.
 		want   string
 	}{
 		"settled":   {map[string]any{"label": "Landed as 5480445", "other": true, "settled": true, "via": "https://github.com/acme/app/pull/41"}, "https://github.com/acme/app/pull/41|Landed as 5480445"},
-		"withdrawn": {map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board}, "*Withdrawn:* superseded by step 4"},
+		"withdrawn": {map[string]any{"label": "superseded by step 4", "withdrawn": true, "via": board}, board + "|superseded by step 4"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := startDaemon(t)
