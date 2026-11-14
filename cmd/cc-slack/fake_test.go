@@ -158,6 +158,10 @@ func (f *fakeSlack) RawMessage(_ context.Context, channelID, _, ts string) (json
 
 func historyOf(channelID string) string { return methodHistory + " " + channelID }
 
+func repliesOf(channelID, threadTS string) string {
+	return methodReplies + " " + channelID + "/" + threadTS
+}
+
 func (f *fakeSlack) fail(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -517,6 +521,9 @@ func (f *fakeSlack) GetConversationRepliesContext(_ context.Context, params *sla
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.call(methodReplies); err != nil {
+		return nil, false, "", err
+	}
+	if err := f.call(repliesOf(params.ChannelID, params.Timestamp)); err != nil {
 		return nil, false, "", err
 	}
 	if f.elsewhere[params.ChannelID+"/"+params.Timestamp] {

@@ -1436,7 +1436,7 @@ func TestRevokedUserTokenAsksForConsentOnce(t *testing.T) {
 func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithOAuth(t, l)
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.slack.fail(repliesOf("D0THEIRDM", testThread), slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
 	link := consentLink(t, l.slack)
 	if got := link.Query(); got.Get("client_id") != testClientID || got.Get("redirect_uri") != consentRedirect || got.Get("code_challenge_method") != "S256" ||
@@ -1460,7 +1460,7 @@ func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 	if edits := l.slack.edited(); len(edits) != 1 || !strings.HasPrefix(edits[0].text, "Allowed") {
 		t.Fatalf("card edits = %+v, want the card marked Allowed", edits)
 	}
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.slack.fail(repliesOf("D0THEIRDM", testThread), slack.SlackErrorResponse{Err: "channel_not_found"})
 	var res threadResult
 	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}).Body, &res); err != nil {
 		t.Fatal(err)
@@ -1473,7 +1473,7 @@ func TestConsentTradesTheCodeForTheUsersTokenAndReadsTheirDM(t *testing.T) {
 func TestConsentRefusesAnotherAccountAndAForeignState(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithOAuth(t, l)
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.slack.fail(repliesOf("D0THEIRDM", testThread), slack.SlackErrorResponse{Err: "channel_not_found"})
 	l.refused(opThread, map[string]string{"channel_id": "D0THEIRDM", "thread_ts": testThread}, "tap Allow on the card")
 	state := consentLink(t, l.slack).Query().Get("state")
 
@@ -2225,7 +2225,7 @@ func TestAThreadReadWithNoChannelReadsYourDMAndAGuessedOneNamesIt(t *testing.T) 
 		t.Fatalf("thread with no channel = %+v, want the reply in your DM", res.Messages)
 	}
 
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.slack.fail(repliesOf("D0", posted["ts"]), slack.SlackErrorResponse{Err: "channel_not_found"})
 	raw, err := json.Marshal(map[string]string{"channel_id": "D0", "thread_ts": posted["ts"]})
 	if err != nil {
 		t.Fatal(err)

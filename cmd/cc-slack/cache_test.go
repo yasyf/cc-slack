@@ -556,7 +556,7 @@ func TestThreadOpFailsUnderARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
 	}
 	l.slack.add(testChannel, inThread(his, "his newest message"))
 	l.post(opReply, map[string]any{"url": permalink, "text": "on it", "no_watch": true})
-	l.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
+	l.slack.fail(repliesOf(testChannel, thread), &slack.RateLimitedError{RetryAfter: 30 * time.Second})
 
 	raw, _ := json.Marshal(map[string]string{"url": permalink})
 	answer, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw)
@@ -700,6 +700,6 @@ func TestThreadOpSaysWhatItReadAndRefusesAFieldItDoesNotKnow(t *testing.T) {
 	l.refused(opThread, map[string]any{"channel": testChannel, "thread_ts": testThread}, `thread takes no field "channel"`)
 	l.slack.fail("conversations.open", slack.SlackErrorResponse{Err: "user_not_found"})
 	l.refused(opThread, map[string]any{"channel_id": "U0NOBODY001", "thread_ts": testThread}, "U0NOBODY001 is not a conversation the bot can read (user_not_found)")
-	l.slack.fail(methodReplies, slack.SlackErrorResponse{Err: "thread_not_found"})
+	l.slack.fail(repliesOf("D"+testUser, "1790000000.000001"), slack.SlackErrorResponse{Err: "thread_not_found"})
 	l.refused(opThread, map[string]any{"thread_ts": "1790000000.000001"}, "thread 1790000000.000001 is not in your DM with the app")
 }
