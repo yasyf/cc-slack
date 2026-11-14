@@ -238,6 +238,12 @@ carries changes state. A PR the program leaves out
 stays a link, as does every PR when the program fails or runs past 30 s, and
 the daemon logs why. A redraw the program skips leaves the card as drawn and logs
 the reason; a redraw with no card and no skip means the PR no longer waits.
+A card Slack refuses to post or redraw is told to the program as
+`{"refused": [{"repo", "number", "reason"}]}`, the reason ending in the messages
+Slack's answer gives, such as the block whose picture it could not download. A
+refused redraw leaves its thread owed, so the ref poller's next pass, about a
+minute later, draws that thread's PR cards again as they stand now, until Slack
+takes the write.
 A PR row's `changed` says what changed since the engineer last answered its
 card, and the card shows it first, as Changed since your answer. When a post's
 `tap_prs` names a PR whose answered card the program now draws waiting on the
