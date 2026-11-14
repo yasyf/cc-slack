@@ -30,7 +30,7 @@ from captain_hook.types import And, Or
 from captain_hook.util import reqenv
 
 from .common import BIN, check_post
-from .writes import DRIVE_SAY, Write, capture, cli_calls, pending, permalink, permissions
+from .writes import DRIVE_SAY, USER_TOOLS, Write, capture, cli_calls, pending, permalink, permissions
 
 CC_SLACK = str(BIN)
 GATE = "slack_writes_need_permission"
@@ -1296,7 +1296,7 @@ def fixture_case(line: dict[str, Any]) -> list[tuple[Input, Allow | Ask | Block 
     fields = {"transcript": transcript, "root_transcript": root, "agent_id": line.get("agent"), "commands": fixture_stubs(line), "tickets": tickets, **judged}
     found = []
     if "tool" in line:
-        found.append(case(line["input"], tool=line["tool"], **fields) >> fixture_expected(line, daemon=not line["tool"].startswith("mcp__slack__"), command=False))
+        found.append(case(line["input"], tool=line["tool"], **fields) >> fixture_expected(line, daemon=line["tool"].rsplit("__", 1)[-1] not in USER_TOOLS, command=False))
     if "command" in line:
         found.append(case(command=line["command"], **fields) >> fixture_expected(line, daemon=SLACK_POST_CALL.search(line["command"]) is None, command=True))
     return found
@@ -1361,7 +1361,7 @@ on(
             case({"channel_id": SAM_USER, "text": "Hi Sam, could you grant the app Actions: Read?"}, tool="slack_send", transcript=owner_answered("Who should I ask about the app permission?", ["DM sam O on slack", "Leave it"], "DM sam O on slack", id="sam"), commands=SAM_DM) >> ALLOW,
             case({"channel_id": SAM_USER, "text": "Hi Sam, could you grant the app Actions: Read?"}, tool="slack_send", transcript=owner_answered("Who should I ask about the app permission?", ["DM sam O on slack", "Leave it"], "DM sam O on slack", id="sam"), commands=PRIYA_DM) >> DENY,
             case({"channel_id": SAM_USER, "text": "Hi Sam, could you grant the app Actions: Read?"}, tool="slack_send", transcript=owner_answered("Ask Sam about the app permission?", ["Yes", "No"], "Yes", id="sam"), commands=SAM_DM) >> ALLOW,
-            case({"channel_id": SAM_USER, "text": "_(Alex's Claude)_ Hi Sam, could you grant the app Actions: Read?"}, tool="mcp__slack__slack_send_message", transcript=owner_answered("Ask Sam about the app permission?", ["Yes", "No"], "Yes", id="sam"), commands=SAM_DM) >> Allow(explicit=True),
+            case({"channel_id": SAM_USER, "text": "_(Alex's Claude)_ Hi Sam, could you grant the app Actions: Read?"}, tool="mcp__claude_ai_Slack__slack_send_message", transcript=owner_answered("Ask Sam about the app permission?", ["Yes", "No"], "Yes", id="sam"), commands=SAM_DM) >> Allow(explicit=True),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", **said(f"fix the wording here {DANA_URL.replace(DANA_THREAD.replace('.', ''), BOT_ANSWERED['ts'].replace('.', ''))}")) >> ALLOW,
             case(commands=NOT_DM | {"ccn answer search": json.dumps([{"id": "0207568abcdef", "title": "Reply in app-followers?", "body": f"Reply in {FOLLOWERS} whenever asked.", "updated_at": "2026-10-01T00:00:00+00:00", "tags": []}])}) >> DENY,
             case(DANA | {"text": "a different reply, later"}, transcript=owner_answered(DANA_ASKED, ["Yes", "No"], "Yes", id="dana")) >> ALLOW,
@@ -1402,7 +1402,7 @@ on(
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), tickets=[posted_once()]) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), tickets=[posted_once()]) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
-            case(NEW_ASK, tool="mcp__slack__slack_send_message", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(NEW_ASK, tool="mcp__claude_ai_Slack__slack_send_message", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(DANA | {"text": SOLVED_TEXT}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED)) >> ALLOW,
             case(DANA | {"text": "This is fixed now, and your chats open again."}, **said("status?"), commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED)) >> DENY,
@@ -1460,8 +1460,8 @@ on(
             case(command=f"printf 'the new draft' | tee {FIXTURES / 'page_reply.txt'} && {PAGE_REPLY}", **said("status?"), commands=ruled(PAGE_GRANT) | PAGE_REPLY_READ, decide=PAGE_GRANT_PERMITS) >> Block(pattern="in its own Bash call first"),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'", tickets=[retrying(DANA | {"text": DANA_TEXT})]) >> Allow(explicit=True),
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text '{DANA_TEXT}'") >> DENY,
-            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", tickets=[retrying(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"})]) >> Allow(explicit=True),
-            case(DANA | {"text": DANA_TEXT}, tool="mcp__slack__slack_send_message") >> DENY,
+            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__claude_ai_Slack__slack_send_message", tickets=[retrying(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"})]) >> Allow(explicit=True),
+            case(DANA | {"text": DANA_TEXT}, tool="mcp__claude_ai_Slack__slack_send_message") >> DENY,
             case({"url": DANA_URL}, tool="slack_delete", tickets=[retrying({"url": DANA_URL}, verb="delete", place={"channel": FOLLOWERS, "thread": ""})]) >> Rewrite(ticket_id="0123456789ab"),
             case({"url": DANA_URL}, tool="slack_delete") >> Block(pattern="Delete the bot's Slack message"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", tickets=[retrying({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"]}, verb="delete", place={"channel": FOLLOWERS, "thread": DANA_THREAD})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Rewrite(ticket_id="0123456789ab"),
@@ -1483,7 +1483,7 @@ on(
             case({"edit": f"https://acme.slack.com/archives/{OWN_DM_EDIT['channel_id']}/p{BOT_ANSWERED['ts'].replace('.', '')}", "text": OWN_DM_EDIT["text"]}, tool=DRIVE_SAY, commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
             case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
-            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True, system_message="goes ahead unchecked"),
+            case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__claude_ai_Slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True, system_message="goes ahead unchecked"),
             case(**said("let dana know the fix landed, in her thread"), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,
             case(command=f"{CLI} send --user {PRIYA_USER} --text '{PRIYA_DM_TEXT}'", transcript=owner_answered(PRIYA_ASKED, ["DM priya and ask her to try posting it", "I'll paste it myself"], "DM priya and ask her to try posting it", id="doc-link"), commands=PRIYA_BY_USER) >> Rewrite(pattern="--ticket-agent main"),
             case(command=f"{CLI} send --user {PRIYA_USER} --text '{PRIYA_DM_TEXT}'", commands=PRIYA_BY_USER) >> DENY,
@@ -1497,7 +1497,7 @@ on(
             case({"text": "status"}, tool="slack_dm_status") >> Allow(),
             case({"text": "status", "thread_ts": DANA_THREAD}, tool=DRIVE_SAY) >> Allow(),
             case(DANA | {"text": DANA_TEXT, "dry_run": True}, tool=DRIVE_SAY) >> Allow(),
-            case({"query": "release"}, tool="mcp__slack__slack_search_messages") >> Allow(),
+            case({"query": "release"}, tool="mcp__claude_ai_Slack__slack_search_messages") >> Allow(),
             case({"ticket_id": "0123456789ab"}, tool="slack_revoke") >> Allow(),
             case(commands=NOT_DM | {f"{CC_SLACK} dm-peer": "cc-slack can't reach the daemon"}) >> ALLOW,
             case(LANDED, tool="slack_send", **said("status?"), commands=ruled(KEPT_POSTING)) >> DENY,

@@ -73,7 +73,7 @@ When the config sets `[doc_cards]`, a link under its `link` prefix in
 `slack_dm_status` ask the doc-cards service for the cards, so a private docs
 site that Slack's crawler cannot read still previews, and Slack sends no
 `link_shared` event for links an app posts. A link inside `blocks` alone
-gets no card, and neither does a Slack MCP fallback post.
+gets no card, and neither does a post cc-slack sends again as the user.
 
 With `[github]` in the config, the daemon links every pull request the text
 names, so write `#123`, `owner/repo#123`, or the PR URL and never build the

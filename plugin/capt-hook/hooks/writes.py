@@ -47,7 +47,7 @@ CLI_VERBS = {
     "apply": "apply",
 }
 MESSAGE_VERBS = frozenset({"post", "edit", "delete"})
-READ_TOOLS = frozenset({"slack_thread", "slack_get_thread"})
+READ_TOOLS = frozenset({"slack_thread"})
 READ_VERBS = {"thread": "read"}
 THREADED_VERBS = MESSAGE_VERBS | set(READ_VERBS.values())
 VALUED = ("agent", "channel", "thread", "ts", "url", "text", "text-file", "file", "blocks", "name", "user", "topic", "session", "cwd", "limit", "since-ts", "plan", "task", "recipient")

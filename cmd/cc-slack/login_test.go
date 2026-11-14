@@ -339,7 +339,7 @@ func TestStateCreatedAfterTheProcessStartedAsksForARestartNotALogin(t *testing.T
 		t.Fatalf("ensure on a state.db created after this process started = %v (started %v), want errStaleProcess before any daemon starts", err, started)
 	}
 	got := fallback(actionWrite, err)
-	for _, want := range []string{"older than its state", "restart the session", mcpSend, statePath(), "cc-slack " + appVersion} {
+	for _, want := range []string{"older than its state", "restart the session", statePath(), "cc-slack " + appVersion} {
 		if !strings.Contains(got, want) {
 			t.Errorf("fallback = %q, want it to contain %q", got, want)
 		}

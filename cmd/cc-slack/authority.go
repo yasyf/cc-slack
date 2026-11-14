@@ -220,6 +220,9 @@ func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticke
 }
 
 func refusedBySlack(err error) bool {
+	if as, ok := errors.AsType[asUserError](err); ok {
+		return !as.called || refusedBySlack(as.userErr)
+	}
 	if errors.As(err, new(inviteNeededError)) || errors.As(err, new(*slack.RateLimitedError)) {
 		return true
 	}

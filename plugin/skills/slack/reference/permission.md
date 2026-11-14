@@ -6,7 +6,7 @@ A post, reply, edit, delete, or channel create, archive, invite, topic, or
 join goes ahead only when a captain-hook ticket covers its place. This
 plugin's permission hook checks every such write on the cc-slack tools,
 the `cc-slack` CLI, any posting CLI the project's config names, and the
-user-level `mcp__slack__*` write tools. An explicit approval mints the
+write tools of any Slack MCP server. An explicit approval mints the
 ticket at once: a Yes the user tapped or answered for this post, their typed
 words linking this thread, a standing grant for this place, or the agent's
 own post to edit or delete. Without one, Jev judges the write against the
@@ -160,7 +160,7 @@ its own posts back as `from_claude` messages, so a lane's consecutive
 replies need no human turn between them.
 
 Read before you reply. A post into a thread, through `slack_reply`,
-`slack_send` with a thread, the CLI, or `mcp__slack__slack_send_message`, is
+`slack_send` with a thread, the CLI, or a Slack MCP's `slack_send_message`, is
 refused unless this agent read that thread through its newest message in the
 last 10 minutes with `slack_thread`. Pass `since_ts` as the newest ts you have already read, and
 the read returns only what is newer, so a long thread is never read again whole. With `since_ts`,

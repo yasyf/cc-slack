@@ -67,7 +67,7 @@ class WritesSlack:
     max_fires=1,
     tests={
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=JARGON): Warn(pattern="decode codenames, drive terms, zone labels"),
-        Input(env=ENABLED, tool="mcp__slack__slack_send_message", tool_input=THREAD | {"text": "R885 is lifted at 17:35Z."}): Warn(pattern="decode inbox ids, zone labels"),
+        Input(env=ENABLED, tool="mcp__claude_ai_Slack__slack_send_message", tool_input=THREAD | {"text": "R885 is lifted at 17:35Z."}): Warn(pattern="decode inbox ids, zone labels"),
         Input(env=ENABLED, tool=P + "slack_edit", tool_input=JARGON | {"ts": THREAD["thread_ts"]}): Warn(pattern="zone labels"),
         Input(env=ENABLED, command=f"{CLI} reply --url {THREAD_LINK} --text 'the merge-walker lane is on it'"): Warn(pattern="decode drive terms;"),
         Input(env=ENABLED, tool=P + "slack_reply", tool_input=PLAIN): Allow(),
