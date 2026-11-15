@@ -14,7 +14,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/yasyf/cc-interact v0.42.3-0.20261113055244-bbaf30762e84
 	github.com/yasyf/daemonkit v0.38.0
-	github.com/yasyf/spawnllm/go v0.17.9
+	github.com/yasyf/spawnllm/go v0.17.10
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 )
