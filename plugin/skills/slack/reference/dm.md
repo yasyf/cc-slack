@@ -32,18 +32,25 @@ the calling session when the holder works for that drive, so the replies under
 that post reach the holder alone. With no holder of that drive it posts as the
 calling session.
 
-The user's words in a channel steer only when they are to the bot: a message
-that mentions the bot, or one that mentions no one else and is a reply in a
-thread this machine's cc-slack posted in. Those carry `operator: true` and
-follow the holder. While a session holds the DM, one
-written in a channel another session watches whole reaches the holder on its
-DM watch, with `relayed` set, and never the watching session. A session
-watching one thread still gets them in that thread, and then the holder does
-not. Anything else the user writes there is Slack content, like a teammate's
-message: a new top-level message that does not mention the bot, a reply in a
-teammate's thread, or a line that mentions a teammate, `@here` or a user group
-and not the bot, in any thread. It reaches the sessions watching that
-channel or thread without `operator`, and never the holder.
+The user's words in a channel steer only when they wrote them to the bot, and
+Jev judges which. For each message the user writes in a watched channel,
+cc-slack asks Jev one yes/no question, whether the user wrote it to their
+agents, sending the message with its mentions named, whether it is a thread
+reply or a new top-level message, up to nine messages before it with who
+wrote each (the user, a teammate, this machine's agents posting as the bot, a
+teammate's agents, an app), and two rules: a message naming @bot, or a
+question or request answering a post of the user's agents, is written to the
+agents; the user's replies, jokes, praise and plans for a teammate are talk
+between people, even in a thread the bot posted in. A message Jev puts at 0.7 or above carries `operator: true` and
+follows the holder. While a session holds the DM, one written in a channel
+another session watches whole reaches the holder on its DM watch, with
+`relayed` set, and never the watching session. A session watching one thread
+still gets them in that thread, and then the holder does not. A message Jev
+puts at 0.3 or below is Slack content, like a teammate's message: it reaches
+the sessions watching that channel or thread without `operator`, and never the
+holder. One Jev puts between the two, or cannot answer, reaches the holder the
+same way with `unclear: true` and no `operator`, telling it to read the thread
+and act only if the words are to it.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
 no bot or agent has answered in its thread yet, leaving out another live session's

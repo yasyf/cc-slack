@@ -79,7 +79,8 @@ const (
 	defaultHistoryLimit = 20
 	historyBudget       = 25 * time.Second
 
-	rawNeedsTS = "raw prints one message as Slack sends it: name it with ts, or url as its permalink"
+	rawNeedsTS       = "raw prints one message as Slack sends it: name it with ts, or url as its permalink"
+	addressedNeedsTS = "addressed judges one message of the operator's: name it with ts, or url as its permalink"
 )
 
 type opBody struct {
@@ -117,6 +118,7 @@ type opBody struct {
 	NoWatch   bool              `json:"no_watch"`
 
 	Raw       bool     `json:"raw"`
+	Addressed bool     `json:"addressed"`
 	Agent     string   `json:"agent"`
 	Mirrored  bool     `json:"mirrored"`
 	Waits     string   `json:"waits"`
@@ -219,10 +221,11 @@ type messageFile struct {
 }
 
 type threadResult struct {
-	ChannelID string        `json:"channel_id"`
-	ThreadTS  string        `json:"thread_ts"`
-	Messages  []readMessage `json:"messages"`
-	Truncated bool          `json:"truncated"`
+	ChannelID string          `json:"channel_id"`
+	ThreadTS  string          `json:"thread_ts"`
+	Messages  []readMessage   `json:"messages"`
+	Truncated bool            `json:"truncated"`
+	Addressed *addressReading `json:"addressed,omitempty"`
 }
 
 type historyResult struct {
@@ -1404,6 +1407,9 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Raw && b.TS == "" {
 		return fail(rawNeedsTS)
 	}
+	if b.Addressed && b.TS == "" {
+		return fail(addressedNeedsTS)
+	}
 	limit := b.Limit
 	if limit <= 0 {
 		limit = defaultThreadLimit
@@ -1415,6 +1421,11 @@ func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {
 	res, err := a.readThread(hc.Ctx, id, b, limit)
 	if err != nil {
 		return fail(threadReadFailure(err, b.ChannelID, id, b.ThreadTS))
+	}
+	if b.Addressed {
+		if res.Addressed, err = a.readAddressed(hc.Ctx, hc.DB, id, res.ChannelID, b.ThreadTS, b.TS); err != nil {
+			return fail(err.Error())
+		}
 	}
 	return ok(res)
 }

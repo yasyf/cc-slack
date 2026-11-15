@@ -506,8 +506,8 @@ func TestPollerFramesTheOperatorsThreadRepliesAsSteering(t *testing.T) {
 	f := newFixture(t)
 	f.watch(agent.TopLevel, testThread)
 	postIn(t, f, testThread)
-	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000200", ThreadTimestamp: testThread, User: testUser, Text: "aim for 5 min releases"}})
-	f.slack.add(testChannel, reply("1800000000.000300", "sounds good"))
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.000200", ThreadTimestamp: testThread, User: testUser, Text: "aim for 5 min releases"}})
+	f.slack.add(testChannel, reply("1800000001.000300", "sounds good"))
 
 	f.tick()
 	if len(f.plane.directives) != 2 {
@@ -1258,59 +1258,90 @@ func TestPollerSendsTheOperatorsReplyToTheSessionWatchingItsThread(t *testing.T)
 	}
 }
 
-func TestTheOperatorsWordsInAWatchedChannelSteerOnlyWhenTheyAreToTheBot(t *testing.T) {
+func TestJevDecidesWhetherTheOperatorsChannelWordsSteer(t *testing.T) {
 	const (
 		teammates = "1800000000.000200"
 		his       = "1800000050.000000"
 	)
 	for name, tc := range map[string]struct {
-		thread, text string
-		ourPost      bool
-		steers       bool
+		pYes float64
+		err  error
+		want addressee
 	}{
-		"a reply in a teammate's thread":                          {teammates, "Wasn't going to, you got it", false, false},
-		"an emoji reply in a teammate's thread":                   {teammates, ":saluting_face:", false, false},
-		"a reply in a thread this daemon posted in":               {teammates, "ship it", true, true},
-		"a reply to a teammate in a thread this daemon posted in": {teammates, "<@UOTHER> on it after lunch", true, false},
-		"a reply that mentions the bot":                           {teammates, "<@UBOT> try this on the eval set", false, true},
-		"a new top-level message":                                 {"", "ship the fix", false, false},
-		"a new top-level message to the bot":                      {"", "<@UBOT> ship the fix", false, true},
-		"a new top-level message to a teammate":                   {"", "<@UOTHER> can you try this", false, false},
-		"a new top-level message to the channel":                  {"", "<!here> deploys are frozen until 3", false, false},
+		"Jev reads it as written to the agents": {pYes: 0.95, want: addressedToAgents},
+		"Jev reads it as written to a teammate": {pYes: 0.05, want: addressedToPeople},
+		"Jev cannot tell":                       {pYes: 0.5, want: addressedUnclear},
+		"Jev cannot be reached":                 {err: errors.New("dial tcp: no route to host"), want: addressedUnclear},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
+			f.jev.pYes = func(addressState) float64 { return tc.pYes }
+			f.jev.err = tc.err
 			holder, _ := dmHeldElsewhere(t, f)
 			watchChannel(t, f)
 			f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: teammates, User: "UOTHER", Text: "a new sandbox just dropped, can you try it"}})
-			if tc.ourPost {
-				postIn(t, f, teammates)
+			postIn(t, f, teammates)
+			f.tick()
+
+			f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: his, ThreadTimestamp: teammates, User: testUser, Text: "<@UOTHER> wasn't going to, you got it"}})
+			f.poller.nudged(messageNudge{Channel: testChannel, TS: his, ThreadTS: teammates})
+			f.tick()
+
+			asked := f.jev.asked()
+			if len(asked) != 1 || asked[0].Where != whereThread || asked[0].Message != "@teammate wasn't going to, you got it" {
+				t.Fatalf("Jev was asked %+v, want his reply once, its mention named", asked)
 			}
-			f.tick()
-
-			f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: his, ThreadTimestamp: tc.thread, User: testUser, Text: tc.text}})
-			f.poller.nudged(messageNudge{Channel: testChannel, TS: his, ThreadTS: tc.thread})
-			f.tick()
-
+			around := asked[0].Around
+			if len(around) == 0 || around[0].From != "teammate, a teammate" || !slices.ContainsFunc(around, func(l spoken) bool { return l.From == ownAgents }) {
+				t.Fatalf("Jev was shown %+v, want the teammate's opener and this daemon's post, each by who wrote it", around)
+			}
 			got := deliveredTo(t, f)
 			ofHis := func(p messagePayload) bool { return p.TS == his }
 			relayed := slices.IndexFunc(got[holder.ID], ofHis)
 			followed := slices.IndexFunc(got[testSubject], ofHis)
-			if tc.steers {
+			switch tc.want {
+			case addressedToAgents:
 				if relayed < 0 || !got[holder.ID][relayed].Operator || !got[holder.ID][relayed].Relayed || followed >= 0 {
 					t.Fatalf("holder got %+v, channel follower %+v, want the message relayed to the holder as steering", got[holder.ID], got[testSubject])
 				}
-				return
-			}
-			if relayed >= 0 || followed < 0 || got[testSubject][followed].Operator {
-				t.Fatalf("holder got %+v, channel follower %+v, want the message only on the channel watch, not as steering", got[holder.ID], got[testSubject])
-			}
-			for _, d := range f.plane.directives {
-				if strings.Contains(d.text, "ts "+his) && (strings.Contains(d.text, "operator steering") || !strings.Contains(d.text, "not an operator instruction")) {
-					t.Fatalf("directive %q, want Slack content", d.text)
+			case addressedUnclear:
+				if relayed < 0 || got[holder.ID][relayed].Operator || !got[holder.ID][relayed].Unclear || followed >= 0 {
+					t.Fatalf("holder got %+v, channel follower %+v, want the message relayed to the holder for it to judge", got[holder.ID], got[testSubject])
+				}
+			case addressedToPeople:
+				if relayed >= 0 || followed < 0 || got[testSubject][followed].Operator {
+					t.Fatalf("holder got %+v, channel follower %+v, want the message only on the channel watch, as content", got[holder.ID], got[testSubject])
 				}
 			}
 		})
+	}
+}
+
+func TestTheThreadVerbSaysHowHisMessageRoutes(t *testing.T) {
+	f := newFixture(t)
+	f.jev.pYes = func(addressState) float64 { return 0.05 }
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: testThread, User: "UOTHER", Text: "a new sandbox just dropped"}})
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000050.000000", ThreadTimestamp: testThread, User: testUser, Text: "Lmao"}})
+
+	got, err := f.app.readAddressed(f.ctx, f.db(), f.id, testChannel, testThread, "1800000050.000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.To != "content" || got.Why != "Jev puts it at 0.05 written to the bot" {
+		t.Fatalf("thread --addressed = %+v, want content at Jev's 0.05", got)
+	}
+}
+
+func TestJevIsNeverAskedAboutATeammatesWords(t *testing.T) {
+	f := newFixture(t)
+	watchChannel(t, f)
+	f.tick()
+	f.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1800000010.000000", User: "UOTHER", Text: "<@UBOT> ship the fix"}})
+	f.poller.nudged(messageNudge{Channel: testChannel, TS: "1800000010.000000"})
+	f.tick()
+
+	if asked := f.jev.asked(); len(asked) != 0 {
+		t.Fatalf("Jev was asked %+v about a teammate's message, want no call", asked)
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/yasyf/cc-interact/event"
 	"github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
+	spawnllm "github.com/yasyf/spawnllm/go"
 )
 
 type fakePost struct {
@@ -572,7 +573,7 @@ func (f *fakeSlack) GetConversationHistoryContext(_ context.Context, params *sla
 			m.Metadata = slack.SlackMetadata{}
 		}
 		top := m.ThreadTimestamp == "" || m.ThreadTimestamp == m.Timestamp
-		if top && (params.Oldest == "" || tsLess(params.Oldest, m.Timestamp)) {
+		if top && (params.Oldest == "" || tsLess(params.Oldest, m.Timestamp)) && (params.Latest == "" || tsLess(m.Timestamp, params.Latest)) {
 			m.LatestReply = cmp.Or(latestReply(msgs, m.Timestamp), m.LatestReply)
 			resp.Messages = append(resp.Messages, m)
 		}
@@ -893,6 +894,43 @@ type fixture struct {
 	alive     map[int]bool
 	id        identity
 	user      *fakeUserToken
+	jev       *fakeJev
+}
+
+type fakeJev struct {
+	mu     sync.Mutex
+	states []addressState
+	pYes   func(addressState) float64
+	err    error
+}
+
+func (j *fakeJev) decide(_ context.Context, state any, _ map[string]spawnllm.Question, _ spawnllm.DecideOpts) (spawnllm.Decision, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	asked, ok := state.(addressState)
+	if !ok {
+		return spawnllm.Decision{}, fmt.Errorf("fake Jev got a %T state, want addressState", state)
+	}
+	j.states = append(j.states, asked)
+	if j.err != nil {
+		return spawnllm.Decision{}, j.err
+	}
+	return spawnllm.Decision{Answers: map[string]spawnllm.Answer{"to_agents": spawnllm.BinaryAnswer{PYes: j.pYes(asked)}}}, nil
+}
+
+func (j *fakeJev) asked() []addressState {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return slices.Clone(j.states)
+}
+
+func answersLikeJev(s addressState) float64 {
+	toAgents := strings.Contains(s.Message, "@bot") || s.Where == whereThread && !strings.Contains(s.Message, "@") &&
+		slices.ContainsFunc(s.Around, func(l spoken) bool { return l.From == ownAgents })
+	if toAgents {
+		return 0.95
+	}
+	return 0.05
 }
 
 func agentAvatar(_ context.Context, id identity) (string, error) {
@@ -910,7 +948,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		t: t, ctx: ctx, slack: newFakeSlack(), plane: &fakePlane{st: st},
 		now: time.Unix(1_800_000_100, 0), alive: map[int]bool{testPID: true},
-		orca: newFakeOrca(), responses: &fakeResponses{},
+		orca: newFakeOrca(), responses: &fakeResponses{}, jev: &fakeJev{pYes: answersLikeJev},
 	}
 	f.slack.users[testUser] = &slack.User{ID: testUser, RealName: "Yasyf Mohamedali", Profile: slack.UserProfile{
 		FirstName: "Yasyf", Email: "ym@example.com", Image512: "https://avatars/ym.png", DisplayName: "yasyf",
@@ -930,6 +968,7 @@ func newFixture(t *testing.T) *fixture {
 	f.app.user = f.user.session()
 	f.poller = f.app.poller
 	f.poller.plane = f.plane
+	f.poller.decide = f.jev.decide
 	f.poller.now = func() time.Time { return f.now }
 	f.plane.now = func() time.Time { return f.now }
 	f.poller.log.SetOutput(testWriter{t})

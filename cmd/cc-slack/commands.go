@@ -661,7 +661,7 @@ func reactionCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int
-	var asJSON, raw bool
+	var asJSON, raw, addressed bool
 	var since string
 	c := &cobra.Command{
 		Use:   "thread",
@@ -671,6 +671,7 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 			body := f.body()
 			body["limit"] = limit
 			body["raw"] = raw
+			body["addressed"] = addressed
 			body["since_ts"] = since
 			return renderOp(c, d, f.sessionFlags, opThread, body, asJSON || raw, renderThread)
 		},
@@ -679,6 +680,7 @@ func threadCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().IntVar(&limit, "limit", defaultThreadLimit, "messages to print: the oldest newer than --since-ts, else the most recent")
 	c.Flags().StringVar(&since, "since-ts", "", "print only messages newer than this Slack ts, or whole epoch seconds")
 	c.Flags().BoolVar(&raw, "raw", false, "print JSON with the message --url names as Slack sends it, with its blocks, attachments and metadata")
+	c.Flags().BoolVar(&addressed, "addressed", false, "also print whether your message --url names steers your sessions, as cc-slack routes it: steers, content or unclear, and why")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the daemon's JSON result")
 	return c
 }
@@ -739,6 +741,9 @@ func renderThread(w io.Writer, res threadResult) {
 	}
 	if res.Truncated {
 		_, _ = fmt.Fprintln(w, "truncated: the thread holds more messages than these; read the rest with since_ts set to the last ts above, or a higher limit")
+	}
+	if a := res.Addressed; a != nil {
+		_, _ = fmt.Fprintf(w, "addressed %s: %s, since %s\n", a.TS, a.To, a.Why)
 	}
 }
 

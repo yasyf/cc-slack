@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-interact/procs"
 	"github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
+	spawnllm "github.com/yasyf/spawnllm/go"
 )
 
 const channelConsumer = "channel"
@@ -80,6 +81,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		undrawn: map[string]map[string]bool{},
 	}
 	p := &poller{
+		decide:    spawnllm.Decide,
 		newAPI:    newAPI,
 		alive:     alive,
 		now:       time.Now,
