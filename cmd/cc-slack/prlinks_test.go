@@ -1235,7 +1235,7 @@ func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {
 	}
 }
 
-func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
+func TestAMergedPRGetsALinkAndNoCardAndAPRTheBoardDoesNotHoldPostsNothing(t *testing.T) {
 	t.Run("merged", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 		l, gh := cardingDaemon(t, cmd.argv, "acme/app#41")
@@ -1250,9 +1250,9 @@ func TestAMergedPRAndAPRTheBoardDoesNotHoldGetALinkAndNoCard(t *testing.T) {
 	t.Run("not held", func(t *testing.T) {
 		cmd := fakeCardCommand(t, []string{"acme/app#41"})
 		l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-		warning := tapWarning(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-		if got := l.slack.sentTo(testDM); len(got) != 1 || len(cmd.requests(t)) != 1 || !strings.Contains(warning, tapPR41[0]+": the card command answered no card for it") {
-			t.Fatalf("posted %+v after %d asks, warning %q; want the post alone after one ask, its warning naming #41", got, len(cmd.requests(t)), warning)
+		lineRefused(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": the card command answered no card for it")
+		if asks := len(cmd.requests(t)); asks != 1 {
+			t.Fatalf("card command asked %d times, want once before nothing went out", asks)
 		}
 	})
 }
@@ -2245,20 +2245,22 @@ func TestANoticeCarryingManyPRCardsKeepsEachMessageWithinSlacksBlocksAndEveryApp
 	}
 }
 
-func TestATapPostWhoseCardNeverDrawsGoesOutAndItsWarningNamesThePR(t *testing.T) {
+func TestATapPostWhoseCardNeverDrawsPostsNothingAndNamesThePR(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	notice := statusCard{Status: "needs_you", Title: "#41 waits on you", Body: "Tap it.", Key: "approvals"}
-	warning := tapWarning(t, l, map[string]any{"card": notice, "tap_prs": tapPR41})
-	if posts := l.slack.sentTo(testDM); len(posts) != 1 || !strings.Contains(warning, "so do not post it again, but drew no card for tap_prs "+tapPR41[0]+": the card command answered no card for it") {
-		t.Fatalf("DM posts = %+v, warning %q; want the notice posted and its warning naming #41", posts, warning)
-	}
+	lineRefused(t, l, map[string]any{"card": notice, "tap_prs": tapPR41}, "drew no card for tap_prs "+tapPR41[0]+": the card command answered no card for it; nothing was sent")
 }
 
-func TestATapPostGoesOutWhileItsCardStillDrawsAndItsReplyNamesTheCard(t *testing.T) {
-	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"prs"`)
-	defer release()
-	l, _ := cardingDaemon(t, cards, "acme/app#41")
+func TestATapPostWaitsForItsCardAndGoesOutWithIt(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	dir := t.TempDir()
+	started, released, held := filepath.Join(dir, "started"), filepath.Join(dir, "released"), filepath.Join(dir, "card")
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"prs\"'*) : > '%s'; until [ -e '%s' ]; do sleep 0.01; done ;;\nesac\nprintf '%%s\\n' \"$in\" | '%s'\n", started, released, cmd.argv[0])
+	if err := os.WriteFile(held, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := cardingDaemon(t, []string{held}, "acme/app#41")
 	replied := make(chan []byte, 1)
 	go func() {
 		reply, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"text": "#41 is green", "tap_prs": tapPR41}))
@@ -2267,49 +2269,41 @@ func TestATapPostGoesOutWhileItsCardStillDrawsAndItsReplyNamesTheCard(t *testing
 		}
 		replied <- reply.Body
 	}()
-	eventually(t, "the post sent while #41's card still draws", func() bool { return len(l.slack.sentTo(testDM)) == 1 })
-	release()
+	eventually(t, "the card command asked for #41's card", func() bool {
+		_, err := os.Stat(started)
+		return err == nil
+	})
+	if sent := l.slack.sentTo(testDM); len(sent) != 0 {
+		t.Fatalf("while #41's card still draws, sent %+v, want nothing yet", sent)
+	}
+	if err := os.WriteFile(released, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var sent map[string]string
 	if err := json.Unmarshal(<-replied, &sent); err != nil {
 		t.Fatal(err)
 	}
 	if cards := rootCards(prCards(l, testDM)); len(cards) != 1 || sent["card_permalink"] == "" || sent["warning"] != "" {
-		t.Fatalf("cards = %+v, reply = %+v; want #41's card drawn after the post and named in the reply", cards, sent)
+		t.Fatalf("cards = %+v, reply = %+v; want #41's card drawn with the post and named in the reply", cards, sent)
 	}
 }
 
-func TestATapPostWhoseCardOutlastsThePatienceAnswersBeforeTheCardAndTheCardStillPosts(t *testing.T) {
+func TestATapPostWhoseCardOutlastsThePatiencePostsNothing(t *testing.T) {
 	prev := tapCardPatience
 	tapCardPatience = 200 * time.Millisecond
 	t.Cleanup(func() { tapCardPatience = prev })
 	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"prs"`)
 	defer release()
 	l, _ := cardingDaemon(t, cards, "acme/app#41")
-	reply, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"text": "#41 is green", "tap_prs": tapPR41}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sent map[string]string
-	if err := json.Unmarshal(reply.Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	if len(l.slack.sentTo(testDM)) != 1 || sent["card_permalink"] != "" || !strings.Contains(sent["warning"], "the cards of tap_prs "+tapPR41[0]+" still draw") {
-		t.Fatalf("reply = %+v; want the post sent and answered while #41's card still draws", sent)
-	}
-	release()
-	eventually(t, "#41's card posted after the reply", func() bool { return len(rootCards(prCards(l, testDM))) == 1 })
+	lineRefused(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, "the card command did not finish in")
 }
 
-func tapWarning(t *testing.T, l *liveDaemon, body map[string]any) string {
+func lineRefused(t *testing.T, l *liveDaemon, body map[string]any, want string) {
 	t.Helper()
-	var sent map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, body).Body, &sent); err != nil {
-		t.Fatal(err)
+	l.refused(opDMStatus, body, want)
+	if posts := l.slack.sentTo(testDM); len(posts) != 0 {
+		t.Fatalf("DM posts = %+v, want nothing posted for a line whose card did not draw", posts)
 	}
-	if sent["permalink"] == "" {
-		t.Fatalf("reply = %+v, want the sent post's permalink", sent)
-	}
-	return sent["warning"]
 }
 
 func TestATapPostUnderALoginWithNoCardCommandFailsSayingSo(t *testing.T) {
@@ -2320,7 +2314,7 @@ func TestATapPostUnderALoginWithNoCardCommandFailsSayingSo(t *testing.T) {
 	}
 }
 
-func TestATapPostWarnsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
+func TestATapPostTheCardCommandSkipsPostsNothingAndSaysWhy(t *testing.T) {
 	dir := t.TempDir()
 	script, answer := filepath.Join(dir, "card"), filepath.Join(dir, "answer.json")
 	skipped := map[string]any{"cards": []any{}, "skipped": []map[string]any{{"repo": "acme/app", "number": 41, "reason": "its body has no What you'll hate most section"}}}
@@ -2331,9 +2325,7 @@ func TestATapPostWarnsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, _ := cardingDaemon(t, []string{script}, "acme/app#41")
-	if warning := tapWarning(t, l, map[string]any{"text": "Here it is.", "tap_prs": tapPR41}); !strings.Contains(warning, tapPR41[0]+": its body has no What you'll hate most section") {
-		t.Fatalf("warning = %q, want the card command's reason for skipping #41", warning)
-	}
+	lineRefused(t, l, map[string]any{"text": "Here it is.", "tap_prs": tapPR41}, tapPR41[0]+": its body has no What you'll hate most section")
 }
 
 func TestAPRCardStatesItsStagingResultFirstAndKeepsItOnceAnswered(t *testing.T) {
@@ -2389,17 +2381,15 @@ func carriesItsTextAlone(p fakePost) bool {
 	return p.blocks == "" || json.Unmarshal([]byte(p.blocks), &blocks) == nil && strings.Join(blockTexts(blocks), "") == p.text
 }
 
-func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneTellsWhySlackRefusedIt(t *testing.T) {
+func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneTakesItsLineDownAndTellsWhySlackRefusedIt(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.slack.fail("chat.postMessage", nil)
 	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "invalid_blocks", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] must be less than 3001 characters [json-pointer:/blocks/7/text]"}}})
-	var sent map[string]string
-	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}).Body, &sent); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(sent["warning"], "so do not post it again, but drew no card for tap_prs "+tapPR41[0]+": its card was not posted; the daemon log says why") || sent["permalink"] == "" {
-		t.Fatalf("reply = %+v, want the sent post's permalink and its undrawn card as a warning", sent)
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, "for tap_prs "+tapPR41[0]+": its card was not posted; the daemon log says why, so took that post down; nothing was sent")
+	line := l.slack.sentTo(testDM)[0]
+	if deleted := l.slack.deleted(); len(deleted) != 1 || deleted[0].channelID != testDM || deleted[0].ts != line.ts {
+		t.Fatalf("deleted %+v, want the line %s taken down once Slack refused its card", deleted, line.ts)
 	}
 	eventually(t, "the card command asked for the card", func() bool { return len(cmd.requests(t)) > 0 })
 	eventually(t, "the failed post", func() bool { return l.slack.callCount("chat.postMessage") >= 2 })
@@ -2543,8 +2533,5 @@ func TestATapPRWithNoCardCarriesWhatTheCardCommandSaid(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, _ := cardingDaemon(t, argv, "acme/app#41")
-	warning := tapWarning(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
-	if got := l.slack.sentTo(testDM); len(got) != 1 || !strings.Contains(warning, tapPR41[0]+": drive card: acme/app#41 is in no drive") {
-		t.Fatalf("posted %+v, warning %q; want the post alone, its warning carrying what the card command said", got, warning)
-	}
+	lineRefused(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": drive card: acme/app#41 is in no drive")
 }

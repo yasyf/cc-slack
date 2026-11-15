@@ -236,19 +236,20 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other text post at a root gets the card's permalink in its thread under
 the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call sends the post before it asks the program for any card, so
-the post never waits on the program: it asks for the cards of the PRs `tap_prs`
-names once the post is sent, within the call, and for those of PRs it only
-links after that, off the call, so its result names only the cards `tap_prs`
-drew. The call waits at most 25 seconds after the post for its `tap_prs` cards,
-inside the CLI's 36-second deadline; a card still drawing then posts beside the
-post later, and the call answers ok with a `warning` saying so. When an open PR its `tap_prs` names gets no card, such as the program's
-`skipped` reason, no card in its answer, a card that fails the card checks, or
-a card that fails to post, the sent post answers ok, its `warning` naming each
-such PR and its reason, so the caller does not post it again. Only a `tap_prs`
-that draws no card at all where it posts, under a login with no `card_command`
-or in a channel neither a DM nor in `card_channels`, fails the call and sends
-nothing. The result's `card_ts` and
+names. The call asks the program for the cards of the PRs `tap_prs` names
+before it sends the post, waiting at most 25 seconds, inside the CLI's
+36-second deadline, and sends the post only once each has its card. An open PR
+the program skips, answers no card for, or gives a card that fails the card
+checks, and one it has not answered within those 25 seconds, fails the call
+with each such PR and its reason and sends nothing, so the caller asks again
+later; so does a `tap_prs` under a login with no `card_command` or in a channel
+neither a DM nor in `card_channels`. It asks for the cards of PRs the post only
+links after the post is sent, off the call, so its result names only the cards
+`tap_prs` drew. A `dm-status` text line whose card then fails to post, or, in a
+thread, does not land right under the line, is taken down again with its pages,
+and the call fails saying so and that nothing was sent. Any other post whose
+card fails to post answers ok, its `warning` naming each such PR and its reason,
+so the caller does not post it again. The result's `card_ts` and
 `card_permalink` name the cards the post drew, space-separated, since the post's
 own `ts` and `permalink` are its text line, and each card's link is already in
 the post's DM thread. A status card that carries cards is then read back from

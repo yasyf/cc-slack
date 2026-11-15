@@ -111,13 +111,15 @@ thread, and the PR's earlier card that still asks, wherever it sits, is edited t
 say it was replaced, so every line asking the user's tap has the buttons under
 it; a card the user answered stays where it is, and a post that only links the PR
 or its card leaves the card where it sits. A post lands in a DM thread only when its
-call names that thread. The post goes out before any card is asked for, and
-the call waits at most 25 seconds for the cards; a card still drawing then posts
-beside the post later and the `warning` says so, so never post it again. When
-an open PR in `tap_prs` draws no card, the post is still sent and its `warning`
-names each such PR with the reason, so never post it again; fix the reason,
-then send `tap_prs` for that PR alone. A login whose config sets no
-`card_command`, or a channel that draws no PR cards, fails the call with
+call names that thread. Every card `tap_prs` names is asked for before the
+post goes out, for at most 25 seconds, and the post goes out only once each has
+its card: an open PR that draws no card in time, or none at all, fails the call
+naming each such PR with the reason, and nothing is sent, so fix the reason or
+send it again later. A `dm-status` line whose card then fails to post, or does
+not land right under it in its thread, is taken down and the call fails, saying
+nothing was sent. On any other post a card that fails to post leaves the post
+sent, its `warning` naming the PR, so never post it again. A login whose config
+sets no `card_command`, or a channel that draws no PR cards, fails the call with
 `tap_prs` and sends nothing. Never post a PR card or add a
 `refs` entry by hand for a PR your text names. With `preview_command` set, a PR
 link in a post to the user's DM also shows a preview under the text saying what

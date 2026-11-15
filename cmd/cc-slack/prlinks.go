@@ -319,6 +319,7 @@ type tapCards struct {
 	standing     []cardRef
 	provided     []providedCard
 	undrawn      map[string]string
+	moves        bool
 }
 
 func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, thread string, b opBody, moves bool) tapCards {
@@ -331,7 +332,7 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 			a.poller.log.Printf("tap PR %s draws no card: it is %s", prURL(pr.ref), pr.state.State)
 		}
 	}
-	t := tapCards{undrawn: map[string]string{}}
+	t := tapCards{undrawn: map[string]string{}, moves: moves}
 	t.ask, t.standing, t.waiting = a.cards.toCard(channelID, thread, channelID == id.DMChannelID, moves, b.Card, prs)
 	if len(t.ask) > 0 {
 		a.askCardCommand(ctx, id, channelID, thread, &t)
@@ -379,6 +380,33 @@ func (a *app) askCardCommand(ctx context.Context, id identity, channelID, thread
 	}
 }
 
+func (a *app) tapCardsFirst(ctx context.Context, id identity, scope, channelID, under string, b opBody, asked []string) (tapCards, error) {
+	if len(b.TapPRs) == 0 {
+		return tapCards{}, nil
+	}
+	if err := refuseTapCards(id, channelID, asked); err != nil {
+		return tapCards{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, tapCardPatience)
+	defer cancel()
+	t := a.askTapCards(ctx, id, scope, channelID, under, b, b.Card == nil && under != "")
+	if said := undrawnAsked(asked, t.undrawn); len(said) > 0 {
+		return tapCards{}, fmt.Errorf("drew no card for tap_prs %s", strings.Join(said, "; "))
+	}
+	return t, nil
+}
+
+func undrawnAsked(asked []string, undrawn map[string]string) []string {
+	var said []string
+	for _, raw := range slices.Compact(slices.Sorted(slices.Values(asked))) {
+		pr, _ := parseRef(raw)
+		if why, missed := undrawn[pr.key()]; missed {
+			said = append(said, raw+": "+why)
+		}
+	}
+	return said
+}
+
 func (a *app) drawLinkedCards(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, linked []string) {
 	named := map[string]bool{}
 	for _, raw := range b.TapPRs {
@@ -394,7 +422,11 @@ func (a *app) drawLinkedCards(hc daemon.HandlerCtx, sub subject.Subject, id iden
 	}
 	hc.Ctx = context.WithoutCancel(hc.Ctx)
 	a.cardWork.Go(func() {
-		a.attachTapPRs(hc, sub, id, under, post, b, nil, false)
+		t := a.askTapCards(hc.Ctx, id, hc.Env.Scope, post.channel, under, b, false)
+		_, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, t)
+		for pr, why := range undrawn {
+			a.poller.log.Printf("linked PR %s drew no card beside %s: %s", pr, id.permalink(post.channel, post.ts, post.thread), why)
+		}
 	})
 }
 
@@ -410,52 +442,22 @@ func (d tapDrawn) named(id identity) (stamps, links string) {
 	return strings.Join(cardStamps(d.cards), " "), strings.Join(permalinks, " ")
 }
 
-func (a *app) drawTapCards(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string) tapDrawn {
-	if len(b.TapPRs) == 0 {
-		return tapDrawn{}
-	}
-	drawn := make(chan tapDrawn, 1)
-	bg := hc
-	bg.Ctx = context.WithoutCancel(hc.Ctx)
-	a.cardWork.Go(func() {
-		drawn <- a.attachTapPRs(bg, sub, id, under, post, b, asked, b.Card == nil && post.thread != post.ts)
-	})
-	select {
-	case d := <-drawn:
-		return d
-	case <-time.After(tapCardPatience):
-		if len(asked) > 0 {
-			notePostWarning(hc.Ctx, fmt.Sprintf("posted %s, so do not post it again; the cards of tap_prs %s still draw and post beside it", id.permalink(post.channel, post.ts, post.thread), strings.Join(asked, ", ")))
-		}
-		return tapDrawn{}
-	}
-}
-
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string, moves bool) tapDrawn {
-	ctx := context.WithoutCancel(hc.Ctx)
-	t := a.askTapCards(ctx, id, hc.Env.Scope, post.channel, under, b, moves)
+func (a *app) placeTapCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, post cardRef, t tapCards) (tapDrawn, map[string]string) {
 	if len(t.ask)+len(t.standing) == 0 {
-		return tapDrawn{}
+		return tapDrawn{}, nil
 	}
-	warning, placed, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, post.channel, post.thread, post.ts, t)
-	notePostWarning(hc.Ctx, warning)
-	link := id.permalink(post.channel, post.ts, post.thread)
-	var said []string
-	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
-		pr, _ := parseRef(raw)
-		why, missed := undrawn[pr.key()]
-		if !missed {
-			continue
-		}
-		a.poller.log.Printf("tap PR %s drew no card beside %s: %s", raw, link, why)
-		if slices.Contains(asked, raw) {
-			said = append(said, raw+": "+why)
-		}
+	warning, placed, undrawn := a.attachPRCards(context.WithoutCancel(ctx), db, sub, id, post.channel, post.thread, post.ts, t)
+	notePostWarning(ctx, warning)
+	if !t.moves {
+		return tapDrawn{cards: placed}, undrawn
 	}
-	if len(said) > 0 {
-		notePostWarning(hc.Ctx, fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; ")))
+	carried := slices.DeleteFunc(slices.Clone(placed), func(card cardRef) bool {
+		return a.cards.awaitsTap(card.channel, card.ts) && (card.thread != post.thread || !tsLess(post.ts, card.ts))
+	})
+	for _, pr := range a.cards.uncarded(carried, t.waiting) {
+		undrawn[pr.key()] = cmp.Or(undrawn[pr.key()], "its card did not go under the line; the daemon log says why")
 	}
-	return tapDrawn{cards: placed}
+	return tapDrawn{cards: carried}, undrawn
 }
 
 func cardStamps(cards []cardRef) []string {
@@ -1048,6 +1050,7 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 }
 
 func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, string, error) {
+	began := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, installed(command[0]), command[1:]...) //nolint:gosec // G204: the configured card command's argv, never a shell
@@ -1055,11 +1058,11 @@ func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, 
 	cmd.WaitDelay = time.Second
 	var said bytes.Buffer
 	cmd.Stderr = &said
-	began := time.Now()
 	out, err := cmd.Output()
 	traced(ctx, strings.Join(command[:min(len(command), 3)], " "), time.Since(began))
 	if err != nil && ctx.Err() != nil {
-		return nil, "", fmt.Errorf("%s: %w in %s: %w", command[0], errCardCommandUnfinished, prCardPatience, ctx.Err())
+		deadline, _ := ctx.Deadline()
+		return nil, "", fmt.Errorf("%s: %w in %s: %w", command[0], errCardCommandUnfinished, deadline.Sub(began).Round(time.Second), ctx.Err())
 	}
 	if _, ok := errors.AsType[*exec.ExitError](err); ok {
 		return nil, "", cardCommandError{command[0], err, string(bytes.TrimSpace(said.Bytes()))}

@@ -699,7 +699,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks)
-		if err := refuseTapCards(id, channelID, b.TapPRs); err != nil {
+		tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, b.TapPRs)
+		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
 		pages[0] = a.laidOut(id, channelID, b.ThreadTS, pages[0], b.Files, render)
@@ -729,8 +730,10 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		}
 		res.PagePermalink = strings.Join(shown, " ")
 		a.answered(hc.Ctx, id, res.ChannelID, b.ThreadTS, res.TS)
-		drawn := a.drawTapCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, b.TapPRs)
-		a.drawLinkedCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, append(linked, ready...))
+		post := cardRef{res.ChannelID, res.ThreadTS, res.TS}
+		drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, tap)
+		notePostWarning(hc.Ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
+		a.drawLinkedCards(hc, sub, id, b.ThreadTS, post, b, append(linked, ready...))
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
@@ -2694,6 +2697,10 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
+	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, b.TapPRs)
+	if err != nil {
+		return fail(err.Error() + "; nothing was sent")
+	}
 	thread, ts, posted, err := a.dmStatus(atStep(hc.Ctx, "status"), hc.DB, sub, id, under, msg)
 	if errors.Is(err, errAskedAgain) {
 		return fail(err.Error())
@@ -2708,14 +2715,49 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
+	post := cardRef{id.DMChannelID, thread, ts}
+	drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, tap)
+	if said := undrawnAsked(b.TapPRs, undrawn); len(said) > 0 && posted && b.Card == nil {
+		return fail(a.takeDown(hc.Ctx, id, post, shown, said))
+	}
+	notePostWarning(hc.Ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
 	if posted && !b.AsHolder {
 		a.answered(hc.Ctx, id, id.DMChannelID, thread, ts)
 	}
-	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
-	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	drawn := a.drawTapCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)
-	a.drawLinkedCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, linked)
+	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, post)
+	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, post, a.cards.continued(id.DMChannelID, thread), b.Card))
+	a.drawLinkedCards(hc, sub, id, under, post, b, linked)
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
+}
+
+func (a *app) undrawnWarning(id identity, post cardRef, asked []string, undrawn map[string]string) string {
+	said := undrawnAsked(asked, undrawn)
+	if len(said) == 0 {
+		return ""
+	}
+	link := id.permalink(post.channel, post.ts, post.thread)
+	a.poller.log.Printf("tap PRs drew no card beside %s: %s", link, strings.Join(said, "; "))
+	return fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; "))
+}
+
+func (a *app) takeDown(ctx context.Context, id identity, post cardRef, pages []string, said []string) string {
+	link := id.permalink(post.channel, post.ts, post.thread)
+	a.poller.log.Printf("tap PRs drew no card under %s, so it comes down: %s", link, strings.Join(said, "; "))
+	stamps := []string{post.ts}
+	for _, page := range pages {
+		ref, err := parsePermalink(page)
+		if err != nil {
+			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for tap_prs %s, and its page %s reads as no Slack message to take down: %v", link, strings.Join(said, "; "), page, err)
+		}
+		stamps = append(stamps, ref.ts)
+	}
+	api := a.newAPI(id.Token)
+	for _, ts := range stamps {
+		if _, _, err := api.DeleteMessageContext(context.WithoutCancel(ctx), post.channel, ts); err != nil && !goneCardCodes[errorCode(err)] {
+			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for tap_prs %s, and taking it down failed: %v", link, strings.Join(said, "; "), err)
+		}
+	}
+	return fmt.Sprintf("drew no card under %s for tap_prs %s, so took that post down; nothing was sent", link, strings.Join(said, "; "))
 }
 
 func operatorIdentity(ctx context.Context, db *sql.DB, channelID string) (identity, error) {
@@ -2803,13 +2845,7 @@ func (a *app) drawCardsOnly(hc daemon.HandlerCtx, id identity, b opBody) daemon.
 	for i := range t.provided {
 		t.provided[i].reasks = true
 	}
-	if len(t.undrawn) > 0 {
-		var said []string
-		for _, pr := range t.ask {
-			if why, missed := t.undrawn[pr.key()]; missed {
-				said = append(said, prURL(pr)+": "+why)
-			}
-		}
+	if said := undrawnAsked(b.TapPRs, t.undrawn); len(said) > 0 {
 		return fail("drew no card for tap_prs " + strings.Join(said, "; ") + "; nothing was sent")
 	}
 	sub, err := a.dmPoster(hc, id, b)
@@ -2868,15 +2904,18 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	if err != nil {
 		return fail(err.Error())
 	}
-	if err := refuseTapCards(id, id.DMChannelID, b.TapPRs); err != nil {
-		return fail(err.Error() + "; nothing was sent")
-	}
 	asked := b.TapPRs
 	b.TapPRs = slices.Concat(asked, linked)
+	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, old.thread, b, asked)
+	if err != nil {
+		return fail(err.Error() + "; nothing was sent")
+	}
 	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, b.TapPRs); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, a.drawTapCards(hc, sub, id, old.thread, cardRef{id.DMChannelID, old.thread, old.ts}, b, asked))
+	drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, old, tap)
+	notePostWarning(hc.Ctx, a.undrawnWarning(id, old, asked, undrawn))
+	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, drawn)
 }
 
 func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, b opBody, pages []string, drawn tapDrawn) daemon.Reply {
