@@ -2239,6 +2239,32 @@ func TestAPRCardStatesItsStagingResultFirstAndKeepsItOnceAnswered(t *testing.T) 
 	})
 }
 
+func TestAPRCardStatesHowItsStoredDataMovesAfterItsStagingResultAndKeepsItOnceAnswered(t *testing.T) {
+	const moves = "Uploads stored before it read a retry count of 0, so old readers see no change"
+	provided := changedTapCard("")
+	provided.Card.PRs[0].StoredData = moves
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, provided)
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	if at := strings.Index(card.blocks, "*Stored data*\\n"+moves); at < strings.Index(card.blocks, "*Staging*") || at > strings.Index(card.blocks, "*Refresher*") {
+		t.Fatalf("PR card blocks = %s, want how its stored data moves right after its staging result", card.blocks)
+	}
+	tapOption(t, l, card, 1)
+	eventually(t, "the answered card keeps how its stored data moves", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "✓ *Hold* · answered") && strings.Contains(edits[len(edits)-1], "*Stored data* "+moves)
+	})
+}
+
+func TestARedrawGivingAPRFreshRowsTakesItsNewWordOnHowItsStoredDataMoves(t *testing.T) {
+	const moves = "Uploads stored before it read a retry count of 0, so old readers see no change"
+	drawn := cardPR{URL: tapPR41[0], StoredData: "The body says nothing yet on how the data stored before it moves"}
+	if got := drawn.withLines(cardPR{URL: tapPR41[0], StoredData: moves}).StoredData; got != moves {
+		t.Fatalf("redrawn Stored data = %q, want the fresh row's %q", got, moves)
+	}
+}
+
 func cardLinks(l *liveDaemon, card fakePost) []fakePost {
 	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
 		return !carriesItsTextAlone(p) || p.unfurlLinks != "true" || !linksMessage(p.text, card.ts)
