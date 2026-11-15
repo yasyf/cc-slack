@@ -49,6 +49,8 @@ EVERY_THREAD = "/threads"
 SOLVED = "/solved"
 SOLVED_EVERYWHERE = f"{GRANT_LABEL}solved"
 SOLVED_LINE = "solved-line"
+CLAIMS = "/claims"
+CLAIM_LINE = "claim-line"
 ASKS = re.compile(r"\?|\b(?:please|pls|could you|can you|would you|let (?:me|us) know|try (?:it )?again|retry|confirm)\b", re.I)
 BARE_URL = re.compile(r"https?://\S+")
 REVOKE_LABEL = "slack-revoke:"
@@ -495,6 +497,19 @@ class SolvedLine(CustomTicketCondition):
         return [ruling_evidence(grants[-1])]
 
 
+@dataclass(frozen=True, slots=True)
+class ClaimLine(CustomTicketCondition):
+    def evidence(self, ctx: Context) -> list[Evidence] | None:
+        channel = ctx.place["channel"]
+        if ctx.place["thread"]:
+            return None
+        write = pending(live(ctx))[0]
+        grants = [answer for answer in live_answers(ctx, channel) if f"{GRANT_LABEL}{channel}{CLAIMS}" in answer.get("tags", ())]
+        if not grants or write.verb != "post" or write.files or write.fields.get("blocks") or "\n" in write.text.strip() or check_post().check(write.text):
+            return None
+        return [ruling_evidence(grants[-1])]
+
+
 def written_here(ctx: Context) -> list[Ticket]:
     return [ticket for ticket in store.tickets(KIND, ctx.trees) if ticket.place == dict(ctx.place) and store.live(ticket)]
 
@@ -730,6 +745,7 @@ SLACK = Tickets(
         Rule("asked-user", Or(Unspent(UserAnswered(Named(), Holds("text"), approved=True)), And(NotRevoked(), BoardTapped()))),
         Rule("own-post", OwnPost()),
         Rule(SOLVED_LINE, And(NotRevoked(), SolvedLine())),
+        Rule(CLAIM_LINE, And(NotRevoked(), ClaimLine())),
         Rule("decide", Judged(Decide(RULES, second_opinion=False, over=(UserSaid(), UserAnswered(approved=False), OwnerOrdered(), GrantCited(), DmOrdered(), EarlierWords(), StandingGrant(), RecordedWords()), contexts=[Destination()], transcript=JUDGED_TURNS, root_transcript=JUDGED_TURNS, tool_results=True))),
     ),
     deny="Ask the user.",
@@ -990,6 +1006,12 @@ SOLVED_GRANT = LABELED_GRANT | {
 EVERY_BUG_GRANT = SOLVED_GRANT | {"id": "e5e5e5e5e5e5e5e5", "tags": ["scope:durable", SOLVED_EVERYWHERE]}
 PETS_THREAD = DANA | {"channel_id": PETS}
 SOLVED_TEXT = "This is fixed in version 0.162.3623. Your existing chats open again, with their drafts intact."
+CLAIM_GRANT = LABELED_GRANT | {
+    "id": "e6e6e6e6e6e6e6e6",
+    "title": "Does a session claiming staging for a test need his permission to post its claim?",
+    "body": "No: post what you test and for how long, cite the staging rule and ask whether anyone objects",
+    "tags": ["scope:durable", f"slack-grant:{FOLLOWERS}{CLAIMS}"],
+}
 KEPT_IN_CHANNEL = {"id": "f00df00df00df00d", "title": "Where do drive updates go?", "body": f"Keep posting in {FOLLOWERS}", "updated_at": "2026-10-01T00:00:00Z", "tags": ["from:owner", "scope:durable"], "superseded_by": None}
 REVOKED = LABELED_GRANT | {"id": "d0d0d0d0d0d0d0d0", "updated_at": "2026-10-17T01:00:00Z", "tags": ["owner-ruling", f"slack-revoke:{FOLLOWERS}"]}
 ROOM = "C0ROOM00001"
@@ -1108,6 +1130,7 @@ def case(write: dict[str, Any] | None = None, **fields: Any) -> Case:
 
 NEW_ASK = DANA | {"text": "Could you send the raw log from last night?"}
 TOP_LEVEL = {"channel_id": FOLLOWERS, "text": "a top-level post", "no_watch": True}
+CLAIM = TOP_LEVEL | {"text": "testing the chat link fix on staging's API for 30 min per the staging rule, lmk if anyone objects"}
 PRIYA_THREAD = {"channel_id": PRIYA_USER, "thread_ts": "1791900000.000400", "text": "and one more thing"}
 LINKED_WORDS = said_evidence(f"respond to this asap {DANA_URL}", PROMPTED_AT, "prompt")
 TAPPED = Evidence(id="ask:dana#0", source="ask", quote="Yes", detail=DANA_ASKED)
@@ -1424,6 +1447,12 @@ on(
             case(DANA | {"text": "Fixed: the walker lane landed behind the fence."}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(THREAD_GRANT, SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(transcript=card_tapped(DANA_CARD, "Yes"), commands=ruled(SOLVED_GRANT)) >> ALLOW,
+            case(CLAIM, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT)) >> ALLOW,
+            case(CLAIM | {"text": f"{CLAIM['text']}\nPRs: #12, #13"}, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT)) >> DENY,
+            case(CLAIM | {"text": "the walker lane is on staging for 30 min, lmk if anyone objects"}, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT)) >> DENY,
+            case(CLAIM | {"channel_id": PETS}, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT)) >> DENY,
+            case(DANA | {"text": CLAIM["text"]}, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(DANA_OPENED)) >> DENY,
+            case(CLAIM, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT, REVOKED)) >> DENY,
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,

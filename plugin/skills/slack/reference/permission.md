@@ -93,6 +93,13 @@ A test post a lane makes in the test channel a user's standing grant names, and
 deletes right after, needs no ask once that user has said so; such a grant is an
 answer labelled `slack-grant:<channel>` and `slack-grant:<channel>/threads`.
 
+A claim at a channel's top level, such as a line saying what a session tests on
+staging and for how long and asking whether anyone objects, needs no ask once
+that user's grant is an answer labelled `slack-grant:<channel>/claims`. Such a
+grant passes each top-level post there that is one plain line with no jargon,
+files or blocks, its ask included. Its thread and every other post there go to
+the other rules.
+
 An instruction from the user that says what to post and who gets it is the
 approval for that one post, in the place it names, whether they typed it in
 the session, sent it in their own DM with the app, or tapped it on a card:
