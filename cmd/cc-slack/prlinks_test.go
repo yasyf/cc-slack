@@ -1536,10 +1536,9 @@ func TestRedrawPRCardsRedrawsEveryOpenCardWithNoNewPost(t *testing.T) {
 
 	l.do(opRedrawPRCards, map[string]any{})
 
-	eventually(t, "the redraw", func() bool {
-		edits := editsOf(l.slack.edited(), card.ts)
-		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "From the ledger")
-	})
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "From the ledger") {
+		t.Fatalf("edits when redraw-pr-cards answered = %q, want the card redrawn before it answers", edits)
+	}
 	if got := len(l.slack.sentTo(testDM)); got != posts {
 		t.Fatalf("posts went from %d to %d, want none new", posts, got)
 	}
@@ -1568,11 +1567,27 @@ func TestRedrawPRCardsCanTakeOnePR(t *testing.T) {
 	if got := redrawing(tapPR41[0]); got != 1 {
 		t.Fatalf("its own PR redraws %d cards, want one", got)
 	}
-	eventually(t, "the redraw", func() bool {
-		edits := editsOf(l.slack.edited(), card.ts)
-		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "From the ledger")
-	})
+	if edits := editsOf(l.slack.edited(), card.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "From the ledger") {
+		t.Fatalf("edits when redraw-pr-cards --pr answered = %q, want the card redrawn before it answers", edits)
+	}
 	l.refused(opRedrawPRCards, map[string]any{"pr": "not a link"}, "pull request URL")
+}
+
+func TestRedrawPRCardsFailsNamingTheCardThatStaysAsDrawn(t *testing.T) {
+	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	if err := os.WriteFile(answer, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	edits := len(editsOf(l.slack.edited(), card.ts))
+
+	l.refused(opRedrawPRCards, map[string]any{"pr": tapPR41[0]}, "p"+strings.ReplaceAll(card.ts, ".", "")+" stays as drawn")
+
+	if got := len(editsOf(l.slack.edited(), card.ts)); got != edits {
+		t.Fatalf("card edits went from %d to %d, want it left as drawn", edits, got)
+	}
 }
 
 func TestRedrawPRCardsForOnePRRedrawsTheWaitingCardListingItOnce(t *testing.T) {

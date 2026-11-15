@@ -1894,69 +1894,25 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		posted = slices.DeleteFunc(posted, func(card postedPRCard) bool { return !card.carries(only) })
 		listing = a.cards.cardsListing(only)
 	}
-	a.prRedraws.push(prRedraw{id: id, posted: posted, listing: listing})
+	var stays []string
+	for _, card := range posted {
+		if err := a.redrawPRCard(hc.Ctx, id, card.card, card.prs[0]); err != nil {
+			stays = append(stays, fmt.Sprintf("%s stays as drawn: %v", id.permalink(card.card.channel, card.card.ts, card.card.thread), err))
+		}
+	}
+	for _, card := range listing {
+		if err := a.poller.redrawWithFreshPRLines(hc.Ctx, id, card); err != nil {
+			stays = append(stays, fmt.Sprintf("%s keeps the PR lines it was drawn with: %v", id.permalink(card.channel, card.ts, card.thread), err))
+			continue
+		}
+		if err := a.cards.redrawCopies(hc.Ctx, id, card); err != nil {
+			stays = append(stays, fmt.Sprintf("the copies of %s keep the lines they were drawn with: %v", id.permalink(card.channel, card.ts, card.thread), err))
+		}
+	}
+	if len(stays) > 0 {
+		return fail(strings.Join(stays, "; "))
+	}
 	return ok(map[string]int{"redrawing": len(posted) + len(listing)})
-}
-
-type prRedraw struct {
-	id      identity
-	posted  []postedPRCard
-	listing []cardRef
-}
-
-type prRedraws struct {
-	mu   sync.Mutex
-	jobs []prRedraw
-	wake chan struct{}
-}
-
-func (q *prRedraws) push(job prRedraw) {
-	q.mu.Lock()
-	q.jobs = append(q.jobs, job)
-	q.mu.Unlock()
-	select {
-	case q.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (q *prRedraws) take() []prRedraw {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	jobs := q.jobs
-	q.jobs = nil
-	return jobs
-}
-
-func (a *app) runPRRedraws(ctx context.Context) {
-	for {
-		for _, job := range a.prRedraws.take() {
-			a.redrawPRCards(ctx, job)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-a.prRedraws.wake:
-		}
-	}
-}
-
-func (a *app) redrawPRCards(ctx context.Context, job prRedraw) {
-	for _, card := range job.posted {
-		if ctx.Err() != nil {
-			return
-		}
-		a.recardPR(ctx, job.id, card.card, card.prs[0])
-	}
-	for _, card := range job.listing {
-		if ctx.Err() != nil {
-			return
-		}
-		a.poller.redrawWithFreshPRLines(ctx, job.id, card)
-		if err := a.cards.redrawCopies(ctx, job.id, card); err != nil {
-			a.poller.log.Printf("card %s: its copies keep the lines they were drawn with: %v", card.ts, err)
-		}
-	}
 }
 
 func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {

@@ -581,20 +581,24 @@ func (a *app) redrawInPlace(ctx context.Context, id identity, posted cardRef, p 
 	return true
 }
 
-func (a *app) redrawStanding(ctx context.Context, id identity, channelID, thread string, p providedCard) {
+func (a *app) redrawStanding(ctx context.Context, id identity, channelID, thread string, p providedCard) error {
+	var stays []error
 	same, found, others := a.postedPRCard(id, channelID, thread, p.Card)
 	if found && a.redrawInPlace(ctx, id, same, p) {
 		a.tellShown(ctx, id, []map[string]any{shownCard(p)})
+	} else if found {
+		stays = append(stays, fmt.Errorf("PR card %s stays as drawn; the daemon log says why", same.ts))
 	}
 	for _, card := range others {
 		if err := a.cards.refreshPRRows(ctx, a.newAPI(id.Token), card, p.Card, a.now()); err != nil {
-			a.poller.log.Printf("PR card %s keeps the PR lines it was drawn with: %v", card.ts, err)
+			stays = append(stays, fmt.Errorf("PR card %s keeps the PR lines it was drawn with: %w", card.ts, err))
 			continue
 		}
 		if err := a.cards.redrawCopies(ctx, id, card); err != nil {
-			a.poller.log.Printf("PR card %s is redrawn, but its copies still show it as it was: %v", card.ts, err)
+			stays = append(stays, fmt.Errorf("PR card %s is redrawn, but its copies still show it as it was: %w", card.ts, err))
 		}
 	}
+	return errors.Join(stays...)
 }
 
 func (a *app) postedPRCard(id identity, channelID, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
@@ -903,13 +907,17 @@ func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID)
 	}
 }
 
+// redrawPRCard fails only when the card command or Slack could not redraw the
+// card; a card the card command draws no card for, or one it refuses, stays as
+// drawn by design, so a caller asking again would get the same card.
 func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr refID) error {
 	provided, skipped, err := askPRCards(ctx, id, []refID{pr}, true)
 	if err != nil {
 		return err
 	}
 	if len(skipped) > 0 {
-		return fmt.Errorf("the card command drew no card for %s: %s", prURL(pr), skipped[0].Reason)
+		a.poller.log.Printf("PR card %s stays as drawn: the card command drew no card for %s: %s", card.ts, prURL(pr), skipped[0].Reason)
+		return nil
 	}
 	if len(provided) == 0 {
 		if a.cards.retired(card) {
@@ -922,20 +930,23 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	}
 	if err := provided[0].Card.check(a.now(), false, id.Config.Links.Tailnet); err != nil {
 		a.tellRefused(ctx, id, provided[0], err)
-		return err
+		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)
+		return nil
 	}
 	thread := prCardThread(id, card.channel, card.thread, card.ts)
 	if thread == card.ts {
 		thread = ""
 	}
 	if provided[0].Card.Waits == "" {
-		a.redrawStanding(ctx, id, card.channel, thread, provided[0])
-		return nil
+		return a.redrawStanding(ctx, id, card.channel, thread, provided[0])
 	}
 	db := a.poller.plane.DB()
-	a.postPRCards(ctx, db, id, card.channel, thread, cardBeside{}, tapCards{provided: provided[:1]}, func(fresh string) error {
+	placed := a.postPRCards(ctx, db, id, card.channel, thread, cardBeside{}, tapCards{provided: provided[:1]}, func(fresh string) error {
 		return a.carrySessions(ctx, db, id, card.thread, fresh)
 	})
+	if len(placed) == 0 {
+		return errors.New("neither its redraw nor its new post went out to Slack; the daemon log says why")
+	}
 	return nil
 }
 

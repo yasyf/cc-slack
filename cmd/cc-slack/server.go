@@ -34,7 +34,6 @@ type app struct {
 	cards     *liveCards
 	shortcuts *shortcutHandler
 	socket    *socketClient
-	prRedraws prRedraws
 	cardWork  sync.WaitGroup
 	captHook  commandRunner
 	claudeCwd func(ctx context.Context, pid int) (string, error)
@@ -128,7 +127,6 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 			state:      socketNoIdentity,
 		},
 	}
-	a.prRedraws.wake = make(chan struct{}, 1)
 	a.socket.hello = a.hello
 	cache.live = func() bool { return a.socket.status() == socketConnected && replay.current() }
 	p.recard, cards.recard = a.recardPR, a.recardPR
@@ -189,7 +187,6 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			s.Background(a.poller.run)
 			s.Background(a.socket.run)
 			s.Background(a.cards.run)
-			s.Background(a.runPRRedraws)
 			return nil
 		},
 		AgentGreeting: agentGreeting,

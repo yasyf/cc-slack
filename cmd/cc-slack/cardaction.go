@@ -1689,10 +1689,7 @@ func (p *poller) drawTap(ctx context.Context, id identity, r cardRef, blockID, l
 	return p.confirmTap(ctx, id, r, blockID, line)
 }
 
-func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r cardRef) {
-	if len(id.Config.PRLinks.CardCommand) == 0 {
-		return
-	}
+func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r cardRef) error {
 	var asked []refID
 	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) {
 		for _, pr := range m.Card.allPRs() {
@@ -1702,12 +1699,11 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 		}
 	})
 	if len(asked) == 0 {
-		return
+		return nil
 	}
 	provided, _, err := askPRCards(ctx, id, asked, true)
 	if err != nil {
-		p.log.Printf("card %s keeps the PR lines it was drawn with: %v", r.ts, err)
-		return
+		return err
 	}
 	changed := false
 	p.cards.markReply(r.channel, r.thread, r.ts, func(m *liveMessage) {
@@ -1725,11 +1721,10 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 		}
 	})
 	if !changed {
-		return
+		return nil
 	}
-	if _, err := p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now()); err != nil {
-		p.log.Printf("card %s: its redraw with the PR lines as they stand now failed: %v", r.ts, err)
-	}
+	_, err = p.cards.redraw(ctx, p.newAPI(id.Token), r.channel, r.thread, r.ts, p.now())
+	return err
 }
 
 func (p *poller) tapDrawn(r cardRef, tapped time.Time, err error) error {
