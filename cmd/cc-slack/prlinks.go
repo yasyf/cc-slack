@@ -27,7 +27,7 @@ var prCardPatience = 2 * time.Minute
 
 var errCardCommandUnfinished = errors.New("the card command did not finish")
 
-var shownRecords sync.RWMutex
+var shownRecords shownChain
 
 var (
 	prUnscanned   = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
@@ -780,13 +780,43 @@ func (a *app) tellShown(ctx context.Context, id identity, shown []map[string]any
 	if len(shown) == 0 {
 		return
 	}
-	shownRecords.Lock()
-	go func() {
-		defer shownRecords.Unlock()
+	shownRecords.add(func() {
 		if _, _, err := cardCommandRan(context.WithoutCancel(ctx), id.Config.PRLinks.CardCommand, map[string]any{"shown": shown}); err != nil {
 			a.poller.log.Printf("PR cards stand, but the card command did not record them, so their rows may draw again: %v", err)
 		}
+	})
+}
+
+type shownChain struct {
+	mu   sync.Mutex
+	last chan struct{}
+}
+
+func (c *shownChain) add(record func()) {
+	c.mu.Lock()
+	prior, done := c.last, make(chan struct{})
+	c.last = done
+	c.mu.Unlock()
+	go func() {
+		defer close(done)
+		if prior != nil {
+			<-prior
+		}
+		record()
 	}()
+}
+
+func (c *shownChain) wait(ctx context.Context) {
+	c.mu.Lock()
+	last := c.last
+	c.mu.Unlock()
+	if last == nil {
+		return
+	}
+	select {
+	case <-last:
+	case <-ctx.Done():
+	}
 }
 
 func (a *app) tellRefused(ctx context.Context, id identity, p providedCard, refusal error) {
@@ -971,8 +1001,7 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 }
 
 func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, string, error) {
-	shownRecords.RLock()
-	defer shownRecords.RUnlock()
+	shownRecords.wait(ctx)
 	return cardCommandRan(ctx, command, ask)
 }
 

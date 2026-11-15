@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -183,8 +184,7 @@ func (c cardCommand) resolves(t *testing.T) []string {
 
 func readAsks(t *testing.T, path string) []string {
 	t.Helper()
-	shownRecords.RLock()
-	defer shownRecords.RUnlock()
+	shownRecords.wait(t.Context())
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -2164,5 +2164,46 @@ func TestATapPRWithNoCardCarriesWhatTheCardCommandSaid(t *testing.T) {
 	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": drive card: acme/app#41 is in no drive; nothing was sent")
 	if got := l.slack.sentTo(testDM); len(got) != 0 {
 		t.Fatalf("posted %+v, want nothing", got)
+	}
+}
+
+func TestAShownRecordNeverHoldsBackItsPostAndACardAskWaitsOnlyForTheRecordsBeforeIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var chain shownChain
+		first, third := make(chan struct{}), make(chan struct{})
+		ran := make(chan string, 3)
+		chain.add(func() { <-first; ran <- "first" })
+		chain.add(func() { ran <- "second" })
+		asked := make(chan struct{})
+		go func() { chain.wait(context.Background()); close(asked) }()
+		ended, end := context.WithCancel(context.Background())
+		gaveUp := make(chan struct{})
+		go func() { chain.wait(ended); close(gaveUp) }()
+		synctest.Wait()
+		chain.add(func() { <-third; ran <- "third" })
+		end()
+		synctest.Wait()
+		if len(ran) != 0 || isClosed(asked) || !isClosed(gaveUp) {
+			t.Fatalf("with the first record running: %d records done, ask done %v, ended ask done %v; want none, false, true", len(ran), isClosed(asked), isClosed(gaveUp))
+		}
+		close(first)
+		synctest.Wait()
+		if got := []string{<-ran, <-ran}; !slices.Equal(got, []string{"first", "second"}) || !isClosed(asked) || len(ran) != 0 {
+			t.Fatalf("records ran %v with the ask done %v and %d more done; want first then second, the ask done, the third still running", got, isClosed(asked), len(ran))
+		}
+		close(third)
+		synctest.Wait()
+		if got := <-ran; got != "third" {
+			t.Fatalf("last record %q, want third", got)
+		}
+	})
+}
+
+func isClosed(c chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
 	}
 }
