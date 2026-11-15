@@ -65,12 +65,6 @@ func postWaiting(t *testing.T, l *liveDaemon, card statusCard) postedCard {
 
 func (c postedCard) url() string { return c.id.permalink(c.id.DMChannelID, c.ts, c.thread) }
 
-func (c postedCard) linkedBy(p fakePost, title string) bool {
-	link, label, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(p.text, "<"), ">"), "|")
-	fresh, linked := strings.CutPrefix(link, c.url())
-	return found && linked && strings.Contains(fresh, freshLinkParam+"=") && label == title && p.blocks == "" && p.unfurlLinks == "true"
-}
-
 func postThread(t *testing.T, l *liveDaemon, text string) string {
 	t.Helper()
 	var res map[string]string
@@ -1125,14 +1119,8 @@ func TestADriveQuestionCardAskedAgainWithANewBodyOptionsAndHintsRedrawsWhereItSi
 	card.Drive = "checkout-rewrite"
 	posts := len(l.slack.sent())
 	first := ask(card)
-	id, err := loadIdentity(l.ctx, l.srv.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := postedCard{id, first["thread_ts"], first["ts"]}
-	sent := l.slack.sent()[posts:]
-	if first["thread_ts"] != first["ts"] || len(sent) != 2 || sent[0].threadTS != "" || sent[1].threadTS != thread || !c.linkedBy(sent[1], card.Title) {
-		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card at the DM root and its link in that thread", thread, first, sent)
+	if sent := l.slack.sent()[posts:]; first["thread_ts"] != thread || len(sent) != 1 || sent[0].threadTS != thread {
+		t.Fatalf("a drive's question card naming thread %s got %v with posts %+v, want the card posted once in that thread", thread, first, sent)
 	}
 	card.Body = "CI is green, and the freeze starts at 5pm."
 	card.Options, card.Recommended = []string{"Merge before the freeze", "Hold until after it"}, "Merge before the freeze"
@@ -1148,9 +1136,6 @@ func TestADriveQuestionCardAskedAgainWithANewBodyOptionsAndHintsRedrawsWhereItSi
 	}
 	if drawn := edits[len(edits)-1]; !strings.Contains(drawn, "the freeze starts at 5pm") || !strings.Contains(drawn, "Hold until after it") || !strings.Contains(drawn, "Nothing lands until Monday.") || !strings.Contains(drawn, cardWaitAction) || strings.Contains(drawn, cardRewordedLine) {
 		t.Fatalf("card redrawn as %s, want its new body, options and hints with its buttons", drawn)
-	}
-	if edits := editsOf(l.slack.edited(), l.slack.sent()[posts-1].ts); len(edits) != 0 {
-		t.Fatalf("link edits = %v, want the card's link in thread %s left for Slack's unfurl to follow the card", edits, thread)
 	}
 }
 
@@ -1223,7 +1208,7 @@ func TestTwoOpenCopiesUnderOneWaitsIDLeaveOneAskingCardAfterARedraw(t *testing.T
 	first := ask(card, thread)
 	card.Title, card.Waits = "Merge #41 before the freeze?", waits+"0"
 	_, askAgain := handlerSession(t, l, 2)
-	second := askAgain(card, thread)
+	second := askAgain(card, postThread(t, l, "About the freeze."))
 	id, err := loadIdentity(l.ctx, l.srv.DB())
 	if err != nil {
 		t.Fatal(err)
@@ -1295,7 +1280,24 @@ func TestAReplyAboutADriveQuestionFromAnotherSessionLandsInItsThreadAnsweredOrNo
 	}
 }
 
-func TestTwoDriveQuestionsNamingAThreadOutsideTheDMPostEachCardOnce(t *testing.T) {
+func TestADriveQuestionCardNamingAThreadOfTheDMPostsOnceInThatThread(t *testing.T) {
+	fakePresent(t)
+	l := startDaemon(t)
+	loggedIn(t, l)
+	const thread = "1794365473.701939"
+	card := mergeCard()
+	card.Drive, card.Waits = "durable-agents", "durable-agents:j633-660964"
+	posts := len(l.slack.sent())
+	var res map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": thread}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if sent := l.slack.sent()[posts:]; len(sent) != 1 || sent[0].threadTS != thread || sent[0].ts != res["ts"] {
+		t.Fatalf("a drive question naming thread %s got %v with posts %+v, want the card posted once in that thread and nothing at the DM root", thread, res, sent)
+	}
+}
+
+func TestADriveQuestionOrLineNamingAThreadOutsideTheDMIsRefusedAndSendsNothing(t *testing.T) {
 	fakePresent(t)
 	l := startDaemon(t)
 	loggedIn(t, l)
@@ -1305,26 +1307,13 @@ func TestTwoDriveQuestionsNamingAThreadOutsideTheDMPostEachCardOnce(t *testing.T
 	}
 	const elsewhere = "1794365473.701939"
 	l.slack.threadElsewhere(id.DMChannelID, elsewhere)
-	for _, asked := range []struct{ title, waits string }{
-		{"Warn the open window at launch?", "durable-agents:j633-660964"},
-		{"Make the api's refusal the only floor?", "durable-agents:j633-660965"},
-	} {
-		card := mergeCard()
-		card.Drive, card.Title, card.Waits = "durable-agents", asked.title, asked.waits
-		posts := len(l.slack.sent())
-		var res map[string]string
-		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"card": card, "thread_ts": elsewhere}).Body, &res); err != nil {
-			t.Fatal(err)
-		}
-		sent := l.slack.sent()[posts:]
-		if len(sent) != 1 || sent[0].ts != res["ts"] || !strings.Contains(res["warning"], "NO CARD LINK") || !strings.Contains(res["warning"], "no thread in your DM") {
-			t.Fatalf("card %q naming thread %s outside the DM got %v with posts %+v, want the card posted once and a warning that its link was left out", asked.title, elsewhere, res, sent)
-		}
-	}
+	card := mergeCard()
+	card.Drive, card.Waits = "durable-agents", "durable-agents:j633-660964"
 	posts := len(l.slack.sent())
-	l.refused(opDMStatus, map[string]any{"text": "Both questions are up.", "thread_ts": elsewhere}, "no thread in your DM")
+	l.refused(opDMStatus, map[string]any{"card": card, "thread_ts": elsewhere}, "no thread in your DM")
+	l.refused(opDMStatus, map[string]any{"text": "The question is up.", "thread_ts": elsewhere}, "no thread in your DM")
 	if sent := l.slack.sent()[posts:]; len(sent) != 0 {
-		t.Fatalf("a line naming thread %s outside the DM posted %+v, want nothing sent", elsewhere, sent)
+		t.Fatalf("a card and a line naming thread %s outside the DM posted %+v, want nothing sent", elsewhere, sent)
 	}
 }
 

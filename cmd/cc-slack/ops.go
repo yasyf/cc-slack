@@ -2693,7 +2693,6 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
 	}
-	linkInto := rootDriveQuestion(&b)
 	blocks, err := checkMessage(b)
 	if err != nil {
 		return fail(err.Error())
@@ -2748,7 +2747,6 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if posted && !b.AsHolder {
 		a.answered(hc.Ctx, id, id.DMChannelID, thread, ts)
 	}
-	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, post)
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, post, a.cards.continued(id.DMChannelID, thread), b.Card))
 	a.drawLinkedCards(hc, sub, id, under, post, b, linked)
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
@@ -2896,28 +2894,6 @@ func (a *app) drawCardsOnly(hc daemon.HandlerCtx, id identity, b opBody) daemon.
 		return fail(fmt.Sprintf("drew no card for tap_prs %s: its card was neither redrawn nor posted; the daemon log says why", prURLs(missed)))
 	}
 	return a.tappedReply(hc, sub, id, placed[0].thread, placed[0].ts, b, nil, tapDrawn{cards: placed})
-}
-
-func rootDriveQuestion(b *opBody) string {
-	if b.Card == nil || !b.Card.driveQuestion() || b.RootOnly {
-		return ""
-	}
-	thread := b.ThreadTS
-	b.ThreadTS = ""
-	return thread
-}
-
-func (a *app) linkDriveQuestion(ctx context.Context, db *sql.DB, id identity, into string, card cardRef) {
-	if into == "" || into == card.thread {
-		return
-	}
-	err := a.missingDMThread(ctx, id, into)
-	if err == nil {
-		err = a.linkCardInto(ctx, db, id, into, card)
-	}
-	if err != nil {
-		notePostWarning(ctx, fmt.Sprintf("NO CARD LINK: the card is up at %s, and its link in thread %s failed: %v", id.permalink(card.channel, card.ts, card.thread), into, err))
-	}
 }
 
 func (a *app) missingDMThread(ctx context.Context, id identity, thread string) error {

@@ -11,7 +11,7 @@ a short conversational answer to the user's DM reply. The CLI takes
 | `status` | `info`, `progress`, `needs_you`, `incident`, or `done`; sets the emoji; defaults to `needs_you` on a waiting card and `info` otherwise |
 | `title` | one line; the card header and the phone notification; defaults to the body's first line |
 | `body` | 1-3 sentences of mrkdwn, under the post rules in [voice.md](voice.md) |
-| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts at the DM root with no board warning |
+| `drive`, `phase` | the long-running drive's name and phase, when there is one; a `waits` card with `drive` is a drive's question and posts with no board warning |
 | `links` | up to 5 `{label, url}` https buttons: PRs, builds, monitors |
 | `options` | up to 4 quick replies of 200 characters or fewer; one over 61 characters or two words draws on its own row with a Pick button; one marked "(Recommended)" becomes the recommended answer |
 | `refs` | up to 10 GitHub pull request or Buildkite build urls; the card shows their live CI, queue, and landed state |
@@ -37,7 +37,7 @@ A `body` line holding only a markdown image, `![what it shows](/absolute/path.pn
 
 A ```` ```chart ```` fence in a `body` or a PR's Show me draws as Slack's own chart, a `data_visualization` block, from a Vega-Lite spec with its data inline in `data.values`. A `bar`, `line`, or `area` mark plots its quantitative field against the field on the other axis, one series per `color` value; an `arc` mark draws a pie of its `theta` field by its `color` field. The chart's title is the spec's `title`, or `<value field> by <category field>`, and each axis is titled with its encoding's `title`, or its field when the encoding names none. Slack holds 2 charts per message, and a post with a third is refused. A chart's title runs up to 50 characters and each label up to 20, with up to 12 series or slices and up to 20 categories, each series giving one value for every category. `cc-slack card render` refuses a chart past those limits, and a fence that is no such spec, naming why.
 
-A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread. A drive's question card, a `waits` card that sets `drive`, always posts at the DM root, where the user expects an answer to be asked: with `thread_ts` it posts there and links it in that thread under its question, and Slack draws the card under that link. A `thread_ts` that is no thread in your DM, such as a thread in another channel, gets no link and a `NO CARD LINK` warning, since Slack posts a reply under a thread it cannot find at the DM root, where the link would draw the card a second time; any other `slack_dm_status` call naming such a thread is refused and sends nothing. `root_only`
+A card posts as its own message at the DM root, or under `thread_ts` when a directive names a thread, a drive's question card included, so the question and every line about it stay in one thread. A `slack_dm_status` call naming a `thread_ts` that is no thread in your DM, such as a thread in another channel, is refused and sends nothing, since Slack posts a reply under a thread it cannot find at the DM root. `root_only`
 (`dm-status --root-only`) keeps one live root card per session, for a script
 that keeps a drive's rollup current: the first call posts it, and each later
 call redraws it, keeping the last progress, times, facts, refs, links, and
