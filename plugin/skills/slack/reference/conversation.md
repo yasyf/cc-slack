@@ -87,7 +87,10 @@ write every post so a person can answer it, and answer each reply as it lands.
   PR's URL in a DM post that says something waits on you. A DM line that says
   something waits on you, with no open card linked, no PR linked or in `tap_prs`
   and no open card in its thread, is refused before it posts, and so is one
-  linking a PR that draws no card. Put each card on its own line, since Slack
+  linking a PR that draws no card. A `dm-status --drive` post, as a drive's
+  `say` sends, posts such a line: the drive's own check judges
+  `check-post`'s finding on it against the user's words before it reaches
+  cc-slack. Put each card on its own line, since Slack
   draws five a message and cc-slack pages a longer DM post between lines. When a card was
   removed or went stale, say so in the same breath and name its replacement.
 - Keep answering as the thread continues. Once the user has told you to

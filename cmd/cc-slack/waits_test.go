@@ -34,6 +34,21 @@ func TestALineThatWaitsOnYouLinksItsCardOrIsRefused(t *testing.T) {
 	}
 }
 
+func TestADrivesSayPostLeavesItsWaitsLineToTheDrivesJudge(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	ack := "You answered both SandSQL design questions and asked what else the drive needs from you; a handler is reading what the design job still waits on and will post it here."
+	l.refused(opDMStatus, map[string]any{"text": ack}, "links no open card")
+	posts := len(l.slack.sent())
+	l.do(opDMStatus, map[string]any{"text": ack, "drive": "demo"})
+	if sent := l.slack.sent()[posts:]; len(sent) != 1 || !strings.Contains(sent[0].text, ack) {
+		t.Fatalf("posts = %+v, want the drive's ack posted as written", sent)
+	}
+	if _, found := waitsWithoutCard("The SandSQL design waits on your pick.", dmCard, false); !found {
+		t.Fatal("check-post passes a line waiting on his pick with no card, so the drive's say has no finding to judge")
+	}
+}
+
 func TestWaitsOnYouReadsPlainVariantsAndLeavesOtherLines(t *testing.T) {
 	cases := map[string]bool{
 		"The Hima fix waits on your pick.":           true,

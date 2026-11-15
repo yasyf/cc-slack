@@ -207,7 +207,7 @@ func waitingPRs(id identity, channelID string, b opBody) []string {
 }
 
 func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) error {
-	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
+	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || b.Drive != "" || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
 		return nil
 	}
 	if said, found := waitsWithoutCard(b.Text, a.openCardIn(id), len(b.TapPRs) > 0 || len(linkedPRRefs(b.Text)) > 0); found {
