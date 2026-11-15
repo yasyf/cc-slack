@@ -226,7 +226,9 @@ names. The call sends the post before it asks the program for any card, so
 the post never waits on the program: it asks for the cards of the PRs `tap_prs`
 names once the post is sent, within the call, and for those of PRs it only
 links after that, off the call, so its result names only the cards `tap_prs`
-drew. When an open PR its `tap_prs` names gets no card, such as the program's
+drew. The call waits at most 25 seconds after the post for its `tap_prs` cards,
+inside the CLI's 36-second deadline; a card still drawing then posts beside the
+post later, and the call answers ok with a `warning` saying so. When an open PR its `tap_prs` names gets no card, such as the program's
 `skipped` reason, no card in its answer, a card that fails the card checks, or
 a card that fails to post, the sent post answers ok, its `warning` naming each
 such PR and its reason, so the caller does not post it again. Only a `tap_prs`

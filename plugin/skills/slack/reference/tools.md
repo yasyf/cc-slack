@@ -104,7 +104,9 @@ which records it when the PR is its own. A reply carrying its own
 picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM the
 card opens at the root in its own thread, wherever the post sits; a post lands in
 a DM thread only when its call names that thread. In a listed channel the card
-goes in the post's thread. The post goes out before any card is asked for. When
+goes in the post's thread. The post goes out before any card is asked for, and
+the call waits at most 25 seconds for the cards; a card still drawing then posts
+beside the post later and the `warning` says so, so never post it again. When
 an open PR in `tap_prs` draws no card, the post is still sent and its `warning`
 names each such PR with the reason, so never post it again; fix the reason,
 then send `tap_prs` for that PR alone. A login whose config sets no

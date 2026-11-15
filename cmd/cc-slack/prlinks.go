@@ -22,7 +22,10 @@ import (
 
 const prLookupPatience = 5 * time.Second
 
-var prCardPatience = 2 * time.Minute
+var (
+	prCardPatience  = 2 * time.Minute
+	tapCardPatience = 25 * time.Second
+)
 
 var errCardCommandUnfinished = errors.New("the card command did not finish")
 
@@ -395,6 +398,25 @@ func (d tapDrawn) named(id identity) (stamps, links string) {
 		permalinks = append(permalinks, id.permalink(card.channel, card.ts, card.thread))
 	}
 	return strings.Join(cardStamps(d.cards), " "), strings.Join(permalinks, " ")
+}
+
+func (a *app) drawTapCards(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string) tapDrawn {
+	if len(b.TapPRs) == 0 {
+		return tapDrawn{}
+	}
+	drawn := make(chan tapDrawn, 1)
+	bg := hc
+	bg.Ctx = context.WithoutCancel(hc.Ctx)
+	a.cardWork.Go(func() { drawn <- a.attachTapPRs(bg, sub, id, under, post, b, asked) })
+	select {
+	case d := <-drawn:
+		return d
+	case <-time.After(tapCardPatience):
+		if len(asked) > 0 {
+			notePostWarning(hc.Ctx, fmt.Sprintf("posted %s, so do not post it again; the cards of tap_prs %s still draw and post beside it", id.permalink(post.channel, post.ts, post.thread), strings.Join(asked, ", ")))
+		}
+		return tapDrawn{}
+	}
 }
 
 func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string) tapDrawn {

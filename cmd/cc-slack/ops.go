@@ -721,7 +721,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
 		res.PagePermalink = strings.Join(shown, " ")
-		drawn := a.attachTapPRs(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, b.TapPRs)
+		drawn := a.drawTapCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, b.TapPRs)
 		a.drawLinkedCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, append(linked, ready...))
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
@@ -2692,7 +2692,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	drawn := a.attachTapPRs(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)
+	drawn := a.drawTapCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)
 	a.drawLinkedCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, linked)
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
 }
@@ -2762,7 +2762,7 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, b.TapPRs); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, a.attachTapPRs(hc, sub, id, old.thread, cardRef{id.DMChannelID, old.thread, old.ts}, b, asked))
+	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, a.drawTapCards(hc, sub, id, old.thread, cardRef{id.DMChannelID, old.thread, old.ts}, b, asked))
 }
 
 func (a *app) tappedReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, b opBody, pages []string, drawn tapDrawn) daemon.Reply {

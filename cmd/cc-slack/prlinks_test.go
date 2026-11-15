@@ -2043,6 +2043,28 @@ func TestATapPostGoesOutWhileItsCardStillDrawsAndItsReplyNamesTheCard(t *testing
 	}
 }
 
+func TestATapPostWhoseCardOutlastsThePatienceAnswersBeforeTheCardAndTheCardStillPosts(t *testing.T) {
+	prev := tapCardPatience
+	tapCardPatience = 200 * time.Millisecond
+	t.Cleanup(func() { tapCardPatience = prev })
+	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"prs"`)
+	defer release()
+	l, _ := cardingDaemon(t, cards, "acme/app#41")
+	reply, err := invoke(l.ctx, l.deps, testSession, "/any/cwd", opDMStatus, mustJSON(map[string]any{"text": "#41 is green", "tap_prs": tapPR41}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent map[string]string
+	if err := json.Unmarshal(reply.Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.slack.sentTo(testDM)) != 1 || sent["card_permalink"] != "" || !strings.Contains(sent["warning"], "the cards of tap_prs "+tapPR41[0]+" still draw") {
+		t.Fatalf("reply = %+v; want the post sent and answered while #41's card still draws", sent)
+	}
+	release()
+	eventually(t, "#41's card posted after the reply", func() bool { return len(rootCards(prCards(l, testDM))) == 1 })
+}
+
 func tapWarning(t *testing.T, l *liveDaemon, body map[string]any) string {
 	t.Helper()
 	var sent map[string]string
