@@ -1379,8 +1379,10 @@ func (p cardPR) settledLine(v cardView) string {
 	if p.Staging != "" {
 		line += " · " + plainMrkdwn(p.Staging)
 	}
-	if why := p.waitsOn(); v.tapped == cardNoLongerWaits && why != "" {
-		line += "\n" + plainMrkdwn(why)
+	for _, f := range []cardFact{{"Where it stands", p.Review}, {"Waits on", p.waitsOn()}} {
+		if strings.TrimSpace(f.Value) != "" {
+			line += "\n*" + f.Label + "* " + plainMrkdwn(f.Value)
+		}
 	}
 	return line
 }

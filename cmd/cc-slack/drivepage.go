@@ -48,14 +48,15 @@ type drivePRCard struct {
 }
 
 type driveClosedCard struct {
-	Waits      string     `json:"waits"`
-	Title      string     `json:"title"`
-	PRs        []string   `json:"prs"`
-	Asked      time.Time  `json:"asked"`
-	URL        string     `json:"url"`
-	Answer     *askAnswer `json:"answer"`
-	Tapped     string     `json:"tapped"`
-	ReplacedBy string     `json:"replaced_by"`
+	Waits      string      `json:"waits"`
+	Title      string      `json:"title"`
+	PRs        []string    `json:"prs"`
+	Asked      time.Time   `json:"asked"`
+	URL        string      `json:"url"`
+	Answer     *askAnswer  `json:"answer"`
+	Tapped     string      `json:"tapped"`
+	ReplacedBy string      `json:"replaced_by"`
+	Card       *statusCard `json:"card,omitempty"`
 }
 
 type driveCardsResult struct {
@@ -74,7 +75,8 @@ type canvasResult struct {
 
 // listDriveCards lists the waiting cards that name drive and are still unanswered and unreplaced, and every PR card still waiting
 // on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink; closed holds every other
-// such card the store keeps, each with the answer, tap line or replacing card that closed it.
+// such card the store keeps, each with the answer, tap line or replacing card that closed it, and a PR card still drawn in place,
+// neither replaced nor withdrawn, with the card as last drawn, so the drive can tell when its rows went stale.
 func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -95,6 +97,9 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 		if m.ReplacedBy != "" {
 			by, _ := l.storedCard(t.Channel, m.ReplacedBy)
 			c.ReplacedBy = link(t.Channel, m.ReplacedBy, by.thread)
+		}
+		if drawn := m.Card; len(c.PRs) > 0 && !t.retired(m) {
+			c.Card = &drawn
 		}
 		return c
 	}

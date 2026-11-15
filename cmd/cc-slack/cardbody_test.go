@@ -523,9 +523,23 @@ func TestAPRCardThatNoLongerWaitsOnHisTapSaysWhyUnderItsPR(t *testing.T) {
 	if !strings.Contains(got, cardNoLongerWaits) || !strings.Contains(got, "found it not ready: Releasable alone needs #43 live first") || strings.Contains(got, `"Approve"`) {
 		t.Fatalf("card %s, want why it no longer waits under its PR and no Approve", got)
 	}
+}
+
+func TestAPRCardHeAnsweredKeepsWhereItStandsAndWhatItWaitsOnUnderEachPR(t *testing.T) {
+	bottom, top := fullPR(7), fullPR(8)
+	bottom.Blocks, bottom.Review, bottom.Staging = "Approved by you. Lands once CI passes", "Commit 7bf3ea0 goes against your words: keep the old key", "Tested on staging: plat-usw2-staging at f3a6f23, passed"
+	top.Blocks = "Approved by you. CI is still running"
+	card := statusCard{Status: "needs_you", Title: "Fix: one cache key", Waits: "merge-7-8", Options: []string{"Approve", "Hold"}, PRs: []cardPR{bottom, top}}
+	v := view()
 	v.tapped = "✓ *Approve* · answered"
-	if got := blocksJSON(t, card.replyBlocks(v)); strings.Contains(got, "found it not ready") {
-		t.Fatalf("card %s, want a card he answered to keep its settled line alone", got)
+	got := blocksJSON(t, card.replyBlocks(v))
+	for _, want := range []string{"*Waits on* Approved by you. Lands once CI passes", "*Where it stands* Commit 7bf3ea0 goes against your words", "Tested on staging: plat-usw2-staging at f3a6f23, passed", "*Waits on* Approved by you. CI is still running"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("card %s, want %q under its PR", got, want)
+		}
+	}
+	if strings.Count(got, "*Where it stands*") != 1 {
+		t.Fatalf("card %s, want Where it stands only under the PR a check objects to", got)
 	}
 }
 

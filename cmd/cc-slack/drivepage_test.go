@@ -193,8 +193,12 @@ func TestDriveCardsListAPRCardPostedAsAWaitingStatusCard(t *testing.T) {
 		t.Fatalf("drive cards = %+v, want the stack card as one PR card listing both PRs", listed)
 	}
 	answerOnBoard(t, l, c, "Hold")
-	if listed := driveCards(t, l, "pier").PRCards; len(listed) != 0 {
-		t.Fatalf("PR cards after his answer = %+v, want none", listed)
+	listed = driveCards(t, l, "pier")
+	if len(listed.PRCards) != 0 {
+		t.Fatalf("PR cards after his answer = %+v, want none", listed.PRCards)
+	}
+	if len(listed.Closed) != 1 || listed.Closed[0].Card == nil || len(listed.Closed[0].Card.PRs) != 2 || listed.Closed[0].Card.PRs[1].Head != stack.PRs[1].Head {
+		t.Fatalf("closed = %+v, want the answered stack card with both rows as last drawn", listed.Closed)
 	}
 }
 
