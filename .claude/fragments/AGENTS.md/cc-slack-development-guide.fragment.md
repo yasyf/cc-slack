@@ -282,7 +282,9 @@ its reason in a reply and the card is redrawn from the program, so a refused tap
 is never silent. A head that moves redraws an open PR card the same way in place,
 and a PR the program no longer cards gives up its buttons. `redraw-pr-cards` runs
 that once over every open PR card, or with `--pr <url>` over one PR's cards, its
-withdrawn ones included, with no new posts.
+withdrawn ones included, with no new posts. A redraw the program draws with no
+`waits` never posts, even when its PRs regroup: each standing card carrying them
+takes their fresh rows in place, as `redrawWithFreshPRLines` gives them.
 
 `preview_command` names a program, resolved on `PATH` at `login` and off when
 unset, that says where the PRs a post links to stand. Slack cannot draw this: it

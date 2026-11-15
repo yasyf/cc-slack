@@ -534,7 +534,6 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 }
 
 func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any, replaced []replacedCard) {
-	now := a.now()
 	for _, p := range provided {
 		posted, found, others := a.cards.posted(channelID, thread, p.Card)
 		for _, old := range others {
@@ -544,22 +543,45 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 			rest = append(rest, p)
 			continue
 		}
-		if err := a.pictureRedrawnPRCard(ctx, id, posted, &p.Card); err != nil {
-			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
-			a.tellRefused(ctx, id, p, err)
+		if !a.redrawInPlace(ctx, id, posted, p) {
 			continue
-		}
-		if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, now); err != nil {
-			a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
-			a.tellRefused(ctx, id, p, err)
-			continue
-		}
-		if err := a.cards.redrawCopies(ctx, id, posted); err != nil {
-			a.poller.log.Printf("PR card %s is redrawn, but its copies still show it as it was: %v", posted.ts, err)
 		}
 		placed, shown, replaced = append(placed, posted), append(shown, shownCard(p)), append(replaced, p.replacedBy(posted)...)
 	}
 	return rest, placed, shown, replaced
+}
+
+func (a *app) redrawInPlace(ctx context.Context, id identity, posted cardRef, p providedCard) bool {
+	if err := a.pictureRedrawnPRCard(ctx, id, posted, &p.Card); err != nil {
+		a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
+		a.tellRefused(ctx, id, p, err)
+		return false
+	}
+	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), posted, p.Card, a.now()); err != nil {
+		a.poller.log.Printf("PR card %s stays as drawn: %v", posted.ts, err)
+		a.tellRefused(ctx, id, p, err)
+		return false
+	}
+	if err := a.cards.redrawCopies(ctx, id, posted); err != nil {
+		a.poller.log.Printf("PR card %s is redrawn, but its copies still show it as it was: %v", posted.ts, err)
+	}
+	return true
+}
+
+func (a *app) redrawStanding(ctx context.Context, id identity, channelID, thread string, p providedCard) {
+	same, found, others := a.cards.posted(channelID, thread, p.Card)
+	if found && a.redrawInPlace(ctx, id, same, p) {
+		a.tellShown(ctx, id, []map[string]any{shownCard(p)})
+	}
+	for _, card := range others {
+		if err := a.cards.refreshPRRows(ctx, a.newAPI(id.Token), card, p.Card, a.now()); err != nil {
+			a.poller.log.Printf("PR card %s keeps the PR lines it was drawn with: %v", card.ts, err)
+			continue
+		}
+		if err := a.cards.redrawCopies(ctx, id, card); err != nil {
+			a.poller.log.Printf("PR card %s is redrawn, but its copies still show it as it was: %v", card.ts, err)
+		}
+	}
 }
 
 func (p providedCard) replacedBy(card cardRef) []replacedCard {
@@ -848,12 +870,11 @@ func unanswered(prs []refID, cards []providedCard, skipped []skippedCard, said s
 	return told
 }
 
-// recardPR redraws a PR card from what the card command says now, so it never
-// offers a head or a question that no longer stands: in place while the card
-// command draws the same PRs, and through the placement a post naming them
-// takes once they regroup, which posts their new card and marks every older
-// card of theirs replaced. A card for a PR that no longer waits keeps its
-// answer, or gives up its buttons, under the row's current words.
+// recardPR redraws a PR card from what the card command says now. A card that
+// asks is edited in place while its PRs stay together, and posted anew with
+// older cards marked replaced once they regroup. A card that asks nothing only
+// edits the standing cards of its PRs. A PR no longer carded keeps its answer
+// or gives up its buttons.
 func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID) {
 	if err := a.redrawPRCard(ctx, id, card, pr); err != nil {
 		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)
@@ -884,6 +905,10 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	thread := prCardThread(id, card.channel, card.thread)
 	if thread == card.ts {
 		thread = ""
+	}
+	if provided[0].Card.Waits == "" {
+		a.redrawStanding(ctx, id, card.channel, thread, provided[0])
+		return nil
 	}
 	db := a.poller.plane.DB()
 	a.postPRCards(ctx, db, id, card.channel, thread, cardBeside{}, tapCards{provided: provided[:1]}, func(fresh string) error {

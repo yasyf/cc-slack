@@ -8,6 +8,7 @@ import (
 	"log"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"sync"
@@ -1960,6 +1961,53 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		l.log.Printf("PR card %s is back in place, but its withdrawn mark stays: %v", card.ts, err)
 	}
 	return nil
+}
+
+func (l *liveCards) refreshPRRows(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, now time.Time) error {
+	key := threadKey(card.channel, card.thread)
+	defer l.drawLock(key)()
+	l.mu.Lock()
+	t, ok := l.threads[key]
+	if !ok {
+		l.mu.Unlock()
+		return fmt.Errorf("no live thread %s/%s", card.channel, card.thread)
+	}
+	i := slices.IndexFunc(t.PRCards, func(m *liveMessage) bool { return m.TS == card.ts })
+	if i < 0 {
+		l.mu.Unlock()
+		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
+	}
+	m := t.PRCards[i]
+	lines := map[string]cardPR{}
+	for _, pr := range drawn.allPRs() {
+		if ref, ok := parseRef(pr.URL); ok {
+			lines[ref.key()] = *pr
+		}
+	}
+	changed, covered := false, true
+	for _, pr := range m.Card.allPRs() {
+		ref, _ := parseRef(pr.URL)
+		line, ok := lines[ref.key()]
+		if !ok {
+			covered = false
+			continue
+		}
+		fresh := pr.withLines(line)
+		changed = changed || !reflect.DeepEqual(fresh, *pr)
+		*pr = fresh
+	}
+	if covered && t.asks(m) {
+		m.Tapped, changed = cardNoLongerWaits, true
+	}
+	if !changed {
+		l.mu.Unlock()
+		return nil
+	}
+	t.Updated = now
+	w := l.write(t, m, now, false)
+	l.mu.Unlock()
+	_, err := l.flush(ctx, api, t, []cardWrite{w}, now, false)
+	return err
 }
 
 func (l *liveCards) threadCard(channel, thread string) (id, title string) {

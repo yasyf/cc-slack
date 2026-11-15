@@ -91,7 +91,9 @@ stack's PRs in one call: they draw one card, and an older card of any of them
 is edited to say it was replaced. A card redrawn at a new head or by
 `redraw-pr-cards` follows the same rule once the card command draws its PR
 with other PRs: their one card is posted and each older card of theirs says it
-was replaced. When a PR no longer waits on the user's tap,
+was replaced. A redrawn card that asks nothing, such as one for a PR the user
+approved, is never posted: each card carrying its PRs is edited in place with
+their rows as drawn now, and one whose PRs no longer wait gives up its buttons. When a PR no longer waits on the user's tap,
 `slack_withdraw_pr_card(pr, reason)` takes down every open card carrying it, a
 stack's included, in place: Withdrawn and the reason replace its buttons, and a
 late tap records nothing; `cc-slack withdraw-pr-card --via` links the reason to

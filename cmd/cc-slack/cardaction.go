@@ -1679,9 +1679,7 @@ func (p *poller) redrawWithFreshPRLines(ctx context.Context, id identity, r card
 			if at < 0 {
 				continue
 			}
-			now := provided[at].Card.PRs[0]
-			fresh := *pr
-			fresh.Summary, fresh.Review, fresh.Surprise, fresh.Plan, fresh.Refresher, fresh.Blocks, fresh.Lands = now.Summary, now.Review, now.Surprise, now.Plan, now.Refresher, now.Blocks, now.Lands
+			fresh := pr.withLines(provided[at].Card.PRs[0])
 			changed = changed || !reflect.DeepEqual(fresh, *pr)
 			*pr = fresh
 		}

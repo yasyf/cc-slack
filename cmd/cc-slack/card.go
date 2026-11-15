@@ -918,6 +918,11 @@ func (c statusCard) visible(links linkDraw) statusCard {
 	return c
 }
 
+func (p cardPR) withLines(of cardPR) cardPR {
+	p.Summary, p.Review, p.Surprise, p.Plan, p.Refresher, p.Blocks, p.Lands = of.Summary, of.Review, of.Surprise, of.Plan, of.Refresher, of.Blocks, of.Lands
+	return p
+}
+
 func (p cardPR) visible(shown func(string) string) cardPR {
 	p.Title, p.Changed, p.Review, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Review), shown(p.Surprise)
 	p.Plan, p.Refresher, p.Blocks, p.Lands = shown(p.Plan), shown(p.Refresher), shown(p.Blocks), shown(p.Lands)

@@ -1045,6 +1045,49 @@ func TestARecardOfACardWhosePRsNowDrawTogetherPostsTheirOneCardAndMarksEachOlder
 	}
 }
 
+func TestARecardThatDrawsItsPRsTogetherAskingNothingEditsTheStandingCardAndPostsNothing(t *testing.T) {
+	drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
+	member, approved := stackMemberCard(), fourPRStackCard()
+	approved.Card.Status, approved.Card.Title = "info", "4 PRs approved"
+	approved.Card.Options, approved.Card.Recommended, approved.Card.Waits = nil, "", ""
+	cmd := fakeCardCommand(t, drivePRs, member)
+	l, _ := cardingDaemon(t, cmd.argv, drivePRs...)
+	l.do(opDMStatus, map[string]any{"text": "#42 is green", "tap_prs": []string{member.Card.PRs[0].URL}})
+	var old fakePost
+	eventually(t, "#42's own card", func() bool {
+		at := slices.IndexFunc(rootCards(l.slack.sentTo(testDM)), func(p fakePost) bool { return strings.Contains(p.blocks, member.Card.Waits) })
+		if at >= 0 {
+			old = rootCards(l.slack.sentTo(testDM))[at]
+		}
+		return at >= 0
+	})
+	posts := len(rootCards(l.slack.sentTo(testDM)))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{approved}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#42": true})
+
+	oldNow := func() string {
+		edits := editsOf(l.slack.edited(), old.ts)
+		if len(edits) == 0 {
+			return ""
+		}
+		return edits[len(edits)-1]
+	}
+	eventually(t, "#42's card redrawn in place", func() bool { return strings.Contains(oldNow(), cardNoLongerWaits) })
+	if strings.Contains(oldNow(), cardWaitAction) || strings.Contains(oldNow(), "*Replaced:*") {
+		t.Fatalf("#42's card = %s, want it in place with no buttons and no Replaced mark", oldNow())
+	}
+	if got := len(rootCards(l.slack.sentTo(testDM))); got != posts {
+		t.Fatalf("DM root posts = %d after the recard, want %d: a card that asks nothing posts nothing", got, posts)
+	}
+}
+
 func TestARecardKeepsTheNewestOfTwoOpenCardsForTheSamePRsAndMarksTheOlderReplaced(t *testing.T) {
 	drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
 	member, stack := stackMemberCard(), fourPRStackCard()
