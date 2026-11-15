@@ -687,7 +687,8 @@ def own_dm(channel: str) -> bool:
 
 
 def linked_orders(ctx: Context, delivered: set[str]) -> list[Evidence]:
-    links = {(channel, thread or f"{seconds}.{micros}", f"{seconds}.{micros}") for text in words_and_calls(ctx) for channel, seconds, micros, thread in DM_LINK.findall(text) if f"operator:{channel}/{seconds}.{micros}" not in delivered}
+    texts = [*words_and_calls(ctx), *live(ctx).input.raw.get("asked", ())]
+    links = {(channel, thread or f"{seconds}.{micros}", f"{seconds}.{micros}") for text in texts for channel, seconds, micros, thread in DM_LINK.findall(text) if f"operator:{channel}/{seconds}.{micros}" not in delivered}
     owned = {channel for channel in {link[0] for link in links} if own_dm(channel)}
     found = []
     for channel, thread in {(channel, thread) for channel, thread, _ in links if channel in owned}:
@@ -1167,7 +1168,8 @@ CARD_TS = "1794714096.102999"
 CARD_ID = f"operator:{OWNER_DM}/{CARD_TS}"
 CARD_ASKED = "Post the fix notes to the authors who reported the bug, as drafted?"
 CARD_PICK = "Live authors now: DM Sam as written; later ones go out on your standing word"
-CARD_BRIEF = f"Record: 711482\nMessage (his words): post the fix note to Sam\nLink: https://acme.slack.com/archives/{OWNER_DM}/p{CARD_TS.replace('.', '')}"
+CARD_URL = f"https://acme.slack.com/archives/{OWNER_DM}/p{CARD_TS.replace('.', '')}"
+CARD_BRIEF = f"Record: 711482\nMessage (his words): post the fix note to Sam\nLink: {CARD_URL}"
 SAM_TOLD = {"channel_id": SAM_USER, "text": "Hey Sam, the fix for the bug you reported is live."}
 ALERTS = "C0ALERTS001"
 ROLLOUT_THREAD = "1794512248.483749"
@@ -1609,6 +1611,8 @@ on(
             case(SAM_TOLD, tool=DRIVE_SAY, **said(CARD_BRIEF), commands=card_answered(), decide=jev(CARD_ID)) >> ALLOW,
             case(SAM_TOLD, tool=DRIVE_SAY, **said(CARD_BRIEF), commands=card_answered(""), decide=jev(CARD_ID)) >> DENY,
             case(SAM_TOLD, tool=DRIVE_SAY, **said(CARD_BRIEF), commands=card_answered(own=False), decide=jev(CARD_ID)) >> DENY,
+            case(SAM_TOLD | {"asked": [CARD_URL]}, tool=DRIVE_SAY, **said("status?"), commands=card_answered(), decide=jev(CARD_ID)) >> ALLOW,
+            case(SAM_TOLD, tool=DRIVE_SAY, **said("status?"), commands=card_answered(), decide=jev(CARD_ID)) >> DENY,
             case(transcript=dm_arrived(), tickets=[posted_once(evidence=(ORDER,))], decide=jev(ORDER_ID)) >> ALLOW,
             case(SHIPPED, transcript=[T.user("status?")], root_transcript=dm_arrived(), agent_id="a-lane", tickets=[posted_once(evidence=(ORDER,))], commands=ruled(SOLVED_GRANT) | thread_read(DANA_OPENED, BOT_ANSWERED), decide=jev(ORDER_ID)) >> Rewrite(ticket_agent="a-lane"),
             case(transcript=dm_arrived()) >> DENY,
