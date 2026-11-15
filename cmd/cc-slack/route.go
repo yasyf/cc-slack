@@ -149,7 +149,7 @@ func (p *poller) messageDelivery(ctx context.Context, api slackAPI, id identity,
 
 func (p *poller) messageTo(ctx context.Context, id identity, w watch, msg messagePayload, mates driveMates) (delivery, error) {
 	if w.ChannelID == id.DMChannelID && msg.ThreadTS != msg.TS {
-		owner, err := p.threadOwner(ctx, w, msg.ThreadTS, mates)
+		owner, err := p.threadOwner(ctx, w, msg.ThreadTS)
 		if err != nil {
 			return delivery{}, err
 		}
@@ -202,7 +202,7 @@ func messageDedup(w watch, ts string) string {
 	return fmt.Sprintf("slack:%s:%s:%s", w.Owner, w.ChannelID, ts)
 }
 
-func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates driveMates) (*threadOwner, error) {
+func (p *poller) threadOwner(ctx context.Context, w watch, thread string) (*threadOwner, error) {
 	bound, err := p.threads.bound(ctx, w.ChannelID, []string{thread})
 	if err != nil {
 		return nil, err
@@ -212,6 +212,10 @@ func (p *poller) threadOwner(ctx context.Context, w watch, thread string, mates 
 		return nil, nil
 	}
 	subjectID := posters[len(posters)-1]
+	mates, err := loadDriveMates(ctx, p.threads, w.SubjectID, []string{subjectID})
+	if err != nil {
+		return nil, err
+	}
 	if subjectID == w.SubjectID || mates.same(subjectID, w.SubjectID) {
 		return nil, nil
 	}

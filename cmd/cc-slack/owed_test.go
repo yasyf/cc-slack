@@ -277,6 +277,9 @@ func TestRepliesHandlersNeverTookGoToTheDMHolderOnceTheyStopHearingTheDM(t *test
 	if got := receivers(t, f, "1800000091.000000"); !slices.Equal(got, []string{testSubject}) {
 		t.Fatalf("delivered to %v, want his next reply on the DM holder alone", got)
 	}
+	if held := deliveredTo(t, f)[testSubject]; len(held) != 2 || held[1].ThreadOwner != nil {
+		t.Fatalf("the DM holder got %+v, want his next reply with no other owner, since the ended handlers that posted there are of its own drive", held)
+	}
 }
 
 func TestAReplyAHandlerTookStaysWithItWhenItStopsHearingTheDM(t *testing.T) {
