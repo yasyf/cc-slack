@@ -620,11 +620,17 @@ saved `seq` marks every cached thread. A thread read as the user, which no
 nudge covers, and any thread while the socket is down or replaying, answers
 from the cache within 15 s of its last sync. Otherwise, it fetches only
 messages newer than the cached newest one, and every 10 minutes it refetches
-the whole thread to pick up edits and deletions. A thread read never waits out
-a 429 and never answers the cached copy in place of Slack's: `thread` fails at
-once, saying how many seconds Slack still limits the read, and a cached thread
-asks Slack nothing until they pass, since the cached copy can lack the thread's
-newest messages. A thread never read before fails the same way. A shared message's original comes from the cache alone, since
+the whole thread to pick up edits and deletions. A thread read never answers
+the cached copy in place of Slack's, since the cached copy can lack the
+thread's newest messages. While Slack limits `conversations.replies`, the read
+cache asks Slack nothing: a read waits until the limit passes and asks again,
+as long as the limit ends at least 5 s before its request's deadline, the 36 s
+cc-interact gives each call, so a read under Slack's usual 10 s limit answers
+in about 10 s. A limit past that fails the read at once, saying how many
+seconds Slack still limits it, and so does any 429 on a read with no deadline,
+such as the poller's, which schedules its own retry. The cache owns that wait,
+so its fetch never takes the transport's four tries. A thread never read
+before waits the same way. A shared message's original comes from the cache alone, since
 a thread holding dozens of shares would otherwise read each one's thread: a
 share whose thread is not cached keeps its link and the author and text Slack
 attached to it. A fetch that runs past 1,000

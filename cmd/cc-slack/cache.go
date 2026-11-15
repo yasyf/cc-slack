@@ -25,6 +25,7 @@ const (
 	cacheFullRefresh = 10 * time.Minute
 	cacheMaxBytes    = 64 << 20
 	nameTTL          = 24 * time.Hour
+	fetchRoom        = 5 * time.Second
 )
 
 var cacheSchema = store.Schema{DDL: `
@@ -100,6 +101,25 @@ func (c *readCache) repliesHolding(ctx context.Context, api slackAPI, channelID,
 }
 
 func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS, want string) ([]slack.Message, error) {
+	for {
+		msgs, err := c.readOnce(ctx, api, channelID, threadTS, want)
+		rate, limited := errors.AsType[*slack.RateLimitedError](err)
+		if !limited || !liftsInTime(ctx, rate.RetryAfter) {
+			return msgs, err
+		}
+		c.log.Printf("Slack limits conversations.replies for %s more, so the read of %s/%s waits for it", rate.RetryAfter, channelID, threadTS)
+		if err := pause(ctx, rate.RetryAfter); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func liftsInTime(ctx context.Context, wait time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	return ok && wait+fetchRoom <= time.Until(deadline)
+}
+
+func (c *readCache) readOnce(ctx context.Context, api slackAPI, channelID, threadTS, want string) ([]slack.Message, error) {
 	now := c.now()
 	c.mu.Lock()
 	entry, found, err := c.load(ctx, channelID, threadTS)
@@ -118,11 +138,7 @@ func (c *readCache) read(ctx context.Context, api slackAPI, channelID, threadTS,
 	if found && entry.whole(now) {
 		since = entry.newest()
 	}
-	fetchCtx := ctx
-	if held {
-		fetchCtx = withoutRateWait(ctx)
-	}
-	fetched, nudged, err := c.fetch(fetchCtx, api, cursorKey{channelID, threadTS}, since)
+	fetched, nudged, err := c.fetch(withoutRateWait(ctx), api, cursorKey{channelID, threadTS}, since)
 	var rate *slack.RateLimitedError
 	if errors.As(err, &rate) {
 		c.limit(c.now().Add(rate.RetryAfter))

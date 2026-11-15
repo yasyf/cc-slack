@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,36 +94,58 @@ func TestThreadReadFetchesOnlyTheDeltaAndRefreshesInFull(t *testing.T) {
 	}
 }
 
-func TestARateLimitedThreadReadFailsUntilSlackAnswers(t *testing.T) {
+func (f *fixture) waitsOutLimits() *[]time.Duration {
+	f.t.Helper()
+	var waits []time.Duration
+	prev := pause
+	pause = func(_ context.Context, wait time.Duration) error {
+		waits = append(waits, wait)
+		f.now = f.now.Add(wait)
+		return nil
+	}
+	f.t.Cleanup(func() { pause = prev })
+	return &waits
+}
+
+func TestARateLimitedThreadReadWaitsOutTheLimitWithinItsDeadline(t *testing.T) {
 	f := newFixture(t)
+	waits := f.waitsOutLimits()
 	seedThread(f)
 	f.read(testThread)
 	f.slack.add(testChannel, reply(secondReply, "second"))
 	f.now = f.now.Add(cacheFresh)
 	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
+	request, cancel := context.WithTimeout(f.ctx, time.Minute)
+	defer cancel()
 
-	msgs, err := f.cache.replies(f.ctx, f.slack, testChannel, testThread)
-	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 30*time.Second || msgs != nil {
-		t.Fatalf("rate-limited read = %q, %v, want no messages and Slack's 30s Retry-After", texts(msgs), err)
-	}
-	calls := f.slack.callCount(methodReplies)
-	f.now = f.now.Add(10 * time.Second)
-	msgs, err = f.cache.replies(f.ctx, f.slack, testChannel, testThread)
-	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 20*time.Second || msgs != nil {
-		t.Fatalf("read inside the limit = %q, %v, want no messages and the 20s Slack still limits", texts(msgs), err)
-	}
-	if n := f.slack.callCount(methodReplies); n != calls {
-		t.Fatalf("replies calls = %d, want %d: a cached thread asks Slack nothing until its Retry-After passes", n, calls)
-	}
-	f.now = f.now.Add(20 * time.Second)
-	if got := texts(f.read(testThread)); !slices.Equal(got, []string{"root", "first", "second"}) {
-		t.Fatalf("read after the limit = %q, want a fresh merged thread", got)
+	msgs, err := f.cache.replies(request, f.slack, testChannel, testThread)
+	if got := texts(msgs); err != nil || !slices.Equal(got, []string{"root", "first", "second"}) || !slices.Equal(*waits, []time.Duration{30 * time.Second}) {
+		t.Fatalf("rate-limited read = %q, %v after waits %v, want Slack's thread with its newest reply after the 30s Retry-After, never the cached copy", got, err, *waits)
 	}
 
 	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second})
-	_, err = f.cache.replies(f.ctx, f.slack, testChannel, "1800000000.000900")
-	if !errors.As(err, new(*slack.RateLimitedError)) {
-		t.Fatalf("uncached read under a rate limit: %v, want the rate-limit error", err)
+	f.now = f.now.Add(cacheFresh)
+	msgs, err = f.cache.replies(f.ctx, f.slack, testChannel, testThread)
+	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 30*time.Second || msgs != nil || len(*waits) != 1 {
+		t.Fatalf("read with no deadline = %q, %v, want no messages and Slack's 30s Retry-After at once", texts(msgs), err)
+	}
+	calls := f.slack.callCount(methodReplies)
+	f.now = f.now.Add(10 * time.Second)
+	if msgs, err = f.cache.replies(request, f.slack, testChannel, testThread); err != nil || len(msgs) != 3 {
+		t.Fatalf("read inside the limit = %q, %v, want the thread once the limit passes", texts(msgs), err)
+	}
+	if got := (*waits)[1:]; !slices.Equal(got, []time.Duration{20 * time.Second}) {
+		t.Fatalf("waits inside the limit = %v, want the 20s Slack still limits", got)
+	}
+	if n := f.slack.callCount(methodReplies); n != calls+1 {
+		t.Fatalf("replies calls = %d, want %d: a cached thread asks Slack nothing until its Retry-After passes", n, calls+1)
+	}
+
+	f.slack.fail(methodReplies, &slack.RateLimitedError{RetryAfter: 2 * time.Minute})
+	f.now = f.now.Add(cacheFresh)
+	msgs, err = f.cache.replies(request, f.slack, testChannel, testThread)
+	if rate, limited := errors.AsType[*slack.RateLimitedError](err); !limited || rate.RetryAfter != 2*time.Minute || msgs != nil || len(*waits) != 2 {
+		t.Fatalf("read whose limit outlasts its deadline = %q, %v after waits %v, want no messages and Slack's 2m Retry-After at once", texts(msgs), err, *waits)
 	}
 }
 
@@ -528,13 +551,28 @@ func TestThreadOpSeesTheBotsOwnReply(t *testing.T) {
 	}
 }
 
-func TestThreadOpFailsUnderARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
+func TestThreadOpWaitsOutARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
 	const (
 		thread = "1794519611.114589"
 		ninth  = "1794526467.338209"
 		his    = "1794531817.560739"
 	)
-	l := startDaemon(t)
+	clock := &testClock{}
+	clock.at.Store(time.Now().UnixNano())
+	var (
+		mu    sync.Mutex
+		waits []time.Duration
+	)
+	prev := pause
+	pause = func(_ context.Context, wait time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		waits = append(waits, wait)
+		clock.advance(wait)
+		return nil
+	}
+	t.Cleanup(func() { pause = prev })
+	l := startDaemon(t, func(a *app) { a.cache.now = clock.now })
 	loggedIn(t, l)
 	inThread := func(ts, text string) slack.Message {
 		m := reply(ts, text)
@@ -556,12 +594,16 @@ func TestThreadOpFailsUnderARateLimitRatherThanAnswerAnOlderCopy(t *testing.T) {
 	}
 	l.slack.add(testChannel, inThread(his, "his newest message"))
 	l.post(opReply, map[string]any{"url": permalink, "text": "on it", "no_watch": true})
-	l.slack.fail(repliesOf(testChannel, thread), &slack.RateLimitedError{RetryAfter: 30 * time.Second})
+	l.slack.fail(repliesOf(testChannel, thread), &slack.RateLimitedError{RetryAfter: 10 * time.Second})
 
-	raw, _ := json.Marshal(map[string]string{"url": permalink})
-	answer, err := invoke(l.ctx, l.deps, testSession, "/any", opThread, raw)
-	if err == nil || !strings.Contains(err.Error(), "ratelimited") || !strings.Contains(err.Error(), "30s more") || strings.Contains(err.Error(), "mcp__slack__") {
-		t.Fatalf("rate-limited read of thread %s = %s, %v, want it refused with the 30s Slack limits it and no Slack MCP tool, never the 9 cached messages without %s", thread, answer.Body, err, his)
+	var read threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": permalink}).Body, &read); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(read.Messages) != 11 || !slices.ContainsFunc(read.Messages, func(m readMessage) bool { return m.TS == his }) || !slices.Equal(waits, []time.Duration{10 * time.Second}) {
+		t.Fatalf("rate-limited read of thread %s = %d messages after waits %v, want all 11 with %s once Slack's 10s Retry-After passes, never the 9 cached", thread, len(read.Messages), waits, his)
 	}
 }
 
@@ -574,7 +616,7 @@ func TestEachRateLimitedSlackCallOfAThreadReadNamesTheThreadAndTheWait(t *testin
 		raw    bool
 		want   string
 	}{
-		{"the replies fetch", methodReplies, &slack.RateLimitedError{RetryAfter: 30 * time.Second}, false, named + "30s more, so read the thread again after that"},
+		{"a replies fetch Slack limits past the call's deadline", methodReplies, &slack.RateLimitedError{RetryAfter: time.Minute}, false, named + "60s more, so read the thread again after that"},
 		{"the raw refetch", methodRawMessage, &slack.RateLimitedError{RetryAfter: 10 * time.Second}, true, named + "10s more, so read the thread again after that"},
 		{"an image block's files.info", "files.info", &slack.RateLimitedError{RetryAfter: time.Minute}, false, named + "60s more, so read the thread again after that"},
 		{"a ratelimited answer with no Retry-After", methodReplies, slack.SlackErrorResponse{Err: "ratelimited"}, false, "(ratelimited)"},
