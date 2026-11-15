@@ -975,6 +975,112 @@ func TestOnePostNamingAStackDrawsOneCardAndMarksAMembersOlderCardReplaced(t *tes
 	}
 }
 
+func TestARecardOfACardWhosePRsNowDrawTogetherPostsTheirOneCardAndMarksEachOlderCardReplaced(t *testing.T) {
+	drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
+	member, siblings := stackMemberCard(), fourPRStackCard()
+	siblings.Card.Siblings = true
+	cmd := fakeCardCommand(t, drivePRs, member)
+	l, _ := cardingDaemon(t, cmd.argv, drivePRs...)
+	drawn := func() []fakePost {
+		return slices.DeleteFunc(rootCards(l.slack.sentTo(testDM)), func(p fakePost) bool {
+			return !strings.Contains(p.blocks, member.Card.Waits) && !strings.Contains(p.blocks, siblings.Card.Waits)
+		})
+	}
+	l.do(opDMStatus, map[string]any{"text": "#42 is green", "tap_prs": []string{member.Card.PRs[0].URL}})
+	eventually(t, "#42's own card", func() bool { return len(drawn()) == 1 })
+	old := drawn()[0]
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json"), mustJSON(map[string]any{"cards": []providedCard{siblings}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#42": true})
+
+	eventually(t, "the four PRs' one card at the DM root", func() bool { return len(drawn()) == 2 })
+	fresh := drawn()[1]
+	if !strings.Contains(fresh.blocks, siblings.Card.Waits) {
+		t.Fatalf("new card = %s, want the card the card command draws for all four PRs", fresh.blocks)
+	}
+	oldNow := func() string {
+		edits := editsOf(l.slack.edited(), old.ts)
+		if len(edits) == 0 {
+			return ""
+		}
+		return edits[len(edits)-1]
+	}
+	eventually(t, "#42's card marked replaced", func() bool { return strings.Contains(oldNow(), "*Replaced:* now one card for 4 PRs of one request") })
+	if !strings.Contains(oldNow(), strings.ReplaceAll(fresh.ts, ".", "")) || strings.Contains(oldNow(), siblings.Card.Waits) || strings.Contains(oldNow(), cardWaitAction) {
+		t.Fatalf("#42's card = %s, want #42 alone with a link to the new card and no buttons", oldNow())
+	}
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 1 || len(listed.PRCards[0].PRs) != 4 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the four PRs' card alone", listed.PRCards)
+	}
+}
+
+func TestARecardKeepsTheNewestOfTwoOpenCardsForTheSamePRsAndMarksTheOlderReplaced(t *testing.T) {
+	drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
+	member, stack := stackMemberCard(), fourPRStackCard()
+	first := member
+	first.Number, first.Card.Waits = 41, "merge:acme:app:41"
+	first.Card.PRs = []cardPR{{URL: "https://github.com/acme/app/pull/41", Title: "add the new key", Head: "e718a74", Refresher: "The new key comes", HateMost: "Old builds lose their cache once"}}
+	cmd := fakeCardCommand(t, drivePRs, first)
+	l, _ := cardingDaemon(t, cmd.argv, drivePRs...)
+	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
+	drawn := func() []fakePost {
+		return slices.DeleteFunc(rootCards(l.slack.sentTo(testDM)), func(p fakePost) bool {
+			return !strings.Contains(p.blocks, first.Card.Waits) && !strings.Contains(p.blocks, member.Card.Waits)
+		})
+	}
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": []string{first.Card.PRs[0].URL}})
+	eventually(t, "#41's own card", func() bool { return len(drawn()) == 1 })
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{member}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opDMStatus, map[string]any{"text": "#42 is green", "tap_prs": []string{member.Card.PRs[0].URL}})
+	eventually(t, "#42's own card", func() bool { return len(drawn()) == 2 })
+	older, newer := drawn()[0], drawn()[1]
+	for _, copied := range []fakePost{older, newer} {
+		if err := l.app.cards.replacePRCard(l.ctx, l.slack, cardRef{testDM, copied.ts, copied.ts}, stack.Card, l.app.now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(answer, mustJSON(map[string]any{"cards": []providedCard{stack}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#43": true})
+
+	olderNow := func() string {
+		edits := editsOf(l.slack.edited(), older.ts)
+		return edits[len(edits)-1]
+	}
+	eventually(t, "the older copy marked replaced", func() bool { return strings.Contains(olderNow(), "*Replaced:* now one card for its stack of 4 PRs") })
+	if !strings.Contains(olderNow(), strings.ReplaceAll(newer.ts, ".", "")) || strings.Contains(olderNow(), cardWaitAction) {
+		t.Fatalf("older copy = %s, want a link to the newer copy and no buttons", olderNow())
+	}
+	if got := drawn(); len(got) != 2 {
+		t.Fatalf("PR cards %+v, want the newer copy redrawn in place and no new card", got)
+	}
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 1 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(newer.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want the newer copy alone", listed.PRCards)
+	}
+}
+
 func TestOnlyACallNamingAThreadPostsInIt(t *testing.T) {
 	const hisThread = "1793804574.412309"
 	l := startDaemon(t)

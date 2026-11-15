@@ -436,7 +436,9 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	default:
 		beside = cardBeside{thread: postTS, carry: true}
 	}
-	placed := a.postPRCards(ctx, db, sub, id, channelID, prCardThread(id, channelID, postThread), beside, t)
+	placed := a.postPRCards(ctx, db, id, channelID, prCardThread(id, channelID, postThread), beside, t, func(thread string) error {
+		return a.bindSessionThread(ctx, db, sub, id, thread)
+	})
 	undrawn := map[string]string{}
 	for _, pr := range a.cards.uncarded(placed, t.waiting) {
 		undrawn[pr.key()] = cmp.Or(t.undrawn[pr.key()], "its card was not posted; the daemon log says why")
@@ -487,10 +489,10 @@ type cardBeside struct {
 	carry  bool
 }
 
-func (a *app) postPRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, beside cardBeside, t tapCards) []cardRef {
+func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelID, thread string, beside cardBeside, t tapCards, bind func(thread string) error) []cardRef {
 	var drawn []cardRef
 	if len(t.provided) > 0 {
-		cards, shown, replaced := a.placePRCards(ctx, db, sub, id, channelID, thread, t.provided)
+		cards, shown, replaced := a.placePRCards(ctx, db, id, channelID, thread, t.provided, bind)
 		a.tellShown(ctx, id, shown)
 		for _, r := range replaced {
 			a.markReplaced(ctx, id, r)
@@ -556,7 +558,7 @@ func (p providedCard) replacedBy(card cardRef) []replacedCard {
 	return replaced
 }
 
-func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, channelID, thread string, provided []providedCard) ([]cardRef, []map[string]any, []replacedCard) {
+func (a *app) placePRCards(ctx context.Context, db *sql.DB, id identity, channelID, thread string, provided []providedCard, bind func(thread string) error) ([]cardRef, []map[string]any, []replacedCard) {
 	provided, placed, shown, replaced := a.redrawPostedPRCards(ctx, id, channelID, thread, provided)
 	cards := a.cards
 	cards.mu.Lock()
@@ -598,7 +600,7 @@ func (a *app) placePRCards(ctx context.Context, db *sql.DB, sub subject.Subject,
 		if thread != "" {
 			continue
 		}
-		if err := a.bindSessionThread(ctx, db, sub, id, res.TS); err != nil {
+		if err := bind(res.TS); err != nil {
 			a.poller.log.Printf("PR card for %s#%d at %s: its thread goes unwatched: %v", p.Repo, p.Number, res.TS, err)
 		}
 	}
@@ -836,10 +838,12 @@ func unanswered(prs []refID, cards []providedCard, skipped []skippedCard, said s
 	return told
 }
 
-// recardPR redraws a PR card in place from what the card command says now, so
-// it never offers a head or a question that no longer stands; a card for a PR
-// that no longer waits keeps its answer, or gives up its buttons, under the
-// row's current words.
+// recardPR redraws a PR card from what the card command says now, so it never
+// offers a head or a question that no longer stands: in place while the card
+// command draws the same PRs, and through the placement a post naming them
+// takes once they regroup, which posts their new card and marks every older
+// card of theirs replaced. A card for a PR that no longer waits keeps its
+// answer, or gives up its buttons, under the row's current words.
 func (a *app) recardPR(ctx context.Context, id identity, card cardRef, pr refID) {
 	if err := a.redrawPRCard(ctx, id, card, pr); err != nil {
 		a.poller.log.Printf("PR card %s stays as drawn: %v", card.ts, err)
@@ -870,16 +874,28 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	if changed := a.cards.changedSinceAnswer(card, provided[0].Card); changed != "" {
 		return fmt.Errorf("%s changed since he answered or it withdrew its card (%s), so the next post naming it in tap_prs draws its new card", prURL(pr), changed)
 	}
-	if err := a.pictureRedrawnPRCard(ctx, id, card, &provided[0].Card); err != nil {
-		a.tellRefused(ctx, id, provided[0], err)
+	thread := prCardThread(id, card.channel, card.thread)
+	if thread == card.ts {
+		thread = ""
+	}
+	db := a.poller.plane.DB()
+	a.postPRCards(ctx, db, id, card.channel, thread, cardBeside{}, tapCards{provided: provided[:1]}, func(fresh string) error {
+		return a.carrySessions(ctx, db, id, card.thread, fresh)
+	})
+	return nil
+}
+
+func (a *app) carrySessions(ctx context.Context, db *sql.DB, id identity, from, to string) error {
+	bound, err := a.poller.threads.bound(ctx, id.DMChannelID, []string{from})
+	if err != nil {
 		return err
 	}
-	if err := a.cards.replacePRCard(ctx, a.newAPI(id.Token), card, provided[0].Card, a.now()); err != nil {
-		a.tellRefused(ctx, id, provided[0], err)
-		return err
+	for _, subjectID := range bound[from] {
+		if err := a.bindSessionThread(ctx, db, subject.Subject{ID: subjectID}, id, to); err != nil {
+			return err
+		}
 	}
-	a.tellShown(ctx, id, []map[string]any{shownCard(provided[0])})
-	return a.cards.redrawCopies(ctx, id, card)
+	return nil
 }
 
 func uploadPRCardPictures(ctx context.Context, id identity, card *statusCard) error {

@@ -88,7 +88,10 @@ which draws its card from what it holds. In the user's DM, a post that says some
 user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
 so name a PR the user has nothing to tap in a post that waits on nothing. List a
 stack's PRs in one call: they draw one card, and an older card of any of them
-is edited to say it was replaced. When a PR no longer waits on the user's tap,
+is edited to say it was replaced. A card redrawn at a new head or by
+`redraw-pr-cards` follows the same rule once the card command draws its PR
+with other PRs: their one card is posted and each older card of theirs says it
+was replaced. When a PR no longer waits on the user's tap,
 `slack_withdraw_pr_card(pr, reason)` takes down every open card carrying it, a
 stack's included, in place: Withdrawn and the reason replace its buttons, and a
 late tap records nothing. A tap on it,
