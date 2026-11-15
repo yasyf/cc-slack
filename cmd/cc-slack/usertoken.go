@@ -219,10 +219,6 @@ func (a *app) keepUserToken(ctx context.Context, id identity) time.Time {
 
 type userReads struct{ slackAPI }
 
-func readAsUser(id identity, err error) bool {
-	return id.Config.OAuth.enabled() && err != nil && outsideBot(err)
-}
-
 func outsideBot(err error) bool {
 	return errorCode(err) == "channel_not_found" || errorCode(err) == "not_in_channel"
 }

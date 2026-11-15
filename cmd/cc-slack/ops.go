@@ -1440,12 +1440,11 @@ func (a *app) readThread(ctx context.Context, id identity, b opBody, limit int) 
 		return threadResult{}, err
 	}
 	reads := withoutRateWait(ctx)
-	msgs, err := a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
-	if readAsUser(id, err) {
-		if api, err = a.userAPI(ctx, id); err == nil {
-			msgs, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
-		}
-	}
+	var msgs []slack.Message
+	api, err = a.readJoinedOrAsUser(ctx, api, id, channelID, func(api slackAPI) (err error) {
+		msgs, err = a.cache.repliesHolding(reads, api, channelID, b.ThreadTS, b.TS)
+		return err
+	})
 	if err != nil {
 		return threadResult{}, err
 	}
@@ -1501,12 +1500,12 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	ctx, cancel := context.WithTimeout(hc.Ctx, historyBudget)
 	defer cancel()
-	msgs, partial, err := fetchRecentTopLevel(ctx, api, channelID, limit)
-	if readAsUser(id, err) {
-		if api, err = a.userAPI(ctx, id); err == nil {
-			msgs, partial, err = fetchRecentTopLevel(ctx, api, channelID, limit)
-		}
-	}
+	var msgs []slack.Message
+	var partial bool
+	api, err = a.readJoinedOrAsUser(ctx, api, id, channelID, func(api slackAPI) (err error) {
+		msgs, partial, err = fetchRecentTopLevel(ctx, api, channelID, limit)
+		return err
+	})
 	if err != nil {
 		return fail(readFailure(err, id))
 	}
@@ -2280,6 +2279,31 @@ func joinPublic(ctx context.Context, api slackAPI, channelID string) (bool, erro
 		return false, nil
 	}
 	return joined, err
+}
+
+func (a *app) readJoinedOrAsUser(ctx context.Context, api slackAPI, id identity, channelID string, read func(slackAPI) error) (slackAPI, error) {
+	err := read(api)
+	if err == nil {
+		return api, nil
+	}
+	if errorCode(err) == "not_in_channel" {
+		joined, joinErr := join(ctx, api, channelID)
+		if joinErr != nil {
+			a.poller.log.Printf("join %s to read there: %v", channelID, joinErr)
+		}
+		if joined {
+			a.poller.log.Printf("joined %s to read there", channelID)
+			return api, read(api)
+		}
+	}
+	if !id.Config.OAuth.enabled() || !outsideBot(err) {
+		return api, err
+	}
+	user, err := a.userAPI(ctx, id)
+	if err != nil {
+		return api, err
+	}
+	return user, read(user)
 }
 
 func join(ctx context.Context, api slackAPI, channelID string) (bool, error) {

@@ -58,7 +58,8 @@ again as the user, under the same ticket, through the Slack user token its
 own app grants once they tap Allow on cc-slack's consent card. Each such post
 opens with `_(<Firstname>'s Claude)_`, and the result reads `as_user`.
 Until the tap, the refusal links the card. The same token lets
-`slack_thread` and `slack_history` read a conversation the bot is not in.
+`slack_thread` and `slack_history` read a DM or private channel the bot is
+not in; a public channel they join and read as the bot.
 A post with files or one too long for one message is never sent as the
 user. A write in the
 user's 1:1 DM with someone else, which the bot cannot join, goes to the

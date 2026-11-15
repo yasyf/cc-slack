@@ -604,9 +604,9 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), "channel_id") {
 		t.Fatalf("history without a channel: %v", err)
 	}
-	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "channel_not_found"})
 	raw, _ = json.Marshal(map[string]string{"channel_id": "C9"})
-	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), "not_in_channel") || strings.Contains(err.Error(), "mcp__slack__") {
+	if _, err := invoke(l.ctx, l.deps, testSession, "/any", opHistory, raw); err == nil || !strings.Contains(err.Error(), "channel_not_found") || strings.Contains(err.Error(), "mcp__slack__") {
 		t.Fatalf("unreadable channel: %v", err)
 	}
 }
@@ -1484,13 +1484,39 @@ func TestRevokedUserTokenAsksForConsentOnce(t *testing.T) {
 	}
 }
 
-func TestAReadRefusedTheBotWithNoClientIDNamesTheKeyAndTheJoin(t *testing.T) {
+func TestAReadOfAPublicChannelTheBotIsNotInJoinsItAndReadsAsTheBot(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithOAuth(t, l)
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: testThread, User: testUser, Text: "release card"}})
+	l.slack.fail(historyOf(testChannel), slack.SlackErrorResponse{Err: "not_in_channel"})
+	var history historyResult
+	if err := json.Unmarshal(l.do(opHistory, map[string]string{"channel_id": testChannel}).Body, &history); err != nil {
+		t.Fatal(err)
+	}
+	l.slack.fail(repliesOf(testChannel, testThread), slack.SlackErrorResponse{Err: "not_in_channel"})
+	var thread threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": testThread}).Body, &thread); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Messages) != 1 || len(thread.Messages) != 1 || thread.Messages[0].Text != "release card" {
+		t.Fatalf("history %+v, thread %+v, want the release card read after the join", history.Messages, thread.Messages)
+	}
+	if joined := l.slack.joinedChannels(); !slices.Equal(joined, []string{testChannel, testChannel}) {
+		t.Fatalf("joined = %v, want one join of %s per refused read", joined, testChannel)
+	}
+	if cards := l.slack.sentTo("D" + testUser); len(cards) != 0 {
+		t.Fatalf("DM posts = %+v, want no consent card for a channel the bot joins", cards)
+	}
+}
+
+func TestAReadTheBotCannotJoinWithNoClientIDNamesTheKey(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
 	l.slack.fail(historyOf("C9"), slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.slack.fail("conversations.join", slack.SlackErrorResponse{Err: "is_archived"})
 	l.refused(opHistory, map[string]string{"channel_id": "C9"}, "as the bot (not_in_channel), and reads it as you only once the cc-slack config sets [oauth] client_id")
-	l.slack.fail(repliesOf("C9", testThread), slack.SlackErrorResponse{Err: "not_in_channel"})
-	l.refused(opThread, map[string]string{"channel_id": "C9", "thread_ts": testThread}, "add the bot to this public channel with slack_channel_join")
+	l.slack.fail(repliesOf("C9", testThread), slack.SlackErrorResponse{Err: "channel_not_found"})
+	l.refused(opThread, map[string]string{"channel_id": "C9", "thread_ts": testThread}, "as the bot (channel_not_found), and reads it as you only once the cc-slack config sets [oauth] client_id")
 	if cards := l.slack.sentTo("D" + testUser); len(cards) != 0 {
 		t.Fatalf("DM posts = %+v, want no consent card with no client ID", cards)
 	}

@@ -153,9 +153,10 @@ approval. `slack_watch` joins public channels when needed and returns
 `{watch_id, joined, cursor}`; retain the watch id for cleanup. A channel
 watch delivers every new top-level message and every new reply in any of
 the channel's threads, each read once on Slack's push, so watch a channel
-instead of polling `slack_history`. `slack_thread` and `slack_history` read
-a conversation the bot is not in, such as the user's DM with someone else, as
-the user. The first such read posts a consent card to the user's DM with the
+instead of polling `slack_history`. `slack_thread` and `slack_history` join
+a public channel the bot is not in and read it as the bot, with no consent
+card, and read a DM or private channel the bot is not in, such as the user's
+DM with someone else, as the user. The first such read posts a consent card to the user's DM with the
 app and is refused with its link: ask the user to tap Allow on the Mac
 running cc-slack, then retry the read. To watch a private channel the bot is
 not in, add it there with `slack_channel_join` under the user's approval;

@@ -156,10 +156,6 @@ func readFailure(err error, id identity) string {
 	if id.Config.OAuth.enabled() || !outsideBot(err) {
 		return fallback(actionRead, err)
 	}
-	refusal := fmt.Sprintf("cc-slack can't read this conversation as the bot (%s), and reads it as you only once the cc-slack config sets [oauth] client_id, "+
+	return fmt.Sprintf("cc-slack can't read this conversation as the bot (%s), and reads it as you only once the cc-slack config sets [oauth] client_id, "+
 		"the client ID of the Slack app the bot belongs to", failureCode(err))
-	if errorCode(err) == "not_in_channel" {
-		return refusal + "; or add the bot to this public channel with slack_channel_join"
-	}
-	return refusal
 }
