@@ -71,11 +71,16 @@ func TestAConsentLinkPostedBeforeARestartStillCompletes(t *testing.T) {
 	if err := f.app.askConsent(f.ctx, f.id); !errors.As(err, new(userConsentError)) {
 		t.Fatalf("askConsent = %v, want the consent card's refusal", err)
 	}
-	state := consentLink(t, f.slack).Query().Get("state")
+	posted := consentLink(t, f.slack)
+	state := posted.Query().Get("state")
 
 	f.app.user, f.user.consent = f.user.session(), nil
 	if err := f.app.resumeConsent(f.ctx); err != nil || f.user.consent == nil {
 		t.Fatalf("resumeConsent = %v, want the restarted daemon serving the redirect again", err)
+	}
+	edits := f.slack.edited()
+	if len(edits) != 1 || edits[0].ts != f.slack.sentTo(f.id.DMChannelID)[0].ts || consentCardLink(t, edits[0].blocks).String() != posted.String() {
+		t.Fatalf("card edits = %+v, want the held card redrawn with the link of the held consent", edits)
 	}
 	if err := f.app.askConsent(f.ctx, f.id); !errors.As(err, new(userConsentError)) || len(f.slack.sentTo(f.id.DMChannelID)) != 1 {
 		t.Fatalf("askConsent after the restart = %v, want the same card and no second one", err)

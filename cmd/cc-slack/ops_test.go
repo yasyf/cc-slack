@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1592,15 +1591,34 @@ func consentLink(t *testing.T, s *fakeSlack) *url.URL {
 	if len(cards) != 1 {
 		t.Fatalf("DM posts = %+v, want one consent card", cards)
 	}
-	m := regexp.MustCompile(`<(` + regexp.QuoteMeta(slackAuthorizeURL) + `\?[^|]+)\|`).FindStringSubmatch(cards[0].text)
-	if m == nil {
-		t.Fatalf("consent card %q carries no authorize link", cards[0].text)
+	return consentCardLink(t, cards[0].blocks)
+}
+
+func consentCardLink(t *testing.T, blocks string) *url.URL {
+	t.Helper()
+	var card []struct {
+		Elements []struct {
+			Elements []struct{ Type, URL, Text string }
+		}
 	}
-	link, err := url.Parse(m[1])
-	if err != nil {
+	if err := json.Unmarshal([]byte(blocks), &card); err != nil {
 		t.Fatal(err)
 	}
-	return link
+	for _, b := range card {
+		for _, section := range b.Elements {
+			for _, e := range section.Elements {
+				if e.Type == "link" && e.Text == consentAllow {
+					link, err := url.Parse(e.URL)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return link
+				}
+			}
+		}
+	}
+	t.Fatalf("consent card %s carries no %s link", blocks, consentAllow)
+	return nil
 }
 
 func redirect(u *fakeUserToken, query string) int {

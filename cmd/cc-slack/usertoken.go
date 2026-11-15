@@ -26,6 +26,10 @@ const (
 	slackAuthorizeURL = "https://slack.com/oauth/v2/authorize"
 	slackOAuthAccess  = "https://slack.com/api/oauth.v2.access"
 	userTokenRenewal  = 5 * time.Minute
+	consentHeadline   = "cc-slack needs your one-time consent to act in Slack as you"
+	consentBody       = "It reads conversations the app is not in, such as your DMs, invites the app to private channels you are in, and sends as you a post or reaction Slack refuses the app, each post marked with your agent's name. " +
+		"Open this link on the Mac that runs cc-slack, since Slack hands your answer to it at localhost: "
+	consentAllow = "Allow cc-slack"
 )
 
 var (
@@ -246,6 +250,18 @@ func (a *app) askConsent(ctx context.Context, id identity) error {
 		return userConsentError{permalink: id.permalink(id.DMChannelID, c.TS, "")}
 	}
 	c = pendingConsent{State: randomToken(), Verifier: randomToken()}
+	_, ts, err := a.newAPI(id.Token).PostMessageContext(ctx, id.DMChannelID, c.card(id)...)
+	if err != nil {
+		return fmt.Errorf("post the consent card: %w", err)
+	}
+	c.TS = ts
+	if err := storeJSON(a.user.consentPath, c); err != nil {
+		return fmt.Errorf("keep the consent card's link: %w", err)
+	}
+	return userConsentError{permalink: id.permalink(id.DMChannelID, ts, "")}
+}
+
+func (c pendingConsent) card(id identity) []slack.MsgOption {
 	challenge := sha256.Sum256([]byte(c.Verifier))
 	link := slackAuthorizeURL + "?" + url.Values{
 		"client_id":             {id.Config.OAuth.ClientID},
@@ -256,18 +272,13 @@ func (a *app) askConsent(ctx context.Context, id identity) error {
 		"code_challenge_method": {"S256"},
 		"team":                  {id.TeamID},
 	}.Encode()
-	text := fmt.Sprintf("*cc-slack needs your one-time consent to act in Slack as you*\nIt reads conversations the app is not in, such as your DMs, "+
-		"invites the app to private channels you are in, and sends as you a post or reaction Slack refuses the app, each post marked with your agent's name. Open this link on the Mac that runs cc-slack, since Slack hands your answer to it at localhost: "+
-		"<%s|Allow cc-slack>", link)
-	_, ts, err := a.newAPI(id.Token).PostMessageContext(ctx, id.DMChannelID, id.postOptions(text, "")...)
-	if err != nil {
-		return fmt.Errorf("post the consent card: %w", err)
-	}
-	c.TS = ts
-	if err := storeJSON(a.user.consentPath, c); err != nil {
-		return fmt.Errorf("keep the consent card's link: %w", err)
-	}
-	return userConsentError{permalink: id.permalink(id.DMChannelID, ts, "")}
+	text := fmt.Sprintf("*%s*\n%s<%s|%s>", consentHeadline, consentBody, link, consentAllow)
+	card := slack.NewRichTextBlock("", slack.NewRichTextSection(
+		slack.NewRichTextSectionTextElement(consentHeadline, &slack.RichTextSectionTextStyle{Bold: true}),
+		slack.NewRichTextSectionTextElement("\n"+consentBody, nil),
+		slack.NewRichTextSectionLinkElement(link, consentAllow, nil),
+	))
+	return id.postOptions(text, "", slack.MsgOptionBlocks(card))
 }
 
 func (a *app) consentAgain(ctx context.Context, id identity) error {
@@ -290,10 +301,21 @@ func (a *app) serveConsentRedirect(ctx context.Context) error {
 func (a *app) resumeConsent(ctx context.Context) error {
 	a.user.mu.Lock()
 	defer a.user.mu.Unlock()
-	if _, held, err := loadJSON[pendingConsent](a.user.consentPath); err != nil || !held {
+	c, held, err := loadJSON[pendingConsent](a.user.consentPath)
+	if err != nil || !held {
 		return err
 	}
-	return a.serveConsentRedirect(ctx)
+	if err := a.serveConsentRedirect(ctx); err != nil {
+		return err
+	}
+	id, err := loadIdentity(ctx, a.poller.plane.DB())
+	if err != nil {
+		return err
+	}
+	if _, _, _, err := a.newAPI(id.Token).UpdateMessageContext(ctx, id.DMChannelID, c.TS, c.card(id)...); err != nil {
+		return fmt.Errorf("redraw the consent card %s: %w", c.TS, err)
+	}
+	return nil
 }
 
 func randomToken() string {

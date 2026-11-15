@@ -408,10 +408,14 @@ anywhere: the app's manifest turns on `pkce_enabled`, lists the redirect
 When a call needs the token and `user-token.json` in the state directory holds none for
 the logged-in user, the daemon serves `127.0.0.1:38427` and posts one consent card to the
 engineer's DM with the app: a link to `oauth/v2/authorize` with those scopes, a random
-`state`, and the S256 challenge of a random verifier. It keeps the `state`, the verifier
-and the card's `ts` in `user-consent.json` beside `user-token.json`, mode 0600, and a
-daemon that starts while that file exists serves the redirect again, so a restart
-between the card and the tap leaves the card's link working. The call is refused with the card's
+`state`, and the S256 challenge of a random verifier. The link goes to Slack as a
+`rich_text` block's `link` element, whose `url` Slack opens as sent; a `<url|label>` link in
+the message's `text` reaches Slack's phone apps with `&amp;` between the query parameters,
+and Slack's authorize page then reads no parameter past `client_id`. It keeps the `state`,
+the verifier and the card's `ts` in `user-consent.json` beside `user-token.json`, mode
+0600, and a daemon that starts while that file exists serves the redirect again and redraws
+the card from them, so a restart between the card and the tap leaves the card's link
+working, and a card an older build drew carries the current one. The call is refused with the card's
 permalink, and every call until the tap points to the same card. The tap, on the Mac
 running cc-slack, lands on the loopback redirect; the daemon checks `state`, trades the
 code and verifier through `oauth.v2.access`, keeps the token only when `authed_user` and
