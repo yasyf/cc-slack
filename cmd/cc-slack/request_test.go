@@ -37,6 +37,7 @@ type wireSlack struct {
 	held     []heldMessage
 	posts    int
 	dropNext bool
+	limits   []string
 }
 
 func newWireSlack(t *testing.T) *wireSlack {
@@ -68,11 +69,33 @@ func (w *wireSlack) dropNextAnswer() {
 	w.dropNext = true
 }
 
+func (w *wireSlack) limitNextRead(retryAfter string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.limits = append(w.limits, retryAfter)
+}
+
+func (w *wireSlack) limited() (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.limits) == 0 {
+		return "", false
+	}
+	retryAfter := w.limits[0]
+	w.limits = w.limits[1:]
+	return retryAfter, true
+}
+
 func (w *wireSlack) serve(rw http.ResponseWriter, r *http.Request) {
 	switch path.Base(r.URL.Path) {
 	case "chat.postMessage":
 		w.post(rw, r)
 	case methodHistory, methodReplies:
+		if retryAfter, limited := w.limited(); limited {
+			rw.Header().Set("Retry-After", retryAfter)
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		w.read(rw, r)
 	default:
 		w.t.Errorf("Slack got an unexpected %s", r.URL.Path)
@@ -316,6 +339,50 @@ func TestASendWhoseAnswerWasLostIsResentAndPostsOnce(t *testing.T) {
 	}
 	if !later.Replayed || later.TS != held[0].TS || wire.postCount() != 1 {
 		t.Fatalf("a later call under the same ticket = %+v, want the receipt replayed and no second post", later)
+	}
+}
+
+func TestAKeyedStatusLineWhoseKeyCheckSlackRateLimitsWaitsOutRetryAfterAndPostsOnceInItsThread(t *testing.T) {
+	wire := newWireSlack(t)
+	var (
+		mu     sync.Mutex
+		waited []string
+	)
+	prev := pause
+	pause = func(_ context.Context, wait time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		waited = append(waited, fmt.Sprintf("%s with %d posted", wait, wire.postCount()))
+		return nil
+	}
+	t.Cleanup(func() { pause = prev })
+	l := startDaemon(t, func(a *app) {
+		fake := a.newAPI
+		a.newAPI = func(token string) slackAPI { return postsOnTheWire{fake(token), wire.api()} }
+	})
+	loggedIn(t, l)
+	line := func(text, thread string) map[string]string {
+		t.Helper()
+		var res map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": text, "thread_ts": thread, "request_key": newRequestKey(time.Now())}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	root := line("the order's thread", "")["ts"]
+	wire.limitNextRead("2")
+	limited := line("the line Slack rate-limited", root)
+	next := line("the next line", root)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"2s with 1 posted"}; !slices.Equal(waited, want) {
+		t.Fatalf("waits = %v, want %v: the line's check for its key waits out Slack's Retry-After before it posts", waited, want)
+	}
+	held := wire.messages()
+	if len(held) != 3 || held[1].TS != limited["ts"] || held[2].TS != next["ts"] || held[1].ThreadTS != root || held[2].ThreadTS != root {
+		t.Fatalf("Slack holds %+v after lines %v and %v, want the rate-limited line posted once in thread %s, before the next line", held, limited, next, root)
 	}
 }
 

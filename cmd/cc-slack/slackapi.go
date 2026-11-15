@@ -111,7 +111,7 @@ func newSlackClient(token, endpoint string, hc doer) slackAPI {
 func newSlackAPI(token string) slackAPI { return newSlackClient(token, slack.APIURL, &http.Client{}) }
 
 func (r retrying) Do(req *http.Request) (*http.Response, error) {
-	replayable := req.Body == nil || req.GetBody != nil
+	replayable := req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 	idempotent := !nonIdempotent[path.Base(req.URL.Path)]
 	backoff := slackFirstBackoff
 	for try := 1; ; try++ {
@@ -130,7 +130,11 @@ func (r retrying) Do(req *http.Request) (*http.Response, error) {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
-		log.Printf("slack %s: %s; try %d of %d in %s", path.Base(req.URL.Path), cause, try+1, slackTries, wait) //nolint:gosec // G706: the line carries Slack's own status, for the daemon log only
+		call := path.Base(req.URL.Path)
+		if keyed, step, stepped := requestStep(req.Context()); stepped {
+			call += fmt.Sprintf(" for step %s of request %s", step, keyed.key)
+		}
+		log.Printf("slack %s: %s; try %d of %d in %s", call, cause, try+1, slackTries, wait) //nolint:gosec // G706: the line carries Slack's own status and ids cc-slack minted, for the daemon log only
 		if err := pause(req.Context(), wait); err != nil {
 			return nil, err
 		}

@@ -128,10 +128,15 @@ type requestPoster struct {
 	next     doer
 }
 
+func requestStep(ctx context.Context) (request, string, bool) {
+	r, keyed := ctx.Value(requestCtxKey{}).(request)
+	step, stepped := ctx.Value(stepCtxKey{}).(string)
+	return r, step, keyed && stepped
+}
+
 func (p requestPoster) Do(req *http.Request) (*http.Response, error) {
-	r, keyed := req.Context().Value(requestCtxKey{}).(request)
-	step, stepped := req.Context().Value(stepCtxKey{}).(string)
-	if !keyed || !stepped || path.Base(req.URL.Path) != "chat.postMessage" {
+	r, step, stepped := requestStep(req.Context())
+	if !stepped || path.Base(req.URL.Path) != "chat.postMessage" {
 		return p.next.Do(req) //nolint:gosec // G704: the caller built the request for Slack or the doc-cards URL the config names
 	}
 	form, err := io.ReadAll(req.Body)
