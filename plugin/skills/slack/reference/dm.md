@@ -53,10 +53,12 @@ same way with `unclear: true` and no `operator`, telling it to read the thread
 and act only if the words are to it.
 Only one session holds the DM: a second `cc-slack follow` on it adds no watch and
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
-no bot or agent has answered in its thread yet, leaving out another live session's
-card threads, from stored state with no Slack call, including replies written while
-no session was live, and the session that owes them as `holder_session`. A post in that thread answers every earlier reply there; a
-post elsewhere answers none. The daemon posts nothing of its own in reply, so the
+no post has answered yet, leaving out another live session's card threads, from
+stored state with no Slack call, including replies written while no session was
+live, and the session that owes them as `holder_session`. A post answers only the
+replies it names with `--answers` on `dm-status`, `send` or `reply`, or `answers`
+on `slack_reply` and `slack_dm_status`, each by its ts, permalink or words; an ack or any other post answers
+none, wherever it goes. The daemon posts nothing of its own in reply, so the
 session holding the DM acknowledges each reply itself. A DM message or card tap
 that needs nothing back gets a `+1` reaction on it and no reply, which also clears
 it from `dm-owed`. Reply in the thread only with what the user does not have: a

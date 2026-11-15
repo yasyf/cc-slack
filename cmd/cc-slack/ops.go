@@ -133,6 +133,7 @@ type opBody struct {
 	About     string   `json:"about"`
 	Drive     string   `json:"drive"`
 	AsHolder  bool     `json:"as_holder"`
+	Answers   []string `json:"answers"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
 	Plan      string   `json:"plan"`
@@ -721,6 +722,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
 		res.PagePermalink = strings.Join(shown, " ")
+		a.answered(hc.Ctx, b.Answers)
 		drawn := a.drawTapCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, b.TapPRs)
 		a.drawLinkedCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, append(linked, ready...))
 		res.CardTS, res.CardPermalink = drawn.named(id)
@@ -913,13 +915,14 @@ func (a *app) send(ctx context.Context, db *sql.DB, id identity, channelID, thre
 	res, err := postAs(ctx, a.newAPI(id.Token), db, a.avatar, a.poller.log, a.now(), id, channelID, threadTS, text, blocks, files, extra...)
 	if err == nil && threadTS != "" {
 		a.wrote(ctx, res.ChannelID, threadTS)
-		if res.ChannelID == id.DMChannelID {
-			if err := a.owed.answered(ctx, threadTS, res.TS); err != nil {
-				a.poller.log.Printf("%v", err)
-			}
-		}
 	}
 	return res, err
+}
+
+func (a *app) answered(ctx context.Context, answers []string) {
+	if err := a.owed.answerAll(ctx, answers); err != nil {
+		notePostWarning(ctx, fmt.Sprintf("the post went out, but the replies it answers are still owed: %v", err))
+	}
 }
 
 func (a *app) wrote(ctx context.Context, channelID, threadTS string) {
@@ -2077,10 +2080,6 @@ func (id identity) botPosted(m slack.Message) bool {
 	return (id.BotID != "" && m.BotID == id.BotID) || (id.BotUserID != "" && m.User == id.BotUserID)
 }
 
-func (id identity) repliedUnder(m slack.Message) bool {
-	return slices.ContainsFunc(m.ReplyUsers, func(user string) bool { return user == id.BotID || user == id.BotUserID })
-}
-
 func (id identity) fromOperator(m slack.Message) bool {
 	return m.User == id.UserID && !id.fromClaude(m)
 }
@@ -2721,6 +2720,7 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
+	a.answered(hc.Ctx, b.Answers)
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	drawn := a.drawTapCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)

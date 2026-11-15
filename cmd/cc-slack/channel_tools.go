@@ -177,6 +177,7 @@ var (
 		},
 	}
 	tapPRsProp   = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "PR URLs that each get a tap card"}
+	answersProp  = map[string]any{"type": "array"}
 	toolSpecList = []toolSpec{
 		{
 			name:        "slack_send",
@@ -193,7 +194,7 @@ var (
 			op:          opReply, failure: actionWrite,
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "text": textProp, "url": urlProp, "files": filesProp, "blocks": blocksProp,
-				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp,
+				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp, "answers": answersProp,
 			},
 		},
 		{
@@ -298,7 +299,7 @@ var (
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "url": urlProp,
 				"limit":    map[string]any{"type": "integer", "description": "default 50"},
-				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this Slack ts, such as 1790210144.444179, or whole epoch seconds"},
+				"since_ts": map[string]any{"type": "string", "description": "only messages newer than this Slack ts, or whole epoch seconds"},
 				"raw":      rawProp,
 			},
 			lines: func(body json.RawMessage) (string, error) { return linesOf(body, renderThread) },
@@ -348,7 +349,7 @@ var (
 		},
 		{
 			name:        "slack_unwatch",
-			description: "Stop a watch by watch_id, or a thread by channel_id and thread_ts or url; returns remaining, this session's top-level watches.",
+			description: "Stop a watch by watch_id, or a thread by channel_id and thread_ts or url; returns the session's remaining top-level watches.",
 			op:          opUnfollow, failure: actionWatch,
 			properties: map[string]any{"watch_id": map[string]any{"type": "integer"}, "channel_id": channelProp, "thread_ts": threadProp, "url": urlProp},
 		},
@@ -395,7 +396,7 @@ var (
 		},
 		{
 			name:        "slack_card_answer",
-			description: "Answer a waiting or reply card with an answer the user gave elsewhere, or settle it. A card already answered keeps that answer and returns it as label with already_answered.",
+			description: "Answer a waiting or reply card with an answer the user gave elsewhere, or settle it. An answered card keeps its answer, returned as label with already_answered.",
 			op:          opCardAnswer, failure: actionWrite,
 			properties: map[string]any{
 				"waits":   map[string]any{"type": "string", "description": "the card's waits or board id"},
@@ -419,7 +420,7 @@ var (
 		},
 		{
 			name:        "slack_dm_status",
-			description: "Post status to your DM with the app, as a card; replies and taps on it steer this session.",
+			description: "Post status to your DM with the app; replies and taps on it steer this session.",
 			op:          opDMStatus, failure: actionWrite,
 			properties: map[string]any{
 				"text":      textProp,
@@ -430,6 +431,7 @@ var (
 				"root_only": map[string]any{"type": "boolean", "description": "redraw this session's root card"},
 				"about":     map[string]any{"type": "string", "pattern": askIDPattern.String(), "description": "waits id this reply is about"},
 				"tap_prs":   tapPRsProp,
+				"answers":   answersProp,
 				"agent":     agentProp,
 			},
 		},

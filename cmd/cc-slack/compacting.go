@@ -217,10 +217,6 @@ func ackedDelivery(w watch, m slack.Message, acked string) delivery {
 	}
 }
 
-func compactionAckPost(m slack.Message) bool {
-	return m.Metadata.EventType == compactionAckEventType
-}
-
 func (a *app) handlePreCompact(hc daemon.HandlerCtx) daemon.Reply {
 	var b preCompactBody
 	if len(hc.Env.Body) > 0 {

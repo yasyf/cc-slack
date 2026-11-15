@@ -438,6 +438,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 		noWatch   bool
 		key       string
 		spend     ticketSpend
+		answers   []string
 	)
 	c := &cobra.Command{
 		Use:   use,
@@ -453,6 +454,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 			body["no_watch"] = noWatch
 			body["agent"] = agentName
 			putRequestKey(body, key)
+			body["answers"] = answers
 			if err := putBlocks(body, f.cwd, blocks); err != nil {
 				return err
 			}
@@ -469,6 +471,7 @@ func postCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 	bindTicket(c, &spend)
 	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
+	bindAnswers(c, &answers)
 	return c
 }
 
@@ -583,6 +586,10 @@ func (s ticketSpend) fill(body map[string]any) {
 
 func bindFiles(c *cobra.Command, files *[]string) {
 	c.Flags().StringArrayVar(files, "file", nil, "file to attach, up to 1 GB (repeatable)")
+}
+
+func bindAnswers(c *cobra.Command, answers *[]string) {
+	c.Flags().StringArrayVar(answers, "answers", nil, "a DM message of the user's this post answers, by ts, permalink or its words, which clears it from dm-owed (repeatable)")
 }
 
 func bindText(c *cobra.Command, text, textFile *string, usage string) {
@@ -1074,13 +1081,14 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		asHolder  bool
 		tapPRs    []string
 		key       string
+		answers   []string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs, "answers": answers}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1105,6 +1113,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for; while it hears the DM, a DM holder of that drive leaves replies under its posts to it")
 	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM when it works for --drive, so the user's replies under the post reach that session; else as this session")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. With no text, it only draws: the card is redrawn where it sits, or first posted under --thread. A link in the text or card draws none")
+	bindAnswers(c, &answers)
 	bindAgent(c, &agentName)
 	bindRequestKey(c, &key)
 	return c

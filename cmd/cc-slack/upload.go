@@ -284,10 +284,6 @@ func shareProcessed(ctx context.Context, api slackAPI, record func(channelID, ts
 	return awaitProcessed(ctx, api, files)
 }
 
-func bareFileShare(m slack.Message) bool {
-	return len(m.Files) > 0 && m.Text == ""
-}
-
 // Slack can refuse a just-processed file with invalid_blocks for a moment after files.info reports its size.
 func whileProcessing(ctx context.Context, write func() error) error {
 	for attempt := 1; ; attempt++ {

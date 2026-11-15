@@ -377,38 +377,38 @@ func TestAReplyWithNoLiveSessionIsStillOwed(t *testing.T) {
 	}
 }
 
-func TestADMMessageReadAgainAfterTheBotRepliedUnderItIsNotOwed(t *testing.T) {
+func TestADMRootReadAgainInItsThreadIsNotOwedAgain(t *testing.T) {
 	f := newFixture(t)
-	dm := f.id.DMChannelID
-	holdDM(t, f)
-	f.tick()
-	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.500000", User: testUser, Text: "answered", ReplyCount: 1, ReplyUsers: []string{f.id.BotID}}})
-	f.slack.add(dm, slack.Message{Msg: slack.Msg{Timestamp: "1800000001.600000", User: testUser, Text: "still waiting"}})
-	f.poller.nudged(messageNudge{Channel: dm, TS: "1800000001.600000"})
-	f.tick()
+	root := slack.Message{Msg: slack.Msg{Timestamp: "1800000001.500000", ThreadTimestamp: "1800000001.500000", User: testUser, Text: "answered", ReplyCount: 1}}
+	if err := f.app.poller.trackOwed(f.ctx, f.id, root.Timestamp, root); err != nil {
+		t.Fatal(err)
+	}
 
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.600000"}) {
-		t.Fatalf("owed %v, want only the message with no reply under it", got)
+	if got := owedStamps(t, f); len(got) != 0 {
+		t.Fatalf("owed %v, want a root read again under its own thread left to the DM root's read", got)
 	}
 }
 
-func TestAPostInTheThreadAnswersOnlyEarlierRepliesThere(t *testing.T) {
+func TestOnlyAPostMarkedAsAnsweringClearsAnOwedReply(t *testing.T) {
 	f := newFixture(t)
 	first, second := postDMThread(t, f), postDMThread(t, f)
 	f.tick()
 	ownerReplies(f, first, "1800000002.100000", "A")
-	ownerReplies(f, second, "1800000002.200000", "B")
+	ownerReplies(f, second, "1800000002.200000", "do the   B thing")
+	ownerReplies(f, second, "1800000002.300000", "C")
 
-	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, first, linkedPage{text: "Seen: A is applied."}, nil, false); err != nil {
+	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, first, linkedPage{text: "On it."}, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000002.200000"}) {
-		t.Fatalf("owed %v, want only the reply in the other thread", got)
+	if got := owedStamps(t, f); len(got) != 3 {
+		t.Fatalf("owed %v, want an ack to answer nothing", got)
 	}
 
-	ownerReplies(f, first, "1800000003.500000", "and one more thing")
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000002.200000", "1800000003.500000"}) {
-		t.Fatalf("owed %v, want the newer reply owed again", got)
+	if err := f.app.owed.answerAll(f.ctx, []string{f.id.permalink(f.id.DMChannelID, "1800000002.100000", first), "do the B thing"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000002.300000"}) {
+		t.Fatalf("owed %v, want only the reply no answer named", got)
 	}
 }
 
@@ -439,8 +439,8 @@ func TestABotMessageIsNeverOwedOrDeliveredToTheHolder(t *testing.T) {
 	f.poller.nudged(messageNudge{Channel: f.id.DMChannelID, TS: fromAnotherHost, ThreadTS: thread, Subtype: "bot_message"})
 	f.tick()
 
-	if got := owedStamps(t, f); len(got) != 0 {
-		t.Fatalf("owed %v, want the bot's answer to clear the reply and owe nothing itself", got)
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.500000"}) {
+		t.Fatalf("owed %v, want the reply owed and the bot's line owing nothing", got)
 	}
 	if got := payloads(t, f); len(got) != 1 || got[0].TS != "1800000001.500000" {
 		t.Fatalf("holder got %+v, want only the owner's reply", got)
@@ -728,35 +728,5 @@ func TestAReplyUnderACardCopyNamesTheCardItCopies(t *testing.T) {
 	got := payloads(t, f)
 	if len(got) != 1 || got[0].ThreadCard != "card-chat" {
 		t.Fatalf("delivered %+v, want the reply naming the card its thread copies", got)
-	}
-}
-
-func TestABareFileShareAnswersNoOwedReply(t *testing.T) {
-	f := newFixture(t)
-	id := f.id
-	id.BotID = "BPICTURES"
-	if err := f.app.owed.owe(f.ctx, owedReply{ThreadTS: testThread, TS: "1800000000.000100", Text: "the images are broken", Permalink: "https://slack/p1"}); err != nil {
-		t.Fatal(err)
-	}
-	owedCount := func() int {
-		replies, err := f.app.owed.list(f.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(replies)
-	}
-	share := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000200", ThreadTimestamp: testThread, BotID: id.BotID, Files: []slack.File{{ID: "Fa"}}}}
-	if err := f.app.poller.trackOwed(f.ctx, id, share); err != nil {
-		t.Fatal(err)
-	}
-	if n := owedCount(); n != 1 {
-		t.Fatalf("owed = %d after a picture share, want the reply still owed", n)
-	}
-	answer := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000300", ThreadTimestamp: testThread, BotID: id.BotID, Text: "fixed"}}
-	if err := f.app.poller.trackOwed(f.ctx, id, answer); err != nil {
-		t.Fatal(err)
-	}
-	if n := owedCount(); n != 0 {
-		t.Fatalf("owed = %d after a text answer, want none", n)
 	}
 }

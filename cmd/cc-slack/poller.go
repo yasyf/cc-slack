@@ -691,7 +691,7 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		if g.key.channelID == id.DMChannelID {
-			tapped, err := p.dmMessage(ctx, api, id, m)
+			tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m)
 			if err != nil {
 				return c, err
 			}
@@ -825,26 +825,21 @@ func (p *poller) routeAll(ctx context.Context, db *sql.DB, api slackAPI, id iden
 	return nil
 }
 
-func (p *poller) dmMessage(ctx context.Context, api slackAPI, id identity, m slack.Message) (bool, error) {
+func (p *poller) dmMessage(ctx context.Context, api slackAPI, id identity, polledThread string, m slack.Message) (bool, error) {
 	if tap, ok := p.numberedTap(id, m); ok {
 		p.eyes(ctx, api, id, m)
 		return true, p.cardAction(ctx, id, tap)
 	}
 	p.prCardWords(ctx, id, m)
-	return false, p.trackOwed(ctx, id, m)
+	return false, p.trackOwed(ctx, id, polledThread, m)
 }
 
-func (p *poller) trackOwed(ctx context.Context, id identity, m slack.Message) error {
-	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
-	switch {
-	case id.fromOperator(m) && routedSubtypes[m.SubType] && id.repliedUnder(m):
-		return p.owed.answer(ctx, m.Timestamp)
-	case id.fromOperator(m) && routedSubtypes[m.SubType]:
-		return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
-	case id.fromClaude(m) && !bareFileShare(m) && !compactionAckPost(m):
-		return p.owed.answered(ctx, thread, m.Timestamp)
+func (p *poller) trackOwed(ctx context.Context, id identity, polledThread string, m slack.Message) error {
+	if !id.fromOperator(m) || !routedSubtypes[m.SubType] || m.Timestamp == polledThread {
+		return nil
 	}
-	return nil
+	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
+	return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
 }
 
 func (p *poller) newToAny(ctx context.Context, db *sql.DB, watches []watch, m slack.Message) (bool, error) {
