@@ -441,7 +441,7 @@ func TestACardPRCarryingItsDescriptionKeepsItOverGitHubs(t *testing.T) {
 	l, _ := linkingDaemon(t, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "Approve it?", "card": map[string]any{"title": "Approve it?", "prs": []map[string]any{{
 		"url": "https://github.com/acme/app/pull/41", "title": "One credential per team", "description": "The ledger's description.",
-		"surprise": "Launches stop waiting", "plan": "Nothing differed", "refresher": "None", "blocks": "Your approval",
+		"surprise": "Launches stop waiting", "plan": "Nothing differed", "refresher": "None",
 	}}}})
 	card := lastPost(l)
 	id, err := loadIdentity(l.ctx, l.srv.DB())
@@ -592,7 +592,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
 	tap := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Approve #41 at e718a74?",
-		PRs:     []cardPR{{Staging: testStaging, URL: tapPR41[0], Title: "Fix the chat list", Surprise: "Chats load faster", Plan: "Nothing differed", Refresher: "One cache key", Blocks: "Your approval"}},
+		PRs:     []cardPR{{Staging: testStaging, URL: tapPR41[0], Title: "Fix the chat list", Surprise: "Chats load faster", Plan: "Nothing differed", Refresher: "One cache key"}},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, tap)
@@ -1643,6 +1643,22 @@ func TestRedrawPRCardsForOnePRRedrawsTheWaitingCardListingItOnce(t *testing.T) {
 	var redrawn map[string]int
 	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]}).Body, &redrawn); err != nil || redrawn["redrawing"] != 1 {
 		t.Fatalf("redraw-pr-cards --pr = %v, %v; want the one waiting card listing #41 redrawn once", redrawn, err)
+	}
+}
+
+func TestRedrawPRCardsStoredRedrawsEachCardListingAPRInPlaceWithNoCardCommand(t *testing.T) {
+	l, _ := linkingDaemon(t)
+	listing := mergeCard()
+	listing.PRs = []cardPR{{URL: tapPR41[0], Staging: testStaging}}
+	posted := postWaiting(t, l, listing)
+	edits, posts := len(editsOf(l.slack.edited(), posted.ts)), len(l.slack.sent())
+	var redrawn map[string]int
+	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"stored": true}).Body, &redrawn); err != nil || redrawn["redrawing"] != 1 {
+		t.Fatalf("redraw-pr-cards --stored = %v, %v; want the one card listing #41", redrawn, err)
+	}
+	eventually(t, "the card redrawn in place", func() bool { return len(editsOf(l.slack.edited(), posted.ts)) > edits })
+	if sent := l.slack.sent()[posts:]; len(sent) != 0 {
+		t.Fatalf("posts = %+v, want the card redrawn where it sits and nothing posted", sent)
 	}
 }
 

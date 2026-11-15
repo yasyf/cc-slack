@@ -181,7 +181,7 @@ func TestRowTapTheBoardRefusesShowsWhyAndLeavesTheRowOpen(t *testing.T) {
 }
 
 func prCardRow() cardRow {
-	return cardRow{ID: testWaits, Buttons: []string{"Approve", "Hold"}, PRCard: true, PR: &cardPR{URL: tapPR41[0], Surprise: "Chats load faster.", Plan: "Checked.", Blocks: "Only your approval."}}
+	return cardRow{ID: testWaits, Buttons: []string{"Approve", "Hold"}, PRCard: true, PR: &cardPR{URL: tapPR41[0], Surprise: "Chats load faster.", Plan: "Checked."}}
 }
 
 func TestAPRCardRowTapAppliesThroughTheCardCommandNotTheBoard(t *testing.T) {

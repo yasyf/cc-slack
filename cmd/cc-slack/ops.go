@@ -138,6 +138,7 @@ type opBody struct {
 	Answers   []string `json:"answers"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
+	Stored    bool     `json:"stored"`
 	Lines     []cardPR `json:"lines"`
 	Plan      string   `json:"plan"`
 	Tasks     []task   `json:"tasks"`
@@ -1883,16 +1884,19 @@ func oneUser(u *slack.User, err error, method, missing string) ([]slack.User, er
 }
 
 func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if b.Stored {
+		return ok(map[string]int{"redrawing": a.cards.redrawStoredPRCards()})
+	}
 	id, err := loadIdentity(hc.Ctx, hc.DB)
 	if err != nil {
 		return fail(err.Error())
 	}
 	if len(id.Config.PRLinks.CardCommand) == 0 {
 		return fail("redraw-pr-cards needs a [pr_links] card_command on this machine")
-	}
-	b, err := decodeBody(hc)
-	if err != nil {
-		return fail(err.Error())
 	}
 	posted := a.cards.postedPRCards(b.PR != "")
 	var listing []cardRef

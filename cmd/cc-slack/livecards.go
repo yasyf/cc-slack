@@ -1971,6 +1971,28 @@ func (l *liveCards) drawPRLines(lines map[string]cardPR, now time.Time) int {
 	return drawn
 }
 
+func (l *liveCards) redrawStoredPRCards() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	listing := map[string]bool{}
+	var stale []string
+	for key, t := range l.threads {
+		before := len(listing)
+		for _, m := range t.messages() {
+			if m != nil && !m.Edited && len(m.Card.allPRs()) > 0 {
+				listing[key+"/"+m.TS] = true
+			}
+		}
+		if len(listing) > before {
+			t.Stale = true
+			stale = append(stale, key)
+		}
+	}
+	l.save(stale, nil)
+	l.wake()
+	return len(listing)
+}
+
 // replacePRCard redraws a posted PR card in place from what its command says now.
 func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, reasks bool, now time.Time) error {
 	key := threadKey(card.channel, card.thread)

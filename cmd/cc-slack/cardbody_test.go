@@ -51,7 +51,7 @@ func tables(blocks []slack.Block) []*slack.TableBlock {
 func fullPR(n int) cardPR {
 	return cardPR{
 		URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: "One credential per team", Head: "7bf3ea0123",
-		Surprise: "Launches stop waiting on a new credential", Plan: "Nothing differed", Refresher: "A stale credential on disk", Blocks: "Your approval",
+		Surprise: "Launches stop waiting on a new credential", Plan: "Nothing differed", Refresher: "A stale credential on disk",
 	}
 }
 
@@ -513,33 +513,27 @@ func TestExplainMoreOnAWaitingPRCardPostsItsDescriptionThenAsksTheLane(t *testin
 	}
 }
 
-func TestAPRCardThatNoLongerWaitsOnHisTapSaysWhyUnderItsPR(t *testing.T) {
-	pr := fullPR(7)
-	pr.Blocks = "A reader's check found it not ready: Releasable alone needs #43 live first"
-	card := statusCard{Status: "info", Title: "Fix: retry flaky uploads", Waits: "merge-7", Options: []string{"Approve", "Hold"}, PRs: []cardPR{pr}}
+func TestAPRCardThatNoLongerWaitsOnHisTapSaysSoAndOffersNoApprove(t *testing.T) {
+	card := statusCard{Status: "info", Title: "Fix: retry flaky uploads", Waits: "merge-7", Options: []string{"Approve", "Hold"}, PRs: []cardPR{fullPR(7)}}
 	v := view()
 	v.tapped = cardNoLongerWaits
 	got := blocksJSON(t, card.replyBlocks(v))
-	if !strings.Contains(got, cardNoLongerWaits) || !strings.Contains(got, "found it not ready: Releasable alone needs #43 live first") || strings.Contains(got, `"Approve"`) {
-		t.Fatalf("card %s, want why it no longer waits under its PR and no Approve", got)
+	if !strings.Contains(got, cardNoLongerWaits) || strings.Contains(got, `"Approve"`) || strings.Contains(got, "Waits on") {
+		t.Fatalf("card %s, want it saying it no longer waits, with no Approve and no Waits on", got)
 	}
 }
 
-func TestAPRCardHeAnsweredKeepsWhereItStandsAndWhatItWaitsOnUnderEachPR(t *testing.T) {
+func TestAPRCardHeAnsweredKeepsEachPRsStagingLineAndNoWhereItStandsOrWaitsOn(t *testing.T) {
 	bottom, top := fullPR(7), fullPR(8)
-	bottom.Blocks, bottom.Review, bottom.Staging = "Approved by you. Lands once CI passes", "Commit 7bf3ea0 goes against your words: keep the old key", "Tested on staging: plat-usw2-staging at f3a6f23, passed"
-	top.Blocks = "Approved by you. CI is still running"
+	bottom.Staging = "Tested on staging: plat-usw2-staging at f3a6f23, passed"
 	card := statusCard{Status: "needs_you", Title: "Fix: one cache key", Waits: "merge-7-8", Options: []string{"Approve", "Hold"}, PRs: []cardPR{bottom, top}}
 	v := view()
 	v.tapped = "✓ *Approve* · answered"
+	id, _ := parseRef(bottom.URL)
+	v.refs = map[string]refState{id.key(): {State: "open", Checks: "failed"}}
 	got := blocksJSON(t, card.replyBlocks(v))
-	for _, want := range []string{"*Waits on* Approved by you. Lands once CI passes", "*Where it stands* Commit 7bf3ea0 goes against your words", "Tested on staging: plat-usw2-staging at f3a6f23, passed", "*Waits on* Approved by you. CI is still running"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("card %s, want %q under its PR", got, want)
-		}
-	}
-	if strings.Count(got, "*Where it stands*") != 1 {
-		t.Fatalf("card %s, want Where it stands only under the PR a check objects to", got)
+	if !strings.Contains(got, "Tested on staging: plat-usw2-staging at f3a6f23, passed") || strings.Contains(got, "Where it stands") || strings.Contains(got, "Waits on") {
+		t.Fatalf("card %s, want its staging line under its PR and neither Where it stands nor Waits on", got)
 	}
 }
 
@@ -566,9 +560,9 @@ func TestAPRCardShowsItsLinkCIAndFourLinesAndFoldsItsDescription(t *testing.T) {
 	}
 	said := asSection(t, blocks[3]).Text.Text
 	if !strings.HasPrefix(said, "*Refresher*\nA stale credential on disk") || strings.Contains(said, "*Where it stands*") {
-		t.Fatalf("fourth block %q, want the refresher first and no Where it stands while CI passed", said)
+		t.Fatalf("fourth block %q, want the refresher first", said)
 	}
-	for _, want := range []string{"*Biggest surprise*\nLaunches", "*Waits on*\nYour", "*Differs from the plan*\nNothing"} {
+	for _, want := range []string{"*Biggest surprise*\nLaunches", "*Differs from the plan*\nNothing"} {
 		if !strings.Contains(said, want) {
 			t.Fatalf("fourth block %q lacks %q", said, want)
 		}
@@ -602,22 +596,21 @@ func TestAPRSectionOpensWithItsSummaryBeforeItsRefresher(t *testing.T) {
 	}
 }
 
-func TestAPRCardCarryingItsLedgerReviewShowsOnlyThatAndNoLiveGitHubState(t *testing.T) {
+func TestAPRCardWhoseCIFailedDrawsNoWhereItStandsOrWaitsOn(t *testing.T) {
 	pr := fullPR(49623)
-	pr.Review = "CI red; approved by poetic-svc; grade pass"
 	card := statusCard{Status: "needs_you", Title: "Approve the team credential?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-49623", PRs: []cardPR{pr}}
 	id, _ := parseRef(pr.URL)
 	v := view()
-	v.refs = map[string]refState{id.key(): {State: "open", Checks: "passed"}}
-	stands := asSection(t, card.replyBlocks(v)[3]).Text.Text
-	if strings.Contains(stands, "CI passed") || !strings.Contains(stands, "*Where it stands*\nCI red; approved by poetic-svc") {
-		t.Fatalf("where it stands %q, want the ledger's review alone, never GitHub's live state beside it", stands)
+	v.refs = map[string]refState{id.key(): {State: "open", Checks: "failed"}}
+	said := asSection(t, card.replyBlocks(v)[3]).Text.Text
+	if strings.Contains(said, "Where it stands") || strings.Contains(said, "Waits on") {
+		t.Fatalf("fourth block %q, want neither Where it stands nor Waits on whatever GitHub reads", said)
 	}
 }
 
 func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 	pr := fullPR(49722)
-	pr.Refresher, pr.Blocks = "", " "
+	pr.Refresher = ""
 	for name, card := range map[string]statusCard{
 		"card": {Status: "needs_you", Title: "x", PRs: []cardPR{pr}},
 		"row":  {Status: "needs_you", Title: "x", Group: "g", Rows: []cardRow{{ID: "r", PR: &pr, Buttons: []string{"Approve", "Hold"}}}},
@@ -630,7 +623,7 @@ func TestAPRCardMissingALinePostsWithTheLinesItHas(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		got := blocksJSON(t, blocks)
-		if !strings.Contains(got, "*Biggest surprise*") || !strings.Contains(got, "*Differs from the plan*") || strings.Contains(got, "A stale credential") || strings.Contains(got, "*Waits on*") {
+		if !strings.Contains(got, "*Biggest surprise*") || !strings.Contains(got, "*Differs from the plan*") || strings.Contains(got, "A stale credential") {
 			t.Fatalf("%s: blocks %s, want the two lines it has and no empty field", name, got)
 		}
 	}
@@ -1060,7 +1053,7 @@ func TestAPRCardSaysWhatItsButtonsDoAndClaimsNoLaneStops(t *testing.T) {
 
 func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 	hidden := " <!-- cci #453550 -->"
-	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Review: "CI green" + hidden, Surprise: "It changes." + hidden, Plan: "Plan." + hidden, Refresher: "Low." + hidden, Blocks: "Nothing." + hidden}
+	pr := cardPR{URL: "https://github.com/o/r/pull/7", Title: "t" + hidden, Surprise: "It changes." + hidden, Plan: "Plan." + hidden, Refresher: "Low." + hidden}
 	row := pr
 	card := statusCard{
 		Status: "needs_you", Title: "Land it?" + hidden, Body: "First sentence." + hidden + " Second sentence.",
@@ -1089,7 +1082,7 @@ func TestNoFieldOfACardDrawsAHiddenComment(t *testing.T) {
 
 func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 	change, eli5 := strings.Repeat("It changes a thing. ", 25)+"The end of the change.", strings.Repeat("Chats come back on their own. ", 30)+"The last line."
-	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: change, Plan: "As planned.", Refresher: eli5, Blocks: "Only your approval."}}}
+	card := statusCard{Status: "needs_you", Title: "Land it?", Waits: "merge:7:abc", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: change, Plan: "As planned.", Refresher: eli5}}}
 	got := blocksJSON(t, card.replyBlocks(view()))
 	for _, whole := range []string{"The end of the change.", "The last line."} {
 		if !strings.Contains(got, whole) {
@@ -1098,14 +1091,6 @@ func TestAPRCardDrawsItsELI5AndWhatChangesWhole(t *testing.T) {
 	}
 	if strings.Contains(got, "…") {
 		t.Errorf("the card cuts a line: %s", got)
-	}
-}
-
-func TestAPRWaitingOnTheChangeBelowItSaysSoUnderBlocksLanding(t *testing.T) {
-	card := statusCard{Status: "needs_you", Title: "Pick one", Options: []string{"A", "B"}, Waits: "card-x", PRs: []cardPR{{URL: "https://github.com/o/r/pull/7", Surprise: "It changes.", Plan: "Plan: step 3.", Refresher: "Plainly.", Lands: "the change below it, #6, lands"}}}
-	got := blocksJSON(t, card.replyBlocks(view()))
-	if !strings.Contains(got, "*Waits on*") || !strings.Contains(got, "It lands once the change below it, #6, lands.") || strings.Contains(got, "*Lands once*") {
-		t.Fatalf("want the wait under Waits on: %s", got)
 	}
 }
 

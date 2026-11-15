@@ -929,16 +929,19 @@ func channelInfoCmd(d cmd.Deps) *cobra.Command {
 func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	var pr string
+	var stored bool
 	c := &cobra.Command{
 		Use:   "redraw-pr-cards",
-		Short: "Redraw every open PR card from the card command: in place while it draws the same PRs, and once they regroup as their one new card, which marks each older card of theirs replaced, unless it asks nothing, when each card carrying its PRs is edited in place; with --pr, every card listing that PR and its copies too, and its withdrawn cards, which come back in place when drawn under the waits id they were withdrawn from; answers once each is redrawn, and fails naming each card that stays as drawn",
+		Short: "Redraw every open PR card from the card command: in place while it draws the same PRs, and once they regroup as their one new card, which marks each older card of theirs replaced, unless it asks nothing, when each card carrying its PRs is edited in place; with --pr, every card listing that PR and its copies too, and its withdrawn cards, which come back in place when drawn under the waits id they were withdrawn from; answers once each is redrawn, and fails naming each card that stays as drawn; with --stored, every card listing a PR, open, answered, replaced or withdrawn, from what cc-slack keeps of it, never the card command, which the ref poll redraws in place in the background, after a restart or a Slack rate limit too; answers how many cards it will redraw",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opRedrawPRCards, map[string]any{"pr": pr})
+			return runOp(c, d, f, opRedrawPRCards, map[string]any{"pr": pr, "stored": stored})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&pr, "pr", "", "pull request URL: redraw only that PR's cards")
+	c.Flags().BoolVar(&stored, "stored", false, "redraw every card listing a PR in place from what cc-slack keeps of it")
+	c.MarkFlagsMutuallyExclusive("pr", "stored")
 	return c
 }
 
@@ -946,7 +949,7 @@ func drawPRLinesCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{
 		Use:   "draw-pr-lines",
-		Short: "Write each PR's head, review, blocks, lands and staging lines, a JSON array of PR rows with their url on stdin, onto every row of that PR on a card neither replaced nor withdrawn, and redraw each card it changed in place in the background, keeping its buttons; answers how many rows changed",
+		Short: "Write each PR's head and staging lines, a JSON array of PR rows with their url on stdin, onto every row of that PR on a card neither replaced nor withdrawn, and redraw each card it changed in place in the background, keeping its buttons; answers how many rows changed",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			var lines []cardPR

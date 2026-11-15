@@ -95,7 +95,6 @@ const (
 	cardImpact        = "FDE impact"
 	cardStaging       = "Staging"
 	cardStoredData    = "Stored data"
-	cardDefaultLands  = "you approve"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
 
@@ -176,7 +175,6 @@ type cardPR struct {
 	Changed     string   `json:"changed,omitempty"`
 	Summary     string   `json:"summary,omitempty"`
 	Impact      string   `json:"impact,omitempty"`
-	Review      string   `json:"review,omitempty"`
 	Surprise    string   `json:"surprise,omitempty"`
 	HateMost    string   `json:"hate_most,omitempty"`
 	Plan        string   `json:"plan"`
@@ -184,8 +182,6 @@ type cardPR struct {
 	ShowMe      string   `json:"show_me,omitempty"`
 	Pictures    []string `json:"pictures,omitempty"`
 	Port        string   `json:"port,omitempty"`
-	Blocks      string   `json:"blocks"`
-	Lands       string   `json:"lands,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Staging     string   `json:"staging,omitempty"`
 	StoredData  string   `json:"stored_data,omitempty"`
@@ -422,29 +418,10 @@ func (p cardPR) check() error {
 	return nil
 }
 
-func (p cardPR) waitsOn() string {
-	if p.Blocks == "" && p.Lands != "" && strings.TrimSuffix(p.Lands, ".") != cardDefaultLands {
-		return "It lands once " + strings.TrimSuffix(p.Lands, ".") + "."
-	}
-	return p.Blocks
-}
-
-func (p cardPR) stands(v cardView) string {
-	if p.Review != "" {
-		return p.Review
-	}
-	id, _ := parseRef(p.URL)
-	live := v.refs[id.key()]
-	if live.State == "open" && (live.Checks == "" || live.Checks == "passed") {
-		return ""
-	}
-	return live.text()
-}
-
-func (p cardPR) fields(v cardView) []cardFact {
+func (p cardPR) fields() []cardFact {
 	return []cardFact{
 		{cardStaging, p.Staging}, {cardStoredData, p.StoredData}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardImpact, p.Impact}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
-		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
+		{"Differs from the plan", p.Plan},
 	}
 }
 
@@ -712,7 +689,7 @@ func (c statusCard) rowChars() int {
 	for _, r := range c.Rows {
 		chars += runes(r.Text)
 		if r.PR != nil {
-			chars += runes(r.PR.markdown(cardView{}))
+			chars += runes(r.PR.markdown())
 		}
 	}
 	return chars
@@ -928,13 +905,13 @@ func (p cardPR) withLines(of cardPR) cardPR {
 }
 
 func (p cardPR) withDrawn(of cardPR) cardPR {
-	p.Head, p.Review, p.Blocks, p.Lands, p.Staging = of.Head, of.Review, of.Blocks, of.Lands, of.Staging
+	p.Head, p.Staging = of.Head, of.Staging
 	return p
 }
 
 func (p cardPR) visible(shown func(string) string) cardPR {
-	p.Title, p.Changed, p.Review, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Review), shown(p.Surprise)
-	p.Plan, p.Refresher, p.Blocks, p.Lands = shown(p.Plan), shown(p.Refresher), shown(p.Blocks), shown(p.Lands)
+	p.Title, p.Changed, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Surprise)
+	p.Plan, p.Refresher = shown(p.Plan), shown(p.Refresher)
 	p.ShowMe, p.HateMost, p.Port, p.Summary, p.Staging = shown(p.ShowMe), shown(p.HateMost), shown(p.Port), shown(p.Summary), shown(p.Staging)
 	p.Impact, p.StoredData = shown(p.Impact), shown(p.StoredData)
 	return p
@@ -1394,16 +1371,14 @@ func (p cardPR) settledLine(v cardView) string {
 	if p.Staging != "" {
 		line += " · " + plainMrkdwn(p.Staging)
 	}
-	for _, f := range []cardFact{{cardStoredData, p.StoredData}, {"Where it stands", p.Review}, {"Waits on", p.waitsOn()}} {
-		if strings.TrimSpace(f.Value) != "" {
-			line += "\n*" + f.Label + "* " + plainMrkdwn(f.Value)
-		}
+	if strings.TrimSpace(p.StoredData) != "" {
+		line += "\n*" + cardStoredData + "* " + plainMrkdwn(p.StoredData)
 	}
 	return line
 }
 
 func (p cardPR) section(v cardView, at, of int, images []cardImage) []slack.Block {
-	blocks := slices.Concat([]slack.Block{p.head(at, of)}, sections(p.body(v)), p.showMe())
+	blocks := slices.Concat([]slack.Block{p.head(at, of)}, sections(p.body()), p.showMe())
 	for _, picture := range pictureBlocks(p.images(images), v.pictures) {
 		blocks = append(blocks, picture)
 	}
@@ -1448,12 +1423,12 @@ func (p cardPR) named(at, of int, between string) string {
 	return link
 }
 
-func (p cardPR) body(v cardView) string {
+func (p cardPR) body() string {
 	var lines []string
 	if port := strings.TrimSpace(p.Port); port != "" {
 		lines = append(lines, plainMrkdwn(port))
 	}
-	for _, f := range p.fields(v) {
+	for _, f := range p.fields() {
 		if strings.TrimSpace(f.Value) != "" {
 			lines = append(lines, "*"+f.Label+"*\n"+plainMrkdwn(f.Value))
 		}
@@ -1461,8 +1436,8 @@ func (p cardPR) body(v cardView) string {
 	return strings.Join(lines, "\n\n")
 }
 
-func (p cardPR) markdown(v cardView) string {
-	return strings.TrimSpace(p.headline(0, 1) + "\n" + p.body(v) + "\n\n" + p.showMeText())
+func (p cardPR) markdown() string {
+	return strings.TrimSpace(p.headline(0, 1) + "\n" + p.body() + "\n\n" + p.showMeText())
 }
 
 func sections(text string) []slack.Block {
