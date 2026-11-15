@@ -296,6 +296,10 @@ that once over every open PR card, or with `--pr <url>` over one PR's cards, its
 withdrawn ones included, with no new posts. A redraw the program draws with no
 `waits` never posts, even when its PRs regroup: each standing card carrying them
 takes their fresh rows in place, as `redrawWithFreshPRLines` gives them.
+`draw-pr-lines` writes the lines a program already drew, each PR's `head`,
+`review`, `blocks`, `lands` and `staging`, onto every row of that PR on a card
+neither replaced nor withdrawn, and marks each thread it changed stale, so the
+ref poll redraws it in place with no card command run.
 
 `preview_command` names a program, resolved on `PATH` at `login` and off when
 unset, that says where the PRs a post links to stand. Slack cannot draw this: it

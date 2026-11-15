@@ -1941,6 +1941,36 @@ func (l *liveCards) cardsListing(pr refID) []cardRef {
 	return listing
 }
 
+// drawPRLines marks each thread it changes stale, so the ref poll redraws it in
+// place, after a restart too.
+func (l *liveCards) drawPRLines(lines map[string]cardPR, now time.Time) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	drawn := 0
+	var changed []string
+	for key, t := range l.threads {
+		rows := 0
+		for _, m := range t.messages() {
+			if m == nil || m.Edited || t.retired(m) {
+				continue
+			}
+			for _, p := range m.Card.allPRs() {
+				ref, _ := parseRef(p.URL)
+				if line, ok := lines[ref.key()]; ok && !reflect.DeepEqual(p.withDrawn(line), *p) {
+					*p, rows = p.withDrawn(line), rows+1
+				}
+			}
+		}
+		if rows > 0 {
+			t.Stale, t.Updated, drawn = true, now, drawn+rows
+			changed = append(changed, key)
+		}
+	}
+	l.save(changed, nil)
+	l.wake()
+	return drawn
+}
+
 // replacePRCard redraws a posted PR card in place from what its command says now.
 func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRef, drawn statusCard, reasks bool, now time.Time) error {
 	key := threadKey(card.channel, card.thread)

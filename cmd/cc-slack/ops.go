@@ -51,6 +51,7 @@ const (
 	opChannelInfo   daemon.Op = "channel-info"
 	opDMOwed        daemon.Op = "dm-owed"
 	opRedrawPRCards daemon.Op = "redraw-pr-cards"
+	opDrawPRLines   daemon.Op = "draw-pr-lines"
 	opFollow        daemon.Op = "follow"
 	opHoldDelivery  daemon.Op = "hold-delivery"
 	opUnfollow      daemon.Op = "unfollow"
@@ -137,6 +138,7 @@ type opBody struct {
 	Answers   []string `json:"answers"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
+	Lines     []cardPR `json:"lines"`
 	Plan      string   `json:"plan"`
 	Tasks     []task   `json:"tasks"`
 	Stop      bool     `json:"stop"`
@@ -346,6 +348,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opDriveCards, a.handleDriveCards)
 	register(opCanvas, a.handleCanvas)
 	register(opRedrawPRCards, a.handleRedrawPRCards)
+	register(opDrawPRLines, a.handleDrawPRLines)
 	register(opFollow, a.handleFollow)
 	register(opHoldDelivery, a.handleHoldDelivery)
 	register(opUnfollow, a.handleUnfollow)
@@ -1920,6 +1923,22 @@ func (a *app) handleRedrawPRCards(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(strings.Join(stays, "; "))
 	}
 	return ok(map[string]int{"redrawing": len(posted) + len(listing)})
+}
+
+func (a *app) handleDrawPRLines(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	lines := map[string]cardPR{}
+	for _, row := range b.Lines {
+		pr, found := parseRef(row.URL)
+		if !found {
+			return fail(fmt.Sprintf("lines take pull request URLs, not %q", row.URL))
+		}
+		lines[pr.key()] = row
+	}
+	return ok(map[string]int{"drawn": a.cards.drawPRLines(lines, a.now())})
 }
 
 func (a *app) handleHoldDelivery(hc daemon.HandlerCtx) daemon.Reply {

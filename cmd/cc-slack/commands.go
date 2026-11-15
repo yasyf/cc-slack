@@ -942,6 +942,24 @@ func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func drawPRLinesCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	c := &cobra.Command{
+		Use:   "draw-pr-lines",
+		Short: "Write each PR's head, review, blocks, lands and staging lines, a JSON array of PR rows with their url on stdin, onto every row of that PR on a card neither replaced nor withdrawn, and redraw each card it changed in place in the background, keeping its buttons; answers how many rows changed",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			var lines []cardPR
+			if err := json.NewDecoder(c.InOrStdin()).Decode(&lines); err != nil {
+				return fmt.Errorf("draw-pr-lines reads a JSON array of PR rows on stdin: %w", err)
+			}
+			return runOp(c, d, f, opDrawPRLines, map[string]any{"lines": lines})
+		},
+	}
+	f.bind(c)
+	return c
+}
+
 func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	var pr, reason, via string

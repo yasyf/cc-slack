@@ -1602,6 +1602,24 @@ func TestRedrawPRCardsForOnePRRedrawsTheWaitingCardListingItOnce(t *testing.T) {
 	}
 }
 
+func TestDrawPRLinesRedrawsTheRowsOfThatPRInPlace(t *testing.T) {
+	l, _ := linkingDaemon(t)
+	listing := mergeCard()
+	listing.PRs = []cardPR{{URL: tapPR41[0], Staging: testStaging}, {URL: "https://github.com/acme/app/pull/42", Staging: testStaging}}
+	posted := postWaiting(t, l, listing)
+	const moved = "Not on staging: acme/app has no staging env"
+	var drawn map[string]int
+	if err := json.Unmarshal(l.do(opDrawPRLines, map[string]any{"lines": []cardPR{{URL: tapPR41[0], Head: "f00d", Staging: moved}}}).Body, &drawn); err != nil || drawn["drawn"] != 1 {
+		t.Fatalf("draw-pr-lines = %v, %v; want the one row of #41 drawn", drawn, err)
+	}
+	eventually(t, "the card redrawn in place with #41's new staging line beside #42's", func() bool {
+		return slices.ContainsFunc(editsOf(l.slack.edited(), posted.ts), func(b string) bool { return strings.Contains(b, moved) && strings.Contains(b, "plat-usw2-staging") })
+	})
+	if err := json.Unmarshal(l.do(opDrawPRLines, map[string]any{"lines": []cardPR{{URL: tapPR41[0], Head: "f00d", Staging: moved}}}).Body, &drawn); err != nil || drawn["drawn"] != 0 {
+		t.Fatalf("draw-pr-lines again = %v, %v; want no row drawn twice", drawn, err)
+	}
+}
+
 func TestARedrawSlackWouldRefuseTellsTheCardCommandWhy(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
