@@ -2717,10 +2717,9 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	}
 	post := cardRef{id.DMChannelID, thread, ts}
 	drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, tap)
-	if said := undrawnAsked(b.TapPRs, undrawn); len(said) > 0 && posted && b.Card == nil {
-		return fail(a.takeDown(hc.Ctx, id, post, shown, said))
+	if refused := a.settleTapLine(hc.Ctx, id, post, shown, b, posted, undrawn); refused != "" {
+		return fail(refused)
 	}
-	notePostWarning(hc.Ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
 	if posted && !b.AsHolder {
 		a.answered(hc.Ctx, id, id.DMChannelID, thread, ts)
 	}
@@ -2740,7 +2739,15 @@ func (a *app) undrawnWarning(id identity, post cardRef, asked []string, undrawn 
 	return fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; "))
 }
 
-func (a *app) takeDown(ctx context.Context, id identity, post cardRef, pages []string, said []string) string {
+func (a *app) settleTapLine(ctx context.Context, id identity, post cardRef, pages []string, b opBody, posted bool, undrawn map[string]string) string {
+	if said := undrawnAsked(b.TapPRs, undrawn); len(said) > 0 && posted && b.Card == nil {
+		return a.takeDown(ctx, id, post, pages, said)
+	}
+	notePostWarning(ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
+	return ""
+}
+
+func (a *app) takeDown(ctx context.Context, id identity, post cardRef, pages, said []string) string {
 	link := id.permalink(post.channel, post.ts, post.thread)
 	a.poller.log.Printf("tap PRs drew no card under %s, so it comes down: %s", link, strings.Join(said, "; "))
 	stamps := []string{post.ts}
