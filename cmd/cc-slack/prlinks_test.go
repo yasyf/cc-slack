@@ -147,7 +147,7 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 	if err := os.WriteFile(holders, mustJSON(map[string]any{"prs": held}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo \"$in\" >> '%[1]s'; cat '%[2]s' ;;\n'{\"answer\":'*) echo \"$in\" >> '%[3]s'; echo '{\"ok\":true}' ;;\n*) echo \"$in\" >> '%[3]s'; cat '%[4]s' ;;\nesac\n", c.resolved, holders, c.asked, answer)
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"numbers\"'*) echo \"$in\" >> '%[1]s'; cat '%[2]s' ;;\n*'\"label\":\"Words\"'*) echo \"$in\" >> '%[3]s'; echo '{\"ok\":true,\"taken\":[\"acme/app#41\"]}' ;;\n'{\"answer\":'*) echo \"$in\" >> '%[3]s'; echo '{\"ok\":true}' ;;\n*) echo \"$in\" >> '%[3]s'; cat '%[4]s' ;;\nesac\n", c.resolved, holders, c.asked, answer)
 	if err := os.WriteFile(c.argv[0], []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1253,6 +1253,28 @@ func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
 	}
 	if got := cmd.requests(t); len(got) != 2 {
 		t.Fatalf("card command asked %v after a second answer, want no new request", got)
+	}
+}
+
+func TestHisWordsUnderAnAnsweredPRCardGoToTheCardCommandAndAnApproveTheyTakeBackLeavesTheCardAskingAgain(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	tapMerge(t, l, card)
+	eventually(t, "the Merge tap to reach the card command", func() bool { return len(cmd.requests(t)) == 2 })
+	thread := cmp.Or(card.threadTS, card.ts)
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); !done {
+		t.Fatal("the card took no Merge answer")
+	}
+	ts := fmt.Sprintf("%d.000001", slackTime(thread).Unix()+1)
+	l.slack.add(testDM, slack.Message{Msg: slack.Msg{Timestamp: ts, ThreadTimestamp: thread, User: testUser, Text: "wait, this keys the cache on the session"}})
+	l.app.poller.nudged(messageNudge{Channel: testDM, TS: ts, ThreadTS: thread})
+	want := `{"answer":{"action_ts":"` + ts + `","heads":{},"label":"Words","number":41,"repo":"acme/app","source":"wrote in the card's thread","waits":"merge:41:e718a74"}}`
+	eventually(t, "his words to reach the card command", func() bool { return slices.Contains(cmd.requests(t), want) })
+	l.app.poller.taps.busy.Wait()
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); done {
+		t.Fatal("the card still holds the Merge his words took back, want it asking again")
 	}
 }
 

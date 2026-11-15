@@ -27,6 +27,8 @@ var (
 	tapCardPatience = 25 * time.Second
 )
 
+const prCardWords = "Words"
+
 var errCardCommandUnfinished = errors.New("the card command did not finish")
 
 var (
