@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -58,9 +59,10 @@ func watchCmd(d cmd.Deps) *cobra.Command {
 			"--only-delivery this stream alone carries the session's Slack messages while it runs:\n" +
 			"no channel tag and no directive for them, until the process exits.\n\n" +
 			"A Monitor event holds 500 characters, so a longer line drops a card's options,\n" +
-			"then its question and the thread owner's title, then the permalink, and last cuts the\n" +
-			"line's own words and sets cut. A tap's id is never cut. --whole prints every line as the\n" +
-			"daemon sent it, for a program reading the stream rather than a Monitor.",
+			"then its question and the thread owner's title, then all but where each file is, then\n" +
+			"the permalink, and last cuts the line's own words and sets cut. A tap's id is never cut.\n" +
+			"--whole prints every line as the daemon sent it, for a program reading the stream\n" +
+			"rather than a Monitor.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			ctx := c.Context()
@@ -195,7 +197,7 @@ func fitted(data string) (string, error) {
 		return "", fmt.Errorf("fit watch line %q: %w", data, err)
 	}
 	var encoded []byte
-	for _, drop := range []func(map[string]any){withoutCardPicks, withoutCardWords, withoutPermalink} {
+	for _, drop := range []func(map[string]any){withoutCardPicks, withoutCardWords, withFileLocationsOnly, withoutPermalink} {
 		drop(line)
 		var err error
 		if encoded, err = json.Marshal(line); err != nil || len(encoded) <= monitorEvent {
@@ -241,6 +243,18 @@ func withoutCardWords(line map[string]any) {
 	delete(line, "question")
 	if owner, ok := line["thread_owner"].(map[string]any); ok {
 		delete(owner, "title")
+	}
+}
+
+func withFileLocationsOnly(line map[string]any) {
+	files, _ := line["files"].([]any)
+	for _, f := range files {
+		file, _ := f.(map[string]any)
+		where := "path"
+		if file[where] == nil {
+			where = "permalink"
+		}
+		maps.DeleteFunc(file, func(k string, _ any) bool { return k != where })
 	}
 }
 

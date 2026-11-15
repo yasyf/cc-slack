@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -314,5 +315,23 @@ func TestWholePrintsALongLineAsTheDaemonSentIt(t *testing.T) {
 
 	if printed := printedLine(t, true, event); printed != string(raw) {
 		t.Fatalf("printed %d bytes, want the %d the daemon sent", len(printed), len(raw))
+	}
+}
+
+func TestAMessageKeepsWhereEachFileIsBeforeCuttingItsWords(t *testing.T) {
+	said := "this card is unreadable, look"
+	var line struct {
+		messagePayload
+		Cut bool `json:"cut"`
+	}
+
+	fitLine(t, messagePayload{Type: eventMessage, WatchID: 574, Kind: kindDM, ChannelID: "D1", ThreadTS: "1.0", TS: "1.3", User: "U1", UserName: "Ria", Text: said, Permalink: "https://acme.slack.com/archives/D1/p13", Files: []messageFile{
+		chartFile(),
+		{ID: "F2", Name: strings.Repeat("screenshot ", 10) + ".png", Mimetype: "image/png", Permalink: "https://acme.slack.com/files/U1/F2/screenshot.png", PathError: "file_not_found"},
+	}}, &line)
+
+	want := []messageFile{{Path: chartFile().Path}, {Permalink: "https://acme.slack.com/files/U1/F2/screenshot.png"}}
+	if line.Text != said || line.Cut || !reflect.DeepEqual(line.Files, want) {
+		t.Fatalf("line = %+v, want the words whole and each file only where it is", line)
 	}
 }

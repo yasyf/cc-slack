@@ -583,6 +583,10 @@ A `cc-slack:slack-waiter` subagent gets one greeting directive when it starts, n
   for 8 seconds. Any operator reply in a DM thread whose root is a live
   card, or a copy of one, carries `thread_card`: the `waits` id of that card, the
   copied card's for a copy.
+  A message with files carries `files`, each as `slack_thread` returns it: an
+  image is saved and names its local `path`, or its `path_error`. The directive
+  names where each file is, its path or else its permalink, for whoever acts on
+  the message to open first.
 - `slack.message@<agent_id>` is a message on a subagent's watch. The daemon's
   subscription tee moves it into that agent's mailbox, and it never reaches the
   parent's channel.

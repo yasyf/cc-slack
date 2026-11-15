@@ -95,6 +95,8 @@ const (
 	cardImpact        = "FDE impact"
 	cardStaging       = "Staging"
 	cardStoredData    = "Stored data"
+	cardHateMost      = "What you'll hate most"
+	cardPlan          = "Differs from the plan"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
 
@@ -420,8 +422,8 @@ func (p cardPR) check() error {
 
 func (p cardPR) fields() []cardFact {
 	return []cardFact{
-		{cardStaging, p.Staging}, {cardStoredData, p.StoredData}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardImpact, p.Impact}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
-		{"Differs from the plan", p.Plan},
+		{cardStaging, p.Staging}, {cardStoredData, p.StoredData}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardImpact, p.Impact}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {cardHateMost, p.HateMost},
+		{cardPlan, p.Plan},
 	}
 }
 

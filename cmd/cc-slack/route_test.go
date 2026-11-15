@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -610,5 +611,32 @@ func TestEveryBotMessageOnAChannelWatchArrivesAsOneLine(t *testing.T) {
 				t.Fatalf("payload = %+v, want text %q and a permalink", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHisDMWithAScreenshotReachesTheSessionWithWhereTheScreenshotIsSaved(t *testing.T) {
+	l := startDaemon(t)
+	l.slack.serveFile(chart, []byte("\x89PNG"))
+	id := identity{TeamURL: "https://acme.slack.com/", UserID: testUser, DMChannelID: "D0OWNER"}
+	w := watch{ID: 7, SubjectID: l.subID, Owner: agent.TopLevel, Kind: kindDM, ChannelID: "D0OWNER", ThreadTS: "1800000000.000100"}
+	m := slack.Message{Msg: slack.Msg{Timestamp: "1800000000.000200", ThreadTimestamp: "1800000000.000100", User: testUser, Text: "this card is unreadable", Files: []slack.File{chart}}}
+
+	d, err := l.app.poller.messageDelivery(l.ctx, l.slack, id, w, m, driveMates{}, addressedToAgents)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got messagePayload
+	if err := json.Unmarshal(d.payload(eventMessage), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Files, []messageFile{chartFile()}) {
+		t.Fatalf("payload files = %+v, want chart.png saved", got.Files)
+	}
+	if saved, err := os.ReadFile(chartFile().Path); err != nil || string(saved) != "\x89PNG" {
+		t.Fatalf("saved %q, %v", saved, err)
+	}
+	if !strings.Contains(d.line, "It attaches "+chartFile().Path+": whoever acts on it opens each first.") {
+		t.Fatalf("line = %q, want it to name where the screenshot is saved", d.line)
 	}
 }
