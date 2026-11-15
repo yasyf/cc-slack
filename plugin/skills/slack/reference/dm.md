@@ -64,6 +64,13 @@ that needs nothing back gets a `+1` reaction on it and no reply, which also clea
 it from `dm-owed`. Reply in the thread only with what the user does not have: a
 condition, a correction, a time or release number, an answer, or a consequence.
 
+`cc-slack operator-channel <name>` creates a private channel as the user,
+through the user token, with the bot in it, and prints its id; `cc-slack whoami`
+lists each one as `operator_channels`. An operator channel works as the DM does:
+`cc-slack dm-status --channel <id>` posts cards and status there, the user's
+messages there are orders and owed until answered, and a session holds the
+channel with `slack_watch` on its id and no `thread_ts`.
+
 Pass `thread_ts` only for a short conversational answer in the thread the
 user replied in. An edit or delete of the agent's own message in this DM
 needs no second ask.

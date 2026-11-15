@@ -592,6 +592,7 @@ func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, ask
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
+	id = id.at(a.Channel)
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)
 		return nil
@@ -1304,6 +1305,7 @@ func (p *poller) reopenAnswer(ctx context.Context, id identity, card string) err
 	if err != nil {
 		return err
 	}
+	id = id.at(link.channelID)
 	ref, ok := p.cards.cardAt(link.channelID, link.ts)
 	if !ok || ref.channel != id.DMChannelID {
 		return fmt.Errorf("no card at %s in your DM", card)
@@ -1339,6 +1341,7 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 	if err != nil {
 		return err
 	}
+	id = id.at(cardLink.channelID)
 	ref, ok := p.cards.cardAt(cardLink.channelID, cardLink.ts)
 	if !ok || ref.channel != id.DMChannelID {
 		return fmt.Errorf("no card at %s in your DM", card)
@@ -1440,6 +1443,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	if err != nil {
 		return cardAnswerResult{}, err
 	}
+	id = id.at(link.channelID)
 	ref, ok := p.cards.cardAt(link.channelID, link.ts)
 	if !ok {
 		ref = cardRef{link.channelID, cmp.Or(link.threadTS, link.ts), link.ts}

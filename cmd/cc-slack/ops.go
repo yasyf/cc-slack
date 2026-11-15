@@ -57,6 +57,7 @@ const (
 	opFollows       daemon.Op = "follows"
 	opThreadSeen    daemon.Op = "thread-seen"
 	opDMStatus      daemon.Op = "dm-status"
+	opOperatorChan  daemon.Op = "operator-channel"
 	opCardAnswer    daemon.Op = "card-answer"
 	opCardReopen    daemon.Op = "card-reopen"
 	opDMRelay       daemon.Op = "dm-relay"
@@ -351,6 +352,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opFollows, a.handleFollows)
 	register(opThreadSeen, a.handleThreadSeen)
 	register(opDMStatus, a.handleDMStatus)
+	register(opOperatorChan, a.handleOperatorChannel)
 	register(opCardAnswer, a.handleCardAnswer)
 	register(opCardReopen, a.handleCardReopen)
 	register(opDMRelay, a.handleDMRelay)
@@ -2620,7 +2622,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 		b.Card.fill(b.Text)
 		b.Text = ""
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := operatorIdentity(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
@@ -2685,6 +2687,50 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	drawn := a.drawTapCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)
 	a.drawLinkedCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, linked)
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
+}
+
+func operatorIdentity(ctx context.Context, db *sql.DB, channelID string) (identity, error) {
+	id, err := loadIdentity(ctx, db)
+	if err != nil || channelID == "" {
+		return id, err
+	}
+	if at := id.at(channelID); at.DMChannelID == channelID {
+		return at, nil
+	}
+	return identity{}, fmt.Errorf("%s is not one of your operator channels; make one with cc-slack operator-channel <name>", channelID)
+}
+
+func (a *app) handleOperatorChannel(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	a.operators.Lock()
+	defer a.operators.Unlock()
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionChannel, err))
+	}
+	if i := slices.IndexFunc(id.OperatorChannels, func(c operatorChannel) bool { return c.Name == b.Name }); i >= 0 {
+		return ok(id.OperatorChannels[i])
+	}
+	user, err := a.userAPI(hc.Ctx, id)
+	if err != nil {
+		return fail(err.Error())
+	}
+	ch, err := user.CreateConversationContext(hc.Ctx, slack.CreateConversationParams{ChannelName: b.Name, IsPrivate: true})
+	if err != nil {
+		return fail(fmt.Sprintf("create the private channel #%s as you: %s", b.Name, errorCode(err)))
+	}
+	if _, err := user.InviteUsersToConversationContext(hc.Ctx, ch.ID, id.BotUserID); err != nil && errorCode(err) != "already_in_channel" {
+		return fail(fmt.Sprintf("made #%s (%s) but could not invite the bot: %s", b.Name, ch.ID, errorCode(err)))
+	}
+	made := operatorChannel{ID: ch.ID, Name: b.Name}
+	if err := storeJSON(operatorChannelsPath(), append(id.OperatorChannels, made)); err != nil {
+		return fail(fmt.Sprintf("made #%s (%s) but could not record it, so run operator-channel again only after adding it by hand: %v", b.Name, ch.ID, err))
+	}
+	a.poller.reconcileAll()
+	return ok(made)
 }
 
 func (a *app) dmPoster(hc daemon.HandlerCtx, id identity, b opBody) (subject.Subject, error) {

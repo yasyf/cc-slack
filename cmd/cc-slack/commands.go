@@ -962,6 +962,20 @@ func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func operatorChannelCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	c := &cobra.Command{
+		Use:   "operator-channel <name>",
+		Short: "Create a private channel as you with the bot in it, which cc-slack then treats as it treats your DM, and print its id",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			return runOp(c, d, f, opOperatorChan, map[string]any{"name": args[0]})
+		},
+	}
+	f.bind(c)
+	return c
+}
+
 func dmOwedCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{
@@ -1082,13 +1096,14 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		tapPRs    []string
 		key       string
 		answers   []string
+		channel   string
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs, "answers": answers}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs, "answers": answers, "channel_id": channel}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1114,6 +1129,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM when it works for --drive, so the user's replies under the post reach that session; else as this session")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. With no text, it only draws: the card is redrawn where it sits, or first posted under --thread. A link in the text or card draws none")
 	bindAnswers(c, &answers)
+	c.Flags().StringVar(&channel, "channel", "", "id of an operator channel from cc-slack operator-channel to post in, as in the DM; the DM when unset")
 	bindAgent(c, &agentName)
 	bindRequestKey(c, &key)
 	return c

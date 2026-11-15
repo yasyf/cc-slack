@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -731,5 +733,50 @@ func TestAReplyUnderACardCopyNamesTheCardItCopies(t *testing.T) {
 	got := payloads(t, f)
 	if len(got) != 1 || got[0].ThreadCard != "card-chat" {
 		t.Fatalf("delivered %+v, want the reply naming the card its thread copies", got)
+	}
+}
+
+func operatorChannelFor(t *testing.T, channelID string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(operatorChannelsPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeJSON(operatorChannelsPath(), []operatorChannel{{ID: channelID, Name: "durable-agents-platform"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHisRootMessageInAnOperatorChannelIsOwedAndReachesItsHolderAsAnOrder(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const platform, asked = "G0PLATFORM", "1800000001.500000"
+	operatorChannelFor(t, platform)
+	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, platform, "", beforeEveryPost, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	f.slack.add(platform, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platform, TS: asked})
+	f.tick()
+
+	if got := owedStamps(t, f); !slices.Equal(got, []string{asked}) {
+		t.Fatalf("owed %v, want his root message in the operator channel owed", got)
+	}
+	if got := payloads(t, f); len(got) != 1 || got[0].TS != asked || !got[0].Operator {
+		t.Fatalf("holder got %+v, want his message as an order", got)
+	}
+}
+
+func TestDMStatusPostsOnlyInAnOperatorChannel(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	operatorChannelFor(t, "G0PLATFORM")
+
+	at, err := operatorIdentity(f.ctx, f.db(), "G0PLATFORM")
+	if err != nil || at.DMChannelID != "G0PLATFORM" {
+		t.Fatalf("operator channel addressed as %q, %v; want G0PLATFORM", at.DMChannelID, err)
+	}
+	if _, err := operatorIdentity(f.ctx, f.db(), testChannel); err == nil {
+		t.Fatalf("dm-status --channel %s went through, want a channel that is not an operator channel refused", testChannel)
 	}
 }

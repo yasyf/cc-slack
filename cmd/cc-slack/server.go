@@ -42,10 +42,11 @@ type app struct {
 
 	channelState func(hc daemon.HandlerCtx, subjectID string) daemon.ChannelState
 
-	peers    sync.Map
-	channels sync.Map
-	owned    sync.Map
-	requests requestTurns
+	peers     sync.Map
+	channels  sync.Map
+	owned     sync.Map
+	requests  requestTurns
+	operators sync.Mutex
 }
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret

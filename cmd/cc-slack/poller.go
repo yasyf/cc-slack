@@ -231,6 +231,15 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 	p.mu.Unlock()
 }
 
+func (p *poller) reconcileOperators(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch) error {
+	for _, channelID := range id.operatorChannelIDs() {
+		if err := p.markReconciled(ctx, db, api, channelID, watches); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, watches []watch) error {
 	p.mark(cursorKey{dmChannelID, ""})
 	running, err := p.feeds.running(ctx)
@@ -338,7 +347,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	}
 	api := p.newAPI(id.Token)
 	if p.reconcile.Swap(false) {
-		if err := p.markReconciled(ctx, db, api, id.DMChannelID, watches); err != nil {
+		if err := p.reconcileOperators(ctx, db, api, id, watches); err != nil {
 			p.reconcile.Store(true)
 			return time.Time{}, err
 		}
@@ -365,7 +374,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 			continue
 		}
 		p.settle(g.key)
-		c, err = p.poll(ctx, db, api, id, g, c)
+		c, err = p.poll(ctx, db, api, id.at(g.key.channelID), g, c)
 		if err != nil {
 			p.mark(g.key)
 			return time.Time{}, err

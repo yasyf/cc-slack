@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,6 +52,33 @@ type identity struct {
 	FetchedAt    int64  `json:"fetched_at"`
 	Config       config `json:"config"`
 	Agent        string `json:"-"`
+
+	OperatorChannels []operatorChannel `json:"operator_channels"`
+}
+
+type operatorChannel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func operatorChannelsPath() string {
+	return filepath.Join(appPaths().StateDir(), "operator-channels.json")
+}
+
+func (id identity) at(channelID string) identity {
+	if slices.ContainsFunc(id.OperatorChannels, func(c operatorChannel) bool { return c.ID == channelID }) {
+		id.DMChannelID = channelID
+	}
+	return id
+}
+
+func (id identity) operatorChannelIDs() []string {
+	ids := make([]string, 0, 1+len(id.OperatorChannels))
+	ids = append(ids, id.DMChannelID)
+	for _, c := range id.OperatorChannels {
+		ids = append(ids, c.ID)
+	}
+	return ids
 }
 
 func (id identity) name() string {
@@ -222,6 +251,9 @@ func loadIdentity(ctx context.Context, db *sql.DB) (identity, error) {
 	}
 	if err := json.Unmarshal([]byte(cfg), &id.Config); err != nil {
 		return identity{}, fmt.Errorf("decode the identity's config: %w", err)
+	}
+	if id.OperatorChannels, _, err = loadJSON[[]operatorChannel](operatorChannelsPath()); err != nil {
+		return identity{}, fmt.Errorf("load operator channels: %w", err)
 	}
 	return id, nil
 }
