@@ -92,6 +92,7 @@ const (
 	cardSummary       = "Summary"
 	cardRefresher     = "Refresher"
 	cardSurprise      = "Biggest surprise"
+	cardStaging       = "Staging"
 	cardDefaultLands  = "you approve"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
 )
@@ -183,6 +184,7 @@ type cardPR struct {
 	Blocks      string   `json:"blocks"`
 	Lands       string   `json:"lands,omitempty"`
 	Description string   `json:"description,omitempty"`
+	Staging     string   `json:"staging,omitempty"`
 }
 
 type cardLink struct {
@@ -437,7 +439,7 @@ func (p cardPR) stands(v cardView) string {
 
 func (p cardPR) fields(v cardView) []cardFact {
 	return []cardFact{
-		{cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
+		{cardStaging, p.Staging}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
 		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
 	}
 }
@@ -932,7 +934,7 @@ func (c statusCard) visible(links linkDraw) statusCard {
 func (p cardPR) visible(shown func(string) string) cardPR {
 	p.Title, p.Changed, p.Review, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Review), shown(p.Surprise)
 	p.Plan, p.Refresher, p.Blocks, p.Lands = shown(p.Plan), shown(p.Refresher), shown(p.Blocks), shown(p.Lands)
-	p.ShowMe, p.HateMost, p.Port, p.Summary = shown(p.ShowMe), shown(p.HateMost), shown(p.Port), shown(p.Summary)
+	p.ShowMe, p.HateMost, p.Port, p.Summary, p.Staging = shown(p.ShowMe), shown(p.HateMost), shown(p.Port), shown(p.Summary), shown(p.Staging)
 	return p
 }
 
@@ -1387,6 +1389,9 @@ func (p cardPR) blocks(v cardView, answered bool) []slack.Block {
 func (p cardPR) settledLine(v cardView) string {
 	id, _ := parseRef(p.URL)
 	line := refLine(p.URL, "", id, v.refs[id.key()], p.Title)
+	if p.Staging != "" {
+		line += " · " + plainMrkdwn(p.Staging)
+	}
 	if why := p.waitsOn(); v.tapped == cardNoLongerWaits && why != "" {
 		line += "\n" + plainMrkdwn(why)
 	}

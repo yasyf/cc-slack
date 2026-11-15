@@ -116,9 +116,10 @@ func prLinksDaemon(t *testing.T, prLinks map[string]any, held ...string) (*liveD
 }
 
 const (
-	testDM    = "D" + testUser
-	testRoom  = "C0TEAMROOM"
-	testWaits = "merge:41:e718a74"
+	testDM      = "D" + testUser
+	testRoom    = "C0TEAMROOM"
+	testWaits   = "merge:41:e718a74"
+	testStaging = "Tested on staging: plat-usw2-staging at e718a74, passed, [proof](https://buildkite.com/acme/staging/builds/7)"
 )
 
 type cardCommand struct {
@@ -576,7 +577,7 @@ func TestAnOpenPRGetsItsMergeRowCardAtTheDMRootOnce(t *testing.T) {
 func TestAPRTapCardCarriesThePRsWorkObjectBesideItsButtons(t *testing.T) {
 	tap := providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Approve #41 at e718a74?",
-		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Surprise: "Chats load faster", Plan: "Nothing differed", Refresher: "One cache key", Blocks: "Your approval"}},
+		PRs:     []cardPR{{Staging: testStaging, URL: tapPR41[0], Title: "Fix the chat list", Surprise: "Chats load faster", Plan: "Nothing differed", Refresher: "One cache key", Blocks: "Your approval"}},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, tap)
@@ -646,7 +647,7 @@ func TestAPRAskedAgainAtANewHeadRedrawsItsCardInPlace(t *testing.T) {
 func changedTapCard(changed string) providedCard {
 	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Merge #41?",
-		PRs:     []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Changed: changed, Refresher: "Chats load from one cache", HateMost: "One more cache key"}},
+		PRs:     []cardPR{{Staging: testStaging, URL: tapPR41[0], Title: "Fix the chat list", Changed: changed, Refresher: "Chats load from one cache", HateMost: "One more cache key"}},
 		Options: []string{"Merge", "Hold"}, Recommended: "Merge", Waits: testWaits,
 	}}
 }
@@ -906,7 +907,7 @@ func assertBackInPlace(t *testing.T, l *liveDaemon, card fakePost, unreacted int
 func stackMemberCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 42, Card: statusCard{
 		Status: "needs_you", Title: "Fix: approve drop the old key?",
-		PRs:     []cardPR{{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Refresher: "The old key goes", HateMost: "Old builds lose their cache once"}},
+		PRs:     []cardPR{{Staging: testStaging, URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Refresher: "The old key goes", HateMost: "Old builds lose their cache once"}},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge:acme:app:42",
 	}}
 }
@@ -917,7 +918,7 @@ func fourPRStackCard() providedCard {
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge:acme:app:41-44",
 	}}
 	for n := 41; n <= 44; n++ {
-		card.Card.PRs = append(card.Card.PRs, cardPR{URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: fmt.Sprintf("cache key step %d", n), Head: "e718a74", Refresher: "One key for every chat", HateMost: "Old builds lose their cache once"})
+		card.Card.PRs = append(card.Card.PRs, cardPR{Staging: testStaging, URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", n), Title: fmt.Sprintf("cache key step %d", n), Head: "e718a74", Refresher: "One key for every chat", HateMost: "Old builds lose their cache once"})
 	}
 	return card
 }
@@ -1072,7 +1073,7 @@ func TestARecardKeepsTheNewestOfTwoOpenCardsForTheSamePRsAndMarksTheOlderReplace
 	member, stack := stackMemberCard(), fourPRStackCard()
 	first := member
 	first.Number, first.Card.Waits = 41, "merge:acme:app:41"
-	first.Card.PRs = []cardPR{{URL: "https://github.com/acme/app/pull/41", Title: "add the new key", Head: "e718a74", Refresher: "The new key comes", HateMost: "Old builds lose their cache once"}}
+	first.Card.PRs = []cardPR{{Staging: testStaging, URL: "https://github.com/acme/app/pull/41", Title: "add the new key", Head: "e718a74", Refresher: "The new key comes", HateMost: "Old builds lose their cache once"}}
 	cmd := fakeCardCommand(t, drivePRs, first)
 	l, _ := cardingDaemon(t, cmd.argv, drivePRs...)
 	answer := filepath.Join(filepath.Dir(cmd.argv[0]), "cards.json")
@@ -1512,7 +1513,7 @@ func TestRedrawPRCardsForOnePRRedrawsTheWaitingCardListingItOnce(t *testing.T) {
 	cmd, _ := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	listing := mergeCard()
-	listing.PRs = []cardPR{{URL: tapPR41[0], Surprise: "Chats load faster"}}
+	listing.PRs = []cardPR{{Staging: testStaging, URL: tapPR41[0], Surprise: "Chats load faster"}}
 	postWaiting(t, l, listing)
 	var redrawn map[string]int
 	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"pr": tapPR41[0]}).Body, &redrawn); err != nil || redrawn["redrawing"] != 1 {
@@ -1603,13 +1604,13 @@ func TestABareNumberLinksToTheDrivePRItNamesOrStaysPlain(t *testing.T) {
 
 func headRowCard() providedCard {
 	card := mergeRowCard()
-	card.Card.Refs, card.Card.PRs = nil, []cardPR{{URL: tapPR41[0], Head: "e718a74"}}
+	card.Card.Refs, card.Card.PRs = nil, []cardPR{{Staging: testStaging, URL: tapPR41[0], Head: "e718a74"}}
 	return card
 }
 
 func pickFor41(head string, options ...string) map[string]any {
 	return map[string]any{"card": statusCard{Status: "needs_you", Title: "Tap: #41", Body: "Fixes the chat list.", Options: options, Recommended: options[0], Waits: testPick,
-		PRs: []cardPR{{URL: tapPR41[0], Title: "Fix the chat list", Description: "Chats load faster.", Head: head}}}}
+		PRs: []cardPR{{Staging: testStaging, URL: tapPR41[0], Title: "Fix the chat list", Description: "Chats load faster.", Head: head}}}}
 }
 
 func postPick(t *testing.T, l *liveDaemon, body map[string]any) fakePost {
@@ -1890,7 +1891,7 @@ func TestAnOpenPickForThatPRAndHeadDrawsNoSecondCard(t *testing.T) {
 
 func TestAPickAskingAboutAPRDrawsNoButtonlessCardBesideIt(t *testing.T) {
 	held := heldRowCard()
-	held.Card.Refs, held.Card.PRs = nil, []cardPR{{URL: tapPR41[0], Head: "e718a74"}}
+	held.Card.Refs, held.Card.PRs = nil, []cardPR{{Staging: testStaging, URL: tapPR41[0], Head: "e718a74"}}
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, held)
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	pick := postPick(t, l, pickFor41("e718a74", "Merge", "Hold"))
@@ -2064,6 +2065,22 @@ func TestATapPostFailsWithTheReasonTheCardCommandSkippedItsPR(t *testing.T) {
 	l.refused(opDMStatus, map[string]any{"text": "Here it is.", "tap_prs": tapPR41}, tapPR41[0]+": its body has no What you'll hate most section")
 }
 
+func TestAPRCardStatesItsStagingResultFirstAndKeepsItOnceAnswered(t *testing.T) {
+	const staged = "Tested on staging: plat-usw2-staging at e718a74, passed"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	if at := strings.Index(card.blocks, "*Staging*\\n"+staged); at < 0 || at > strings.Index(card.blocks, "*Refresher*") {
+		t.Fatalf("PR card blocks = %s, want its staging result as the first field", card.blocks)
+	}
+	tapOption(t, l, card, 1)
+	eventually(t, "the answered card keeps its staging result", func() bool {
+		edits := editsOf(l.slack.edited(), card.ts)
+		return len(edits) > 0 && strings.Contains(edits[len(edits)-1], "✓ *Hold* · answered") && strings.Contains(edits[len(edits)-1], " · "+staged)
+	})
+}
+
 func cardLinks(l *liveDaemon, card fakePost) []fakePost {
 	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
 		return p.blocks != "" || p.unfurlLinks != "true" || !linksMessage(p.text, card.ts)
@@ -2152,8 +2169,8 @@ func stackCard() providedCard {
 	return providedCard{Repo: "acme/app", Number: 41, Card: statusCard{
 		Status: "needs_you", Title: "Fix: approve 2 PRs: one cache key · drop the old key?",
 		PRs: []cardPR{
-			{URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Surprise: "Chats load faster", Refresher: "One key for every chat"},
-			{URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Surprise: "Nothing you see", HateMost: "Old builds lose their cache once", Refresher: "The old key goes"},
+			{Staging: testStaging, URL: "https://github.com/acme/app/pull/41", Title: "one cache key", Head: "e718a74", Surprise: "Chats load faster", Refresher: "One key for every chat"},
+			{Staging: testStaging, URL: "https://github.com/acme/app/pull/42", Title: "drop the old key", Head: "5c1d2e3", Surprise: "Nothing you see", HateMost: "Old builds lose their cache once", Refresher: "The old key goes"},
 		},
 		Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
 	}}
