@@ -384,6 +384,28 @@ func TestAPRCardRedrawSlackRefusedIsDrawnAgainOnTheNextRefreshPass(t *testing.T)
 	}
 }
 
+func TestAPRCardRedrawAskingAgainUnderItsWaitsReopensATapMarkNoAnswerBacks(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	_, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 11, 15, 11, 3, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	const thread, ts = "1800000000.000100", "1800000000.000300"
+	card := statusCard{Status: "needs_you", Title: "Fix: approve the chat list?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits, PRs: []cardPR{{URL: testPRURL}}}
+	answered := &liveThread{Channel: "D" + testUser, Thread: thread, Updated: clock.now(), Answers: map[string]askAnswer{testWaits: {Label: "Approve"}}, PRCards: []*liveMessage{{TS: ts, At: clock.now(), Card: card, Tapped: "✓ *Approve* · answered 2:59am"}}}
+	cards.threads[threadKey("D"+testUser, thread)] = answered
+	ref := cardRef{"D" + testUser, thread, ts}
+
+	if err := cards.replacePRCard(l.ctx, l.slack, ref, card, false, clock.now()); err != nil || !strings.Contains(answered.PRCards[0].Tapped, "answered 2:59am") {
+		t.Fatalf("redraw of a card his recorded answer closes = %v, shows %q; want it kept answered", err, answered.PRCards[0].Tapped)
+	}
+	delete(answered.Answers, testWaits)
+	if err := cards.replacePRCard(l.ctx, l.slack, ref, card, false, clock.now()); err != nil || answered.PRCards[0].Tapped != "" || !answered.open(answered.PRCards[0]) {
+		t.Fatalf("redraw asking again once his answer is released = %v, shows %q; want it open with its buttons", err, answered.PRCards[0].Tapped)
+	}
+}
+
 func TestARefusedGitHubReadKeepsTheCardsLastStateAndBacksOff(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)

@@ -1996,13 +1996,14 @@ func (l *liveCards) replacePRCard(ctx context.Context, api slackAPI, card cardRe
 		delete(t.Answers, m.Card.Waits)
 		m.Tapped = ""
 	}
+	_, answered := t.Answers[m.Card.Waits]
 	switch {
 	case drawn.Waits == "":
 		drawn.Waits, drawn.Options, drawn.Recommended = m.Card.Waits, m.Card.Options, m.Card.Recommended
 		if t.asks(m) {
 			m.Tapped = cardNoLongerWaits
 		}
-	case m.Tapped == cardNoLongerWaits || drawn.Waits != m.Card.Waits:
+	case !answered || drawn.Waits != m.Card.Waits:
 		m.Tapped = ""
 	}
 	m.Card, m.Final, m.Edited = drawn, drawn.Waits == "", false
