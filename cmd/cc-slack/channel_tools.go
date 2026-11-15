@@ -177,7 +177,6 @@ var (
 		},
 	}
 	tapPRsProp   = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "PR URLs that each get a tap card"}
-	answersProp  = map[string]any{"type": "array"}
 	toolSpecList = []toolSpec{
 		{
 			name:        "slack_send",
@@ -194,7 +193,7 @@ var (
 			op:          opReply, failure: actionWrite,
 			properties: map[string]any{
 				"channel_id": channelProp, "thread_ts": threadProp, "text": textProp, "url": urlProp, "files": filesProp, "blocks": blocksProp,
-				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp, "answers": answersProp,
+				"broadcast": broadcastProp, "no_watch": noWatchProp, "agent": agentProp, "tap_prs": tapPRsProp,
 			},
 		},
 		{
@@ -431,7 +430,6 @@ var (
 				"root_only": map[string]any{"type": "boolean", "description": "redraw this session's root card"},
 				"about":     map[string]any{"type": "string", "pattern": askIDPattern.String(), "description": "waits id this reply is about"},
 				"tap_prs":   tapPRsProp,
-				"answers":   answersProp,
 				"agent":     agentProp,
 			},
 		},

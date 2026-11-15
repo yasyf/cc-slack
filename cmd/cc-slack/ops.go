@@ -135,7 +135,6 @@ type opBody struct {
 	About     string   `json:"about"`
 	Drive     string   `json:"drive"`
 	AsHolder  bool     `json:"as_holder"`
-	Answers   []string `json:"answers"`
 	TapPRs    []string `json:"tap_prs"`
 	PR        string   `json:"pr"`
 	Stored    bool     `json:"stored"`
@@ -729,7 +728,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
 		res.PagePermalink = strings.Join(shown, " ")
-		a.answered(hc.Ctx, b.Answers)
+		a.answered(hc.Ctx, id, res.ChannelID, b.ThreadTS, res.TS)
 		drawn := a.drawTapCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, b.TapPRs)
 		a.drawLinkedCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, append(linked, ready...))
 		res.CardTS, res.CardPermalink = drawn.named(id)
@@ -775,6 +774,7 @@ func (a *app) failedPost(hc daemon.HandlerCtx, subjectID string, id identity, b 
 	postRecorder(hc.Ctx, hc.DB, a.poller.log)(ch, ts)
 	res := postResult{ChannelID: ch, TS: ts, ThreadTS: cmp.Or(b.ThreadTS, ts), Permalink: id.permalink(ch, ts, b.ThreadTS), TicketID: ticket.ID, Posted: true, AsUser: true}
 	a.wrote(hc.Ctx, res.ChannelID, res.ThreadTS)
+	a.answered(hc.Ctx, id, ch, b.ThreadTS, ts)
 	if ticket.once() {
 		if err := a.saveReceipt(hc.Ctx, hc.DB, receipt{TicketID: ticket.ID, ChannelID: ch, TS: ts, Permalink: res.Permalink}); err != nil {
 			return fail(fmt.Sprintf("posted %s as you but could not record its receipt, so do not resend: %v", res.Permalink, err))
@@ -926,9 +926,12 @@ func (a *app) send(ctx context.Context, db *sql.DB, id identity, channelID, thre
 	return res, err
 }
 
-func (a *app) answered(ctx context.Context, answers []string) {
-	if err := a.owed.answerAll(ctx, answers); err != nil {
-		notePostWarning(ctx, fmt.Sprintf("the post went out, but the replies it answers are still owed: %v", err))
+func (a *app) answered(ctx context.Context, id identity, channelID, threadTS, ts string) {
+	if threadTS == "" || !slices.Contains(id.operatorChannelIDs(), channelID) {
+		return
+	}
+	if err := a.owed.answeredIn(ctx, threadTS, ts); err != nil {
+		notePostWarning(ctx, fmt.Sprintf("the post went out, but the replies above it in its thread are still owed: %v", err))
 	}
 }
 
@@ -2704,7 +2707,9 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
-	a.answered(hc.Ctx, b.Answers)
+	if posted && !b.AsHolder {
+		a.answered(hc.Ctx, id, id.DMChannelID, thread, ts)
+	}
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
 	drawn := a.drawTapCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, b.TapPRs)

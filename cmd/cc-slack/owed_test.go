@@ -394,39 +394,43 @@ func TestADMRootReadAgainInItsThreadIsNotOwedAgain(t *testing.T) {
 	}
 }
 
-func TestOnlyAPostMarkedAsAnsweringClearsAnOwedReply(t *testing.T) {
-	f := newFixture(t)
-	first, second := postDMThread(t, f), postDMThread(t, f)
-	f.tick()
-	ownerReplies(f, first, "1800000002.100000", "A")
-	ownerReplies(f, second, "1800000002.200000", "do the   B thing")
-	ownerReplies(f, second, "1800000002.300000", "C")
-
-	if _, err := f.app.post(f.ctx, f.db(), f.id, f.id.DMChannelID, first, linkedPage{text: "On it."}, nil, false); err != nil {
-		t.Fatal(err)
+func TestAPostInAThreadAnswersEveryReplyAboveItThereAndAPostAsTheHolderAnswersNone(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	thread, other := postThread(t, l, "which one?"), postThread(t, l, "and this?")
+	const above, elsewhere, later = "1800000001.500000", "1800000002.500000", "1900000000.000000"
+	for _, r := range []owedReply{{ThreadTS: thread, TS: above, Text: "A"}, {ThreadTS: other, TS: elsewhere, Text: "B"}, {ThreadTS: thread, TS: later, Text: "C"}} {
+		if err := l.app.owed.owe(l.ctx, r); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := owedStamps(t, f); len(got) != 3 {
-		t.Fatalf("owed %v, want an ack to answer nothing", got)
+	owed := func() []string {
+		t.Helper()
+		replies, err := l.app.owed.list(l.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stamps := make([]string, 0, len(replies))
+		for _, r := range replies {
+			stamps = append(stamps, r.TS)
+		}
+		return stamps
 	}
 
-	if err := f.app.owed.answerAll(f.ctx, []string{f.id.permalink(f.id.DMChannelID, "1800000002.100000", first), "do the B thing"}); err != nil {
-		t.Fatal(err)
+	postThread(t, l, "an unrelated card")
+	l.do(opDMStatus, map[string]any{"thread_ts": thread, "text": "On it: A.", "drive": "demo", "as_holder": true})
+	if got := owed(); !slices.Equal(got, []string{above, elsewhere, later}) {
+		t.Fatalf("owed %v after a root post and a post as the holder, want every reply still owed", got)
 	}
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000002.300000"}) {
-		t.Fatalf("owed %v, want only the reply no answer named", got)
+
+	l.do(opDMStatus, map[string]any{"thread_ts": thread, "text": "A is applied."})
+	if got := owed(); !slices.Equal(got, []string{elsewhere, later}) {
+		t.Fatalf("owed %v, want the answer to clear only the reply above it in its own thread", got)
 	}
-}
 
-func TestAPostAtTheDMRootAnswersNoThread(t *testing.T) {
-	f := newFixture(t)
-	thread := postDMThread(t, f)
-	f.tick()
-	ownerReplies(f, thread, "1800000001.500000", "A")
-
-	postDMThread(t, f)
-
-	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000001.500000"}) {
-		t.Fatalf("owed %v, want the reply still owed after an unrelated card", got)
+	l.post(opReply, map[string]any{"channel_id": testUser, "thread_ts": other, "text": "B is applied."})
+	if got := owed(); !slices.Equal(got, []string{later}) {
+		t.Fatalf("owed %v, want a reply in the other thread to answer B and the reply written after every post still owed", got)
 	}
 }
 

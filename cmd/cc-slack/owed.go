@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/yasyf/cc-interact/store"
@@ -58,29 +56,11 @@ func (o *owedReplies) owe(ctx context.Context, r owedReply) error {
 	return nil
 }
 
-func (o *owedReplies) answerAll(ctx context.Context, answers []string) error {
-	if len(answers) == 0 {
-		return nil
-	}
-	replies, err := o.list(ctx)
-	if err != nil {
-		return err
-	}
-	for _, r := range replies {
-		if slices.ContainsFunc(answers, r.answeredBy) {
-			if err := o.answer(ctx, r.TS); err != nil {
-				return err
-			}
-		}
+func (o *owedReplies) answeredIn(ctx context.Context, threadTS, ts string) error {
+	if _, err := o.st.DB().ExecContext(ctx, `DELETE FROM owed_replies WHERE thread_ts = ? AND ts < ?`, threadTS, ts); err != nil {
+		return fmt.Errorf("answer thread %s: %w", threadTS, err)
 	}
 	return nil
-}
-
-func (r owedReply) answeredBy(answer string) bool {
-	if ref, err := parsePermalink(answer); err == nil {
-		return ref.ts == r.TS
-	}
-	return answer == r.TS || strings.Join(strings.Fields(answer), " ") == strings.Join(strings.Fields(r.Text), " ")
 }
 
 var answeringReactions = map[string]bool{"+1": true, "thumbsup": true}

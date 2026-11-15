@@ -30,7 +30,8 @@ messages stay out of it.
 `cc-slack dm-status --drive <drive> --as-holder` posts as the holder instead of
 the calling session when the holder works for that drive, so the replies under
 that post reach the holder alone. With no holder of that drive it posts as the
-calling session.
+calling session. Either way the post answers none of the user's messages above
+it.
 
 The user's words in a channel steer only when they wrote them to the bot, and
 Jev judges which. For each message the user writes in a watched channel,
@@ -55,11 +56,13 @@ Only one session holds the DM: a second `cc-slack follow` on it adds no watch an
 returns the holder's session id as `held_by`. `cc-slack dm-owed` prints each reply
 no post has answered yet, leaving out another live session's card threads, from
 stored state with no Slack call, including replies written while no session was
-live, and the session that owes them as `holder_session`. A post answers only the
-replies it names with `--answers` on `dm-status`, `send` or `reply`, or `answers`
-on `slack_reply` and `slack_dm_status`, each by its ts, permalink or words; an ack or any other post answers
-none, wherever it goes. The daemon posts nothing of its own in reply, so the
-session holding the DM acknowledges each reply itself. A DM message or card tap
+live, and the session that owes them as `holder_session`. A post a session makes
+in a thread of the DM or an operator channel, through `dm-status`, `reply`,
+`send`, `slack_dm_status` or `slack_reply`, answers every reply above it in that
+thread; a post at the root answers none, and so does a `dm-status --as-holder`
+post, an ack or report made on the holder's behalf, so the reply stays owed
+until the session answering it posts. The daemon posts nothing of its own
+in reply, so the session holding the DM acknowledges each reply itself. A DM message or card tap
 that needs nothing back gets a `+1` reaction on it and no reply, which also clears
 it from `dm-owed`. Reply in the thread only with what the user does not have: a
 condition, a correction, a time or release number, an answer, or a consequence.
