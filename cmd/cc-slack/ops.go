@@ -198,6 +198,7 @@ type readMessage struct {
 	FromBot     bool            `json:"from_bot,omitempty"`
 	Dashboard   bool            `json:"dashboard,omitempty"`
 	Text        string          `json:"text"`
+	Answer      string          `json:"answer,omitempty"`
 	Permalink   string          `json:"permalink,omitempty"`
 	ReplyCount  int             `json:"reply_count,omitempty"`
 	LatestReply string          `json:"latest_reply,omitempty"`
@@ -1442,12 +1443,14 @@ func (a *app) readThread(ctx context.Context, id identity, b opBody, limit int) 
 			return threadResult{}, err
 		}
 	}
+	answers := a.cards.answersIn(channelID)
 	out := make([]readMessage, 0, len(msgs))
 	for _, m := range msgs {
 		msg, err := a.readMessageOf(ctx, reads, api, id, m, raw[m.Timestamp])
 		if err != nil {
 			return threadResult{}, err
 		}
+		msg.Answer = answers[m.Timestamp]
 		out = append(out, msg)
 	}
 	return threadResult{ChannelID: channelID, ThreadTS: b.ThreadTS, Messages: out, Truncated: truncated}, nil

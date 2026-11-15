@@ -121,6 +121,36 @@ func TestDriveCardsKeepEveryClosedCardWithWhatClosedIt(t *testing.T) {
 	}
 }
 
+func TestAThreadReadCarriesHisAnswerOnACard(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	answered := mergeCard()
+	answered.Drive = "brook"
+	a := postWaiting(t, l, answered)
+	answerOnBoard(t, l, a, "Hold")
+	withdrawn := mergeCard()
+	withdrawn.Drive, withdrawn.Waits, withdrawn.Title = "brook", "step-4:cache", "Grow the cache disk?"
+	w := postWaiting(t, l, withdrawn)
+	l.do(opCardAnswer, map[string]any{"waits": withdrawn.Waits, "url": w.url(), "label": "his order replaced it", "withdrawn": true, "via": w.url()})
+	open := mergeCard()
+	open.Drive, open.Waits, open.Title = "brook", "step-5:deploy", "Deploy before the freeze?"
+	o := postWaiting(t, l, open)
+
+	for _, c := range []struct {
+		card postedCard
+		want string
+	}{{a, "Hold"}, {w, ""}, {o, ""}} {
+		var read threadResult
+		if err := json.Unmarshal(l.do(opThread, map[string]any{"url": c.card.url()}).Body, &read); err != nil {
+			t.Fatal(err)
+		}
+		at := slices.IndexFunc(read.Messages, func(m readMessage) bool { return m.TS == c.card.ts })
+		if at < 0 || read.Messages[at].Answer != c.want {
+			t.Fatalf("thread at %s = %+v, want the card with answer %q", c.card.url(), read.Messages, c.want)
+		}
+	}
+}
+
 func TestAFollowUpAskedUnderTheOpenCardsIDLeavesOneCardOpen(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

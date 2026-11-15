@@ -530,6 +530,26 @@ func (l *liveCards) cardAt(channel, ts string) (cardRef, bool) {
 	return l.storedCard(channel, ts)
 }
 
+func (l *liveCards) answersIn(channel string) map[string]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	answers := map[string]string{}
+	for _, t := range l.threads {
+		if t.Channel != channel {
+			continue
+		}
+		for _, m := range t.messages() {
+			if m == nil || m.Card.Waits == "" {
+				continue
+			}
+			if ans, done := t.Answers[m.Card.Waits]; done && !ans.Withdrawn {
+				answers[m.TS] = ans.Label
+			}
+		}
+	}
+	return answers
+}
+
 func (l *liveCards) titleOf(channel, ts string) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
