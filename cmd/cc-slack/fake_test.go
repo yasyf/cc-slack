@@ -80,6 +80,7 @@ type fakeSlack struct {
 	edits     []fakeEdit
 	deletes   []fakeEdit
 	reactions []fakeEdit
+	pins      []slack.ItemRef
 	statuses  []slack.AssistantThreadsSetStatusParameters
 	streams   []url.Values
 	sequence  []string
@@ -430,6 +431,25 @@ func (f *fakeSlack) AddReactionContext(_ context.Context, name string, item slac
 	}
 	f.reactions = append(f.reactions, fakeEdit{channelID: item.Channel, ts: item.Timestamp, text: name})
 	return nil
+}
+
+func (f *fakeSlack) AddPinContext(_ context.Context, _ string, item slack.ItemRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("pins.add"); err != nil {
+		return err
+	}
+	if slices.Contains(f.pins, item) {
+		return slack.SlackErrorResponse{Err: "already_pinned"}
+	}
+	f.pins = append(f.pins, item)
+	return nil
+}
+
+func (f *fakeSlack) pinned() []slack.ItemRef {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.pins)
 }
 
 func (f *fakeSlack) reactedTo(ts string) []string {

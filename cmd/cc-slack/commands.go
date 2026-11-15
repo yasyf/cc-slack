@@ -661,6 +661,21 @@ func reactionCmd(d cmd.Deps, use, short string, op daemon.Op) *cobra.Command {
 	return c
 }
 
+func pinCmd(d cmd.Deps) *cobra.Command {
+	var f messageFlags
+	c := &cobra.Command{
+		Use:   "pin",
+		Short: "Pin a Slack message to its conversation as the bot, answering ok when it is already pinned",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f.sessionFlags, opPin, f.body())
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&f.ts, "ts", "", "message ts")
+	return c
+}
+
 func threadCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var limit int

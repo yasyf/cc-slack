@@ -1291,6 +1291,23 @@ func TestPostAndReactJoinAPublicChannelAndRetryOnce(t *testing.T) {
 	}
 }
 
+func TestPinPinsAMessageOnceAndAnswersOkWhenItIsAlreadyPinned(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+
+	var sent postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]string{"channel_id": testChannel, "text": "Waiting on you"}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	l.do(opPin, map[string]string{"url": sent.Permalink})
+	l.do(opPin, map[string]string{"channel_id": testChannel, "ts": sent.TS})
+	if pins := l.slack.pinned(); len(pins) != 1 || pins[0] != slack.NewRefToMessage(testChannel, sent.TS) {
+		t.Fatalf("pins = %+v, want %s pinned once in %s", pins, sent.TS, testChannel)
+	}
+	l.slack.fail("pins.add", slack.SlackErrorResponse{Err: "not_in_channel"})
+	l.refused(opPin, map[string]string{"channel_id": testChannel, "ts": sent.TS}, "can't pin here (not_in_channel)")
+}
+
 func TestPostToAHiddenPrivateChannelRefusesWithoutAnAsk(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

@@ -38,6 +38,7 @@ const (
 	opReply         daemon.Op = "reply"
 	opReact         daemon.Op = "react"
 	opUnreact       daemon.Op = "unreact"
+	opPin           daemon.Op = "pin"
 	opPickup        daemon.Op = "pickup"
 	opStream        daemon.Op = "stream"
 	opEdit          daemon.Op = "edit"
@@ -331,6 +332,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opReply, a.handlePost(true))
 	register(opReact, a.handleReaction(actionReact, "already_reacted", slackAPI.AddReactionContext))
 	register(opUnreact, a.handleReaction(actionUnreact, "no_reaction", slackAPI.RemoveReactionContext))
+	register(opPin, a.handlePin)
 	register(opPickup, a.handlePickup)
 	register(opStream, a.handleStream)
 	register(opEdit, a.handleEdit)
@@ -1404,6 +1406,29 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 		}
 		return ok(map[string]bool{"ok": true})
 	}
+}
+
+func (a *app) handlePin(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if b.ChannelID == "" || b.TS == "" {
+		return fail("pin needs channel_id and ts (or a Slack url)")
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(fallback(actionPin, err))
+	}
+	api := a.newAPI(id.Token)
+	channelID, err := conversationID(hc.Ctx, api, id, b.ChannelID)
+	if err != nil {
+		return fail(fallback(actionPin, err))
+	}
+	if err := api.AddPinContext(hc.Ctx, channelID, slack.NewRefToMessage(channelID, b.TS)); err != nil && errorCode(err) != "already_pinned" {
+		return fail(fallback(actionPin, err))
+	}
+	return ok(map[string]bool{"ok": true})
 }
 
 func (a *app) handleThread(hc daemon.HandlerCtx) daemon.Reply {

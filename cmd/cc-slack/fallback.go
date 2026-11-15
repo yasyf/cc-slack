@@ -17,6 +17,7 @@ const (
 	actionRead
 	actionReact
 	actionUnreact
+	actionPin
 	actionEdit
 	actionDelete
 	actionWatch
@@ -95,6 +96,8 @@ func fallback(a action, err error) string {
 		return fmt.Sprintf("cc-slack can't react here (%s)", code)
 	case actionUnreact:
 		return fmt.Sprintf("cc-slack can't remove a reaction here (%s)", code)
+	case actionPin:
+		return fmt.Sprintf("cc-slack can't pin here (%s)", code)
 	case actionWatch:
 		return fmt.Sprintf("cc-slack can't watch this conversation (%s): the bot watches only conversations it is a member of, "+
 			"so invite it there, or read it once with slack_thread or slack_history, which read it as you with [oauth] client_id set", code)
