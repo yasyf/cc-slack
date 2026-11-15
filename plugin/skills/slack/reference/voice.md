@@ -16,7 +16,9 @@ order.
    plugin's checker, which a bare `check-post` on an older session's PATH may
    not reach. Fix every line it prints; it exits 1 on a finding. It flags raw commit
    shas, but not a hex run joined to a longer id such as a UUID or a
-   `term_` handle, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, ULIDs, bare `#N`
+   `term_` handle, `G`/`R`/`L` ids, `brw_`/`run_`/`exec_`/`ctx_` ids, but not a
+   table, column or label with no digit after that prefix, such as the
+   `run_claims` table, ULIDs, bare `#N`
    and build or PR numbers, bare URLs other than a Sentry issue or Datadog
    monitor, incident, or event link, which stay bare so Slack unfurls them,
    a Slack message link included, which draws an open card under words that

@@ -77,7 +77,7 @@ RULES = (
     ),
     Rule(
         "internal-id",
-        re.compile(r"\b(?:brw|run|exec|ctx)_[A-Za-z0-9]+"),
+        re.compile(r"\b(?:brw|run|exec|ctx)_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+(?!\w)"),
         "link the run or browser page, or describe it in the reader's terms",
         reads_labels=True,
         passes=his_ids,

@@ -179,6 +179,16 @@ class CheckPostTest(unittest.TestCase):
             with self.subTest(asked=asked):
                 self.assertEqual([(finding.kind, finding.token) for finding in check_post.check(row, asked)], [("internal-id", run), ("internal-id", "ctx_9f2")])
 
+    def test_flags_a_run_id_but_not_a_table_column_or_label_named_like_one(self) -> None:
+        text = (
+            "Should 0002_run_claims_chain_journal, adding two run_claims columns, mark itself readable so a staging restore works? "
+            "The runner of run_01hzx3k8m2q4r6t8v0w2y4a6c8 holds its run_claims row, `exec_failed` counts each refused write "
+            "to run_v2_claims, and ctx_timeout ends brw_7k2."
+        )
+        self.assertEqual(kinds(text), [("internal-id", "run_01hzx3k8m2q4r6t8v0w2y4a6c8"), ("internal-id", "brw_7k2")])
+        linked = text.replace("run_01hzx3k8m2q4r6t8v0w2y4a6c8", "<https://acme.example/runs/run_01hzx3k8m2q4r6t8v0w2y4a6c8|the stuck run>")
+        self.assertEqual(kinds(linked.replace("brw_7k2", "<https://acme.example/browsers/brw_7k2|its browser>")), [])
+
     def test_ignores_letters_inside_words_and_names(self) -> None:
         text = "I asked Walker about the U.S. region, C++ builds, Q&A notes, and a T-shirt; S3 and E2E are fine."
         self.assertEqual(kinds(text), [])
