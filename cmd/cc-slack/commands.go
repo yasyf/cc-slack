@@ -934,18 +934,19 @@ func redrawPRCardsCmd(d cmd.Deps) *cobra.Command {
 
 func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
-	var pr, reason string
+	var pr, reason, via string
 	c := &cobra.Command{
 		Use:   "withdraw-pr-card",
-		Short: "Withdraw every open tap card that carries a pull request, a stack's included, in place: Withdrawn and the reason replace its buttons, and a late tap records nothing",
+		Short: "Withdraw every open tap card that carries a pull request, a stack's included, in place: Withdrawn and the reason replace its buttons, and a late tap records nothing; a card already withdrawn under another reason is redrawn in place with this one",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opWithdrawPRCard, map[string]any{"pr": pr, "reason": reason})
+			return runOp(c, d, f, opWithdrawPRCard, map[string]any{"pr": pr, "reason": reason, "via": via})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&pr, "pr", "", "pull request URL: every open card carrying it is withdrawn")
 	c.Flags().StringVar(&reason, "reason", "", "why the card no longer stands, shown on it after Withdrawn")
+	c.Flags().StringVar(&via, "via", "", "permalink of the user's message the reason quotes, which the reason links to")
 	_ = c.MarkFlagRequired("pr")
 	_ = c.MarkFlagRequired("reason")
 	return c

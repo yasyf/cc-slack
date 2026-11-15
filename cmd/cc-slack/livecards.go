@@ -1867,6 +1867,37 @@ func (l *liveCards) openPRCards(pr refID) []offeredCard {
 	return open
 }
 
+type withdrawnCard struct {
+	ref    cardRef
+	waits  string
+	reason string
+	tapped string
+}
+
+func (l *liveCards) withdrawnPRCards(pr refID) []withdrawnCard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var withdrawn []withdrawnCard
+	for _, t := range l.threads {
+		for _, m := range t.PRCards {
+			if t.withdrawn(m) && m.cites(map[string]bool{pr.key(): true}) {
+				withdrawn = append(withdrawn, withdrawnCard{cardRef{t.Channel, t.Thread, m.TS}, m.Card.Waits, t.Answers[m.Card.Waits].Label, m.Tapped})
+			}
+		}
+	}
+	return withdrawn
+}
+
+func (l *liveCards) rewithdrawn(r cardRef, askID, reason string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.threads[threadKey(r.channel, r.thread)]
+	ans := t.Answers[askID]
+	ans.Label, ans.At = reason, at
+	t.Answers[askID] = ans
+	l.save([]string{threadKey(r.channel, r.thread)}, nil)
+}
+
 // uncarded lists the PRs in waiting that none of the cards carries.
 func (l *liveCards) uncarded(cards []cardRef, waiting []refID) []refID {
 	l.mu.Lock()

@@ -805,6 +805,49 @@ func TestARedrawForItsPRBringsAWithdrawnCardBackInPlaceOnlyUnderTheWaitsIDItWasW
 	assertBackInPlace(t, l, card, unreacted)
 }
 
+func TestAPRCardWithdrawnUnderAnotherReasonIsRedrawnInPlaceWithTheNewReasonLinkedToHisWords(t *testing.T) {
+	const first, second = "Being reworked to your words: Capture is a notion we should still richly use", "Being reworked to your words: Locate by llm we don't want"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := rootCards(awaitPRCards(t, l, testDM))[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := id.permalink(testDM, "1800000009.000100", "")
+	withdraw := func(reason, via string) []string {
+		var res struct{ Withdrawn []string }
+		if err := json.Unmarshal(l.do(opWithdrawPRCard, map[string]any{"pr": tapPR41[0], "reason": reason, "via": via}).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.Withdrawn
+	}
+	withdraw(first, "")
+
+	if got := withdraw(second, said); len(got) != 1 || !strings.Contains(got[0], strings.ReplaceAll(card.ts, ".", "")) {
+		t.Fatalf("withdrawn = %v, want the card withdrawn under the first reason", got)
+	}
+	edits := editsOf(l.slack.edited(), card.ts)
+	last := edits[len(edits)-1]
+	if !strings.Contains(last, `*Withdrawn:* \u003c`+said+"|"+mrkdwnEscapes.Replace(second)+`\u003e`) || strings.Contains(last, "Capture") || strings.Contains(last, "what replaced it") {
+		t.Fatalf("card = %s, want the new reason linked to his words in place of the first", last)
+	}
+	if got := rootCards(prCards(l, testDM)); len(got) != 1 {
+		t.Fatalf("PR cards at the DM root = %+v, want the one card redrawn in place", got)
+	}
+	if got := withdraw(second, said); len(got) != 0 || len(editsOf(l.slack.edited(), card.ts)) != len(edits) {
+		t.Fatalf("withdrawn again = %v, want the card left as drawn", got)
+	}
+	var listed driveCardsResult
+	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.PRCards) != 0 || len(listed.Closed) != 1 || listed.Closed[0].Answer == nil || listed.Closed[0].Answer.Label != second || !listed.Closed[0].Answer.Withdrawn {
+		t.Fatalf("drive-cards = %+v, want the card closed, withdrawn under the second reason", listed)
+	}
+}
+
 func TestAWithdrawnPRCardDrawnAgainSayingWhatChangedAsksOnAFreshCardAndMarksTheWithdrawnOneReplaced(t *testing.T) {
 	const reworked = "Reworked to your words: topology moves to the session meta table"
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, changedTapCard(""))

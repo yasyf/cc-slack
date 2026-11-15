@@ -94,7 +94,9 @@ with other PRs: their one card is posted and each older card of theirs says it
 was replaced. When a PR no longer waits on the user's tap,
 `slack_withdraw_pr_card(pr, reason)` takes down every open card carrying it, a
 stack's included, in place: Withdrawn and the reason replace its buttons, and a
-late tap records nothing. A tap on it,
+late tap records nothing; `cc-slack withdraw-pr-card --via` links the reason to
+the permalink of the user's words it quotes. A card on that PR already withdrawn
+under another reason is redrawn in place with this one. A tap on it,
 or on a pick card whose `prs` names that one PR at that head with the same
 answers, closes every other such card and counts once. A tap on a waiting card
 whose `prs` names a PR, with no PR card for it, also goes to the card command,

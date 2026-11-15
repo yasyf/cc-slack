@@ -145,6 +145,7 @@ type waitsAnswer struct {
 	records   bool
 	settled   bool
 	withdrawn bool
+	quotes    bool
 }
 
 var (
@@ -1072,7 +1073,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 }
 
 func (p *poller) withdrawWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
-	line := withdrawnLine(w.tap.Label, w.via, w.card.ts, clock(w.at, p.now()))
+	line := withdrawnLine(w.tap.Label, w.via, w.card.ts, clock(w.at, p.now()), w.quotes)
 	if err := p.tapDrawn(w.card, w.at, p.markAnswer(ctx, id, w.card, w.tap.ID, line)); err != nil {
 		p.cards.release(w.card.channel, w.card.thread, w.tap.ID)
 		return cardAnswerResult{}, err
@@ -1089,12 +1090,12 @@ func (p *poller) redrawWithdrawn(ctx context.Context, id identity, r cardRef, la
 	return cardAnswerResult{Answered: true, Label: label, Other: true, At: at}, nil
 }
 
-func withdrawnLine(reason, via, card, at string) string {
+func withdrawnLine(reason, via, card, at string, quotes bool) string {
 	shown := clipRunes(mrkdwnEscapes.Replace(reason), cardMaxReasonLen)
 	switch ref, err := parsePermalink(via); {
 	case via == "" || err == nil && ref.ts == card:
 		return "*Withdrawn:* " + shown + " · " + at
-	case err == nil && ref.ts != "":
+	case err == nil && ref.ts != "" && !quotes:
 		return "*Replaced:* " + shown + " · " + at + " · " + slackLink(via, "what replaced it")
 	}
 	return "*Withdrawn:* " + slackLink(via, clipRunes(reason, cardMaxReasonLen)) + " · " + at
@@ -1102,7 +1103,7 @@ func withdrawnLine(reason, via, card, at string) string {
 
 func withdrawnAgain(drawn, reason, via, card string) (string, bool) {
 	at, unlinked := strings.CutPrefix(drawn, "*Withdrawn:* "+clipRunes(mrkdwnEscapes.Replace(reason), cardMaxReasonLen)+" · ")
-	line := withdrawnLine(reason, via, card, at)
+	line := withdrawnLine(reason, via, card, at, false)
 	return line, unlinked && line != drawn
 }
 
@@ -1413,7 +1414,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 		case withdrawn && m.Tapped != "":
 			return cardAnswerResult{}, fmt.Errorf("PR card %s no longer waits on a tap: it shows %q", card, m.Tapped)
 		case withdrawn:
-			return p.withdrawPRCard(ctx, id, offeredCard{ref: cardRef{id.DMChannelID, thread, m.TS}, waits: waits, question: m.Card.Title}, label, via)
+			return p.withdrawPRCard(ctx, id, offeredCard{ref: cardRef{id.DMChannelID, thread, m.TS}, waits: waits, question: m.Card.Title}, label, via, false)
 		case !other && !settled:
 			return p.answerPRCardElsewhere(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, waits, m, label, via, name)
 		}
@@ -1533,11 +1534,11 @@ func (w waitsAnswer) undoUntil() time.Time {
 	return w.at.Add(cardUndoWindow)
 }
 
-func (p *poller) withdrawPRCards(ctx context.Context, id identity, pr refID, reason string) ([]string, error) {
+func (p *poller) withdrawPRCards(ctx context.Context, id identity, pr refID, reason, via string) ([]string, error) {
 	withdrawn := []string{}
 	for _, c := range p.cards.openPRCards(pr) {
 		permalink := id.permalink(c.ref.channel, c.ref.ts, c.ref.thread)
-		res, err := p.withdrawPRCard(ctx, id, c, reason, "")
+		res, err := p.withdrawPRCard(ctx, id, c, reason, via, true)
 		if err != nil {
 			return nil, fmt.Errorf("PR card %s still waits on a tap: %w", permalink, err)
 		}
@@ -1545,11 +1546,23 @@ func (p *poller) withdrawPRCards(ctx context.Context, id identity, pr refID, rea
 			withdrawn = append(withdrawn, permalink)
 		}
 	}
+	for _, c := range p.cards.withdrawnPRCards(pr) {
+		if c.reason == reason && strings.Contains(c.tapped, via) {
+			continue
+		}
+		permalink := id.permalink(c.ref.channel, c.ref.ts, c.ref.thread)
+		at := p.now()
+		if err := p.tapDrawn(c.ref, at, p.markOption(ctx, id, c.ref, withdrawnLine(reason, via, c.ref.ts, clock(at, at), true))); err != nil {
+			return nil, fmt.Errorf("PR card %s still shows its earlier withdrawal: %w", permalink, err)
+		}
+		p.cards.rewithdrawn(c.ref, c.waits, reason, at)
+		withdrawn = append(withdrawn, permalink)
+	}
 	return withdrawn, nil
 }
 
-func (p *poller) withdrawPRCard(ctx context.Context, id identity, c offeredCard, reason, via string) (cardAnswerResult, error) {
-	return p.answerWaits(ctx, id, waitsAnswer{card: c.ref, tap: askTap{ID: c.waits, Label: reason, Question: c.question, Waits: true}, at: p.now(), via: via, withdrawn: true})
+func (p *poller) withdrawPRCard(ctx context.Context, id identity, c offeredCard, reason, via string, quotes bool) (cardAnswerResult, error) {
+	return p.answerWaits(ctx, id, waitsAnswer{card: c.ref, tap: askTap{ID: c.waits, Label: reason, Question: c.question, Waits: true}, at: p.now(), via: via, withdrawn: true, quotes: quotes})
 }
 
 func answeredFrom(from, via string) (kind, surface, name string) {

@@ -160,7 +160,7 @@ func (a *app) handleWithdrawPRCard(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	withdrawn, err := a.poller.withdrawPRCards(hc.Ctx, id, pr, reason)
+	withdrawn, err := a.poller.withdrawPRCards(hc.Ctx, id, pr, reason, b.Via)
 	if err != nil {
 		return fail(err.Error())
 	}
