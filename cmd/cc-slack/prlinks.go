@@ -27,7 +27,10 @@ var (
 	tapCardPatience = 25 * time.Second
 )
 
-const prCardWords = "Words"
+const (
+	prCardWords    = "Words"
+	cardAskedAgain = "asked again under a newer line"
+)
 
 var errCardCommandUnfinished = errors.New("the card command did not finish")
 
@@ -57,6 +60,7 @@ type providedCard struct {
 
 	replaces []replacedCard
 	reasks   bool
+	moves    bool
 }
 
 type replacedCard struct {
@@ -317,7 +321,7 @@ type tapCards struct {
 	undrawn      map[string]string
 }
 
-func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, thread string, b opBody) tapCards {
+func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, thread string, b opBody, moves bool) tapCards {
 	if len(b.TapPRs) == 0 || tapCardsRefused(id, channelID) != "" {
 		return tapCards{}
 	}
@@ -328,9 +332,12 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 		}
 	}
 	t := tapCards{undrawn: map[string]string{}}
-	t.ask, t.standing, t.waiting = a.cards.toCard(channelID, thread, channelID == id.DMChannelID, b.Card, prs)
+	t.ask, t.standing, t.waiting = a.cards.toCard(channelID, thread, channelID == id.DMChannelID, moves, b.Card, prs)
 	if len(t.ask) > 0 {
 		a.askCardCommand(ctx, id, channelID, thread, &t)
+	}
+	for i := range t.provided {
+		t.provided[i].moves = moves
 	}
 	return t
 }
@@ -387,7 +394,7 @@ func (a *app) drawLinkedCards(hc daemon.HandlerCtx, sub subject.Subject, id iden
 	}
 	hc.Ctx = context.WithoutCancel(hc.Ctx)
 	a.cardWork.Go(func() {
-		a.attachTapPRs(hc, sub, id, under, post, b, nil)
+		a.attachTapPRs(hc, sub, id, under, post, b, nil, false)
 	})
 }
 
@@ -410,7 +417,9 @@ func (a *app) drawTapCards(hc daemon.HandlerCtx, sub subject.Subject, id identit
 	drawn := make(chan tapDrawn, 1)
 	bg := hc
 	bg.Ctx = context.WithoutCancel(hc.Ctx)
-	a.cardWork.Go(func() { drawn <- a.attachTapPRs(bg, sub, id, under, post, b, asked) })
+	a.cardWork.Go(func() {
+		drawn <- a.attachTapPRs(bg, sub, id, under, post, b, asked, b.Card == nil && post.thread != post.ts)
+	})
 	select {
 	case d := <-drawn:
 		return d
@@ -422,9 +431,9 @@ func (a *app) drawTapCards(hc daemon.HandlerCtx, sub subject.Subject, id identit
 	}
 }
 
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string) tapDrawn {
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string, moves bool) tapDrawn {
 	ctx := context.WithoutCancel(hc.Ctx)
-	t := a.askTapCards(ctx, id, hc.Env.Scope, post.channel, under, b)
+	t := a.askTapCards(ctx, id, hc.Env.Scope, post.channel, under, b, moves)
 	if len(t.ask)+len(t.standing) == 0 {
 		return tapDrawn{}
 	}
@@ -479,7 +488,7 @@ func (a *app) attachPRCards(ctx context.Context, db *sql.DB, sub subject.Subject
 	return a.approvesCarried(ctx, id, cardRef{channelID, postTS, postTS}, placed, t.waiting), placed, undrawn
 }
 
-func (l *liveCards) toCard(channelID, postThread string, dm bool, posting *statusCard, prs []linkedPR) (asked []refID, standing []cardRef, waiting []refID) {
+func (l *liveCards) toCard(channelID, postThread string, dm, moves bool, posting *statusCard, prs []linkedPR) (asked []refID, standing []cardRef, waiting []refID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	post := l.draft(channelID, postThread)
@@ -487,7 +496,7 @@ func (l *liveCards) toCard(channelID, postThread string, dm bool, posting *statu
 		post.Reply = &liveMessage{Card: *posting}
 	}
 	named := slices.DeleteFunc(slices.Clone(prs), func(pr linkedPR) bool { return pr.state.terminal() })
-	if !slices.ContainsFunc(named, func(pr linkedPR) bool { return !post.shows(map[string]bool{pr.ref.key(): true}) }) {
+	if !moves && !slices.ContainsFunc(named, func(pr linkedPR) bool { return !post.shows(map[string]bool{pr.ref.key(): true}) }) {
 		return nil, nil, nil
 	}
 	var stood []cardRef
@@ -499,7 +508,7 @@ func (l *liveCards) toCard(channelID, postThread string, dm bool, posting *statu
 			standing = append(standing, card)
 		}
 	}
-	if len(standing) == 1 && !slices.Contains(stood, cardRef{}) {
+	if !moves && len(standing) == 1 && !slices.Contains(stood, cardRef{}) {
 		return nil, standing, waiting
 	}
 	for i, pr := range named {
@@ -551,6 +560,9 @@ func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, t
 		posted, found, others := a.postedPRCard(id, channelID, thread, p.Card)
 		for _, old := range others {
 			p.replaces = append(p.replaces, replacedCard{old: old, why: regrouped(p.Card)})
+		}
+		if found && p.moves && a.cards.unanswered(posted, p.Card) {
+			p.replaces, found = append(p.replaces, replacedCard{old: posted, why: cardAskedAgain}), false
 		}
 		if !found {
 			rest = append(rest, p)

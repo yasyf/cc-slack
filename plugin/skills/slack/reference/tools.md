@@ -82,8 +82,8 @@ this session's repo, then `repos` under `[pr_links]`; a number none of them
 holds stays plain text. When GitHub refuses the read, a reference naming one PR
 still links, and a bare number two repos could hold stays plain. Code spans and text already inside `<...>` are left
 alone. With `card_command` set, a PR the user has to tap gets its card when the
-call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`),
-once per PR and head; a PR GitHub does not read still goes to the card command,
+call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`);
+a PR GitHub does not read still goes to the card command,
 which draws its card from what it holds. In the user's DM, a post that says something waits on the
 user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
 once the post is sent, so the result's `card_permalink` leaves it out; name a PR the user has nothing to tap in a post that waits on nothing. List a
@@ -103,10 +103,15 @@ or on a pick card whose `prs` names that one PR at that head with the same
 answers, closes every other such card and counts once. A tap on a waiting card
 whose `prs` names a PR, with no PR card for it, also goes to the card command,
 which records it when the PR is its own. A reply carrying its own
-picks lists the PR in the card's `prs` instead of `tap_prs`. In the user's DM the
-card opens at the root in its own thread, wherever the post sits; a post lands in
-a DM thread only when its call names that thread. In a listed channel the card
-goes in the post's thread. The post goes out before any card is asked for, and
+picks lists the PR in the card's `prs` instead of `tap_prs`. A post at the root
+of the user's DM carries the card's answer button in itself, and a first card
+opens at the root in its own thread. A post in a thread, of the DM or a listed
+channel, gets the card of each PR its `tap_prs` names right under it, in that
+thread, and the PR's earlier card that still asks, wherever it sits, is edited to
+say it was replaced, so every line asking the user's tap has the buttons under
+it; a card the user answered stays where it is, and a post that only links the PR
+or its card leaves the card where it sits. A post lands in a DM thread only when its
+call names that thread. The post goes out before any card is asked for, and
 the call waits at most 25 seconds for the cards; a card still drawing then posts
 beside the post later and the `warning` says so, so never post it again. When
 an open PR in `tap_prs` draws no card, the post is still sent and its `warning`

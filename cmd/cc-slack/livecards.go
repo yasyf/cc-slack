@@ -830,6 +830,13 @@ func (l *liveCards) retired(card cardRef) bool {
 	return m != nil && t.retired(m)
 }
 
+func (l *liveCards) unanswered(card cardRef, drawn statusCard) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, m := l.liveMessage(card.channel, card.ts)
+	return m != nil && (t.asks(m) || t.revives(m, drawn))
+}
+
 func (l *liveCards) staysRetired(card cardRef, drawn statusCard) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

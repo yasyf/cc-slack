@@ -192,9 +192,10 @@ channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 (`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`,
 those with an open card in the post's thread or at the DM root included, so the
-program sees the whole stack it groups. It runs not at all when an open card in
-the post's thread cites every one of them, or when one open card at the DM root
-carries every one of them. A card
+program sees the whole stack it groups. For a post at a root it runs not at all
+when an open card in the post's thread cites every one of them, or when one open
+card at the DM root carries every one of them; for a text post in a thread it
+always runs. A card
 the program draws for exactly the PRs of a posted card redraws that card in
 place. One whose PRs differ from a posted card that carries some of them, such
 as a stack card over one member's own card, posts fresh, and each such older
@@ -215,8 +216,14 @@ fresh card on the card itself. In the bot's DM a PR has one card, opened where
 the post naming it sits: at the root in its own thread, watched by the session
 whose post named the PR, for a post at the root, and in the thread for a post
 in a DM thread; a post lands in a DM thread only when its call names that
-thread. A later post naming the PR, in any thread, links that card while it
-still asks and otherwise redraws it where it sits. A call whose `tap_prs` comes with no text, card, blocks or files only
+thread. A later text post in a thread whose `tap_prs` names the PR posts its
+card again right under the post, in that thread, while the card still asks, and
+edits the card it replaces, wherever it sat, to say it was asked again under a
+newer line, with a link to the new card and no buttons, so every line asking the
+engineer's tap has the buttons under it; a card the engineer answered is redrawn
+where it sits. A post that only links the PR, or its card, as a line fanned out to
+other threads does, links the card and leaves it where it sits. A later post
+naming the PR at a root carries or links it. A call whose `tap_prs` comes with no text, card, blocks or files only
 draws: it asks the program for each PR's card, redraws a posted one in place,
 offering again an answer whose waits id the program still asks, and posts a
 first card under `thread_ts`, or at the root with none, and nothing else.
@@ -225,8 +232,8 @@ post. A status card at the DM root carries each card inside itself, below its
 own words, with the card's answer buttons; a tap on one answers the card
 itself, and the status card redraws whenever the card does, so a tap on
 either shows the answer on both. Other and Explain more stay on the card.
-Every other post in the DM, a text post at the root or a post in a DM thread,
-gets the card's permalink in its thread under the card's question, which Slack unfurls as the card. Each card shows once per post,
+Every other text post at a root gets the card's permalink in its thread under
+the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
 names. The call sends the post before it asks the program for any card, so
 the post never waits on the program: it asks for the cards of the PRs `tap_prs`

@@ -137,7 +137,7 @@ func TestLiveStorePostedPRSeedSurvivesRestart(t *testing.T) {
 	pr, _ := parseRef(testPRURL)
 	state := refState{State: "open", Head: "head", Checks: "passed"}
 	prs := []linkedPR{{ref: pr, state: state}}
-	if asked, _, _ := l.toCard("D1", "1", false, nil, prs); len(asked) != 1 {
+	if asked, _, _ := l.toCard("D1", "1", false, false, nil, prs); len(asked) != 1 {
 		t.Fatal("new PR did not seed a card")
 	}
 	l.commit(&liveThread{
@@ -145,7 +145,7 @@ func TestLiveStorePostedPRSeedSurvivesRestart(t *testing.T) {
 		Reply: &liveMessage{Card: statusCard{Refs: []cardLink{{URL: testPRURL}}}},
 	})
 	before := liveStoreChanges(t, l)
-	l.toCard("D1", "1", false, nil, prs)
+	l.toCard("D1", "1", false, false, nil, prs)
 	l.save(nil, nil)
 	if liveStoreChanges(t, l) != before {
 		t.Fatal("unchanged PR seed wrote state again")
