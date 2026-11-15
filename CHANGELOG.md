@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A PR card draws its `impact`, what the change reaches in forward-deployed engineers' code, right under its Summary as `FDE impact`. Before, the card had no field for it, so an Approve could be given on a card that named none of the callers a changed default reached.
+
 ### Changed
 
 - The Slack skill's voice guide says how a post that explains how something works reads, such as a walkthrough of a review point for a teammate: labels for the questions its reader has, each mechanism as a short snippet of what the code does with one plain sentence after it on what happens, each term defined where it first appears, a cost listed as the concrete things the change adds, and a test the reader can reuse at the end. Before, the guide's labeled paragraphs covered only a heads-up, a handoff, an incident summary or an ask, with "What happened", "Where we are now" and "What they need to do". You wrote that a walkthrough like this "is excellent and should be gold standard of how you always talk to me".

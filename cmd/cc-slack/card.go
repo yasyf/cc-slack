@@ -92,6 +92,7 @@ const (
 	cardSummary       = "Summary"
 	cardRefresher     = "Refresher"
 	cardSurprise      = "Biggest surprise"
+	cardImpact        = "FDE impact"
 	cardStaging       = "Staging"
 	cardDefaultLands  = "you approve"
 	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
@@ -173,6 +174,7 @@ type cardPR struct {
 	Head        string   `json:"head,omitempty"`
 	Changed     string   `json:"changed,omitempty"`
 	Summary     string   `json:"summary,omitempty"`
+	Impact      string   `json:"impact,omitempty"`
 	Review      string   `json:"review,omitempty"`
 	Surprise    string   `json:"surprise,omitempty"`
 	HateMost    string   `json:"hate_most,omitempty"`
@@ -439,7 +441,7 @@ func (p cardPR) stands(v cardView) string {
 
 func (p cardPR) fields(v cardView) []cardFact {
 	return []cardFact{
-		{cardStaging, p.Staging}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
+		{cardStaging, p.Staging}, {cardChanged, p.Changed}, {cardSummary, p.Summary}, {cardImpact, p.Impact}, {cardRefresher, p.Refresher}, {cardSurprise, p.Surprise}, {"What you'll hate most", p.HateMost},
 		{"Where it stands", p.stands(v)}, {"Waits on", p.waitsOn()}, {"Differs from the plan", p.Plan},
 	}
 }
@@ -935,6 +937,7 @@ func (p cardPR) visible(shown func(string) string) cardPR {
 	p.Title, p.Changed, p.Review, p.Surprise = shown(p.Title), shown(p.Changed), shown(p.Review), shown(p.Surprise)
 	p.Plan, p.Refresher, p.Blocks, p.Lands = shown(p.Plan), shown(p.Refresher), shown(p.Blocks), shown(p.Lands)
 	p.ShowMe, p.HateMost, p.Port, p.Summary, p.Staging = shown(p.ShowMe), shown(p.HateMost), shown(p.Port), shown(p.Summary), shown(p.Staging)
+	p.Impact = shown(p.Impact)
 	return p
 }
 

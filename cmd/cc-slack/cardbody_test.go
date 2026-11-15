@@ -1199,6 +1199,23 @@ func TestAPRCardLeadsWithItsPortAndELI5AndShowsWhatHeWillHateMostAndShowMe(t *te
 	}
 }
 
+func TestAPRCardShowsWhatItReachesInFDECodeRightUnderItsSummary(t *testing.T) {
+	pr := fullPR(52858)
+	pr.Summary = "Reads default to consistency NONE."
+	pr.Impact = "`read` is called 2,412 times in 466 files across 32 of 254 FDE repositories."
+	card := statusCard{Status: "needs_you", Title: "Fix: approve #52858?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: "merge-52858", PRs: []cardPR{pr}}
+	blocks := card.replyBlocks(view())
+	if err := checkBlocks(blocks); err != nil {
+		t.Fatalf("Slack would refuse the card: %v", err)
+	}
+	if got := blocksJSON(t, blocks); !strings.Contains(got, "*Summary*\\nReads default to consistency NONE.\\n\\n*FDE impact*\\n`read` is called 2,412 times") {
+		t.Fatalf("blocks %s, want the FDE impact right under the Summary", got)
+	}
+	if lines := pr.lines(); !slices.Contains(lines, cardFact{cardImpact, "*" + cardImpact + "*"}) {
+		t.Fatalf("lines = %+v, want the read-back check to expect the FDE impact line", lines)
+	}
+}
+
 const fencedTable = "*Show me*\n```\nThe 5 tables past the line (measured)\n" +
 	"table  team class                  table GB  its database GB  what it did in the last day            parts at 1.7 GB\n" +
 	"-----  --------------------------  --------  ---------------  -------------------------------------  ---------------\n" +
