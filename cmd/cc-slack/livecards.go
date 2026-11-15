@@ -76,6 +76,7 @@ type liveCardCopy struct {
 	Card string `json:"card"`
 	TS   string `json:"ts"`
 	Link bool   `json:"link,omitempty"`
+	Post string `json:"post,omitempty"`
 }
 
 type askingCard struct {

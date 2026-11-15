@@ -168,3 +168,28 @@ func TestAnEditDrawsAnOpenCardItsThreadHasNotShown(t *testing.T) {
 		t.Fatalf("edits = %+v, want the card drawn by the message that links it each time it is edited, and plain in a thread that shows it and under a link to another message", edits)
 	}
 }
+
+func TestAnEditThatDropsACardLinkDeletesTheCardItsPostDrew(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	card := postWaiting(t, l, mergeCard())
+	link := "<" + card.url() + "|the merge card>"
+	other := "https://example.slack.com/archives/C1/p1793818357021259"
+	var first postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]string{"channel_id": testChannel, "text": "see " + link + " and " + other}).Body, &first); err != nil {
+		t.Fatal(err)
+	}
+	sent := l.slack.sent()
+	drawn := sent[len(sent)-1]
+	if drawn.threadTS != first.TS || !strings.Contains(drawn.text, card.url()) {
+		t.Fatalf("last post %+v, want the merge card's link posted under %s", drawn, first.TS)
+	}
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": first.TS, "text": "see " + link + " and " + other + ", still"})
+	if deleted := l.slack.deleted(); len(deleted) != 0 {
+		t.Fatalf("an edit keeping the card's link deleted %+v, want nothing deleted", deleted)
+	}
+	l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": first.TS, "text": "see " + other})
+	if deleted := l.slack.deleted(); len(deleted) != 1 || deleted[0].ts != drawn.ts {
+		t.Fatalf("an edit dropping the card's link deleted %+v, want the card it drew at %s deleted", deleted, drawn.ts)
+	}
+}

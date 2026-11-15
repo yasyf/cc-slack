@@ -1131,6 +1131,7 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		if !draw.inline {
 			draw.cards = nil
 		}
+		linked := linkedRefs(texts[0], blocks)
 		text, blocks := eachText(texts[0], blocks, draw.marked)
 		if len(blocks) == 0 {
 			var pages [][]slack.Block
@@ -1147,8 +1148,8 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		if err != nil {
 			return err
 		}
-		a.cards.drew(channelID, key, b.TS, draw.cards, a.now())
-		return nil
+		a.cards.drew(channelID, key, b.TS, "", draw.cards, a.now())
+		return a.cards.unlinkDropped(ctx, api, channelID, key, b.TS, linked, a.now())
 	})
 }
 

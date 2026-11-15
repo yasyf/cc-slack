@@ -705,15 +705,15 @@ func (a *app) linkCardInto(ctx context.Context, db *sql.DB, id identity, thread 
 	if a.cards.showsIn(card.channel, thread, card) {
 		return nil
 	}
-	return a.postCardLink(ctx, db, id, card.channel, thread, card)
+	return a.postCardLink(ctx, db, id, card.channel, thread, "", card)
 }
 
-func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, channel, under string, card cardRef) error {
+func (a *app) postCardLink(ctx context.Context, db *sql.DB, id identity, channel, under, post string, card cardRef) error {
 	res, err := a.post(atStep(ctx, "link:"+card.ts+":"+under), db, id, channel, under, linkedPage{text: slackLink(id.permalink(card.channel, card.ts, card.thread), a.cards.titleOf(card.channel, card.ts))}, nil, false)
 	if err != nil {
 		return err
 	}
-	a.cards.drew(channel, cmp.Or(under, res.TS), res.TS, []cardRef{card}, a.now())
+	a.cards.drew(channel, cmp.Or(under, res.TS), res.TS, post, []cardRef{card}, a.now())
 	return nil
 }
 
