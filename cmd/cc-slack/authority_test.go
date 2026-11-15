@@ -361,6 +361,21 @@ func TestEditInTheOwnersDMNeedsNoTicket(t *testing.T) {
 		t.Fatalf("edits = %+v, want one chat.update in the owner's DM", edits)
 	}
 	l.refused(opDelete, map[string]any{"channel_id": testDM, "ts": ts}, "no ticket covers this delete")
+
+	edit := map[string]any{"channel_id": testDM, "ts": ts, "text": "PR is up, green and queued"}
+	unspendable := l.tickets.mint(fakeTicket{tree: testTree, place: map[string]string{"channel": testDM, "thread": ts}, reach: reachOnce, rule: "unchecked"})
+	if err := json.Unmarshal(l.do(opEdit, l.spending(unspendable, edit)).Body, &edited); err != nil {
+		t.Fatal(err)
+	}
+	if !edited.Posted || edited.TicketID != "" || edited.TS != ts {
+		t.Fatalf("edit passed ticket %s = %+v, want it made with no ticket spent", unspendable, edited)
+	}
+	if n := l.tickets.callCount(); n != 0 {
+		t.Fatalf("capt-hook ran %d times, want never for an edit of the bot's post in the owner's DM, even one the hook passed a ticket", n)
+	}
+	if edits := l.slack.edited(); len(edits) != 2 || edits[1].text != "PR is up, green and queued" {
+		t.Fatalf("edits = %+v, want the ticketed edit made too", edits)
+	}
 }
 
 func TestDeleteNeedsItsOwnTicket(t *testing.T) {

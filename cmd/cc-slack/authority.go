@@ -197,7 +197,7 @@ func (a *app) spendTicket(ctx context.Context, api slackAPI, id identity, sessio
 
 func (a *app) authorize(hc daemon.HandlerCtx, api slackAPI, id identity, s ticketSpend, w write) (hookTicket, *receipt, error) {
 	ctx, db := hc.Ctx, hc.DB
-	if s.TicketID == "" && (w.editsOwnersDM(id) || !a.mintsTickets(ctx, hc.Env.ClaudePID)) {
+	if w.editsOwnersDM(id) || s.TicketID == "" && !a.mintsTickets(ctx, hc.Env.ClaudePID) {
 		return hookTicket{}, nil, nil
 	}
 	t, err := a.spendTicket(ctx, api, id, hc.Env.Session, s, w)
