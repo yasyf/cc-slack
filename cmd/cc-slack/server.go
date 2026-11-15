@@ -35,6 +35,7 @@ type app struct {
 	shortcuts *shortcutHandler
 	socket    *socketClient
 	prRedraws prRedraws
+	cardWork  sync.WaitGroup
 	captHook  commandRunner
 	claudeCwd func(ctx context.Context, pid int) (string, error)
 	avatar    avatarPublisher

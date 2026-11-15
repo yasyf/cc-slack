@@ -185,8 +185,9 @@ cannot add a page. `check-post` flags such a line as `links-past-five`.
 card of a PR waiting on a tap. A checked-in config can name a tool only some engineers have,
 so `login` on a machine without it leaves cards off and links still work. A link
 draws one only in the bot's DM, in a post that says something waits on the
-engineer: each PR it links by URL counts as listed in `tap_prs`, so the PR's
-card draws with the post or the call fails and sends nothing. After a post in the bot's DM with the engineer, or in a
+engineer: each PR it links by URL draws its card as if `tap_prs` named it,
+but only once the post is sent, so a card that is slow or draws none never holds
+or fails the post. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
 (`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`,
@@ -221,7 +222,9 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
 gets the card's permalink in its thread under the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call asks the program for its cards before it posts anything. When an
+names. The call asks the program for the cards of the PRs `tap_prs` names before
+it posts anything, and for those of PRs it only links after the post is sent,
+off the call, so its result names only the cards `tap_prs` drew. When an
 open PR its `tap_prs` names gets no card, such as the program's `skipped` reason,
 no card in its answer, or a card that fails the card checks, the call fails with
 each such PR and its reason and sends nothing. A card the program answered that

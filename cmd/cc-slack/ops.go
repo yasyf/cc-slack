@@ -666,8 +666,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
-		asked := slices.Clone(b.TapPRs)
-		b.TapPRs = append(b.TapPRs, waitingPRs(id, channelID, b)...)
+		linked := waitingPRs(id, channelID, b)
 		texts, crowded := b.pagesIn(id, channelID, a.cards.drawsIn(channelID, b.ThreadTS, ""))
 		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b), crowded); err != nil {
 			return fail(err.Error())
@@ -688,8 +687,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(err.Error())
 		}
 		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks)
-		b.TapPRs = append(b.TapPRs, ready...)
-		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, asked)
+		taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, b.TapPRs)
 		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
@@ -719,7 +717,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 			return fail(fmt.Sprintf("posted %s, so do not post it again, but its next page failed: %v", res.Permalink, err))
 		}
 		res.PagePermalink = strings.Join(shown, " ")
-		drawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, taps, asked)
+		drawn := a.attachTapPRs(hc, sub, id, res.ChannelID, res.ThreadTS, res.TS, taps, b.TapPRs)
+		a.drawLinkedCards(hc, sub, id, b.ThreadTS, cardRef{res.ChannelID, res.ThreadTS, res.TS}, b, append(linked, ready...))
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
@@ -2638,8 +2637,7 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
-	asked := slices.Clone(b.TapPRs)
-	b.TapPRs = append(b.TapPRs, waitingPRs(id, id.DMChannelID, b)...)
+	linked := waitingPRs(id, id.DMChannelID, b)
 	texts, crowded := b.pagesIn(id, id.DMChannelID, a.cards.drawsIn(id.DMChannelID, b.ThreadTS, ""))
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
@@ -2662,14 +2660,14 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	pages, ready := a.dmPagesOf(hc, id, b, blocks, texts)
 	msg := pages[0]
-	b.TapPRs = append(b.TapPRs, ready...)
+	linked = append(linked, ready...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
-		return a.replaceCardReply(hc, sub, id, b, asked, msg.tag)
+		return a.replaceCardReply(hc, sub, id, b, linked, msg.tag)
 	}
 	if reply, answered := a.rewordAnswered(hc, sub, id, b); answered {
 		return reply
 	}
-	under, taps, err := a.dmThreadOf(hc, sub, id, b, asked)
+	under, taps, err := a.dmThreadOf(hc, sub, id, b)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2689,7 +2687,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	}
 	a.linkDriveQuestion(hc.Ctx, hc.DB, id, linkInto, cardRef{id.DMChannelID, thread, ts})
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, cardRef{id.DMChannelID, thread, ts}, a.cards.continued(id.DMChannelID, thread), b.Card))
-	return a.tappedReply(hc, sub, id, thread, ts, b, shown, a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, asked))
+	drawn := a.attachTapPRs(hc, sub, id, id.DMChannelID, thread, ts, taps, b.TapPRs)
+	a.drawLinkedCards(hc, sub, id, under, cardRef{id.DMChannelID, thread, ts}, b, linked)
+	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
 }
 
 func (a *app) dmPoster(hc daemon.HandlerCtx, id identity, b opBody) (subject.Subject, error) {
@@ -2744,11 +2744,13 @@ func (a *app) missingDMThread(ctx context.Context, id identity, thread string) e
 	return fmt.Errorf("thread %s is no thread in your DM with the app, and Slack posts a reply under a thread it cannot find at the DM root", thread)
 }
 
-func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string, tag cardTag) daemon.Reply {
+func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, linked []string, tag cardTag) daemon.Reply {
 	old, err := a.replacedCard(id, b.Card.Replaces)
 	if err != nil {
 		return fail(err.Error())
 	}
+	asked := b.TapPRs
+	b.TapPRs = slices.Concat(asked, linked)
 	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, old.thread, b, asked)
 	if err != nil {
 		return fail(err.Error() + "; nothing was sent")
@@ -2806,7 +2808,7 @@ func (a *app) refuseClosedPost(ctx context.Context, id identity, card statusCard
 	return fail(fmt.Errorf("waiting card %q replaces %s, a card with no answer left to tap; %w", card.Waits, card.Replaces, errAskedAgain).Error()), true
 }
 
-func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody, asked []string) (string, tapCards, error) {
+func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity, b opBody) (string, tapCards, error) {
 	under := b.ThreadTS
 	if b.About != "" {
 		if b.Card != nil || b.Text == "" {
@@ -2820,7 +2822,7 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 	if err := a.missingDMThread(hc.Ctx, id, under); err != nil {
 		return "", tapCards{}, fmt.Errorf("%w: leave thread_ts out to post at the root, or answer a thread in another channel with slack_reply; nothing was sent", err)
 	}
-	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, asked)
+	taps, err := a.askTapCards(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, b.TapPRs)
 	if err != nil {
 		return "", tapCards{}, fmt.Errorf("%w; nothing was sent", err)
 	}

@@ -86,7 +86,7 @@ call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`)
 once per PR and head; a PR GitHub does not read still goes to the card command,
 which draws its card from what it holds. In the user's DM, a post that says something waits on the
 user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
-so name a PR the user has nothing to tap in a post that waits on nothing. List a
+once the post is sent, so the result's `card_permalink` leaves it out; name a PR the user has nothing to tap in a post that waits on nothing. List a
 stack's PRs in one call: they draw one card, and an older card of any of them
 is edited to say it was replaced. A card redrawn at a new head or by
 `redraw-pr-cards` follows the same rule once the card command draws its PR

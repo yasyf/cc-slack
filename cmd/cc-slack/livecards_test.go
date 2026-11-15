@@ -776,13 +776,9 @@ func TestADriveQuestionCardLinkingAPRTakesHisTapAsHisAnswerToItsQuestion(t *test
 
 func TestAnUndoWhileItsAnswerIsStillRecordingRedrawsTheCardAtOnceAndReachesTheCardCommandAfterIt(t *testing.T) {
 	cmd := fakeCardCommand(t, nil)
-	dir := t.TempDir()
-	recorded, slow := filepath.Join(dir, "recorded"), filepath.Join(dir, "card")
-	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"undone\":false'*) until [ -e '%s' ]; do sleep 0.01; done ;;\nesac\nprintf '%%s\\n' \"$in\" | '%s'\n", recorded, cmd.argv[0])
-	if err := os.WriteFile(slow, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{slow}})
+	slow, record := holdingCardCommand(t, cmd, `"undone":false`)
+	defer record()
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": slow})
 	card := statusCard{Status: "needs_you", Title: "Delete the stale cards?", Waits: "demo:j2580-682984", Options: []string{"Delete", "Keep"}, Recommended: "Delete"}
 	l.do(opDMStatus, map[string]any{"card": card})
 	reply := l.slack.sent()[0]
@@ -814,9 +810,7 @@ func TestAnUndoWhileItsAnswerIsStillRecordingRedrawsTheCardAtOnceAndReachesTheCa
 	if got := answersOf(cmd.requests(t)); len(got) != 0 {
 		t.Fatalf("card command took %v while his answer was still recording, want nothing until his answer's record finishes", got)
 	}
-	if err := os.WriteFile(recorded, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	record()
 	l.app.poller.taps.busy.Wait()
 	answer := func(at string, undone bool) string {
 		return string(mustJSON(map[string]any{"answer": map[string]any{

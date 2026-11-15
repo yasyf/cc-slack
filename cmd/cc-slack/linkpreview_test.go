@@ -278,9 +278,7 @@ func TestAPostLinkingAPRHeCanApproveShowsItsCardAloneInCIOrNot(t *testing.T) {
 		t.Fatalf("PR cards = %+v, want none for a held PR he cannot approve", drawn)
 	}
 	l.do(opDMStatus, map[string]any{"text": "In CI now: " + testPR})
-	if drawn := prCards(l, testDM); len(drawn) == 0 {
-		t.Fatal("a post linking a PR in CI drew no card with Approve")
-	}
+	awaitPRCards(t, l, testDM)
 	for _, post := range l.slack.sent() {
 		if strings.Contains(post.attachments, testPR) {
 			t.Fatalf("post %+v previews a PR its card already shows", post)

@@ -188,6 +188,20 @@ func TestAPostThatWaitsOnHimDrawsTheTapCardOfEachPRItLinks(t *testing.T) {
 	}
 }
 
+func TestAPostThatWaitsOnHimGoesOutWhileTheCardOfThePRItLinksStillDraws(t *testing.T) {
+	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"prs"`)
+	defer release()
+	l, _ := cardingDaemon(t, cards, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": waitsOn41})
+	if sent := l.slack.sentTo(testDM); len(sent) != 1 || !strings.Contains(sent[0].text, tapPR41[0]) {
+		t.Fatalf("while #41's card still draws, sent %+v, want the post alone", sent)
+	}
+	release()
+	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
+		t.Fatalf("cards = %+v, want #41's tap card once the card command answers", cards)
+	}
+}
+
 func TestAPostThatWaitsOnHimGoesOutLinkingAPRWhoseCardDoesNotDraw(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"})
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")

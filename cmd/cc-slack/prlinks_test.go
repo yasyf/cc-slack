@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -154,6 +153,21 @@ func fakeCardCommand(t *testing.T, drivePRs []string, cards ...providedCard) car
 	return c
 }
 
+func holdingCardCommand(t *testing.T, c cardCommand, ask string) (argv []string, release func()) {
+	t.Helper()
+	dir := t.TempDir()
+	released, held := filepath.Join(dir, "released"), filepath.Join(dir, "card")
+	script := fmt.Sprintf("#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'%s'*) until [ -e '%s' ]; do sleep 0.01; done ;;\nesac\nprintf '%%s\\n' \"$in\" | '%s'\n", ask, released, c.argv[0])
+	if err := os.WriteFile(held, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return []string{held}, func() {
+		if err := os.WriteFile(released, nil, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
 func (c cardCommand) requests(t *testing.T) []string {
 	t.Helper()
 	return slices.DeleteFunc(readAsks(t, c.asked), func(ask string) bool { return isShown(ask) || isRefused(ask) })
@@ -184,7 +198,6 @@ func (c cardCommand) resolves(t *testing.T) []string {
 
 func readAsks(t *testing.T, path string) []string {
 	t.Helper()
-	shownRecords.wait(t.Context())
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -2064,6 +2077,30 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneTellsWhySlackRefusedIt
 	}
 }
 
+func TestACardAskRunsWhileAShownRecordIsStillRunning(t *testing.T) {
+	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"shown"`)
+	defer release()
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cards})
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.app.tellShown(l.ctx, id, []map[string]any{shownCard(mergeRowCard())})
+	asked := make(chan error, 1)
+	go func() {
+		_, err := runCardCommand(l.ctx, cards, map[string]any{"numbers": []int{41}})
+		asked <- err
+	}()
+	select {
+	case err := <-asked:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a card ask waited on a shown record still running")
+	}
+}
+
 func TestAPRCardRedrawShowsItsPictureUploadedOnceAndReusesItAfter(t *testing.T) {
 	cmd, answer := refusingCardCommand(t, "unused", mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
@@ -2164,46 +2201,5 @@ func TestATapPRWithNoCardCarriesWhatTheCardCommandSaid(t *testing.T) {
 	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": drive card: acme/app#41 is in no drive; nothing was sent")
 	if got := l.slack.sentTo(testDM); len(got) != 0 {
 		t.Fatalf("posted %+v, want nothing", got)
-	}
-}
-
-func TestAShownRecordNeverHoldsBackItsPostAndACardAskWaitsOnlyForTheRecordsBeforeIt(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var chain shownChain
-		first, third := make(chan struct{}), make(chan struct{})
-		ran := make(chan string, 3)
-		chain.add(func() { <-first; ran <- "first" })
-		chain.add(func() { ran <- "second" })
-		asked := make(chan struct{})
-		go func() { chain.wait(context.Background()); close(asked) }()
-		ended, end := context.WithCancel(context.Background())
-		gaveUp := make(chan struct{})
-		go func() { chain.wait(ended); close(gaveUp) }()
-		synctest.Wait()
-		chain.add(func() { <-third; ran <- "third" })
-		end()
-		synctest.Wait()
-		if len(ran) != 0 || isClosed(asked) || !isClosed(gaveUp) {
-			t.Fatalf("with the first record running: %d records done, ask done %v, ended ask done %v; want none, false, true", len(ran), isClosed(asked), isClosed(gaveUp))
-		}
-		close(first)
-		synctest.Wait()
-		if got := []string{<-ran, <-ran}; !slices.Equal(got, []string{"first", "second"}) || !isClosed(asked) || len(ran) != 0 {
-			t.Fatalf("records ran %v with the ask done %v and %d more done; want first then second, the ask done, the third still running", got, isClosed(asked), len(ran))
-		}
-		close(third)
-		synctest.Wait()
-		if got := <-ran; got != "third" {
-			t.Fatalf("last record %q, want third", got)
-		}
-	})
-}
-
-func isClosed(c chan struct{}) bool {
-	select {
-	case <-c:
-		return true
-	default:
-		return false
 	}
 }
