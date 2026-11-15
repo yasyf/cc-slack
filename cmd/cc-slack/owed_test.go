@@ -596,12 +596,13 @@ func TestAReplyDrawsNoAutoReply(t *testing.T) {
 	}
 }
 
-func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
+func TestAThumbsUpOnAReplyInTheDMOrAnOperatorChannelAnswersOnlyThatReply(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
+	recordPlatformChannel(t)
 	dm := "D" + testUser
-	const seen, liked, other = "1800000090.000000", "1800000090.000100", "1800000090.000200"
-	for _, ts := range []string{seen, liked, other} {
+	const seen, liked, inChannel, other = "1800000090.000000", "1800000090.000100", "1800000090.000150", "1800000090.000200"
+	for _, ts := range []string{seen, liked, inChannel, other} {
 		if err := l.app.owed.owe(l.ctx, owedReply{ThreadTS: testThread, TS: ts, Text: "A"}); err != nil {
 			t.Fatal(err)
 		}
@@ -609,6 +610,7 @@ func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
 
 	l.do(opReact, map[string]string{"channel_id": dm, "ts": seen, "name": "eyes"})
 	l.do(opReact, map[string]string{"channel_id": dm, "ts": liked, "name": ":+1:"})
+	l.do(opReact, map[string]string{"channel_id": platformChannel, "ts": inChannel, "name": "+1"})
 	l.do(opReact, map[string]string{"channel_id": testChannel, "ts": other, "name": "+1"})
 
 	replies, err := l.app.owed.list(l.ctx)
@@ -620,7 +622,7 @@ func TestAThumbsUpOnADMReplyAnswersOnlyThatReply(t *testing.T) {
 		got = append(got, r.TS)
 	}
 	if !slices.Equal(got, []string{seen, other}) {
-		t.Fatalf("owed = %v, want only the thumbs-up in the DM to answer its reply", got)
+		t.Fatalf("owed = %v, want only a thumbs-up in the DM or an operator channel to answer its reply", got)
 	}
 }
 
@@ -740,12 +742,14 @@ func TestAReplyUnderACardCopyNamesTheCardItCopies(t *testing.T) {
 	}
 }
 
-func operatorChannelFor(t *testing.T, channelID string) {
+const platformChannel = "G0PLATFORM"
+
+func recordPlatformChannel(t *testing.T) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(operatorChannelsPath()), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeJSON(operatorChannelsPath(), []operatorChannel{{ID: channelID, Name: "durable-agents-platform"}}); err != nil {
+	if err := storeJSON(operatorChannelsPath(), []operatorChannel{{ID: platformChannel, Name: "durable-agents-platform"}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -753,14 +757,14 @@ func operatorChannelFor(t *testing.T, channelID string) {
 func TestHisRootMessageInAnOperatorChannelIsOwedAndReachesItsHolderAsAnOrder(t *testing.T) {
 	shortHome(t)
 	f := newFixture(t)
-	const platform, asked = "G0PLATFORM", "1800000001.500000"
-	operatorChannelFor(t, platform)
-	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, platform, "", beforeEveryPost, f.now); err != nil {
+	const asked = "1800000001.500000"
+	recordPlatformChannel(t)
+	if _, _, err := insertWatch(f.ctx, f.db(), testSubject, agent.TopLevel, kindChannel, platformChannel, "", beforeEveryPost, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.tick()
-	f.slack.add(platform, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
-	f.poller.nudged(messageNudge{Channel: platform, TS: asked})
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: asked})
 	f.tick()
 
 	if got := owedStamps(t, f); !slices.Equal(got, []string{asked}) {
@@ -771,13 +775,53 @@ func TestHisRootMessageInAnOperatorChannelIsOwedAndReachesItsHolderAsAnOrder(t *
 	}
 }
 
+func TestHisMessagesInAnOperatorChannelNoSessionHoldsAreOwed(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const asked, replied = "1800000200.000000", "1800000201.000000"
+	recordPlatformChannel(t)
+	f.poller.reconcileAll()
+	f.tick()
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: asked})
+	f.tick()
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: replied, ThreadTimestamp: asked, User: testUser, Text: "and who owns it?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: replied, ThreadTS: asked})
+	f.tick()
+
+	if got := owedStamps(t, f); !slices.Equal(got, []string{asked, replied}) {
+		t.Fatalf("owed %v, want his root message and his reply in the operator channel no session holds", got)
+	}
+	if got := payloads(t, f); len(got) != 0 {
+		t.Fatalf("delivered %+v with no session holding the operator channel", got)
+	}
+}
+
+func TestACardAnswerInAnOperatorChannelClearsOnlyTheRepliesBeforeIt(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const thread, before, after = "1800000001.000000", "1800000002.000000", "1800000004.000000"
+	recordPlatformChannel(t)
+	for _, ts := range []string{before, after} {
+		if err := f.app.owed.owe(f.ctx, owedReply{ThreadTS: thread, TS: ts, Text: "1+2", Permalink: f.id.permalink(platformChannel, ts, thread)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.app.cards.threads[threadKey(platformChannel, thread)] = &liveThread{Channel: platformChannel, Thread: thread,
+		Answers: map[string]askAnswer{"w": {At: slackTime("1800000003.000000")}}}
+
+	if got := owedToHolder(t, f); len(got) != 1 || got[0].TS != after {
+		t.Fatalf("owed %+v, want only the reply after the card's answer in the operator channel", got)
+	}
+}
+
 func TestDMStatusPostsOnlyInAnOperatorChannel(t *testing.T) {
 	shortHome(t)
 	f := newFixture(t)
-	operatorChannelFor(t, "G0PLATFORM")
+	recordPlatformChannel(t)
 
-	at, err := operatorIdentity(f.ctx, f.db(), "G0PLATFORM")
-	if err != nil || at.DMChannelID != "G0PLATFORM" {
+	at, err := operatorIdentity(f.ctx, f.db(), platformChannel)
+	if err != nil || at.DMChannelID != platformChannel {
 		t.Fatalf("operator channel addressed as %q, %v; want G0PLATFORM", at.DMChannelID, err)
 	}
 	if _, err := operatorIdentity(f.ctx, f.db(), testChannel); err == nil {

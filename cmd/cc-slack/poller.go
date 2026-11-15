@@ -233,6 +233,10 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 
 func (p *poller) reconcileOperators(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch) error {
 	for _, channelID := range id.operatorChannelIDs() {
+		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, '', ?, 0)`,
+			channelID, formatTS(p.now())); err != nil {
+			return fmt.Errorf("claim the cursor of %s: %w", channelID, err)
+		}
 		if err := p.markReconciled(ctx, db, api, channelID, watches); err != nil {
 			return err
 		}
@@ -357,7 +361,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	groups := groupWatches(watches, id.DMChannelID, since, bound, mates)
+	groups := groupWatches(watches, id, since, bound, mates)
 	p.keepWatched(groups, seen)
 	now := p.now()
 	var next time.Time
@@ -533,8 +537,9 @@ func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
 	return threads
 }
 
-func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
+func groupWatches(watches []watch, id identity, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
+	dmChannelID, operators := id.DMChannelID, id.operatorChannelIDs()
 	holder := dmHolderIn(watches, dmChannelID)
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
@@ -575,7 +580,7 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 	}
 	for _, key := range slices.SortedFunc(maps.Keys(since), compareKeys) {
 		_, own := index[key]
-		if !own && len(channels[key.channelID]) == 0 && key.channelID != dmChannelID {
+		if !own && len(channels[key.channelID]) == 0 && !slices.Contains(operators, key.channelID) {
 			continue
 		}
 		g := group(key)
@@ -586,9 +591,10 @@ func groupWatches(watches []watch, dmChannelID string, since map[cursorKey]strin
 			}
 		}
 	}
-	root := group(cursorKey{dmChannelID, ""})
-	root.root = true
-	root.sessions = sessions
+	for _, channelID := range operators {
+		group(cursorKey{channelID, ""}).root = true
+	}
+	group(cursorKey{dmChannelID, ""}).sessions = sessions
 	return groups
 }
 

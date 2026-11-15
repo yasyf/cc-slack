@@ -1403,7 +1403,7 @@ func (a *app) handleReaction(act action, settled string, apply func(slackAPI, co
 		if err != nil && errorCode(err) != settled {
 			return fail(fallback(act, err))
 		}
-		if act == actionReact && answeringReactions[name] && channelID == id.DMChannelID {
+		if act == actionReact && answeringReactions[name] && slices.Contains(id.operatorChannelIDs(), channelID) {
 			if err := a.owed.answer(hc.Ctx, b.TS); err != nil {
 				return fail(err.Error())
 			}
@@ -2010,16 +2010,20 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if replies, err = a.unansweredByCards(hc.Ctx, id.DMChannelID, replies); err != nil {
+	if replies, err = a.unansweredByCards(hc.Ctx, replies); err != nil {
 		return fail(err.Error())
 	}
 	return ok(dmOwedResult{Replies: slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] }), HolderSession: holder.session})
 }
 
-func (a *app) unansweredByCards(ctx context.Context, dm string, replies []owedReply) ([]owedReply, error) {
+func (a *app) unansweredByCards(ctx context.Context, replies []owedReply) ([]owedReply, error) {
 	var owed []owedReply
 	for _, r := range replies {
-		if slackTime(r.TS).After(a.cards.lastAnswer(dm, r.ThreadTS)) {
+		at, err := parsePermalink(r.Permalink)
+		if err != nil {
+			return nil, err
+		}
+		if slackTime(r.TS).After(a.cards.lastAnswer(at.channelID, r.ThreadTS)) {
 			owed = append(owed, r)
 			continue
 		}

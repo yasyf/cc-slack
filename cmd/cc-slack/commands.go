@@ -1009,7 +1009,7 @@ func dmOwedCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{
 		Use:   "dm-owed",
-		Short: "Print your DM replies that no bot or agent has answered in their thread yet, from stored state",
+		Short: "Print your replies in the DM and operator channels that no bot or agent has answered in their thread yet, from stored state",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runOp(c, d, f, opDMOwed, map[string]any{})

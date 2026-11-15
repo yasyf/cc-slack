@@ -240,7 +240,7 @@ func TestAReplyACardRecordedAsItsAnswerIsNotOwed(t *testing.T) {
 	}
 	before, after := formatTS(time.Now().Add(-time.Minute)), formatTS(time.Now().Add(time.Hour))
 	for _, ts := range []string{before, after} {
-		if err := l.app.owed.owe(l.ctx, owedReply{ThreadTS: c.thread, TS: ts, Text: "1+2"}); err != nil {
+		if err := l.app.owed.owe(l.ctx, owedReply{ThreadTS: c.thread, TS: ts, Text: "1+2", Permalink: c.id.permalink(c.id.DMChannelID, ts, c.thread)}); err != nil {
 			t.Fatal(err)
 		}
 	}
