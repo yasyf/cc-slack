@@ -100,6 +100,7 @@ func root() *cobra.Command {
 		redrawPRCardsCmd(d),
 		drawPRLinesCmd(d),
 		withdrawPRCardCmd(d),
+		moveCardCmd(d),
 		channelsCmd(d),
 		usersCmd(d),
 		followCmd(d),

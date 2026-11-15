@@ -362,6 +362,7 @@ func (a *app) register(s *daemon.Server) {
 	register(opCardReopen, a.handleCardReopen)
 	register(opDMRelay, a.handleDMRelay)
 	register(opWithdrawPRCard, a.handleWithdrawPRCard)
+	register(opMoveCard, a.handleMoveCard)
 	register(opRevoke, a.handleRevoke)
 	register(opAgentSubject, a.handleAgentSubject)
 	register(opChannelCreate, a.handleChannel(approveCreate, createChannel))

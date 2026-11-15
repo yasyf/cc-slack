@@ -968,7 +968,7 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	}
 	db := a.poller.plane.DB()
 	placed := a.postPRCards(ctx, db, id, card.channel, thread, cardBeside{}, tapCards{provided: provided[:1]}, func(fresh string) error {
-		return a.carrySessions(ctx, db, id, card.thread, fresh)
+		return a.carrySessions(ctx, db, card, id, fresh)
 	})
 	if len(placed) == 0 {
 		return errors.New("neither its redraw nor its new post went out to Slack; the daemon log says why")
@@ -976,12 +976,12 @@ func (a *app) redrawPRCard(ctx context.Context, id identity, card cardRef, pr re
 	return nil
 }
 
-func (a *app) carrySessions(ctx context.Context, db *sql.DB, id identity, from, to string) error {
-	bound, err := a.poller.threads.bound(ctx, id.DMChannelID, []string{from})
+func (a *app) carrySessions(ctx context.Context, db *sql.DB, from cardRef, id identity, to string) error {
+	bound, err := a.poller.threads.bound(ctx, from.channel, []string{from.thread})
 	if err != nil {
 		return err
 	}
-	for _, subjectID := range bound[from] {
+	for _, subjectID := range bound[from.thread] {
 		if err := a.bindSessionThread(ctx, db, subject.Subject{ID: subjectID}, id, to); err != nil {
 			return err
 		}

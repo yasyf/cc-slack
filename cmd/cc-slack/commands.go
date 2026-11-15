@@ -991,6 +991,25 @@ func withdrawPRCardCmd(d cmd.Deps) *cobra.Command {
 	return c
 }
 
+func moveCardCmd(d cmd.Deps) *cobra.Command {
+	var f sessionFlags
+	var url, channel string
+	c := &cobra.Command{
+		Use:   "move-card",
+		Short: "Post an open card anew at the root of one of your operator channels under its own waits id, with the sessions that hold its thread, and edit the old card to Moved to and a link in place of its buttons; prints the new card's permalink",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runOp(c, d, f, opMoveCard, map[string]any{"url": url, "channel_id": channel})
+		},
+	}
+	f.bind(c)
+	c.Flags().StringVar(&url, "url", "", "permalink of the open card to move")
+	c.Flags().StringVar(&channel, "channel", "", "id of the operator channel the card moves to")
+	_ = c.MarkFlagRequired("url")
+	_ = c.MarkFlagRequired("channel")
+	return c
+}
+
 func operatorChannelCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
 	c := &cobra.Command{

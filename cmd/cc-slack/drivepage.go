@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ const (
 	opDriveCards     daemon.Op = "drive-cards"
 	opCanvas         daemon.Op = "canvas"
 	opWithdrawPRCard daemon.Op = "withdraw-pr-card"
+	opMoveCard       daemon.Op = "move-card"
 )
 
 var goneCanvasCodes = map[string]bool{"canvas_not_found": true, "canvas_deleted": true}
@@ -96,8 +98,8 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 			c.Answer = &ans
 		}
 		if m.ReplacedBy != "" {
-			by, _ := l.storedCard(t.Channel, m.ReplacedBy)
-			c.ReplacedBy = link(t.Channel, m.ReplacedBy, by.thread)
+			by := l.replacement(t.Channel, m.ReplacedBy)
+			c.ReplacedBy = link(by.channel, by.ts, by.thread)
 		}
 		if drawn := m.Card; len(c.PRs) > 0 && !t.retired(m) {
 			c.Card = &drawn
@@ -132,6 +134,18 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 	slices.SortFunc(res.PRCards, func(a, b drivePRCard) int { return a.Asked.Compare(b.Asked) })
 	slices.SortFunc(res.Closed, func(a, b driveClosedCard) int { return a.Asked.Compare(b.Asked) })
 	return res
+}
+
+func (l *liveCards) replacement(channel, ts string) cardRef {
+	if by, found := l.storedCard(channel, ts); found {
+		return by
+	}
+	for _, t := range l.threads {
+		if slices.ContainsFunc(t.messages(), func(m *liveMessage) bool { return m != nil && m.TS == ts }) {
+			return cardRef{t.Channel, t.Thread, ts}
+		}
+	}
+	return cardRef{channel: channel, ts: ts}
 }
 
 func (a *app) handleDriveCards(hc daemon.HandlerCtx) daemon.Reply {
@@ -173,6 +187,64 @@ func (a *app) handleWithdrawPRCard(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return ok(map[string][]string{"withdrawn": withdrawn})
+}
+
+func (a *app) handleMoveCard(hc daemon.HandlerCtx) daemon.Reply {
+	b, err := decodeBody(hc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	ref, err := parsePermalink(b.URL)
+	if err != nil || ref.ts == "" {
+		return fail(fmt.Sprintf("move-card needs url, a card's permalink, not %q", b.URL))
+	}
+	id, err := loadIdentity(hc.Ctx, hc.DB)
+	if err != nil {
+		return fail(err.Error())
+	}
+	from, to := id.at(ref.channelID), id.at(b.ChannelID)
+	switch {
+	case from.DMChannelID != ref.channelID:
+		return fail(fmt.Sprintf("%s is not in your DM with the app or one of your operator channels", b.URL))
+	case to.DMChannelID != b.ChannelID || b.ChannelID == ref.channelID:
+		return fail(fmt.Sprintf("move-card needs channel_id, one of your operator channels other than the card's, not %q", b.ChannelID))
+	}
+	moved, err := a.moveCard(hc.Ctx, hc.DB, from, to, ref.ts)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return ok(map[string]string{"permalink": to.permalink(moved.channel, moved.ts, moved.thread)})
+}
+
+func (a *app) moveCard(ctx context.Context, db *sql.DB, from, to identity, ts string) (cardRef, error) {
+	cards := a.cards
+	cards.mu.Lock()
+	t, m := cards.liveMessage(from.DMChannelID, ts)
+	if m == nil || !t.asks(m) {
+		cards.mu.Unlock()
+		return cardRef{}, fmt.Errorf("no open card at %s in %s to move", ts, from.DMChannelID)
+	}
+	copied := *m
+	moved := &liveThread{Channel: to.DMChannelID, Reply: &copied, Updated: a.now()}
+	placed, err := a.placeCard(ctx, db, to, moved, nil)
+	if err != nil {
+		cards.mu.Unlock()
+		return cardRef{}, err
+	}
+	if slices.Contains(t.PRCards, m) {
+		moved.Reply, moved.PRCards = nil, []*liveMessage{placed}
+	} else {
+		moved.keep(placed.Card, placed)
+	}
+	m.ReplacedBy = placed.TS
+	cards.commit(moved, threadKey(t.Channel, t.Thread))
+	cards.mu.Unlock()
+	old, fresh := cardRef{t.Channel, t.Thread, ts}, cardRef{moved.Channel, moved.Thread, placed.TS}
+	if err := a.carrySessions(ctx, db, old, to, fresh.thread); err != nil {
+		return fresh, err
+	}
+	line := "↪ *Moved to* <#" + fresh.channel + "> · " + slackLink(to.permalink(fresh.channel, fresh.ts, fresh.thread), "answer it there")
+	return fresh, a.poller.markOption(ctx, from, old, line)
 }
 
 func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
