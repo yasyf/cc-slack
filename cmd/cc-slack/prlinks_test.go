@@ -2208,8 +2208,13 @@ func TestAPRCardStatesItsStagingResultFirstAndKeepsItOnceAnswered(t *testing.T) 
 
 func cardLinks(l *liveDaemon, card fakePost) []fakePost {
 	return slices.DeleteFunc(l.slack.sentTo(testDM), func(p fakePost) bool {
-		return p.blocks != "" || p.unfurlLinks != "true" || !linksMessage(p.text, card.ts)
+		return !carriesItsTextAlone(p) || p.unfurlLinks != "true" || !linksMessage(p.text, card.ts)
 	})
+}
+
+func carriesItsTextAlone(p fakePost) bool {
+	var blocks slack.Blocks
+	return p.blocks == "" || json.Unmarshal([]byte(p.blocks), &blocks) == nil && strings.Join(blockTexts(blocks), "") == p.text
 }
 
 func linksIn(l *liveDaemon, card fakePost, thread string) bool {

@@ -746,10 +746,10 @@ func (a *app) failedPost(hc daemon.HandlerCtx, subjectID string, id identity, b 
 	if !resendsAsUser(botErr) || len(b.Files) > 0 || len(pages) > 1 || len(pages[0].more) > 0 {
 		return fail(a.slackFailed(hc, id, b.ticketSpend, ticket, actionWrite, botErr))
 	}
-	text, blocks := pages[0].text, pages[0].blocks
+	text, blocks := fitText(withoutHidden(pages[0].text), pages[0].blocks)
 	tool := cmp.Or(id.Agent, defaultAgent)
 	mark := fmt.Sprintf("_(%s's %s)_", cmp.Or(id.FirstName, id.name()), strings.ToUpper(tool[:1])+tool[1:])
-	opts := []slack.MsgOption{textOption(mark + " " + withoutHidden(text)), slack.MsgOptionDisableLinkUnfurl()}
+	opts := []slack.MsgOption{textOption(mark + " " + text), slack.MsgOptionDisableLinkUnfurl()}
 	if b.ThreadTS != "" {
 		opts = append(opts, slack.MsgOptionTS(b.ThreadTS))
 	}

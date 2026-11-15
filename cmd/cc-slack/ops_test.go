@@ -1709,6 +1709,61 @@ func TestSendAndEditOfTextPastTheTextLimitStayOneMessage(t *testing.T) {
 	}
 }
 
+const (
+	consentLinkPosted = "https://slack.com/oauth/v2/authorize?client_id=1.2&code_challenge=c&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A38427%2Fcc-slack%2Foauth&state=s&team=T1&user_scope=chat%3Awrite"
+	replyLinkPosted   = "https://acme.slack.com/archives/C1/p1794715845701179?thread_ts=1794715845.701179&cid=C1"
+)
+
+func sectionsHold(t *testing.T, raw, link string) bool {
+	t.Helper()
+	if raw == "" {
+		return false
+	}
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(raw), &blocks); err != nil {
+		t.Fatal(err)
+	}
+	return slices.ContainsFunc(blockTexts(blocks), func(text string) bool { return strings.Contains(text, "<"+link) })
+}
+
+func TestALinkWhoseURLCarriesAnAmpersandReachesSlackInBlocks(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+
+	for i, tc := range []struct{ text, link string }{
+		{"*cc-slack needs your one-time consent to act in Slack as you*\nOpen this link on the Mac that runs cc-slack: <" + consentLinkPosted + "|Allow cc-slack>", consentLinkPosted},
+		{"Answered in " + replyLinkPosted, replyLinkPosted},
+	} {
+		l.post(opSend, map[string]string{"channel_id": testChannel, "text": tc.text})
+		post := l.slack.sentTo(testChannel)[i]
+		if !sectionsHold(t, post.blocks, tc.link) {
+			t.Fatalf("post of %q carries blocks %s, want a section holding %s with its & as written", tc.text, post.blocks, tc.link)
+		}
+		l.post(opEdit, map[string]string{"channel_id": testChannel, "ts": post.ts, "text": tc.text + " again"})
+		if edit := l.slack.edited()[i]; !sectionsHold(t, edit.blocks, tc.link) {
+			t.Fatalf("edit to %q carries blocks %s, want a section holding %s with its & as written", tc.text, edit.blocks, tc.link)
+		}
+	}
+
+	text := "The runbook is <https://example.com/runbook?step=2|here>"
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": text})
+	if posts := l.slack.sentTo(testChannel); posts[2].text != text || posts[2].blocks != "" {
+		t.Fatalf("post = %+v, want a text whose link carries no & to go out as text alone", posts[2])
+	}
+}
+
+func TestALinkWithAnAmpersandSentAgainAsTheUserReachesSlackInBlocks(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	user := l.user.as(testUser)
+
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "restricted_action"})
+	l.post(opSend, map[string]string{"channel_id": testChannel, "text": "Answered in " + replyLinkPosted})
+	if posts := user.sentTo(testChannel); len(posts) != 1 || !sectionsHold(t, posts[0].blocks, replyLinkPosted) {
+		t.Fatalf("posts as the user = %+v, want one whose blocks hold %s with its & as written", posts, replyLinkPosted)
+	}
+}
+
 func TestEditOfAMessageTheBotDidNotPostNamesNoMCPTool(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

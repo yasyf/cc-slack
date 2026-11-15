@@ -50,6 +50,7 @@ var (
 	htmlFold        = regexp.MustCompile(`(?i)</?details[^>]*>|<br\s*/?>`)
 	slackEscapable  = regexp.MustCompile(`<(?:https?://|mailto:|[@#!])[^<>\n]*>|&(?:amp|lt|gt);|[&<>]`)
 	bareURL         = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\\n]*>|<https?://[^\\s<>]*|https?://[^\\s<>\"`]+")
+	ampersandLink   = regexp.MustCompile(`<https?://[^\s<>|]*&`)
 )
 
 type bodyPiece struct {

@@ -375,7 +375,7 @@ func messageBlocks(text string, blocks []slack.Block) []slack.Block {
 
 func fitText(text string, blocks []slack.Block) (string, []slack.Block) {
 	short := shortText(text)
-	if short == text {
+	if short == text && !ampersandLink.MatchString(explicitLinks(text)) {
 		return text, blocks
 	}
 	return short, messageBlocks(text, blocks)
