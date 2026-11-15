@@ -222,14 +222,17 @@ either shows the answer on both. Other and Explain more stay on the card.
 Every other post in the DM, a text post at the root or a post in a DM thread,
 gets the card's permalink in its thread under the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
-names. The call asks the program for the cards of the PRs `tap_prs` names before
-it posts anything, and for those of PRs it only links after the post is sent,
-off the call, so its result names only the cards `tap_prs` drew. When an
-open PR its `tap_prs` names gets no card, such as the program's `skipped` reason,
-no card in its answer, or a card that fails the card checks, the call fails with
-each such PR and its reason and sends nothing. A card the program answered that
-still fails to post leaves the sent post answering ok, its `warning` naming
-each PR whose card it did not draw, so the caller does not post it again. The result's `card_ts` and
+names. The call sends the post before it asks the program for any card, so
+the post never waits on the program: it asks for the cards of the PRs `tap_prs`
+names once the post is sent, within the call, and for those of PRs it only
+links after that, off the call, so its result names only the cards `tap_prs`
+drew. When an open PR its `tap_prs` names gets no card, such as the program's
+`skipped` reason, no card in its answer, a card that fails the card checks, or
+a card that fails to post, the sent post answers ok, its `warning` naming each
+such PR and its reason, so the caller does not post it again. Only a `tap_prs`
+that draws no card at all where it posts, under a login with no `card_command`
+or in a channel neither a DM nor in `card_channels`, fails the call and sends
+nothing. The result's `card_ts` and
 `card_permalink` name the cards the post drew, space-separated, since the post's
 own `ts` and `permalink` are its text line, and each card's link is already in
 the post's DM thread. A status card that carries cards is then read back from

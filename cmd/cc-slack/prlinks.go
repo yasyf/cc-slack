@@ -279,6 +279,14 @@ func tapCardsRefused(id identity, channelID string) string {
 	return ""
 }
 
+func refuseTapCards(id identity, channelID string, asked []string) error {
+	why := tapCardsRefused(id, channelID)
+	if why == "" || len(asked) == 0 {
+		return nil
+	}
+	return fmt.Errorf("drew no card for tap_prs %s: %s", strings.Join(asked, ", "), why)
+}
+
 func prCardThread(id identity, channelID, postThread string) string {
 	if channelID == id.DMChannelID {
 		return ""
@@ -303,16 +311,9 @@ type tapCards struct {
 	undrawn      map[string]string
 }
 
-func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, thread string, b opBody, asked []string) (tapCards, error) {
-	if len(b.TapPRs) == 0 {
-		return tapCards{}, nil
-	}
-	if why := tapCardsRefused(id, channelID); why != "" {
-		if len(asked) == 0 {
-			return tapCards{}, nil
-		}
-		a.poller.log.Printf("tap PRs %s draw no card: %s", strings.Join(asked, ", "), why)
-		return tapCards{}, fmt.Errorf("drew no card for tap_prs %s: %s", strings.Join(asked, ", "), why)
+func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, thread string, b opBody) tapCards {
+	if len(b.TapPRs) == 0 || tapCardsRefused(id, channelID) != "" {
+		return tapCards{}
 	}
 	prs := a.tapPRs(ctx, id, scope, b)
 	for _, pr := range prs {
@@ -325,22 +326,7 @@ func (a *app) askTapCards(ctx context.Context, id identity, scope, channelID, th
 	if len(t.ask) > 0 {
 		a.askCardCommand(ctx, id, channelID, thread, &t)
 	}
-	var said []string
-	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
-		pr, _ := parseRef(raw)
-		why, missed := t.undrawn[pr.key()]
-		if !missed {
-			continue
-		}
-		a.poller.log.Printf("tap PR %s draws no card: %s", raw, why)
-		if slices.Contains(asked, raw) {
-			said = append(said, raw+": "+why)
-		}
-	}
-	if len(said) > 0 {
-		return tapCards{}, fmt.Errorf("drew no card for tap_prs %s", strings.Join(said, "; "))
-	}
-	return t, nil
+	return t
 }
 
 func (a *app) askCardCommand(ctx context.Context, id identity, channelID, thread string, t *tapCards) {
@@ -395,8 +381,7 @@ func (a *app) drawLinkedCards(hc daemon.HandlerCtx, sub subject.Subject, id iden
 	}
 	hc.Ctx = context.WithoutCancel(hc.Ctx)
 	a.cardWork.Go(func() {
-		taps, _ := a.askTapCards(hc.Ctx, id, hc.Env.Scope, post.channel, under, b, nil)
-		a.attachTapPRs(hc, sub, id, post.channel, post.thread, post.ts, taps, nil)
+		a.attachTapPRs(hc, sub, id, under, post, b, nil)
 	})
 }
 
@@ -412,23 +397,26 @@ func (d tapDrawn) named(id identity) (stamps, links string) {
 	return strings.Join(cardStamps(d.cards), " "), strings.Join(permalinks, " ")
 }
 
-func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, channelID, postThread, postTS string, t tapCards, asked []string) tapDrawn {
+func (a *app) attachTapPRs(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, asked []string) tapDrawn {
+	ctx := context.WithoutCancel(hc.Ctx)
+	t := a.askTapCards(ctx, id, hc.Env.Scope, post.channel, under, b)
 	if len(t.ask)+len(t.standing) == 0 {
 		return tapDrawn{}
 	}
-	ctx := context.WithoutCancel(hc.Ctx)
-	warning, placed, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, channelID, postThread, postTS, t)
+	warning, placed, undrawn := a.attachPRCards(ctx, hc.DB, sub, id, post.channel, post.thread, post.ts, t)
 	notePostWarning(hc.Ctx, warning)
-	link := id.permalink(channelID, postTS, postThread)
+	link := id.permalink(post.channel, post.ts, post.thread)
 	var said []string
-	for _, raw := range slices.Compact(slices.Sorted(slices.Values(asked))) {
+	for _, raw := range slices.Compact(slices.Sorted(slices.Values(b.TapPRs))) {
 		pr, _ := parseRef(raw)
 		why, missed := undrawn[pr.key()]
 		if !missed {
 			continue
 		}
 		a.poller.log.Printf("tap PR %s drew no card beside %s: %s", raw, link, why)
-		said = append(said, raw+": "+why)
+		if slices.Contains(asked, raw) {
+			said = append(said, raw+": "+why)
+		}
 	}
 	if len(said) > 0 {
 		notePostWarning(hc.Ctx, fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; ")))

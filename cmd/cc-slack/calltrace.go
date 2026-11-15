@@ -23,9 +23,11 @@ type callSpan struct {
 }
 
 type callTrace struct {
-	mu    sync.Mutex
-	spans map[string]*callSpan
-	order []string
+	mu     sync.Mutex
+	began  time.Time
+	posted time.Duration
+	spans  map[string]*callSpan
+	order  []string
 }
 
 func (t *callTrace) add(name string, took time.Duration) {
@@ -39,6 +41,9 @@ func (t *callTrace) add(name string, took time.Duration) {
 	}
 	span.calls++
 	span.took += took
+	if t.posted == 0 && (name == "chat.postMessage" || name == "chat.update") {
+		t.posted = time.Since(t.began)
+	}
 }
 
 func (t *callTrace) String() string {
@@ -52,7 +57,10 @@ func (t *callTrace) String() string {
 		span := t.spans[name]
 		parts = append(parts, fmt.Sprintf("%s x%d %s", name, span.calls, span.took.Round(10*time.Millisecond)))
 	}
-	return strings.Join(parts, ", ")
+	if t.posted == 0 {
+		return strings.Join(parts, ", ")
+	}
+	return fmt.Sprintf("first Slack write done at %s; %s", t.posted.Round(10*time.Millisecond), strings.Join(parts, ", "))
 }
 
 func traced(ctx context.Context, name string, took time.Duration) {
@@ -63,11 +71,10 @@ func traced(ctx context.Context, name string, took time.Duration) {
 
 func timedOp(op daemon.Op, h daemon.HandlerFunc) daemon.HandlerFunc {
 	return func(hc daemon.HandlerCtx) daemon.Reply {
-		trace := &callTrace{spans: map[string]*callSpan{}}
+		trace := &callTrace{began: time.Now(), spans: map[string]*callSpan{}}
 		hc.Ctx = context.WithValue(hc.Ctx, traceCtxKey{}, trace)
-		began := time.Now()
 		reply := h(hc)
-		if took := time.Since(began); took >= slowOp {
+		if took := time.Since(trace.began); took >= slowOp {
 			log.Printf("slow op %s: %s, ok=%t; %s", op, took.Round(10*time.Millisecond), reply.OK, trace)
 		}
 		return reply
