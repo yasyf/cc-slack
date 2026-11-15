@@ -364,6 +364,65 @@ class CheckPostTest(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(kinds(line), [])
 
+    def test_flags_an_apology_in_any_form(self) -> None:
+        cases = {
+            "Sorry, the earlier answer was wrong: the fix is live.": "Sorry",
+            "Thanks for the patience, and sorry it took a second pass.": "sorry",
+            "Apologies for the noise; the alert is muted now.": "Apologies",
+            "I apologize, the deploy is back on dev.": "apologize",
+            "My bad, the job was on the wrong branch.": "My bad",
+            "Pardon the delay: <https://github.com/acme/app/pull/55|the fix> merged.": "Pardon the",
+            "*Sorry for the confusion.* The queue drains at 5pm.": "Sorry",
+        }
+        for line, token in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [("apology", token)])
+
+    def test_passes_the_same_posts_without_their_apology(self) -> None:
+        for line in (
+            "The earlier answer was wrong: the fix is live.",
+            "Thanks for the patience; it took a second pass.",
+            "The alert is muted now.",
+            "<https://github.com/acme/app/pull/55|The fix> merged.",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [])
+
+    def test_passes_a_sorry_someone_else_said_or_the_reader_asked_about(self) -> None:
+        for line in (
+            'Drive tooling: post feedback: "Why did you say sorry in it again?"',
+            "Your words “no more sorry” are on the hook now.",
+            "> sorry, I pushed to the wrong branch",
+            "Run `grep -n sorry post.txt` to find it.",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [])
+        answer = "The post said sorry because no check refused it, and `cc-slack check-post` refuses it now."
+        self.assertEqual(check_post.check(answer, ["Why did you say sorry in it again?"]), [])
+        self.assertEqual([finding.kind for finding in check_post.check(answer, ["is it fixed?"])], ["apology"])
+
+    def test_flags_a_post_naming_another_draft_of_itself(self) -> None:
+        cases = {
+            "Hey <@U0123ABCDE>, here's the longer version: the replay drops a run's first event.": "longer version",
+            "Shorter take: the fix is live.": "Shorter take",
+            "The reworded draft says the same thing.": "reworded draft",
+            "As in the earlier draft, the bucket stays private.": "earlier draft",
+        }
+        for line, token in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [("earlier-draft", token)])
+
+    def test_passes_a_post_that_stands_alone_and_a_comparison_the_reader_asked_for(self) -> None:
+        for line in (
+            "Hey <@U0123ABCDE>, the replay drops a run's first event, so its chart starts one step late.",
+            "Short version: the fix is live.",
+            "The longer test suite runs on dev, and the draft PR is up.",
+            "Version 2 of the app ships the previous version's settings.",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kinds(line), [])
+        self.assertEqual(check_post.check("Here's the longer version: the replay drops a run's first event.", ["can you make it longer"]), [])
+
     def test_reads_through_emphasis_markers(self) -> None:
         self.assertEqual(kinds("Thanks *Andrew*, it is live."), [("plain-name", "Thanks *Andrew")])
 

@@ -32,7 +32,11 @@ order.
    that leads with what is not proven yet under any label, such as "Not
    proven yet", "Not seen working yet", "Unverified" or "Untested", a line
    that reports no change, such as "No change since the last update" or
-   "Nothing new", which a post leaves out or a :+1: reaction replaces, and a
+   "Nothing new", which a post leaves out or a :+1: reaction replaces, an
+   apology such as "sorry", "apologies" or "my bad", where the post says what
+   was wrong and what is fixed instead, a post naming another draft of
+   itself, such as "here's the longer version", which its reader never saw,
+   though not either inside quotes or a `>` quote, and a
    sentence that says something waits on the reader, though not a list of
    states that ends in "or waiting on you", in a post that links no
    card in your DM with the app, where a linked PR carries any such sentence
@@ -50,7 +54,8 @@ order.
    `--asked "<message>"`, once for each: a multi-agent term the reader used
    there, such as "the drive" in a question about the drive, then passes in
    the answer, and so does an internal id such as a run id when that message
-   names it or asks for ids, as "the session IDs" does. Then check what the
+   names it or asks for ids, as "the session IDs" does, and so does a sorry,
+   or a comparison such as "longer version", whose word that message used. Then check what the
    script cannot detect:
 
    - Would someone who only reads this thread understand every noun?
@@ -71,7 +76,8 @@ such post follows, as [Keep the conversation going](conversation.md) says.
 
 Talk like a human teammate. Where it fits, open with a thank-you or
 greeting. Address people directly by mention, use full sentences and
-contractions, and write the way you talk at their desk. Never send a wall
+contractions, and write the way you talk at their desk. Say no sorry: a
+post owns a mistake by saying what was wrong and what is fixed. Never send a wall
 of text: no paragraph runs past three sentences, and a post with more than
 one idea breaks into paragraphs with a blank line between them.
 

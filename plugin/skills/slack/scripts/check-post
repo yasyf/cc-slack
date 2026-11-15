@@ -13,6 +13,8 @@ LINK_LABEL = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|([^<>]*)>")
 NESTED_LINK = re.compile(r"<(?:https?://|mailto:)[^<>|\s]*\|[^<>]*?(?=\s*<)")
 NESTED_FIX = "a link's words cannot hold another link or mention, and Slack draws both broken; end this link's words, then put the inner one after it"
 CODE_SPAN = re.compile(r"`[^`\n]+`")
+QUOTED = re.compile(r'"[^"\n]*"|“[^”\n]*”')
+QUOTE_LINE = re.compile(r"^\s*(?:>|&gt;)")
 EMPHASIS = re.compile(r"(?<!\w)([*_~]+)(?=\S)(.*?\S)\1(?!\w)")
 LEADING_THE = re.compile(r"^the\s+", re.IGNORECASE)
 NUMBER = re.compile(r"\d+")
@@ -34,6 +36,10 @@ def his_ids(token: str, asked: Sequence[str]) -> bool:
     return his_word(token, asked) or any(IDS_ASKED.search(message) for message in asked)
 
 
+def his_comparison(token: str, asked: Sequence[str]) -> bool:
+    return his_word(token.split()[0], asked)
+
+
 def his_number(token: str, asked: Sequence[str]) -> bool:
     numbers = NUMBER.findall(token)
     return bool(numbers) and all(any(re.search(OWN_NUMBER.format(number), message) for message in asked) for number in numbers)
@@ -46,6 +52,7 @@ class Rule:
     fix: str
     reads_code: bool = True
     reads_labels: bool = False
+    reads_quotes: bool = True
     passes: Callable[[str, Sequence[str]], bool] | None = None
 
 
@@ -147,6 +154,27 @@ RULES = (
         ),
         "this line reports no change, which tells the reader nothing; post nothing, or react :+1: to a message that needs no answer",
     ),
+    Rule(
+        "apology",
+        re.compile(r"(?i)(?<![\w'’-])(?:sorry|apolog(?:y|ies|i[sz](?:e|es|ed|ing))|my bad|pardon (?:the|my))(?![\w'’-])"),
+        "a post says no sorry; drop the apology and say what was wrong and what is fixed",
+        reads_code=False,
+        reads_labels=True,
+        reads_quotes=False,
+        passes=his_word,
+    ),
+    Rule(
+        "earlier-draft",
+        re.compile(
+            r"(?i)(?<![\w-])(?:(?:longer|shorter|fuller|expanded|condensed|reworded|rewritten|revised)\s+(?:version|draft|take|cut|write-?up)"
+            r"|(?:earlier|previous|prior|last|original|first|other|old)\s+draft(?!\s+(?:PRs?|pull|release|doc)\b))(?![\w-])"
+        ),
+        "the reader never saw another draft of this post, so it compares itself with nothing; say what it says, standing alone",
+        reads_code=False,
+        reads_labels=True,
+        reads_quotes=False,
+        passes=his_comparison,
+    ),
 )
 
 
@@ -178,6 +206,12 @@ def mask_code(line: str) -> str:
     return CODE_SPAN.sub(lambda match: " " * len(match.group()), line)
 
 
+def mask_quotes(line: str) -> str:
+    if QUOTE_LINE.match(line):
+        return " " * len(line)
+    return QUOTED.sub(lambda match: " " * len(match.group()), line)
+
+
 def mask_emphasis(line: str) -> str:
     while (unmarked := EMPHASIS.sub(lambda match: f"{' ' * len(match[1])}{match[2]}{' ' * len(match[1])}", line)) != line:
         line = unmarked
@@ -196,8 +230,8 @@ def check(text: str, asked: Sequence[str] = ()) -> list[Finding]:
             if fenced and not rule.reads_code:
                 continue
             span = "token" if "token" in rule.pattern.groupindex else 0
-            read = masked[rule.reads_labels]
-            for match in rule.pattern.finditer(read if rule.reads_code else mask_code(read)):
+            read = masked[rule.reads_labels] if rule.reads_code else mask_code(masked[rule.reads_labels])
+            for match in rule.pattern.finditer(read if rule.reads_quotes else mask_quotes(read)):
                 token = line[match.start(span) : match.end(span)]
                 if not (rule.passes and rule.passes(token, asked)):
                     findings.append(Finding(number, match.start(span) + 1, rule.kind, token, rule.fix))
@@ -223,14 +257,14 @@ def fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Flag internal ids, raw shas, unlinked references, links nested in another link's words, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, and lines reporting no change in a Slack post, reading the words of each link as the reader sees them."
+        description="Flag internal ids, raw shas, unlinked references, links nested in another link's words, options named by number or position, plain-name greetings, unformatted identifiers, paragraphs listing what is not proven, lines reporting no change, apologies, and a post naming another draft of itself in a Slack post, reading the words of each link as the reader sees them."
     )
     parser.add_argument("path", nargs="?", default="-", help="post text file, or - for stdin")
     parser.add_argument(
         "--asked",
         action="append",
         default=[],
-        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes, so does an option number the reader typed there on its own, and so does an internal id such as a run id when that message names it or asks for ids, as the session IDs does",
+        help="a message of the reader's that the post answers, word for word; repeat for each. A multi-agent term the reader used there, such as the drive, passes, so does an option number the reader typed there on its own, and so does an internal id such as a run id when that message names it or asks for ids, as the session IDs does, and so does a sorry, or a comparison such as the longer version, whose word that message used",
     )
     args = parser.parse_args()
     text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text()
