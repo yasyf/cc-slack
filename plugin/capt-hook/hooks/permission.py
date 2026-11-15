@@ -894,6 +894,9 @@ def slack_writes_need_permission(evt: PreToolUseEvent) -> HookResult | None:
         return plan_checked(evt, write)
     if write.fields.get("text_file") in written_files(evt):
         return evt.block(DRAFTED.format(flag="text-file"))
+    if write.verb == "edit" and own_dm(write.channel):
+        logger.bind(hook=GATE, agent=evt.agent_id or "main", tool=evt.tool_name, allowed=True, detail="an edit in the user's own DM with the app").info("slack write checked")
+        return evt.allow()
     conv = Conversation(write.channel, write.thread)
     try:
         with check_deadline():
@@ -1523,13 +1526,14 @@ on(
             case({"channel_id": FOLLOWERS, "ts": DANA_FOLLOWED_UP["ts"], "text": "edited"}, tool="slack_edit", tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, DANA_FOLLOWED_UP | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
             case({"channel_id": FOLLOWERS, "ts": BOT_ANSWERED["ts"], "text": "fix is out, edited"}, tool="slack_edit", tickets=[posted_once({"channel": FOLLOWERS, "thread": "1791000000.000001"})], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
             case(tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> DENY,
-            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
+            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> Allow(explicit=True),
             case({"channel_id": OWN_DM_EDIT["channel_id"], "ts": BOT_ANSWERED["ts"]}, tool="slack_delete", commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
-            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED | {"from_claude": False})) >> Block(pattern="Edit the bot's message to this"),
+            case(OWN_DM_EDIT, tool="slack_edit", commands=OWN_DM | thread_read(BOT_ANSWERED | {"from_claude": False, "from_bot": True})) >> Allow(explicit=True),
             case(OWN_DM_EDIT, tool="slack_edit", commands=PRIYA_DM | thread_read(BOT_ANSWERED)) >> Block(pattern="Edit the bot's message to this"),
             case({"edit": SAY_EDIT_URL, "text": "fix is out, edited"}, tool=DRIVE_SAY, tickets=[posted_once()], commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> ALLOW,
             case({"edit": SAY_EDIT_URL, "text": "edited"}, tool=DRIVE_SAY, commands=NOT_DM | thread_read(DANA_OPENED, BOT_ANSWERED | {"thread_ts": DANA_THREAD})) >> Block(pattern="Edit the bot's message to this"),
-            case({"edit": f"https://acme.slack.com/archives/{OWN_DM_EDIT['channel_id']}/p{BOT_ANSWERED['ts'].replace('.', '')}", "text": OWN_DM_EDIT["text"]}, tool=DRIVE_SAY, commands=OWN_DM | thread_read(BOT_ANSWERED)) >> ALLOW,
+            case({"edit": f"https://acme.slack.com/archives/{OWN_DM_EDIT['channel_id']}/p{BOT_ANSWERED['ts'].replace('.', '')}", "text": OWN_DM_EDIT["text"]}, tool=DRIVE_SAY, commands=OWN_DM | thread_read(BOT_ANSWERED)) >> Allow(explicit=True),
+            case({"edit": f"https://acme.slack.com/archives/{OWN_DM_EDIT['channel_id']}/p{BOT_ANSWERED['ts'].replace('.', '')}?thread_ts={DANA_THREAD}&cid={OWN_DM_EDIT['channel_id']}", "text": OWN_DM_EDIT["text"]}, tool=DRIVE_SAY, commands=OWN_DM | {f"{CC_SLACK} thread --json": (1, "ratelimited")}) >> Allow(explicit=True),
             case(PRIYA_EDIT, tool="slack_edit", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> ALLOW,
             case(command=f"{CLI} reply --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'any reply'", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Rewrite(pattern="--ticket-agent main"),
             case(DANA | {"text": f"_(Alex's Claude)_ {DANA_TEXT}"}, tool="mcp__claude_ai_Slack__slack_send_message", commands=NOT_DM | {f"{CC_SLACK} dm-peer": (1, "ratelimited")}) >> Allow(explicit=True, system_message="goes ahead unchecked"),
