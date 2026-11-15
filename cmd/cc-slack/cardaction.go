@@ -75,6 +75,7 @@ type actionPayload struct {
 	PosterEnded bool     `json:"poster_ended,omitempty"`
 	Undo        bool     `json:"undo,omitempty"`
 	Recorded    bool     `json:"recorded,omitempty"`
+	Asks        bool     `json:"asks,omitempty"`
 	Permalink   string   `json:"permalink"`
 }
 
@@ -414,6 +415,7 @@ const (
 	tapRecorded
 	tapRefused
 	tapUndone
+	tapAsking
 )
 
 func (p *poller) applyPRTap(ctx context.Context, id identity, card cardRef, tap owedTap) bool {
@@ -525,11 +527,15 @@ func (p *poller) runQuestionTap(ctx context.Context, id identity, answer questio
 		return tapRefused, err
 	}
 	var said struct {
-		OK  bool   `json:"ok"`
-		Why string `json:"why"`
+		OK   bool   `json:"ok"`
+		Asks bool   `json:"asks"`
+		Why  string `json:"why"`
 	}
 	if err := json.Unmarshal(out, &said); err != nil {
 		return tapRefused, fmt.Errorf("the card command's reply %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	if said.Asks {
+		return tapAsking, errors.New(said.Why)
 	}
 	if !said.OK {
 		return tapUnrecorded, errors.New(said.Why)
@@ -578,8 +584,61 @@ func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef
 	case tapUnrecorded:
 		p.cards.oweTap(card.channel, card.thread, answer.Waits, nil)
 		p.log.Printf("waiting card %s: %q stays with the sessions alone, since the card command does not record it: %v", answer.Waits, answer.Label, err)
+	case tapAsking:
+		p.cards.oweTap(card.channel, card.thread, answer.Waits, nil)
+		p.log.Printf("waiting card %s: %q answers nothing, so the card waits again: %v", answer.Waits, answer.Label, err)
+		if err := p.askedOn(ctx, id, card, answer); err != nil {
+			p.log.Printf("waiting card %s: its session is not told of %q: %v", answer.Waits, answer.Label, err)
+		}
 	}
 	return rec
+}
+
+func (p *poller) askedOn(ctx context.Context, id identity, card cardRef, answer questionAnswer) error {
+	at := slackTime(answer.ActionTS)
+	hint := "🔎 *You asked:* " + mrkdwnEscapes.Replace(clipRunes(answer.Label, cardMaxDetailLen)) + " · " + clock(at, p.now()) +
+		". An answer follows in this thread, and the card still waits for your pick."
+	undone := p.cards.undoReply(card, answer.Label)
+	for _, u := range undone {
+		p.cards.markReply(u.card.channel, u.card.thread, u.card.ts, func(m *liveMessage) { m.Hint = hint })
+	}
+	p.redrawUndone(ctx, id, undone, cardPress{ActionTS: answer.ActionTS})
+	k := askTap{ID: answer.Waits, Label: answer.Label, Other: true, Waits: true}
+	if len(undone) > 0 {
+		k.Question = undone[0].question
+	}
+	db := p.plane.DB()
+	watches, err := p.cardListeners(ctx, db, card.channel, card.thread)
+	if err != nil {
+		return err
+	}
+	if len(watches) == 0 {
+		return p.keepTap(ctx, id, cardActionPush{Channel: card.channel, ThreadTS: card.thread, MessageTS: card.ts, ActionTS: answer.ActionTS}, k)
+	}
+	permalink := id.permalink(card.channel, card.ts, card.thread)
+	who := cardSource(id, tapHow(k), slackTime(card.ts).In(pacific).Format(cardTimeLayout), permalink)
+	line := fmt.Sprintf("%s: they wrote %q in the Other box of the waiting ask %q, and your card command read it as only asking about the card or remarking on it, "+
+		"so it recorded nothing and the card offers its options again, waiting for their pick. Answer them in the card's own thread with slack_dm_status text and about %q, "+
+		"calling the card this card and never linking it, and post no record of these words.", who, answer.Label, answer.Waits, answer.Waits)
+	for _, w := range watches {
+		msg := actionPayload{
+			WatchID: w.ID, ChannelID: card.channel, ThreadTS: card.thread, TS: card.ts, ActionTS: answer.ActionTS, Label: answer.Label, ID: answer.Waits,
+			Waits: true, Other: true, Question: k.Question, Asks: true, Permalink: permalink,
+		}
+		if err := p.deliver(ctx, db, w, delivery{
+			base:   eventAction,
+			origin: event.OriginHuman,
+			dedup:  fmt.Sprintf("slack-asked:%s:%s:%s", card.channel, card.ts, answer.ActionTS),
+			line:   line,
+			payload: func(typ string) []byte {
+				msg.Type = typ
+				return mustJSON(msg)
+			},
+		}); err != nil {
+			return fmt.Errorf("telling watch %d failed: %w", w.ID, err)
+		}
+	}
+	return nil
 }
 
 func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, askID string) {
@@ -1087,7 +1146,7 @@ func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (c
 	}
 	answered := w.answeredLine(p.now())
 	rec := p.recordWaits(ctx, id, w, answered)
-	if rec == tapUndone {
+	if rec == tapUndone || rec == tapAsking {
 		return cardAnswerResult{Label: w.tap.Label, Other: w.other, At: w.at}, nil
 	}
 	if rec == tapRecording || rec == tapRefused {

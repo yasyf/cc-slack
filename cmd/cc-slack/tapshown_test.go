@@ -117,6 +117,30 @@ func TestAWaitingTapNoSessionOrDriveTakesIsKeptForTheNextHolder(t *testing.T) {
 	}
 }
 
+func TestWordsInTheOtherBoxTheCardCommandReadsAsOnlyAskingOfferTheCardsOptionsAgainAndReachTheSessionToAnswer(t *testing.T) {
+	command := cardOwnerCommand(t, `echo "{\"ok\":false,\"asks\":true,\"why\":\"Jev reads his words as only asking the card questions\"}"`)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{command}})
+	c := postWaiting(t, l, mergeCard())
+	written := askTap{ID: "step-3:merge", Label: "What would merging before the freeze cost?", Question: "Merge #41 now?", Options: []string{"Hold", "Merge"}}
+
+	l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+		ActionID: cardWroteAction + "step-3:merge", Value: string(mustJSON(written)), ActionTS: fmt.Sprintf("%d.000401", time.Now().Unix()), Seq: "001800000100000-abcd0401"})
+
+	if !strings.Contains(strings.Join(l.channelPayloads(), "\n"), `"asks":true`) {
+		t.Fatal("the slack.action does not say his words only ask")
+	}
+	got := l.inject(agent.TopLevel)
+	if !strings.Contains(got, `they wrote "What would merging before the freeze cost?" in the Other box`) || !strings.Contains(got, "post no record of these words") {
+		t.Fatalf("directive = %q, want his question handed to the session to answer in the card's thread", got)
+	}
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "🔎 *You asked:* What would merging before the freeze cost?") || !strings.Contains(edits[len(edits)-1], cardWaitAction) {
+		t.Fatalf("card edits %v, want his question over the card's options", edits)
+	}
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); done {
+		t.Fatalf("the card holds the answer %+v, want it waiting for his pick", ans)
+	}
+}
+
 func TestAnAckNoSessionHoldsIsKeptForTheNextHolder(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
