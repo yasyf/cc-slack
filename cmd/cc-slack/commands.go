@@ -1182,20 +1182,24 @@ func cardAnswerCmd(d cmd.Deps) *cobra.Command {
 
 func cardReopenCmd(d cmd.Deps) *cobra.Command {
 	var (
-		f           sessionFlags
-		card, reply string
+		f                       sessionFlags
+		card, reply, answeredOn string
 	)
 	c := &cobra.Command{
 		Use:   "card-reopen",
-		Short: "Reopen an answered card so it waits again: a button answer while its Undo shows, or one taken from the user's reply in its thread",
+		Short: "Reopen an answered card so it waits again: a button answer while its Undo shows, one taken from the user's reply in its thread, or a PR card's answer given on another surface",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runOp(c, d, f, opCardReopen, map[string]any{"url": card, "via": reply})
+			if reply != "" && answeredOn != "" {
+				return errors.New("card-reopen takes --reply or --answered-on, not both")
+			}
+			return runOp(c, d, f, opCardReopen, map[string]any{"url": card, "via": cmp.Or(reply, answeredOn)})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&card, "card", "", "the answered card's Slack permalink")
-	c.Flags().StringVar(&reply, "reply", "", "permalink of the user's reply in the card's thread whose words the card shows as its answer; without it, the card's button answer is undone while its Undo shows")
+	c.Flags().StringVar(&reply, "reply", "", "permalink of the user's reply in the card's thread whose words the card shows as its answer; without it or --answered-on, the card's button answer is undone while its Undo shows")
+	c.Flags().StringVar(&answeredOn, "answered-on", "", "url of the surface a PR card's answer was given on, such as a drive dashboard's: the card takes that answer back and offers its buttons again, while an answer given in Slack stays")
 	return c
 }
 

@@ -3138,7 +3138,7 @@ func (a *app) handleCardReopen(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Via == "" {
 		err = a.poller.reopenAnswer(hc.Ctx, id, b.URL)
 	} else {
-		err = a.poller.reopenReply(hc.Ctx, id, b.URL, b.Via)
+		err = a.poller.reopenGiven(hc.Ctx, id, b.URL, b.Via)
 	}
 	if err != nil {
 		return fail(err.Error())

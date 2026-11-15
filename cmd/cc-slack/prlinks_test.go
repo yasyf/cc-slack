@@ -1280,6 +1280,50 @@ func TestADashboardAnswerOnAPRCardGoesToTheCardCommandAsATapDoes(t *testing.T) {
 	}
 }
 
+func TestCardReopenTakesBackAPRCardAnswerGivenOnTheNamedSurfaceAndNeverASlackTap(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.do(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41})
+	card := awaitPRCards(t, l, testDM)[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := cmp.Or(card.threadTS, card.ts)
+	cardURL := id.permalink(testDM, card.ts, card.threadTS)
+	lastEdit := func() string {
+		edits := editsOf(l.slack.edited(), card.ts)
+		if len(edits) == 0 {
+			t.Fatal("the card was never redrawn")
+		}
+		return edits[len(edits)-1]
+	}
+	l.do(opCardAnswer, map[string]any{"url": cardURL, "label": "Hold", "via": "http://studio:41330/", "surface": surfaceDashboard})
+
+	l.refused(opCardReopen, map[string]any{"url": cardURL, "via": "http://laptop:41330/"}, "shows no answer given on http://laptop:41330/")
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); !done {
+		t.Fatal("a reopen naming another surface took the dashboard's Hold back")
+	}
+
+	l.do(opCardReopen, map[string]any{"url": cardURL, "via": "http://studio:41330/"})
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); done {
+		t.Fatal("card-reopen left the dashboard's Hold on the card")
+	}
+	if drawn := lastEdit(); !strings.Contains(drawn, cardWaitAction) || strings.Contains(drawn, "answered on") {
+		t.Fatalf("card %s, want its Merge and Hold buttons offered again", drawn)
+	}
+	if got := answersOf(cmd.requests(t)); len(got) != 1 {
+		t.Fatalf("card command answers = %v, want only the dashboard's Hold: a reopen asks it nothing", got)
+	}
+
+	tapMerge(t, l, card)
+	eventually(t, "the Merge tap to reach the card command", func() bool { return len(answersOf(cmd.requests(t))) == 2 })
+	l.refused(opCardReopen, map[string]any{"url": cardURL, "via": "http://studio:41330/"}, "shows no answer given on http://studio:41330/")
+	if _, done := l.app.cards.answer(testDM, thread, testWaits); !done {
+		t.Fatal("a reopen naming the dashboard took his Slack tap back")
+	}
+}
+
 func TestHisWordsUnderAnAnsweredPRCardGoToTheCardCommandAndAnApproveTheyTakeBackLeavesTheCardAskingAgain(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")

@@ -1391,12 +1391,8 @@ func (p *poller) undoAnswer(ctx context.Context, id identity, card cardRef, ans 
 	return errors.Join(errs...)
 }
 
-func (p *poller) reopenReply(ctx context.Context, id identity, card, reply string) error {
+func (p *poller) reopenGiven(ctx context.Context, id identity, card, via string) error {
 	cardLink, err := parsePermalink(card)
-	if err != nil {
-		return err
-	}
-	replyLink, err := parsePermalink(reply)
 	if err != nil {
 		return err
 	}
@@ -1404,6 +1400,26 @@ func (p *poller) reopenReply(ctx context.Context, id identity, card, reply strin
 	ref, ok := p.cards.cardAt(cardLink.channelID, cardLink.ts)
 	if !ok || ref.channel != id.DMChannelID {
 		return fmt.Errorf("no card at %s in your DM", card)
+	}
+	if waits, m, ok := p.cards.prCardAt(ref.channel, ref.thread, ref.ts); ok {
+		return p.reopenPRAnswer(ctx, id, ref, waits, m, via)
+	}
+	return p.reopenReply(ctx, id, ref, card, via)
+}
+
+func (p *poller) reopenPRAnswer(ctx context.Context, id identity, ref cardRef, waits string, m liveMessage, surface string) error {
+	ans, done := p.cards.answer(ref.channel, ref.thread, waits)
+	if !done || !strings.Contains(m.Tapped, " · answered on <"+surface+"|") {
+		return fmt.Errorf("PR card %s shows no answer given on %s to take back: it shows %q", id.permalink(ref.channel, ref.ts, ref.thread), surface, m.Tapped)
+	}
+	p.reopenPRCard(ctx, id, ref, waits, ans.Label, false)
+	return nil
+}
+
+func (p *poller) reopenReply(ctx context.Context, id identity, ref cardRef, card, reply string) error {
+	replyLink, err := parsePermalink(reply)
+	if err != nil {
+		return err
 	}
 	msgs, err := fetchReplies(ctx, p.newAPI(id.Token), ref.channel, ref.thread, justBefore(replyLink.ts))
 	if err != nil {

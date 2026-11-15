@@ -134,7 +134,12 @@ closed on their words that answered nothing waits again after
 `cc-slack card-reopen --card <its permalink> --reply <their reply's permalink>`,
 which refuses unless the card shows that reply's words as its answer.
 Without `--reply` it takes back a button answer while the card shows Undo,
-as a tap on Undo does; a drive dashboard's Undo calls it.
+as a tap on Undo does; a drive dashboard's Undo calls it. A PR card answered
+somewhere other than Slack offers Approve and Hold again after
+`cc-slack card-reopen --card <its permalink> --answered-on <that surface's url>`,
+which refuses unless the card shows an answer given on that url, so a tap
+given in Slack stays. The card command is not told; the PRs keep whatever tap
+it holds.
 
 A card that reuses the `waits` id of a card still waiting edits that one card
 in place, its buttons kept, and posts nothing, whether or not its words change.
