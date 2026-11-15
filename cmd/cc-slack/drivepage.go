@@ -55,6 +55,7 @@ type driveClosedCard struct {
 	URL        string      `json:"url"`
 	Answer     *askAnswer  `json:"answer"`
 	Tapped     string      `json:"tapped"`
+	Ended      string      `json:"ended"`
 	ReplacedBy string      `json:"replaced_by"`
 	Card       *statusCard `json:"card,omitempty"`
 }
@@ -75,8 +76,8 @@ type canvasResult struct {
 
 // listDriveCards lists the waiting cards that name drive and are still unanswered and unreplaced, and every PR card still waiting
 // on a tap, a waiting status card that carries PR rows included, oldest first, each with its permalink; closed holds every other
-// such card the store keeps, each with the answer, tap line or replacing card that closed it, and a PR card still drawn in place,
-// neither replaced nor withdrawn, with the card as last drawn, so the drive can tell when its rows went stale.
+// such card the store keeps, each with the answer, tap line, replacing card or ended PRs that closed it, and a PR card still drawn
+// in place, neither replaced nor withdrawn, with the card as last drawn, so the drive can tell when its rows went stale.
 func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread string) string) driveCardsResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -90,7 +91,7 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 		return prs
 	}
 	closed := func(t *liveThread, m *liveMessage) driveClosedCard {
-		c := driveClosedCard{Waits: m.Card.Waits, Title: m.Card.Title, PRs: prURLs(m), Asked: m.At, URL: link(t.Channel, m.TS, t.Thread), Tapped: m.Tapped}
+		c := driveClosedCard{Waits: m.Card.Waits, Title: m.Card.Title, PRs: prURLs(m), Asked: m.At, URL: link(t.Channel, m.TS, t.Thread), Tapped: m.Tapped, Ended: m.Card.ended(l.refs)}
 		if ans, answered := t.Answers[m.Card.Waits]; answered {
 			c.Answer = &ans
 		}
@@ -111,6 +112,8 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 				res.Closed = append(res.Closed, closed(t, m))
 			case m.Card.Drive == drive:
 				res.Questions = append(res.Questions, driveQuestion{m.Card.Title, m.Card.Options, m.Card.Recommended, m.At, link(t.Channel, m.TS, t.Thread), m.Card})
+			case m.Card.ended(l.refs) != "":
+				res.Closed = append(res.Closed, closed(t, m))
 			default:
 				res.PRCards = append(res.PRCards, drivePRCard{prURLs(m), m.At, link(t.Channel, m.TS, t.Thread), m.Card})
 			}
@@ -118,7 +121,7 @@ func (l *liveCards) listDriveCards(drive string, link func(channel, ts, thread s
 		for _, m := range t.PRCards {
 			switch {
 			case m.Card.Waits == "":
-			case t.open(m):
+			case t.open(m) && m.Card.ended(l.refs) == "":
 				res.PRCards = append(res.PRCards, drivePRCard{prURLs(m), m.At, link(t.Channel, m.TS, t.Thread), m.Card})
 			default:
 				res.Closed = append(res.Closed, closed(t, m))
@@ -321,7 +324,7 @@ func howClosed(c driveClosedCard) string {
 	case c.ReplacedBy != "":
 		return "replaced by " + c.ReplacedBy
 	case c.Answer == nil:
-		return c.Tapped
+		return cmp.Or(c.Tapped, c.Ended)
 	case c.Answer.Withdrawn:
 		return "withdrawn: " + c.Answer.Label
 	}

@@ -298,3 +298,37 @@ func TestDriveCardsPrintALinePerCardAndOneCardWholeByItsWaitsIDOrPermalink(t *te
 		t.Errorf("--waits step-9:gone = %s, want it refused", card)
 	}
 }
+
+func TestDriveCardsListAPRCardWhosePRsAllEndedAsClosedByItsOutcome(t *testing.T) {
+	card := statusCard{
+		Status: "needs_you", Title: "Fix: approve the chat list?", Options: []string{"Approve", "Hold"}, Recommended: "Approve", Waits: testWaits,
+		PRs: []cardPR{{URL: "https://github.com/acme/app/pull/41"}, {URL: "https://github.com/acme/app/pull/42"}},
+	}
+	status := card
+	status.Waits = "step-3:merge"
+	l := &liveCards{
+		threads: map[string]*liveThread{"D1/1800000000.000100": {
+			Channel: "D1", Thread: "1800000000.000100",
+			PRCards: []*liveMessage{{TS: "1800000000.000300", Card: card}},
+			Waiting: map[string]*liveMessage{status.Waits: {TS: "1800000000.000400", Card: status}},
+		}},
+		refs: map[string]refState{"pr:acme/app#41": {State: "merged"}, "pr:acme/app#42": {State: "open"}},
+	}
+	link := func(channel, ts, thread string) string { return channel + "/" + ts }
+
+	if listed := l.listDriveCards("pier", link); len(listed.PRCards) != 2 || len(listed.Closed) != 0 {
+		t.Fatalf("drive cards while one PR is open = %+v, want both cards waiting on his tap", listed)
+	}
+	l.refs["pr:acme/app#42"] = refState{State: "closed"}
+	listed := l.listDriveCards("pier", link)
+	if len(listed.PRCards) != 0 || len(listed.Closed) != 2 {
+		t.Fatalf("drive cards once every PR ended = %+v, want both cards closed, since each draws collapsed with no buttons", listed)
+	}
+	var lines strings.Builder
+	renderDriveCards(&lines, listed, true)
+	for _, c := range listed.Closed {
+		if c.Ended != "🟣 1 merged, ⚪ 1 closed without merging" || c.Answer != nil || c.Card == nil || !strings.Contains(lines.String(), c.URL+"\t"+card.Title+": "+c.Ended) {
+			t.Fatalf("closed card %+v in\n%s\nwant it closed by its ended PRs, with the card as last drawn", c, lines.String())
+		}
+	}
+}
