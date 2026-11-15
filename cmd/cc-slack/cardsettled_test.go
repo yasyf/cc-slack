@@ -125,6 +125,66 @@ func TestEverySettleRouteCollapsesTheCardOnceAndPostsNothingInItsThread(t *testi
 	}
 }
 
+func TestHisWordsBesideATapReplaceItOnTheCardWhicheverArrivesFirst(t *testing.T) {
+	const words = "Merge it after the canary"
+	tap := func(l *liveDaemon, c postedCard, action string, at time.Time, seq string) {
+		l.tap(c.id, cardActionPush{User: testUser, Channel: c.id.DMChannelID, MessageTS: c.ts, ThreadTS: c.thread,
+			ActionID: action, Value: string(mustJSON(askTap{ID: "step-3:merge", Label: "Hold", Question: "Merge #41 now?"})),
+			ActionTS: fmt.Sprintf("%d.000100", at.Unix()), Seq: seq})
+	}
+	lastEdit := func(t *testing.T, l *liveDaemon, c postedCard) string {
+		edits := editsOf(l.slack.edited(), c.ts)
+		if len(edits) == 0 {
+			t.Fatal("the card was never redrawn")
+		}
+		return edits[len(edits)-1]
+	}
+	settle := func(t *testing.T, l *liveDaemon, c postedCard, his, replaces string) cardAnswerResult {
+		var res cardAnswerResult
+		fields := map[string]any{"url": c.url(), "label": words, "other": true, "settled": true, "via": his, "replaces": replaces}
+		if err := json.Unmarshal(l.do(opCardAnswer, fields).Body, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	orders := map[string]func(*testing.T, *liveDaemon, postedCard, string, time.Time) cardAnswerResult{
+		"tap then words": func(t *testing.T, l *liveDaemon, c postedCard, his string, tapped time.Time) cardAnswerResult {
+			tap(l, c, cardWaitAction+"0:step-3:merge", tapped, "001800000100000-abcf0001")
+			if drawn := lastEdit(t, l, c); !strings.Contains(drawn, "✓ *Hold* · answered") || !strings.Contains(drawn, cardUndoAction) {
+				t.Fatalf("card %s, want his tap drawn with Undo", drawn)
+			}
+			return settle(t, l, c, his, fmt.Sprintf("%d.000100", tapped.Unix()))
+		},
+		"words then tap": func(t *testing.T, l *liveDaemon, c postedCard, his string, tapped time.Time) cardAnswerResult {
+			res := settle(t, l, c, his, "")
+			tap(l, c, cardWaitAction+"0:step-3:merge", tapped, "001800000100000-abcf0001")
+			return res
+		},
+	}
+	for name, answer := range orders {
+		t.Run(name, func(t *testing.T) {
+			l := startDaemon(t)
+			loggedIn(t, l)
+			c := postWaiting(t, l, mergeCard())
+			tapped := time.Now()
+			said := fmt.Sprintf("%d.000200", tapped.Add(5*time.Second).Unix())
+			his := c.id.permalink(c.id.DMChannelID, said, c.thread)
+			res := answer(t, l, c, his, tapped)
+			if !res.Answered || res.Already || res.Label != words {
+				t.Fatalf("card-answer = %+v, want his words to answer the card", res)
+			}
+			drawn := lastEdit(t, l, c)
+			if !strings.Contains(drawn, "/p"+strings.ReplaceAll(said, ".", "")) || !strings.Contains(drawn, "|"+words) || strings.Contains(drawn, "*Hold*") || strings.Contains(drawn, cardUndoAction) || strings.Contains(drawn, cardWaitAction) {
+				t.Fatalf("card %s, want his words settled in place of the tap, with no Undo and no buttons", drawn)
+			}
+			tap(l, c, cardUndoAction+"step-3:merge", tapped.Add(10*time.Second), "001800000100000-abcf0002")
+			if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Label != words || !ans.Other {
+				t.Fatalf("answer = %+v after an Undo, want his words to stand", ans)
+			}
+		})
+	}
+}
+
 func TestACardOutsideTheLiveStoreCollapsesOnce(t *testing.T) {
 	blocks := exampleCard().replyBlocks(view())
 	blocks[0] = header(":raising_hand: Post it?")

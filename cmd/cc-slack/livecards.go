@@ -1029,6 +1029,16 @@ func (l *liveCards) undoReply(card cardRef, words string) []undoneAnswer {
 	})
 }
 
+func (l *liveCards) dropTap(card cardRef, actionTS string) {
+	if actionTS == "" {
+		return
+	}
+	l.undoWhere(func(t *liveThread, ans askAnswer, answered []*liveMessage) bool {
+		return t.Channel == card.channel && t.Thread == card.thread && !ans.Other && ans.At.Truncate(time.Second).Equal(slackTime(actionTS)) &&
+			slices.ContainsFunc(answered, func(m *liveMessage) bool { return m.TS == card.ts })
+	})
+}
+
 func (l *liveCards) undoWhere(match func(t *liveThread, ans askAnswer, answered []*liveMessage) bool) []undoneAnswer {
 	l.mu.Lock()
 	defer l.mu.Unlock()

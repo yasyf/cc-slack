@@ -1394,7 +1394,7 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 	return nil
 }
 
-func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via, from string) (cardAnswerResult, error) {
+func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, label string, other, settled, withdrawn bool, via, from, replaces string) (cardAnswerResult, error) {
 	link, err := parsePermalink(card)
 	if err != nil {
 		return cardAnswerResult{}, err
@@ -1422,6 +1422,7 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 	if err != nil {
 		return cardAnswerResult{}, fmt.Errorf("no waiting card %q at %s in your DM: %w", named, card, err)
 	}
+	p.cards.dropTap(cardRef{id.DMChannelID, thread, m.TS}, replaces)
 	if line, again := withdrawnAgain(m.Tapped, label, via, m.TS); withdrawn && again {
 		return p.redrawWithdrawn(ctx, id, cardRef{id.DMChannelID, thread, m.TS}, label, line)
 	}

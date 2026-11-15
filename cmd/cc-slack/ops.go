@@ -129,6 +129,7 @@ type opBody struct {
 	Reason    string   `json:"reason"`
 	Via       string   `json:"via"`
 	Surface   string   `json:"surface"`
+	Replaces  string   `json:"replaces"`
 	About     string   `json:"about"`
 	Drive     string   `json:"drive"`
 	AsHolder  bool     `json:"as_holder"`
@@ -2996,6 +2997,8 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 		return fail("card-answer settled takes a written-in outcome with other")
 	case b.Surface != "" && b.Surface != surfaceDashboard:
 		return fail("card-answer surface is dashboard, or empty for a cc-present board")
+	case b.Replaces != "" && (!b.Settled || !slackTSPattern.MatchString(b.Replaces)):
+		return fail("card-answer replaces takes the Slack action ts of the tap a settled write-in replaces")
 	}
 	label := b.Label
 	if b.Other || b.Withdrawn {
@@ -3005,7 +3008,7 @@ func (a *app) handleCardAnswer(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Settled, b.Withdrawn, b.Via, b.Surface)
+	res, err := a.poller.answerElsewhere(hc.Ctx, id, b.Waits, b.URL, label, b.Other, b.Settled, b.Withdrawn, b.Via, b.Surface, b.Replaces)
 	if err != nil {
 		return fail(err.Error())
 	}
