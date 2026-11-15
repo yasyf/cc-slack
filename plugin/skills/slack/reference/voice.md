@@ -141,6 +141,15 @@ Leave a blank line between sections and drop a label with nothing under
 it. Open with a one-line greeting when you address someone, and end on the
 ask.
 
+A post that explains how something works, such as a walkthrough of a
+review point for a teammate, picks labels for the questions its reader has,
+such as `*What your PR does*` and `*What we want instead*`. Show each
+mechanism as a short snippet of what the code does, with one plain sentence
+after it saying what happens when it runs, and define each term in a few
+words where it first appears. List a cost as the concrete things the change
+adds, never an adjective, and end a post that teaches on a test the reader
+can reuse next time.
+
 ```text
 Hi <@U0123ABCD>, thanks for jumping on this with us.
 
