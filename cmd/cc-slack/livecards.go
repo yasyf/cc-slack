@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -796,6 +797,25 @@ func (l *liveCards) standingPRCard(channel string, anyThread bool, matches func(
 		}
 	}
 	return found, newest != nil
+}
+
+func (l *liveCards) regroupInto(channel, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
+	same, found, others = l.posted(channel, thread, card)
+	if found || len(others) == 0 {
+		return same, found, others
+	}
+	others = slices.Clone(others)
+	slices.SortFunc(others, func(a, b cardRef) int { return strings.Compare(b.ts, a.ts) })
+	l.mu.Lock()
+	keep := slices.IndexFunc(others, func(ref cardRef) bool {
+		t, m := l.liveMessage(ref.channel, ref.ts)
+		return !t.withdrawn(m)
+	})
+	l.mu.Unlock()
+	if keep < 0 {
+		keep = 0
+	}
+	return others[keep], true, slices.Delete(others, keep, keep+1)
 }
 
 func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {

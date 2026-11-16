@@ -1073,7 +1073,7 @@ func TestOnePostNamingAStackDrawsOneCardAndMarksAMembersOlderCardReplaced(t *tes
 	}
 }
 
-func TestARecardOfACardWhosePRsNowDrawTogetherPostsTheirOneCardAndMarksEachOlderCardReplaced(t *testing.T) {
+func TestARecardOfACardWhosePRsNowDrawTogetherRedrawsItInPlaceAsTheirOneCard(t *testing.T) {
 	drivePRs := []string{"acme/app#41", "acme/app#42", "acme/app#43", "acme/app#44"}
 	member, siblings := stackMemberCard(), fourPRStackCard()
 	siblings.Card.Siblings = true
@@ -1097,11 +1097,6 @@ func TestARecardOfACardWhosePRsNowDrawTogetherPostsTheirOneCardAndMarksEachOlder
 
 	l.app.cards.recardMoved(l.ctx, id, map[string]bool{"pr:acme/app#42": true})
 
-	eventually(t, "the four PRs' one card at the DM root", func() bool { return len(drawn()) == 2 })
-	fresh := drawn()[1]
-	if !strings.Contains(fresh.blocks, siblings.Card.Waits) {
-		t.Fatalf("new card = %s, want the card the card command draws for all four PRs", fresh.blocks)
-	}
 	oldNow := func() string {
 		edits := editsOf(l.slack.edited(), old.ts)
 		if len(edits) == 0 {
@@ -1109,16 +1104,16 @@ func TestARecardOfACardWhosePRsNowDrawTogetherPostsTheirOneCardAndMarksEachOlder
 		}
 		return edits[len(edits)-1]
 	}
-	eventually(t, "#42's card marked replaced", func() bool { return strings.Contains(oldNow(), "*Replaced:* now one card for 4 PRs of one request") })
-	if !strings.Contains(oldNow(), strings.ReplaceAll(fresh.ts, ".", "")) || strings.Contains(oldNow(), siblings.Card.Waits) || strings.Contains(oldNow(), cardWaitAction) {
-		t.Fatalf("#42's card = %s, want #42 alone with a link to the new card and no buttons", oldNow())
+	eventually(t, "#42's card redrawn as the four PRs' one card", func() bool { return strings.Contains(oldNow(), siblings.Card.Waits) })
+	if got := drawn(); len(got) != 1 || strings.Contains(oldNow(), "*Replaced:*") || !strings.Contains(oldNow(), cardWaitAction) {
+		t.Fatalf("PR cards %+v, #42's card = %s; want the four PRs drawn on #42's card in place with its buttons and no new post", got, oldNow())
 	}
 	var listed driveCardsResult
 	if err := json.Unmarshal(l.do(opDriveCards, map[string]any{"name": "demo"}).Body, &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.PRCards) != 1 || len(listed.PRCards[0].PRs) != 4 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(fresh.ts, ".", "")) {
-		t.Fatalf("drive-cards = %+v, want the four PRs' card alone", listed.PRCards)
+	if len(listed.PRCards) != 1 || len(listed.PRCards[0].PRs) != 4 || !strings.Contains(listed.PRCards[0].URL, strings.ReplaceAll(old.ts, ".", "")) {
+		t.Fatalf("drive-cards = %+v, want #42's card alone, with the four PRs", listed.PRCards)
 	}
 }
 

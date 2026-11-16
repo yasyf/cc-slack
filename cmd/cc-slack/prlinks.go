@@ -571,7 +571,11 @@ func (a *app) postPRCards(ctx context.Context, db *sql.DB, id identity, channelI
 
 func (a *app) redrawPostedPRCards(ctx context.Context, id identity, channelID, thread string, provided []providedCard) (rest []providedCard, placed []cardRef, shown []map[string]any, replaced []replacedCard) {
 	for _, p := range provided {
-		posted, found, others := a.postedPRCard(id, channelID, thread, p.Card)
+		find := a.regroupedPRCard
+		if p.moves {
+			find = a.postedPRCard
+		}
+		posted, found, others := find(id, channelID, thread, p.Card)
 		for _, old := range others {
 			p.replaces = append(p.replaces, replacedCard{old: old, why: regrouped(p.Card)})
 		}
@@ -632,6 +636,13 @@ func (a *app) postedPRCard(id identity, channelID, thread string, card statusCar
 		thread = ""
 	}
 	return a.cards.posted(channelID, thread, card)
+}
+
+func (a *app) regroupedPRCard(id identity, channelID, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
+	if channelID == id.DMChannelID {
+		thread = ""
+	}
+	return a.cards.regroupInto(channelID, thread, card)
 }
 
 func (p providedCard) replacedBy(card cardRef) []replacedCard {

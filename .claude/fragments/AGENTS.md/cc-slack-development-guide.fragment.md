@@ -197,10 +197,15 @@ when an open card in the post's thread cites every one of them, or when one open
 card at the DM root carries every one of them; for a text post in a thread it
 always runs. A card
 the program draws for exactly the PRs of a posted card redraws that card in
-place. One whose PRs differ from a posted card that carries some of them, such
-as a stack card over one member's own card, posts fresh, and each such older
-card is edited in place to say it was replaced, with a link to the new card and
-the answer it got, and is never redrawn again. An older open card the program
+place. One whose PRs differ from posted cards that carry some of them, such
+as a stack card over one member's own card, is drawn in place over the newest
+of those cards that was not withdrawn, under its own `waits`, so an answer the
+older PRs got never stands for the PRs it adds, and nothing new posts. Each
+other such card is edited in place to say it was replaced, with a link to the
+card that now carries its PRs and the answer it got, and is never redrawn
+again. A text line in a thread whose `tap_prs` regroup the PRs still posts the
+new card under itself, as a later text post below says, and marks each older
+card replaced. An older open card the program
 declines to redraw still shows with the post. A merged or closed PR gets no card. A card the program draws for a PR and
 head that a pick card already offers, with the same answers, is not posted. The program prints `{"cards": [{"repo", "number", "card"}], "skipped": [{"repo", "number", "reason"}]}`, each
 `card` a waiting `dm-status` card with `options`, and the daemon posts each
