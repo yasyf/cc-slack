@@ -557,7 +557,14 @@ A daemon with no saved `seq`, or one more than 1 h 45 min old, says hello
 without `since` and reads every watch once instead. A reply sent while the
 socket was down, in a thread only a channel watch covers, is then not
 recovered. A rate-limited read pauses that method until `Retry-After`, and a
-failed read retries after a backoff that doubles from 10 s to 60 s.
+failed read retries after a backoff that doubles from 10 s to 60 s. A thread in
+the engineer's DM or an operator channel takes no backoff: a 429 there reads
+it again once `Retry-After` passes. The poller's thread reads never wait out a
+429 inside the call, so one limited read cannot hold up the rest. While Slack limits the
+poller's read of a thread in his DM or an operator channel, a session's read
+through the read cache waits 5 s at a time until that read goes through, for
+at most 2 minutes, so the engineer's words are read before anyone's thread
+read.
 
 ## Events
 

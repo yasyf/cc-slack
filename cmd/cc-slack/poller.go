@@ -688,16 +688,19 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		msgs []slack.Message
 		err  error
 	)
+	operator := slices.Contains(id.operatorChannelIDs(), g.key.channelID)
 	if g.key.threadTS != "" {
 		observe := p.cacheObserver(ctx, g.key)
-		msgs, err = fetchReplies(ctx, api, g.key.channelID, g.key.threadTS, c.oldest)
+		msgs, err = fetchReplies(withoutRateWait(ctx), api, g.key.channelID, g.key.threadTS, c.oldest)
 		observe(c.oldest, msgs, err)
+		_, limited := errors.AsType[*slack.RateLimitedError](err)
+		p.cache.budget.pollerWaits(g.key, operator && limited)
 	} else {
 		msgs, err = fetchHistory(ctx, api, g.key.channelID, c.oldest, pageLimit)
 	}
 	now := p.now()
 	if err != nil {
-		return p.pollFailed(ctx, db, g, c, now, err)
+		return p.pollFailed(ctx, db, g, c, now, err, operator)
 	}
 	latest := c.oldest
 	for _, m := range msgs {
@@ -911,9 +914,12 @@ func (p *poller) routable(ctx context.Context, db *sql.DB, g cursorGroup, m slac
 	return !own, err
 }
 
-func (p *poller) pollFailed(ctx context.Context, db *sql.DB, g cursorGroup, c cursorRow, now time.Time, err error) (cursorRow, error) {
+func (p *poller) pollFailed(ctx context.Context, db *sql.DB, g cursorGroup, c cursorRow, now time.Time, err error, operator bool) (cursorRow, error) {
 	var rate *slack.RateLimitedError
 	switch {
+	case errors.As(err, &rate) && operator:
+		c.backoffS = 0
+		c.nextPollAt = now.Add(rate.RetryAfter).UnixMilli()
 	case errors.As(err, &rate):
 		p.paused[methodFor(g.key)] = now.Add(rate.RetryAfter)
 		c.backoffS = int64(min(maxBackoff, max(minBackoff, 2*time.Duration(c.backoffS)*time.Second)) / time.Second)

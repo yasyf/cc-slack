@@ -62,6 +62,7 @@ type readCache struct {
 	inflight     map[cursorKey]*inflightRead
 	log          *log.Logger
 	limitedUntil time.Time
+	budget       repliesBudget
 }
 
 type threadEntry struct {
@@ -134,6 +135,9 @@ func (c *readCache) readOnce(ctx context.Context, api slackAPI, channelID, threa
 	}
 	if until := c.limited(); held && now.Before(until) {
 		return nil, &slack.RateLimitedError{RetryAfter: until.Sub(now)}
+	}
+	if err := c.budget.yield(); err != nil {
+		return nil, err
 	}
 	since := ""
 	if found && entry.whole(now) {
