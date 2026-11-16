@@ -24,7 +24,7 @@ func compactWithTranscript(t *testing.T, f *fixture) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.poller.startCompacting(testSubject, mark)
+	f.poller.startCompacting(f.ctx, testSubject, mark)
 	return transcript
 }
 
@@ -110,7 +110,7 @@ func TestAMessageMissingFromTheSessionsTranscriptEightSecondsAfterArrivingGetsOn
 func TestAMessageAfterTheSessionStartsAgainGetsNoAck(t *testing.T) {
 	f, thread := compactingDM(t)
 	compactWithTranscript(t, f)
-	if !f.poller.endCompacting(testSubject) {
+	if !f.poller.endCompacting(f.ctx, testSubject) {
 		t.Fatal("the session was not marked compacting")
 	}
 
@@ -199,7 +199,7 @@ func TestAMessageAfterTheSessionsCompactBoundaryGetsNoAckAndEndsTheMark(t *testi
 	if got := compactionAcks(f); len(got) != 0 {
 		t.Fatalf("acks = %+v, want none once the transcript records the compaction", got)
 	}
-	if f.poller.endCompacting(testSubject) {
+	if f.poller.endCompacting(f.ctx, testSubject) {
 		t.Fatal("the session is still marked compacting after its compact_boundary record")
 	}
 }

@@ -75,7 +75,7 @@ type poller struct {
 	pending map[cursorKey]uint64
 	since   map[cursorKey]string
 	compact map[string]transcriptMark
-	held    []heldAck
+	swept   time.Time
 	edits   map[string]bool
 	left    []string
 }
@@ -304,6 +304,9 @@ func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, d
 
 func (p *poller) run(ctx context.Context) {
 	ctx = withSource(ctx, "poller")
+	if err := p.loadCompactions(ctx); err != nil {
+		p.log.Printf("load the sessions compacting when the daemon stopped: %v", err)
+	}
 	for {
 		next, err := p.tick(ctx)
 		if err != nil {
@@ -367,9 +370,14 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	}
 	groups := groupWatches(watches, id, since, bound, mates)
 	p.keepWatched(groups, seen)
+	settled, done := drainable(ctx, drainGrace)
+	defer done()
 	now := p.now()
 	var next time.Time
 	for _, g := range groups {
+		if ctx.Err() != nil {
+			break
+		}
 		if !p.isPending(g.key) {
 			continue
 		}
@@ -382,7 +390,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 			continue
 		}
 		p.settle(g.key)
-		c, err = p.poll(ctx, db, api, id.at(g.key.channelID), g, c)
+		c, err = p.poll(settled, db, api, id.at(g.key.channelID), g, c)
 		if err != nil {
 			p.mark(g.key)
 			return time.Time{}, err
@@ -391,9 +399,18 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 			next = earliest(next, p.dueAt(g.key, c))
 		}
 	}
-	if due := p.ackHeld(ctx, db, api, id); !due.IsZero() {
-		next = earliest(next, due)
+	if err := ctx.Err(); err != nil {
+		return next, err
 	}
+	due, err := p.ackHeld(settled, db, api, id)
+	if err != nil {
+		p.log.Printf("ack held messages: %v", err)
+	}
+	next = earliest(next, due)
+	if due, err = p.sweepOwnerMessages(settled, db, api, id, watches); err != nil {
+		p.log.Printf("sweep owner messages: %v", err)
+	}
+	next = earliest(next, due)
 	next = earliest(next, takeDue)
 	if due := p.retryTaps(ctx, id); !due.IsZero() {
 		next = earliest(next, due)
@@ -401,7 +418,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	if due := p.keepUser(ctx, id); !due.IsZero() {
 		next = earliest(next, due)
 	}
-	due, err := p.feedTick(ctx, db, api, id, watches)
+	due, err = p.feedTick(ctx, db, api, id, watches)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -556,7 +573,7 @@ func groupWatches(watches []watch, id identity, since map[cursorKey]string, boun
 		return &groups[i]
 	}
 	channels := map[string][]watch{}
-	sessions, subscriptions := dmSubscribers(watches)
+	sessions, subscriptions := dmSubscribers(watches, dmChannelID)
 	for _, w := range watches {
 		if w.Kind == kindDM {
 			continue
@@ -620,11 +637,11 @@ func dmSubjects(watches []watch) []string {
 	return subjects
 }
 
-func dmSubscribers(watches []watch) ([]watch, map[string]watch) {
+func dmSubscribers(watches []watch, dmChannelID string) ([]watch, map[string]watch) {
 	var sessions []watch
 	subscriptions := map[string]watch{}
 	for _, w := range watches {
-		if _, dup := subscriptions[w.SubjectID]; w.Kind == kindDM && !dup {
+		if _, dup := subscriptions[w.SubjectID]; w.Kind == kindDM && w.ChannelID == dmChannelID && !dup {
 			subscriptions[w.SubjectID] = w
 			sessions = append(sessions, w)
 		}
@@ -716,6 +733,9 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			}
 			if tapped {
 				continue
+			}
+			if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
+				p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
 			}
 		}
 		if g.idle() {

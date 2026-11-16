@@ -73,6 +73,14 @@ func (o *owedReplies) answer(ctx context.Context, ts string) error {
 	return nil
 }
 
+func (o *owedReplies) owes(ctx context.Context, ts string) (bool, error) {
+	var owed bool
+	if err := o.st.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM owed_replies WHERE ts = ?)`, ts).Scan(&owed); err != nil {
+		return false, fmt.Errorf("check reply %s is owed: %w", ts, err)
+	}
+	return owed, nil
+}
+
 func (o *owedReplies) forget(ctx context.Context, threadTS string) error {
 	if _, err := o.st.DB().ExecContext(ctx, `DELETE FROM owed_replies WHERE thread_ts = ?`, threadTS); err != nil {
 		return fmt.Errorf("forget thread %s: %w", threadTS, err)

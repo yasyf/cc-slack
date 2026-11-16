@@ -531,7 +531,7 @@ func (a *app) handleSessionStart(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if b.Source != "compact" && a.poller.endCompacting(sub.ID) {
+	if b.Source != "compact" && a.poller.endCompacting(hc.Ctx, sub.ID) {
 		a.poller.log.Printf("session %s started again with source %q while marked compacting", hc.Env.Session, b.Source)
 	}
 	var res sessionStartResult

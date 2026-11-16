@@ -18,6 +18,32 @@ CREATE TABLE delivery_holds (
   pid        INTEGER NOT NULL,
   started_at INTEGER NOT NULL
 );
+CREATE TABLE owner_messages (
+  channel_id     TEXT NOT NULL,
+  ts             TEXT NOT NULL,
+  message        TEXT NOT NULL,
+  picked_at      INTEGER NOT NULL,
+  holder         TEXT NOT NULL,
+  transcript     TEXT NOT NULL,
+  transcript_at  INTEGER NOT NULL,
+  confirmed_at   INTEGER NOT NULL DEFAULT 0,
+  redelivered    INTEGER NOT NULL DEFAULT 0,
+  redelivered_at INTEGER NOT NULL DEFAULT 0,
+  reacted_at     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel_id, ts)
+);
+CREATE TABLE held_acks (
+  channel_id TEXT NOT NULL,
+  ts         TEXT NOT NULL,
+  due_at     INTEGER NOT NULL,
+  held       TEXT NOT NULL,
+  PRIMARY KEY (channel_id, ts)
+);
+CREATE TABLE compactions (
+  subject_id TEXT PRIMARY KEY,
+  transcript TEXT NOT NULL,
+  offset     INTEGER NOT NULL
+);
 `}
 
 type deliveryHolds struct {

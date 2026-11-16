@@ -75,6 +75,8 @@ type messagePayload struct {
 	Unclear     bool          `json:"unclear,omitempty"`
 	Relayed     bool          `json:"relayed,omitempty"`
 	Dashboard   bool          `json:"dashboard,omitempty"`
+	Redelivered int           `json:"redelivered,omitempty"`
+	TakenBy     []string      `json:"taken_by,omitempty"`
 }
 
 type threadOwner struct {

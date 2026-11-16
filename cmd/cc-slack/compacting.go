@@ -80,26 +80,73 @@ type ackedPayload struct {
 	Acked     string `json:"acked"`
 }
 
-func (p *poller) startCompacting(subjectID string, mark transcriptMark) {
+func (p *poller) startCompacting(ctx context.Context, subjectID string, mark transcriptMark) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.compact[subjectID] = mark
+	p.mu.Unlock()
+	if err := p.holds.saveCompaction(ctx, subjectID, mark); err != nil {
+		p.log.Printf("record that subject %s compacts: %v", subjectID, err)
+	}
 }
 
-func (p *poller) endCompacting(subjectID string) bool {
+func (p *poller) endCompacting(ctx context.Context, subjectID string) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	_, was := p.compact[subjectID]
 	delete(p.compact, subjectID)
+	p.mu.Unlock()
+	if err := p.holds.dropCompaction(ctx, subjectID); err != nil {
+		p.log.Printf("record that subject %s finished compacting: %v", subjectID, err)
+	}
 	return was
 }
 
-func (p *poller) settleCompacting(subjectID string, mark transcriptMark) {
+func (p *poller) settleCompacting(ctx context.Context, subjectID string, mark transcriptMark) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.compact[subjectID] == mark {
+	settled := p.compact[subjectID] == mark
+	if settled {
 		delete(p.compact, subjectID)
 	}
+	p.mu.Unlock()
+	if !settled {
+		return
+	}
+	if err := p.holds.dropCompaction(ctx, subjectID); err != nil {
+		p.log.Printf("record that subject %s finished compacting: %v", subjectID, err)
+	}
+}
+
+func (p *poller) stillCompacting(ctx context.Context, subjectID string) bool {
+	p.mu.Lock()
+	mark, on := p.compact[subjectID]
+	p.mu.Unlock()
+	if !on {
+		return false
+	}
+	written, err := mark.written()
+	if err != nil {
+		p.log.Printf("read the transcript of compacting subject %s: %v", subjectID, err)
+		return true
+	}
+	if !bytes.Contains(written, compactBoundary) {
+		return true
+	}
+	p.settleCompacting(ctx, subjectID, mark)
+	return false
+}
+
+func (p *poller) loadCompactions(ctx context.Context) error {
+	stored, err := p.holds.compactions(ctx)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for subjectID, mark := range stored {
+		if _, on := p.compact[subjectID]; !on {
+			p.compact[subjectID] = mark
+		}
+	}
+	return nil
 }
 
 func (p *poller) compacting(watches []watch) []watch {
@@ -121,12 +168,14 @@ func (p *poller) holdAck(ctx context.Context, db *sql.DB, channelID string, watc
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	h := heldAck{channel: channelID, m: m, due: p.now().Add(ackWait), watches: compacting}
 	for _, w := range compacting {
 		h.marks = append(h.marks, p.compact[w.SubjectID])
 	}
-	p.held = append(p.held, h)
+	p.mu.Unlock()
+	if err := p.holds.holdAck(ctx, h); err != nil {
+		p.log.Printf("hold an ack for %s while a compaction runs: %v", m.Timestamp, err)
+	}
 }
 
 func markTranscript(path string) (transcriptMark, error) {
@@ -140,26 +189,18 @@ func markTranscript(path string) (transcriptMark, error) {
 	return transcriptMark{path: path, offset: info.Size()}, nil
 }
 
-func (p *poller) ackHeld(ctx context.Context, db *sql.DB, api slackAPI, id identity) time.Time {
-	now := p.now()
-	var (
-		due  []heldAck
-		next time.Time
-	)
-	p.mu.Lock()
-	p.held = slices.DeleteFunc(p.held, func(h heldAck) bool {
-		if h.due.After(now) {
-			next = earliest(next, h.due)
-			return false
-		}
-		due = append(due, h)
-		return true
-	})
-	p.mu.Unlock()
+func (p *poller) ackHeld(ctx context.Context, db *sql.DB, api slackAPI, id identity) (time.Time, error) {
+	due, next, err := p.holds.dueAcks(ctx, p.now())
+	if err != nil {
+		return next, err
+	}
 	for _, h := range due {
 		p.ackUnseen(ctx, db, api, id, h)
+		if err := p.holds.dropAck(ctx, h); err != nil {
+			return next, err
+		}
 	}
-	return next
+	return next, nil
 }
 
 func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id identity, h heldAck) {
@@ -171,7 +212,7 @@ func (p *poller) ackUnseen(ctx context.Context, db *sql.DB, api slackAPI, id ide
 			return
 		}
 		if bytes.Contains(written, compactBoundary) {
-			p.settleCompacting(subject, mark)
+			p.settleCompacting(ctx, subject, mark)
 			p.log.Printf("no ack for %s: session subject %s finished compacting", h.m.Timestamp, subject)
 			return
 		}
@@ -242,7 +283,7 @@ func (a *app) handlePreCompact(hc daemon.HandlerCtx) daemon.Reply {
 		a.poller.log.Printf("session %s PreCompact at %d of %d tokens (%s), with no transcript to hold an ack on: %v", hc.Env.Session, b.Context, b.Point, b.Trigger, err)
 		return ok(preCompactResult{})
 	}
-	a.poller.startCompacting(sub.ID, mark)
+	a.poller.startCompacting(hc.Ctx, sub.ID, mark)
 	a.poller.log.Printf("session %s is compacting at %d of %d tokens (%s): until a compact_boundary record lands in its transcript, an operator DM message not in it %s after it arrives gets an ack", hc.Env.Session, b.Context, b.Point, b.Trigger, ackWait)
 	return ok(preCompactResult{Compacting: sub.ID})
 }
