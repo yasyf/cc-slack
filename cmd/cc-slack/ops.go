@@ -2026,11 +2026,40 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if replies, err = a.unansweredByCards(hc.Ctx, replies); err != nil {
 		return fail(err.Error())
 	}
+	if replies, err = a.unansweredInThreads(hc.Ctx, id, replies); err != nil {
+		return fail(err.Error())
+	}
 	replies = slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] })
 	if err := heldReplies(hc.Ctx, hc.DB, id, replies); err != nil {
 		return fail(err.Error())
 	}
 	return ok(dmOwedResult{Replies: replies, HolderSession: holder.session})
+}
+
+func (a *app) unansweredInThreads(ctx context.Context, id identity, replies []owedReply) ([]owedReply, error) {
+	api := a.newAPI(id.Token)
+	var owed []owedReply
+	for _, r := range replies {
+		at, err := parsePermalink(r.Permalink)
+		if err != nil {
+			return nil, err
+		}
+		thread, err := a.cache.replies(ctx, api, at.channelID, r.ThreadTS)
+		if err != nil {
+			owed = append(owed, r)
+			continue
+		}
+		by, answered := answeredInThread(id.at(at.channelID), thread, r.TS)
+		if !answered {
+			owed = append(owed, r)
+			continue
+		}
+		a.poller.log.Printf("owed %s/%s: answered by %s in its thread", at.channelID, r.TS, by)
+		if err := a.owed.answer(ctx, r.TS); err != nil {
+			return nil, err
+		}
+	}
+	return owed, nil
 }
 
 func (a *app) unansweredByCards(ctx context.Context, replies []owedReply) ([]owedReply, error) {

@@ -137,6 +137,9 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 		}
 	}
 	if b.Done {
+		if err := a.owed.answer(hc.Ctx, b.TS); err != nil {
+			return fail(err.Error())
+		}
 		if err := a.poller.holds.settleOwnerMessage(hc.Ctx, ownerMessage{channelID: channelID, ts: b.TS}); err != nil {
 			return fail(err.Error())
 		}

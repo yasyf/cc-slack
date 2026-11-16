@@ -931,3 +931,29 @@ func TestACompactingChannelHolderIsAckedInItsOperatorChannel(t *testing.T) {
 		t.Fatalf("acks = %+v, want one in %s under his message", acks, platformChannel)
 	}
 }
+
+func TestAnOwedReplyAnsweredByADrivePostInItsThreadLeavesDMOwed(t *testing.T) {
+	f := newFixture(t)
+	thread := postDMThread(t, f)
+	f.tick()
+	ownerReplies(f, thread, "1800000001.500000", "A")
+	ownerReplies(f, thread, "1800000003.500000", "B")
+	f.slack.add(f.id.DMChannelID, slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000002.000000", ThreadTimestamp: thread, SubType: "bot_message", User: f.id.BotUserID, BotID: f.id.BotID, Username: "Yasyf (claude)", Text: "A is done.",
+	}})
+
+	replies, err := f.app.owed.list(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owed, err := f.app.unansweredInThreads(f.ctx, f.id, replies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owed) != 1 || owed[0].TS != "1800000003.500000" {
+		t.Fatalf("still owed = %+v, want only B, which came after the drive's answer", owed)
+	}
+	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000003.500000"}) {
+		t.Fatalf("owed rows %v, want A cleared", got)
+	}
+}

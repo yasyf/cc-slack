@@ -381,13 +381,20 @@ func (p *poller) unansweredInThread(ctx context.Context, api slackAPI, id identi
 	if err != nil {
 		return true, fmt.Errorf("read thread %s/%s for an answer to %s: %w", o.channelID, thread, o.ts, err)
 	}
-	for _, m := range msgs {
-		if tsLess(o.ts, m.Timestamp) && id.fromClaude(m) && !typedOnDashboard(m) && m.Metadata.EventType != compactionAckEventType {
-			p.log.Printf("owner message %s/%s: answered by %s in its thread", o.channelID, o.ts, m.Timestamp)
-			return false, p.owed.answer(ctx, o.ts)
-		}
+	if by, ok := answeredInThread(id, msgs, o.ts); ok {
+		p.log.Printf("owner message %s/%s: answered by %s in its thread", o.channelID, o.ts, by)
+		return false, p.owed.answer(ctx, o.ts)
 	}
 	return true, nil
+}
+
+func answeredInThread(id identity, thread []slack.Message, ts string) (string, bool) {
+	for _, m := range thread {
+		if tsLess(ts, m.Timestamp) && id.fromClaude(m) && !typedOnDashboard(m) && m.Metadata.EventType != compactionAckEventType {
+			return m.Timestamp, true
+		}
+	}
+	return "", false
 }
 
 func (p *poller) settleOwnerMessage(ctx context.Context, api slackAPI, o ownerMessage, owed bool) error {
