@@ -236,10 +236,12 @@ Every other text post at a root gets the card's permalink in its thread under
 the card's question, which Slack unfurls as the card. Each card shows once per post,
 so a keyed card sent again in place, or replaced, adds only the cards it newly
 names. The call asks the program for the cards of the PRs `tap_prs` names
-before it sends the post, waiting at most 25 seconds, inside the CLI's
-36-second deadline, and sends the post only once each has its card. An open PR
+before it sends the post, waiting at most a minute, and sends the post only
+once each has its card. The CLI gives a call naming `tap_prs` 80 seconds where
+any other call gets 36, so the post still goes out after a minute-long card
+ask, inside the 90 seconds the drive waits on `cc-slack`. An open PR
 the program skips, answers no card for, or gives a card that fails the card
-checks, and one it has not answered within those 25 seconds, fails the call
+checks, and one it has not answered within that minute, fails the call
 with each such PR and its reason and sends nothing, so the caller asks again
 later; so does a `tap_prs` under a login with no `card_command` or in a channel
 neither a DM nor in `card_channels`. It asks for the cards of PRs the post only

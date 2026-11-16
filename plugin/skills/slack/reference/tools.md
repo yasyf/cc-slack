@@ -112,7 +112,7 @@ say it was replaced, so every line asking the user's tap has the buttons under
 it; a card the user answered stays where it is, and a post that only links the PR
 or its card leaves the card where it sits. A post lands in a DM thread only when its
 call names that thread. Every card `tap_prs` names is asked for before the
-post goes out, for at most 25 seconds, and the post goes out only once each has
+post goes out, for at most a minute, and the post goes out only once each has
 its card: an open PR that draws no card in time, or none at all, fails the call
 naming each such PR with the reason, and nothing is sent, so fix the reason or
 send it again later. A `dm-status` line whose card then fails to post, or does

@@ -31,6 +31,8 @@ var (
 )
 
 func invoke(ctx context.Context, d cmd.Deps, session, scope string, op daemon.Op, body json.RawMessage) (daemon.Reply, error) {
+	ctx, cancel := tapCallContext(ctx, op, body)
+	defer cancel()
 	resend, again := restarting, body
 	if slices.Contains(attachmentWrites, op) {
 		staged, cleanup, err := stageAttachments(body)

@@ -24,8 +24,20 @@ const prLookupPatience = 5 * time.Second
 
 var (
 	prCardPatience  = 2 * time.Minute
-	tapCardPatience = 25 * time.Second
+	tapCardPatience = time.Minute
 )
+
+const tapPostPatience = 20 * time.Second
+
+func tapCallContext(ctx context.Context, op daemon.Op, body json.RawMessage) (context.Context, context.CancelFunc) {
+	var call struct {
+		TapPRs []string `json:"tap_prs"`
+	}
+	if _, bounded := ctx.Deadline(); bounded || !slices.Contains(attachmentWrites, op) || json.Unmarshal(body, &call) != nil || len(call.TapPRs) == 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, tapCardPatience+tapPostPatience)
+}
 
 const (
 	prCardWords    = "Words"
