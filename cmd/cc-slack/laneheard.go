@@ -17,7 +17,7 @@ type lanesConfig struct {
 
 func (p *poller) laneHeard(ctx context.Context, id identity, channelID, threadTS, ts, words string) {
 	command := id.Config.Lanes.HeardCommand
-	if len(command) == 0 || channelID == id.DMChannelID {
+	if len(command) == 0 {
 		return
 	}
 	args := append(slices.Clone(command[1:]), "--channel", channelID, "--ts", ts, "--words", words, "--link", id.permalink(channelID, ts, threadTS))

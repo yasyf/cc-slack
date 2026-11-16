@@ -774,6 +774,9 @@ func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		if err != nil || tapped {
 			return err
 		}
+		if id.fromOperator(m) && routedSubtypes[m.SubType] {
+			p.laneHeard(ctx, id, g.key.channelID, g.key.threadTS, m.Timestamp, m.Text)
+		}
 		if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
 			p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
 		}
