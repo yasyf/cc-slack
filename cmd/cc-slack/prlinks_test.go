@@ -82,6 +82,64 @@ func (f *fakeGitHub) readCount() int {
 	return f.reads
 }
 
+func TestPRReadBatchBoundariesAndRepositoryRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		app, lib    int
+		description bool
+		calls       int
+	}{
+		{name: "empty"},
+		{name: "single", app: 1, calls: 1},
+		{name: "full", app: 100, calls: 1},
+		{name: "overflow", app: 101, calls: 2},
+		{name: "two-full", app: 200, calls: 2},
+		{name: "two-overflow", app: 201, calls: 3},
+		{name: "repositories", app: 201, lib: 3, calls: 4},
+		{name: "descriptions", app: 26, description: true, calls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &fakeGitHub{held: map[string]bool{}, merged: map[string]bool{}}
+			var refs []refID
+			for n := 1; n <= max(tc.app, tc.lib); n++ {
+				for repo, count := range map[string]int{"app": tc.app, "lib": tc.lib} {
+					if n > count {
+						continue
+					}
+					r := refID{Kind: refPR, Owner: "acme", Repo: repo, Number: n}
+					refs = append(refs, r)
+					key := fmt.Sprintf("acme/%s#%d", repo, n)
+					gh.held[key] = true
+					gh.merged[key] = n%2 == 0
+				}
+			}
+			srv := httptest.NewServer(gh)
+			defer srv.Close()
+			client := newRefClient(fakeGHArgv(srv), srv.Client(), srv.URL, time.Now)
+			read := client.queryPRs
+			if tc.description {
+				read = client.describePRs
+			}
+			found, err := read(t.Context(), refs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gh.readCount() != tc.calls || len(found) != len(refs) {
+				t.Fatalf("%d calls returned %d PRs, want %d calls and %d PRs", gh.readCount(), len(found), tc.calls, len(refs))
+			}
+			for _, r := range refs {
+				want := "OPEN"
+				if r.Number%2 == 0 {
+					want = "MERGED"
+				}
+				if pr := found[r.key()]; pr.State != want {
+					t.Fatalf("%s state = %s, want %s", r.key(), pr.State, want)
+				}
+			}
+		})
+	}
+}
+
 func linkingDaemon(t *testing.T, held ...string) (*liveDaemon, *fakeGitHub) {
 	t.Helper()
 	return cardingDaemon(t, nil, held...)

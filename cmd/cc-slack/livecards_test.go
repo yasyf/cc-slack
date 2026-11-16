@@ -241,8 +241,8 @@ func TestNewLiveRefDoesNotRefreshKnownRefsOrPostponeTheirPoll(t *testing.T) {
 	}
 	clock.advance(30 * time.Second)
 	cards.tick(l.ctx)
-	if refs.calls() != 4 {
-		t.Fatalf("scheduled refresh made %d total calls, want initial lookup plus three batches", refs.calls())
+	if refs.calls() != 2 {
+		t.Fatalf("scheduled refresh made %d total calls, want initial lookup plus one batch", refs.calls())
 	}
 }
 

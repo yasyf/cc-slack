@@ -21,14 +21,15 @@ import (
 )
 
 const (
-	refPR              = "pr"
-	refBuild           = "build"
-	buildkiteAPI       = "https://api.buildkite.com"
-	refTokenTTL        = 30 * time.Minute
-	refCommandTimeout  = 15 * time.Second
-	refGraphQLBatch    = 25
-	refMaxResponseSize = 4 << 20
-	refDescriptionAge  = 10 * time.Minute
+	refPR               = "pr"
+	refBuild            = "build"
+	buildkiteAPI        = "https://api.buildkite.com"
+	refTokenTTL         = 30 * time.Minute
+	refCommandTimeout   = 15 * time.Second
+	refStatusBatch      = 100
+	refDescriptionBatch = 25
+	refMaxResponseSize  = 4 << 20
+	refDescriptionAge   = 10 * time.Minute
 )
 
 var refNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
@@ -327,14 +328,14 @@ func (c refClient) pullRequests(ctx context.Context, refs []refID) (map[string]r
 }
 
 func (c refClient) queryPRs(ctx context.Context, refs []refID) (map[string]githubPR, error) {
-	return c.selectPRs(ctx, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }", 0)
+	return c.selectPRs(ctx, refs, "state isDraft mergeQueueEntry { state } commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }", 0, refStatusBatch)
 }
 
 func (c refClient) describePRs(ctx context.Context, refs []refID) (map[string]githubPR, error) {
-	return c.selectPRs(ctx, refs, "title body", refDescriptionAge)
+	return c.selectPRs(ctx, refs, "title body", refDescriptionAge, refDescriptionBatch)
 }
 
-func (c refClient) selectPRs(ctx context.Context, refs []refID, fields string, maxAge time.Duration) (map[string]githubPR, error) {
+func (c refClient) selectPRs(ctx context.Context, refs []refID, fields string, maxAge time.Duration, batchSize int) (map[string]githubPR, error) {
 	byRepo := map[string][]refID{}
 	for _, r := range refs {
 		byRepo[r.Owner+"/"+r.Repo] = append(byRepo[r.Owner+"/"+r.Repo], r)
@@ -342,7 +343,7 @@ func (c refClient) selectPRs(ctx context.Context, refs []refID, fields string, m
 	out := map[string]githubPR{}
 	var errs []error
 	for _, repo := range slices.Sorted(maps.Keys(byRepo)) {
-		for batch := range slices.Chunk(byRepo[repo], refGraphQLBatch) {
+		for batch := range slices.Chunk(byRepo[repo], batchSize) {
 			found, err := c.readPRs(ctx, repo, batch, fields, maxAge)
 			if err != nil {
 				errs = append(errs, err)
