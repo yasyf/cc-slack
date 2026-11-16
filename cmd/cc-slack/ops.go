@@ -679,7 +679,6 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err != nil {
 			return fail(fallback(actionWrite, err))
 		}
-		linked := waitingPRs(id, channelID, b)
 		texts, crowded := b.pagesIn(id, channelID, a.cards.drawsIn(channelID, b.ThreadTS, ""))
 		if err := cmp.Or(a.refuseWaitsWithoutCard(id, channelID, b), a.refuseCardCopies(id, channelID, b), crowded); err != nil {
 			return fail(err.Error())
@@ -699,8 +698,8 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		if err := a.claimReceipt(hc.Ctx, hc.DB, ticket, w); err != nil {
 			return fail(err.Error())
 		}
-		pages, ready := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, texts, blocks)
-		tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, b.TapPRs)
+		pages, linked := a.linkedPages(hc.Ctx, id, hc.Env.Scope, channelID, b, texts, blocks)
+		tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, channelID, b.ThreadTS, b, linked)
 		if err != nil {
 			return fail(a.handBack(hc.Ctx, hc.DB, id, b.ticketSpend, ticket, true, err.Error()))
 		}
@@ -733,8 +732,7 @@ func (a *app) handlePost(requireThread bool) daemon.HandlerFunc {
 		a.answered(hc.Ctx, id, res.ChannelID, b.ThreadTS, res.TS)
 		post := cardRef{res.ChannelID, res.ThreadTS, res.TS}
 		drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, tap)
-		notePostWarning(hc.Ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
-		a.drawLinkedCards(hc, sub, id, b.ThreadTS, post, b, append(linked, ready...))
+		notePostWarning(hc.Ctx, a.undrawnWarning(id, post, tap.settles, undrawn))
 		res.CardTS, res.CardPermalink = drawn.named(id)
 		res.Warning = postWarningsIn(hc.Ctx)
 		if b.NoWatch {
@@ -795,17 +793,14 @@ type linkedPage struct {
 	draw     linkDraw
 }
 
-func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, texts []string, blocks []slack.Block) ([]linkedPage, []string) {
+func (a *app) linkedPages(ctx context.Context, id identity, scope, channelID string, b opBody, texts []string, blocks []slack.Block) ([]linkedPage, []string) {
 	texts, _ = a.linkPRs(ctx, id, scope, texts...)
 	pages := make([]linkedPage, len(texts))
 	pages[0].blocks = blocks
-	var ready []string
 	for i, text := range texts {
-		var more []string
-		pages[i].text, pages[i].previews, more = a.linkPreviews(ctx, id, channelID, text, nil)
-		ready = append(ready, more...)
+		pages[i].text, pages[i].previews = a.linkPreviews(ctx, id, channelID, text, nil)
 	}
-	return pages, ready
+	return pages, a.linkedTapPRs(b, texts...)
 }
 
 func (a *app) laidOut(id identity, channelID, threadTS string, page linkedPage, files []string, render bool) linkedPage {
@@ -2701,7 +2696,6 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 }
 
 func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.Reply {
-	linked := waitingPRs(id, id.DMChannelID, b)
 	texts, crowded := b.pagesIn(id, id.DMChannelID, a.cards.drawsIn(id.DMChannelID, b.ThreadTS, ""))
 	if err := cmp.Or(checkDMStatus(b, a.now(), id), a.refuseWaitsWithoutCard(id, id.DMChannelID, b), a.refuseCardCopies(id, id.DMChannelID, b), crowded); err != nil {
 		return fail(err.Error())
@@ -2721,9 +2715,8 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if b.Card != nil {
 		b.Card.dropUnopenable(hc.Ctx, id.Config.Links.Tailnet)
 	}
-	pages, ready := a.dmPagesOf(hc, id, b, blocks, texts)
+	pages, linked := a.dmPagesOf(hc, id, b, blocks, texts)
 	msg := pages[0]
-	linked = append(linked, ready...)
 	if b.Card != nil && b.Card.Replaces != "" && b.Card.Waits == "" {
 		return a.replaceCardReply(hc, sub, id, b, linked, msg.tag)
 	}
@@ -2734,7 +2727,7 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	if err != nil {
 		return fail(err.Error())
 	}
-	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, b.TapPRs)
+	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, under, b, linked)
 	if err != nil {
 		return fail(err.Error() + "; nothing was sent")
 	}
@@ -2754,14 +2747,13 @@ func (a *app) postDMStatus(hc daemon.HandlerCtx, id identity, b opBody) daemon.R
 	}
 	post := cardRef{id.DMChannelID, thread, ts}
 	drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, tap)
-	if refused := a.settleTapLine(hc.Ctx, id, post, shown, b, posted, undrawn); refused != "" {
+	if refused := a.settleTapLine(hc.Ctx, id, post, shown, b, posted, tap.settles, undrawn); refused != "" {
 		return fail(refused)
 	}
 	if posted && !b.AsHolder {
 		a.answered(hc.Ctx, id, id.DMChannelID, thread, ts)
 	}
 	notePostWarning(hc.Ctx, a.linesCarried(hc.Ctx, id, post, a.cards.continued(id.DMChannelID, thread), b.Card))
-	a.drawLinkedCards(hc, sub, id, under, post, b, linked)
 	return a.tappedReply(hc, sub, id, thread, ts, b, shown, drawn)
 }
 
@@ -2772,14 +2764,14 @@ func (a *app) undrawnWarning(id identity, post cardRef, asked []string, undrawn 
 	}
 	link := id.permalink(post.channel, post.ts, post.thread)
 	a.poller.log.Printf("tap PRs drew no card beside %s: %s", link, strings.Join(said, "; "))
-	return fmt.Sprintf("posted %s, so do not post it again, but drew no card for tap_prs %s", link, strings.Join(said, "; "))
+	return fmt.Sprintf("posted %s, so do not post it again, but drew no card for %s", link, strings.Join(said, "; "))
 }
 
-func (a *app) settleTapLine(ctx context.Context, id identity, post cardRef, pages []string, b opBody, posted bool, undrawn map[string]string) string {
-	if said := undrawnAsked(b.TapPRs, undrawn); len(said) > 0 && posted && b.Card == nil {
+func (a *app) settleTapLine(ctx context.Context, id identity, post cardRef, pages []string, b opBody, posted bool, settles []string, undrawn map[string]string) string {
+	if said := undrawnAsked(settles, undrawn); len(said) > 0 && posted && b.Card == nil {
 		return a.takeDown(ctx, id, post, pages, said)
 	}
-	notePostWarning(ctx, a.undrawnWarning(id, post, b.TapPRs, undrawn))
+	notePostWarning(ctx, a.undrawnWarning(id, post, settles, undrawn))
 	return ""
 }
 
@@ -2790,17 +2782,17 @@ func (a *app) takeDown(ctx context.Context, id identity, post cardRef, pages, sa
 	for _, page := range pages {
 		ref, err := parsePermalink(page)
 		if err != nil {
-			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for tap_prs %s, and its page %s reads as no Slack message to take down: %v", link, strings.Join(said, "; "), page, err)
+			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for %s, and its page %s reads as no Slack message to take down: %v", link, strings.Join(said, "; "), page, err)
 		}
 		stamps = append(stamps, ref.ts)
 	}
 	api := a.newAPI(id.Token)
 	for _, ts := range stamps {
 		if _, _, err := api.DeleteMessageContext(context.WithoutCancel(ctx), post.channel, ts); err != nil && !goneCardCodes[errorCode(err)] {
-			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for tap_prs %s, and taking it down failed: %v", link, strings.Join(said, "; "), err)
+			return fmt.Sprintf("posted %s, so do not post it again, but drew no card under it for %s, and taking it down failed: %v", link, strings.Join(said, "; "), err)
 		}
 	}
-	return fmt.Sprintf("drew no card under %s for tap_prs %s, so took that post down; nothing was sent", link, strings.Join(said, "; "))
+	return fmt.Sprintf("drew no card under %s for %s, so took that post down; nothing was sent", link, strings.Join(said, "; "))
 }
 
 func operatorIdentity(ctx context.Context, db *sql.DB, channelID string) (identity, error) {
@@ -2925,17 +2917,15 @@ func (a *app) replaceCardReply(hc daemon.HandlerCtx, sub subject.Subject, id ide
 	if err != nil {
 		return fail(err.Error())
 	}
-	asked := b.TapPRs
-	b.TapPRs = slices.Concat(asked, linked)
-	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, old.thread, b, asked)
+	tap, err := a.tapCardsFirst(hc.Ctx, id, hc.Env.Scope, id.DMChannelID, old.thread, b, linked)
 	if err != nil {
 		return fail(err.Error() + "; nothing was sent")
 	}
-	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, b.TapPRs); err != nil {
+	if err := a.replaceCard(hc.Ctx, id, old, *b.Card, tag, slices.Concat(b.TapPRs, linked)); err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	drawn, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, old, tap)
-	notePostWarning(hc.Ctx, a.undrawnWarning(id, old, asked, undrawn))
+	notePostWarning(hc.Ctx, a.undrawnWarning(id, old, tap.settles, undrawn))
 	return a.tappedReply(hc, sub, id, old.thread, old.ts, b, nil, drawn)
 }
 
@@ -3008,14 +2998,14 @@ func (a *app) dmThreadOf(hc daemon.HandlerCtx, sub subject.Subject, id identity,
 
 func (a *app) dmPagesOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []slack.Block, texts []string) ([]dmMessage, []string) {
 	pages := make([]dmMessage, len(texts))
-	var ready []string
+	var linked []string
 	for i, text := range texts {
 		b.Text = text
 		pages[i] = a.dmMessageOf(hc, id, b, blocks)
-		ready = append(ready, pages[i].tapPRs...)
+		linked = append(linked, pages[i].linked...)
 		b.Files, blocks = nil, nil
 	}
-	return pages, ready
+	return pages, linked
 }
 
 func (a *app) postLinkPages(hc daemon.HandlerCtx, sub subject.Subject, id identity, thread, ts string, pages []dmMessage) ([]string, error) {
@@ -3034,11 +3024,13 @@ func (a *app) dmMessageOf(hc daemon.HandlerCtx, id identity, b opBody, blocks []
 	texts, _ := a.linkPRs(hc.Ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 	msg := dmMessage{text: texts[0], blocks: blocks, files: b.Files, card: b.Card, rootOnly: b.RootOnly}
 	if b.Card == nil {
-		msg.text, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
+		msg.linked = a.linkedTapPRs(b, texts[0])
+		msg.text, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], nil)
 		return msg
 	}
 	texts, _ = a.linkPRs(hc.Ctx, id, hc.Env.Scope, b.Card.Body, b.Card.Title)
-	b.Card.Body, msg.previews, msg.tapPRs = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], b.Card.refIDs())
+	msg.linked = a.linkedTapPRs(b, texts[0])
+	b.Card.Body, msg.previews = a.linkPreviews(hc.Ctx, id, id.DMChannelID, texts[0], b.Card.refIDs())
 	msg.tag = gitCardTag(hc.Ctx, hc.Env.Session, hc.Env.Scope)
 	a.describeCardPRs(hc.Ctx, id, b.Card)
 	return msg
@@ -3247,7 +3239,7 @@ type dmMessage struct {
 	tag      cardTag
 	rootOnly bool
 	previews []slack.Attachment
-	tapPRs   []string
+	linked   []string
 }
 
 func (a *app) dmStatus(ctx context.Context, db *sql.DB, sub subject.Subject, id identity, under string, msg dmMessage) (string, string, bool, error) {

@@ -183,13 +183,13 @@ cannot add a page. `check-post` flags such a line as `links-past-five`.
 
 `card_command` names a program, resolved on `PATH` at `login`, that draws the
 card of a PR waiting on a tap. A checked-in config can name a tool only some engineers have,
-so `login` on a machine without it leaves cards off and links still work. A link
-draws one only in the bot's DM, in a post that says something waits on the
-engineer: each PR it links by URL draws its card as if `tap_prs` named it,
-but only once the post is sent, so a card that is slow or draws none never holds
-or fails the post. After a post in the bot's DM with the engineer, or in a
+so `login` on a machine without it leaves cards off and links still work. Each PR
+a post links, by URL, by a `#N` the daemon links, or by the permalink of its PR
+card, draws its card as if `tap_prs` named it, whatever the words around it,
+except that a linked PR the program skips or draws no card for in time fails
+nothing and the post goes out without its card. After a post in the bot's DM with the engineer, or in a
 channel whose ID `card_channels` lists, whose call lists PR URLs in `tap_prs`
-(`--tap-pr` on `dm-status`), the daemon reads those PRs from GitHub in one more query and runs it once with
+(`--tap-pr` on `dm-status`) or links a PR, the daemon reads those PRs from GitHub in one more query and runs it once with
 `{"prs": [{"repo", "number"}]}` on stdin. It lists every open PR in `tap_prs`,
 those with an open card in the post's thread or at the DM root included, so the
 program sees the whole stack it groups. For a post at a root it runs not at all
@@ -226,8 +226,7 @@ card again right under the post, in that thread, while the card still asks, and
 edits the card it replaces, wherever it sat, to say it was asked again under a
 newer line, with a link to the new card and no buttons, so every line asking the
 engineer's tap has the buttons under it; a card the engineer answered is redrawn
-where it sits. A post that only links the PR, or its card, as a line fanned out to
-other threads does, links the card and leaves it where it sits. A later post
+where it sits. A post linking the PR or its card does the same. A later post
 naming the PR at a root carries or links it. A call whose `tap_prs` comes with no text, card, blocks or files only
 draws: it asks the program for each PR's card, redraws a posted one in place,
 offering again an answer whose waits id the program still asks, and posts a
@@ -328,8 +327,8 @@ all of `for_users`, and one line that says it landed, closed, is ready for a tap
 on hold, or what it waits on, with its `ci`. A hold's reason stays out, since it is
 written for whoever holds the PR. `state` `landed` and `closed` end it, and only
 `state` `open` with `ready_for_tap` reads as ready. With `card_command` set, a
-linked PR whose row is `state` `open` with no `hold` draws its card with Approve
-and Hold instead of a preview, in CI or not, as if `tap_prs` named it. A status card carries its previews in a reply in its thread.
+linked PR whose row is `state` `open` with no `hold` gets its card in place of a
+preview, in CI or not. A status card carries its previews in a reply in its thread.
 A PR in a card's `prs` draws in the card's own blocks, above its buttons: a link to
 GitHub and one paragraph per line, each its own section, and nothing is cut. Its
 description waits whole behind Explain more and the link. A PR the card draws gets

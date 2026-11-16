@@ -485,6 +485,18 @@ func (l *liveCards) liveMessage(channel, ts string) (*liveThread, *liveMessage) 
 	return nil, nil
 }
 
+func (l *liveCards) linkedPRCards(text string) []refID {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var prs []refID
+	for _, ref := range linkedRefs(text, nil) {
+		if t, m := l.liveMessage(ref.channelID, ref.ts); m != nil && slices.Contains(t.PRCards, m) {
+			prs = append(prs, slices.DeleteFunc(m.Card.refIDs(), func(pr refID) bool { return pr.Kind != refPR })...)
+		}
+	}
+	return prs
+}
+
 func (l *liveCards) copiesOf(channel, card string) []cardRef {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -84,9 +84,11 @@ still links, and a bare number two repos could hold stays plain. Code spans and 
 alone. With `card_command` set, a PR the user has to tap gets its card when the
 call lists its URL in `tap_prs` (the CLI's repeatable `--tap-pr` on `dm-status`);
 a PR GitHub does not read still goes to the card command,
-which draws its card from what it holds. In the user's DM, a post that says something waits on the
-user also draws the card of each PR it links by URL, as if `tap_prs` listed it,
-once the post is sent, so the result's `card_permalink` leaves it out; name a PR the user has nothing to tap in a post that waits on nothing. List a
+which draws its card from what it holds. A post also draws the card of each PR
+it links, by URL, by a `#123` the daemon links, or by the permalink of the PR's
+card, whatever the words around it, as if `tap_prs` listed it; a PR the card
+command skips, such as one the user approved, merged or closed, draws nothing
+and fails nothing. List a
 stack's PRs in one call: they draw one card, and an older card of any of them
 is edited to say it was replaced. A card redrawn at a new head or by
 `redraw-pr-cards` follows the same rule once the card command draws its PR
@@ -106,16 +108,16 @@ which records it when the PR is its own. A reply carrying its own
 picks lists the PR in the card's `prs` instead of `tap_prs`. A post at the root
 of the user's DM carries the card's answer button in itself, and a first card
 opens at the root in its own thread. A post in a thread, of the DM or a listed
-channel, gets the card of each PR its `tap_prs` names right under it, in that
-thread, and the PR's earlier card that still asks, wherever it sits, is edited to
-say it was replaced, so every line asking the user's tap has the buttons under
-it; a card the user answered stays where it is, and a post that only links the PR
-or its card leaves the card where it sits. A post lands in a DM thread only when its
-call names that thread. Every card `tap_prs` names is asked for before the
-post goes out, for at most a minute, and the post goes out only once each has
-its card: an open PR that draws no card in time, or none at all, fails the call
-naming each such PR with the reason, and nothing is sent, so fix the reason or
-send it again later. A `dm-status` line whose card then fails to post, or does
+channel, gets the card of each PR its `tap_prs` names or it links right under
+it, in that thread, and the PR's earlier card that still asks, wherever it sits,
+is edited to say it was replaced, so every line asking the user's tap has the
+buttons under it; a card the user answered stays where it is. A post lands in a
+DM thread only when its call names that thread. Every card is asked for before
+the post goes out, for at most a minute, and the post goes out only once each PR
+`tap_prs` names has its card: an open PR there that draws no card in time, or
+none at all, fails the call naming each such PR with the reason, and nothing is
+sent, so fix the reason or send it again later; a linked PR with no card goes
+out without one. A `dm-status` line whose card then fails to post, or does
 not land right under it in its thread, is taken down and the call fails, saying
 nothing was sent. On any other post a card that fails to post leaves the post
 sent, its `warning` naming the PR, so never post it again. A login whose config

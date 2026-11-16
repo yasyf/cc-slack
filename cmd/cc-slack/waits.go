@@ -184,28 +184,6 @@ func (a *app) openCardIn(id identity) func(permalinkRef) bool {
 	}
 }
 
-func waitingPRs(id identity, channelID string, b opBody) []string {
-	if channelID != id.DMChannelID || tapCardsRefused(id, channelID) != "" {
-		return nil
-	}
-	if len(waitsOnReader(b.Text)) == 0 {
-		return nil
-	}
-	named := map[string]bool{}
-	for _, raw := range b.TapPRs {
-		if pr, ok := parseRef(raw); ok {
-			named[pr.key()] = true
-		}
-	}
-	var prs []string
-	for _, pr := range linkedPRRefs(b.Text) {
-		if !named[pr.key()] {
-			prs = append(prs, prURL(pr))
-		}
-	}
-	return prs
-}
-
 func (a *app) refuseWaitsWithoutCard(id identity, channelID string, b opBody) error {
 	if channelID != id.DMChannelID || b.Card != nil || b.About != "" || b.Drive != "" || a.cards.holdsOpenCard(channelID, b.ThreadTS) {
 		return nil

@@ -74,25 +74,25 @@ func (r ledgerRow) checks() string {
 	return " CI " + mrkdwnEscapes.Replace(r.CI) + "."
 }
 
-func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string, onCard []refID) (string, []slack.Attachment, []string) {
+func (a *app) linkPreviews(ctx context.Context, id identity, channelID, text string, onCard []refID) (string, []slack.Attachment) {
 	if channelID != id.DMChannelID {
-		return text, nil, nil
+		return text, nil
 	}
-	text, previews, ready, more := a.prPreviews(ctx, id, text, onCard)
+	text, previews, more := a.prPreviews(ctx, id, text, onCard)
 	builds, moreBuilds := a.buildPreviews(ctx, id, text, linkPreviewLimit-len(previews))
 	previews = append(previews, builds...)
 	if more += moreBuilds; more > 0 {
 		line := fmt.Sprintf("+%d more not shown here", more)
 		previews = append(previews, slack.Attachment{Fallback: line, Blocks: slack.Blocks{BlockSet: []slack.Block{mrkdwn(linkPreviewsMore, line)}}})
 	}
-	return text, previews, ready
+	return text, previews
 }
 
-func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard []refID) (string, []slack.Attachment, []string, int) {
+func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard []refID) (string, []slack.Attachment, int) {
 	command := id.Config.PRLinks.PreviewCommand
 	prs := linkedPRRefs(text)
 	if len(command) == 0 || len(prs) == 0 {
-		return text, nil, nil, 0
+		return text, nil, 0
 	}
 	drawn := map[string]bool{}
 	for _, pr := range onCard {
@@ -100,15 +100,14 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 	}
 	prs = slices.DeleteFunc(prs, func(pr refID) bool { return drawn[pr.key()] })
 	if len(prs) == 0 {
-		return withoutRepeatedLinks(text, drawn), nil, nil, 0
+		return withoutRepeatedLinks(text, drawn), nil, 0
 	}
 	rows, err := readLedgerRows(ctx, command, prs)
 	if err != nil {
 		a.poller.log.Printf("post keeps its PR links with no previews: %v", err)
-		return text, nil, nil, 0
+		return text, nil, 0
 	}
 	var previews []slack.Attachment
-	var ready []string
 	more := 0
 	for _, pr := range prs {
 		row, ok := rows[pr.key()]
@@ -116,7 +115,6 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 			continue
 		}
 		if row.approvable() && len(id.Config.PRLinks.CardCommand) > 0 {
-			ready = append(ready, prURL(pr))
 			drawn[pr.key()] = true
 			continue
 		}
@@ -127,7 +125,7 @@ func (a *app) prPreviews(ctx context.Context, id identity, text string, onCard [
 		previews = append(previews, prPreview(pr, row))
 		drawn[pr.key()] = true
 	}
-	return withoutRepeatedLinks(text, drawn), previews, ready, more
+	return withoutRepeatedLinks(text, drawn), previews, more
 }
 
 func (a *app) buildPreviews(ctx context.Context, id identity, text string, room int) ([]slack.Attachment, int) {

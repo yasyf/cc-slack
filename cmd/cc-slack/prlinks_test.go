@@ -1802,9 +1802,6 @@ func TestABareNumberLinksToTheDrivePRItNamesOrStaysPlain(t *testing.T) {
 			if got := cmd.resolves(t); len(got) != tc.resolves || tc.resolves == 1 && got[0] != `{"numbers":[2475]}` {
 				t.Fatalf("card command resolved %v, want %d asks for [2475]", got, tc.resolves)
 			}
-			if got := cmd.requests(t); len(got) != 0 {
-				t.Fatalf("card command asked %v, want no card from a link", got)
-			}
 		})
 	}
 }
@@ -1851,22 +1848,25 @@ func answersOf(requests []string) []string {
 	return slices.DeleteFunc(requests, func(r string) bool { return !strings.Contains(r, `"answer"`) })
 }
 
-func TestALinkInAPostDrawsNoTapCardAndKeepsItsLink(t *testing.T) {
+func TestALinkInAPostDrawsItsTapCardAndKeepsItsLink(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "#41 and " + tapPR41[0] + " are green"})
-	l.do(opDMStatus, map[string]any{"card": statusCard{Status: "info", Title: "#41 is green", Body: tapPR41[0]}})
-	l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 again"})
-	if asked := cmd.requests(t); len(asked) != 0 {
-		t.Fatalf("card command asked %v, want no ask from a link", asked)
+	if asked := cmd.requests(t); len(asked) != 1 {
+		t.Fatalf("card command asked %v, want one ask for the PR the post links", asked)
 	}
-	first := l.slack.sentTo(testDM)[0]
-	if !strings.Contains(first.text, "<https://github.com/acme/app/pull/41|#41>") {
+	if first := l.slack.sentTo(testDM)[0]; !strings.Contains(first.text, "<https://github.com/acme/app/pull/41|#41>") {
 		t.Fatalf("post = %q, want the PR still linked", first.text)
 	}
-	l.do(opDMStatus, map[string]any{"text": "#41 waits on your tap", "tap_prs": tapPR41})
-	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
-		t.Fatalf("cards = %+v, want the one card tap_prs asked for", cards)
+	if cards := rootCards(prCards(l, testDM)); len(cards) != 1 {
+		t.Fatalf("cards = %+v, want #41's tap card", cards)
+	}
+	var room postResult
+	if err := json.Unmarshal(l.post(opSend, map[string]any{"channel_id": testRoom, "text": "#41 again"}).Body, &room); err != nil {
+		t.Fatal(err)
+	}
+	if cards := prCards(l, testRoom); len(cards) != 1 || cards[0].threadTS != room.TS {
+		t.Fatalf("listed channel got cards %+v, want #41's card in the send's thread %s", cards, room.TS)
 	}
 }
 
@@ -2381,7 +2381,7 @@ func TestAPostedPRCardTellsTheCommandItStandsAndAFailedOneTakesItsLineDownAndTel
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
 	l.slack.fail("chat.postMessage", nil)
 	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "invalid_blocks", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] must be less than 3001 characters [json-pointer:/blocks/7/text]"}}})
-	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, "for tap_prs "+tapPR41[0]+": its card was not posted; the daemon log says why, so took that post down; nothing was sent")
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, "for "+tapPR41[0]+": its card was not posted; the daemon log says why, so took that post down; nothing was sent")
 	line := l.slack.sentTo(testDM)[0]
 	if deleted := l.slack.deleted(); len(deleted) != 1 || deleted[0].channelID != testDM || deleted[0].ts != line.ts {
 		t.Fatalf("deleted %+v, want the line %s taken down once Slack refused its card", deleted, line.ts)

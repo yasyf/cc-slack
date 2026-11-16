@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/slack-go/slack"
 )
 
 func roomLink(n int) string {
@@ -179,38 +182,64 @@ func TestALineOrAnEditPastFiveLinksIsRefusedAndSendsNothing(t *testing.T) {
 
 var waitsOn41 = "<" + tapPR41[0] + "|#41> waits on your tap."
 
-func TestAPostThatWaitsOnHimDrawsTheTapCardOfEachPRItLinks(t *testing.T) {
+func TestAPostDrawsTheTapCardOfEachPRItLinksWhateverItsWords(t *testing.T) {
 	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": waitsOn41})
-	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
-		t.Fatalf("cards = %+v, want #41's tap card", cards)
+	l.do(opDMStatus, map[string]any{"text": "<" + tapPR41[0] + "|#41> merged into the release branch."})
+	if cards := rootCards(prCards(l, testDM)); len(cards) != 1 {
+		t.Fatalf("cards = %+v, want #41's tap card drawn before dm-status answers", cards)
 	}
 }
 
-func TestAPostThatWaitsOnHimGoesOutWhileTheCardOfThePRItLinksStillDraws(t *testing.T) {
-	cards, release := holdingCardCommand(t, fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard()), `"prs"`)
-	defer release()
-	l, _ := cardingDaemon(t, cards, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": waitsOn41})
-	if sent := l.slack.sentTo(testDM); len(sent) != 1 || !strings.Contains(sent[0].text, tapPR41[0]) {
-		t.Fatalf("while #41's card still draws, sent %+v, want the post alone", sent)
-	}
-	release()
-	if cards := rootCards(awaitPRCards(t, l, testDM)); len(cards) != 1 {
-		t.Fatalf("cards = %+v, want #41's tap card once the card command answers", cards)
-	}
-}
-
-func TestAPostThatWaitsOnHimGoesOutLinkingAPRWhoseCardDoesNotDraw(t *testing.T) {
-	cmd := fakeCardCommand(t, []string{"acme/app#41"})
+func TestALineLinkingAPRByURLOrByItsCardGetsItsTapCardRightUnderIt(t *testing.T) {
+	const hisThread = "1793804574.412309"
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
 	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
-	l.do(opDMStatus, map[string]any{"text": waitsOn41})
-	if sent := l.slack.sentTo(testDM); len(sent) != 1 || !strings.Contains(sent[0].text, tapPR41[0]) {
-		t.Fatalf("a waiting post whose PR drew no card sent %+v, want it once with the PR's link", sent)
+	said := func(text string, tapPRs []string) map[string]string {
+		t.Helper()
+		var sent map[string]string
+		if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"thread_ts": hisThread, "text": text, "tap_prs": tapPRs}).Body, &sent); err != nil {
+			t.Fatal(err)
+		}
+		card := postUnder(t, l, hisThread, sent["ts"])
+		if sent["card_ts"] != card.ts || !strings.Contains(card.blocks, "Merge (Recommended)") {
+			t.Fatalf("dm-status = %v, post under %q = %+v; want #41's card with Merge right under the line, named in the reply", sent, text, card)
+		}
+		return sent
 	}
-	l.do(opDMStatus, map[string]any{"text": "<" + tapPR41[0] + "|#41> merged at 6:40pm."})
-	if sent := l.slack.sentTo(testDM); len(sent) != 2 {
-		t.Fatalf("a post that waits on nothing sent %+v, want it after the first", sent)
+	said("#41 is green", tapPR41)
+	byURL := said("Waiting on you: <"+tapPR41[0]+"|your card's fix>'s Approve", nil)
+	said("Its Merge is on <"+byURL["card_permalink"]+"|its card>", nil)
+}
+
+func TestAPostLinkingAPRTheCardCommandSkipsGoesOutAndRefusesNothing(t *testing.T) {
+	dir := t.TempDir()
+	script, answer := filepath.Join(dir, "card"), filepath.Join(dir, "answer.json")
+	skipped := map[string]any{"cards": []any{}, "skipped": []map[string]any{{"repo": "acme/app", "number": 41, "reason": "he approved it already"}}}
+	if err := os.WriteFile(answer, mustJSON(skipped), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+answer+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := cardingDaemon(t, []string{script}, "acme/app#41")
+	var sent map[string]string
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"text": waitsOn41}).Body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if posts := l.slack.sentTo(testDM); len(posts) != 1 || !strings.Contains(posts[0].text, tapPR41[0]) || sent["warning"] != "" {
+		t.Fatalf("a post linking an approved PR sent %+v and answered %v, want it once with the PR's link, no card and no warning", posts, sent)
+	}
+}
+
+func TestALineWhoseLinkedPRsDrawnCardFailsToPostComesDown(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	l.slack.fail("chat.postMessage", nil)
+	l.slack.fail("chat.postMessage", slack.SlackErrorResponse{Err: "invalid_blocks"})
+	l.refused(opDMStatus, map[string]any{"text": "<" + tapPR41[0] + "|#41> is green."}, "for "+tapPR41[0]+": its card was not posted; the daemon log says why, so took that post down; nothing was sent")
+	line := l.slack.sentTo(testDM)[0]
+	if deleted := l.slack.deleted(); len(deleted) != 1 || deleted[0].ts != line.ts {
+		t.Fatalf("deleted %+v, want the line %s taken down once its card failed", deleted, line.ts)
 	}
 }

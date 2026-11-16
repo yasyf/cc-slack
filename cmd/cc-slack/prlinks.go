@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -331,6 +332,7 @@ type tapCards struct {
 	standing     []cardRef
 	provided     []providedCard
 	undrawn      map[string]string
+	settles      []string
 	moves        bool
 }
 
@@ -392,12 +394,13 @@ func (a *app) askCardCommand(ctx context.Context, id identity, channelID, thread
 	}
 }
 
-func (a *app) tapCardsFirst(ctx context.Context, id identity, scope, channelID, under string, b opBody, asked []string) (tapCards, error) {
-	if len(b.TapPRs) == 0 {
-		return tapCards{}, nil
-	}
-	if err := refuseTapCards(id, channelID, asked); err != nil {
+func (a *app) tapCardsFirst(ctx context.Context, id identity, scope, channelID, under string, b opBody, linked []string) (tapCards, error) {
+	if err := refuseTapCards(id, channelID, b.TapPRs); err != nil {
 		return tapCards{}, err
+	}
+	asked := b.TapPRs
+	if b.TapPRs = slices.Concat(asked, linked); len(b.TapPRs) == 0 {
+		return tapCards{}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, tapCardPatience)
 	defer cancel()
@@ -405,7 +408,37 @@ func (a *app) tapCardsFirst(ctx context.Context, id identity, scope, channelID, 
 	if said := undrawnAsked(asked, t.undrawn); len(said) > 0 {
 		return tapCards{}, fmt.Errorf("drew no card for tap_prs %s", strings.Join(said, "; "))
 	}
+	drawn := map[string]bool{}
+	for _, p := range t.provided {
+		maps.Copy(drawn, p.Card.prKeys())
+	}
+	t.settles = slices.Concat(asked, slices.DeleteFunc(slices.Clone(linked), func(raw string) bool {
+		pr, _ := parseRef(raw)
+		return !drawn[pr.key()]
+	}))
 	return t, nil
+}
+
+func (a *app) linkedTapPRs(b opBody, texts ...string) []string {
+	named := map[string]bool{}
+	for _, raw := range b.TapPRs {
+		if pr, ok := parseRef(raw); ok {
+			named[pr.key()] = true
+		}
+	}
+	if b.Card != nil {
+		maps.Copy(named, b.Card.prKeys())
+	}
+	var linked []string
+	for _, text := range texts {
+		for _, pr := range slices.Concat(linkedPRRefs(text), a.cards.linkedPRCards(text)) {
+			if !named[pr.key()] {
+				named[pr.key()] = true
+				linked = append(linked, prURL(pr))
+			}
+		}
+	}
+	return linked
 }
 
 func undrawnAsked(asked []string, undrawn map[string]string) []string {
@@ -417,29 +450,6 @@ func undrawnAsked(asked []string, undrawn map[string]string) []string {
 		}
 	}
 	return said
-}
-
-func (a *app) drawLinkedCards(hc daemon.HandlerCtx, sub subject.Subject, id identity, under string, post cardRef, b opBody, linked []string) {
-	named := map[string]bool{}
-	for _, raw := range b.TapPRs {
-		pr, _ := parseRef(raw)
-		named[pr.key()] = true
-	}
-	b.TapPRs = slices.DeleteFunc(linked, func(raw string) bool {
-		pr, _ := parseRef(raw)
-		return named[pr.key()]
-	})
-	if len(b.TapPRs) == 0 {
-		return
-	}
-	hc.Ctx = context.WithoutCancel(hc.Ctx)
-	a.cardWork.Go(func() {
-		t := a.askTapCards(hc.Ctx, id, hc.Env.Scope, post.channel, under, b, false)
-		_, undrawn := a.placeTapCards(hc.Ctx, hc.DB, sub, id, post, t)
-		for pr, why := range undrawn {
-			a.poller.log.Printf("linked PR %s drew no card beside %s: %s", pr, id.permalink(post.channel, post.ts, post.thread), why)
-		}
-	})
 }
 
 type tapDrawn struct {

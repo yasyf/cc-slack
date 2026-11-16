@@ -266,17 +266,11 @@ func cardedPreviewDaemon(t *testing.T, row ledgerRow) (*liveDaemon, fakePost) {
 	return l, card
 }
 
-func TestAPostLinkingAPRHeCanApproveShowsItsCardAloneInCIOrNot(t *testing.T) {
+func TestAPostLinkingAPRHeCanApproveInCIShowsItsCardAndNoPreview(t *testing.T) {
 	inCI := readyRow(41)
 	inCI.ReadyForTap, inCI.WaitsOn = false, "CI is running"
-	held := readyRow(42)
-	held.ReadyForTap, held.Hold, held.WaitsOn = false, "root:hold record 12", "held, root:hold record 12"
 	cards := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
-	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}, "card_command": cards.argv, "preview_command": fakePRRows(t, inCI, held).argv}, "acme/app#41", "acme/app#42")
-	l.do(opDMStatus, map[string]any{"text": "#42 is held: https://github.com/acme/app/pull/42"})
-	if drawn := prCards(l, testDM); len(drawn) != 0 {
-		t.Fatalf("PR cards = %+v, want none for a held PR he cannot approve", drawn)
-	}
+	l, _ := prLinksDaemon(t, map[string]any{"repos": []string{"acme/app"}, "card_command": cards.argv, "preview_command": fakePRRows(t, inCI).argv}, "acme/app#41")
 	l.do(opDMStatus, map[string]any{"text": "In CI now: " + testPR})
 	awaitPRCards(t, l, testDM)
 	for _, post := range l.slack.sent() {
@@ -290,8 +284,10 @@ func TestAHeldPRNeverOffersATapEvenWithAnOpenCard(t *testing.T) {
 	held := readyRow(41)
 	held.ReadyForTap, held.Hold, held.WaitsOn = false, "root:hold record 12", "held, root:hold record 12"
 	l, _ := cardedPreviewDaemon(t, held)
-	if got := lastPost(l).attachments; !strings.Contains(got, "*On hold.*") {
-		t.Fatalf("attachments = %s, want its hold and no card to tap", got)
+	posts := l.slack.sent()
+	line := posts[slices.IndexFunc(posts, func(p fakePost) bool { return strings.HasPrefix(p.text, "Again") })]
+	if !strings.Contains(line.attachments, "*On hold.*") {
+		t.Fatalf("attachments = %s, want its hold and no card to tap", line.attachments)
 	}
 }
 
