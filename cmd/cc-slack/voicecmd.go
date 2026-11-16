@@ -102,8 +102,8 @@ func printVoice(w io.Writer, out voiceOutcome) error {
 		fmt.Fprintf(&b, "not sent: %s%s\n", out.Dropped, out.Error)
 	}
 	fmt.Fprintf(&b, "BEFORE\n%s\n\nAFTER\n%s\n", out.Before, out.After)
-	if out.Lead != "" || len(out.Cut) > 0 {
-		fmt.Fprintf(&b, "(lead %s, cut %v)\n", out.Lead, out.Cut)
+	if len(out.Cut) > 0 || out.Repeat > 0 {
+		fmt.Fprintf(&b, "(cut %v, repeat %.2f)\n", out.Cut, out.Repeat)
 	}
 	if len(out.Scores) > 0 {
 		fmt.Fprintf(&b, "jev cut scores %v\n", out.Scores)
@@ -131,9 +131,9 @@ func voiceHere(ctx context.Context, req voiceRequest) (voiceOutcome, error) {
 	}
 	units := voiceUnits(out.Formatted)
 	jev := time.Now()
-	e := v.ask(ctx, rules, req.Asked, units)
+	e := v.ask(ctx, rules, req.Asked, "", units)
 	out.JevMS, out.Jev = time.Since(jev).Milliseconds(), cmp.Or(e.note, "answered")
-	out.After, out.Lead, out.Cut, out.Scores = voiceApplied(units, e), e.lead, e.cut, e.scores
+	out.After, out.Cut, out.Scores = voiceApplied(units, e), e.cut, e.scores
 	out.TotalMS = time.Since(began).Milliseconds()
 	return out, nil
 }

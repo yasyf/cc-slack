@@ -30,21 +30,26 @@ const (
 	voiceJevLate   = 5 * time.Second
 	voicePostLimit = 10 * time.Second
 	voiceCutAt     = 0.65
+	voiceRepeatAt  = 0.8
+	voiceRepeatFor = 10 * time.Minute
 	voiceMaxUnits  = 16
-	voiceLabelWord = 4
+	voiceLabelWord = 6
+	voiceOwnWords  = 8
 	voiceBodyBytes = 64 << 10
 	voiceIdle      = time.Minute
 	voiceLogName   = "voice.jsonl"
 )
 
 var (
-	voicePRLink   = regexp.MustCompile(`<(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))(?:\|([^<>]*))?>`)
-	barePRLink    = regexp.MustCompile(`(^|[\s(])(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))\b`)
-	unresolvedRef = regexp.MustCompile(`\{(?:pr|card|order|record|answer|started|at|release):[^{}]*\}`)
-	deadTarget    = regexp.MustCompile(`<(?:(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?:[:/][^<>|]*)?|file://[^<>|]*|/[^<>|]*|\s*)(?:\|[^<>]*)?>`)
-	secretShapes  = regexp.MustCompile(`xox[abpors]-[\w-]{10,}|xapp-[\w-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{40,}|sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{40,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[\w-]{20,}\.eyJ[\w-]{20,}\.[\w-]{10,}`)
-	listLine      = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
-	headingLine   = regexp.MustCompile(`^\s*\*[^*\n]+\*\s*$`)
+	voicePRLink     = regexp.MustCompile(`<(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))(?:\|([^<>]*))?>`)
+	barePRLink      = regexp.MustCompile(`(^|[\s(])(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))\b`)
+	bareSlackLink   = regexp.MustCompile(`(^|[\s(])(https://[\w-]+\.slack\.com/archives/[A-Z0-9]+/p(\d{10})\d{6}[^\s<>]*)`)
+	spaceBeforeStop = regexp.MustCompile(`(>) +([.,;])`)
+	unresolvedRef   = regexp.MustCompile(`\{(?:pr|card|order|record|answer|started|at|release):[^{}]*\}`)
+	deadTarget      = regexp.MustCompile(`<(?:(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?:[:/][^<>|]*)?|file://[^<>|]*|/[^<>|]*|\s*)(?:\|[^<>]*)?>`)
+	secretShapes    = regexp.MustCompile(`xox[abpors]-[\w-]{10,}|xapp-[\w-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{40,}|sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{40,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[\w-]{20,}\.eyJ[\w-]{20,}\.[\w-]{10,}`)
+	listLine        = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
+	headingLine     = regexp.MustCompile(`^\s*\*[^*\n]+\*\s*$`)
 )
 
 type voiceRequest struct {
@@ -66,7 +71,7 @@ type voiceOutcome struct {
 	Before    string             `json:"before"`
 	Formatted string             `json:"formatted"`
 	After     string             `json:"after"`
-	Lead      string             `json:"lead,omitempty"`
+	Repeat    float64            `json:"repeat,omitempty"`
 	Scores    map[string]float64 `json:"scores,omitempty"`
 	Cut       []string           `json:"cut,omitempty"`
 	Dropped   string             `json:"dropped,omitempty"`
@@ -88,9 +93,9 @@ type voiceUnit struct {
 }
 
 type voiceEdits struct {
-	lead   string
 	cut    []string
 	note   string
+	repeat float64
 	scores map[string]float64
 }
 
@@ -110,6 +115,7 @@ type voiceSender struct {
 
 	mu     sync.Mutex
 	queues map[string]chan voiceJob
+	last   map[string]voiceLast
 	rules  map[string]voiceRules
 	write  sync.Mutex
 }
@@ -126,6 +132,7 @@ func newVoiceSender(a *app, decide voiceDecide) *voiceSender {
 		logTo:  filepath.Join(appPaths().StateDir(), voiceLogName),
 		log:    log.New(os.Stderr, "["+binaryName+" voice] ", log.LstdFlags),
 		queues: map[string]chan voiceJob{},
+		last:   map[string]voiceLast{},
 		rules:  map[string]voiceRules{},
 	}
 }
@@ -222,7 +229,9 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	units := voiceUnits(formatted)
 	edits := make(chan voiceEdits, 1)
 	jevBegan := time.Now()
-	go func() { edits <- v.ask(context.WithoutCancel(ctx), rules, job.req.Asked, units) }()
+	key := job.req.ChannelID + "/" + job.req.ThreadTS
+	last := v.lastPost(key, job.received)
+	go func() { edits <- v.ask(context.WithoutCancel(ctx), rules, job.req.Asked, last.text, units) }()
 	var landed *voiceEdits
 	select {
 	case e := <-edits:
@@ -233,12 +242,12 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	}
 	out.After = formatted
 	if landed != nil {
-		out.After, out.Lead, out.Cut, out.Scores = voiceApplied(units, *landed), landed.lead, landed.cut, landed.scores
+		out.After, out.Cut, out.Scores, out.Repeat = voiceApplied(units, *landed), landed.cut, landed.scores, landed.repeat
 	}
 	if job.req.DryRun {
 		if landed == nil {
 			e := <-edits
-			out.After, out.Lead, out.Cut, out.Scores, out.Jev = voiceApplied(units, e), e.lead, e.cut, e.scores, "late: "+cmp.Or(e.note, "answered")
+			out.After, out.Cut, out.Scores, out.Repeat, out.Jev = voiceApplied(units, e), e.cut, e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
 			out.JevMS = time.Since(jevBegan).Milliseconds()
 		}
 		return out
@@ -247,6 +256,15 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
 	id.Agent = cmp.Or(job.req.Lane, defaultAgent)
+	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
+		_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(postCtx, job.req.ChannelID, last.ts, textOption(out.After))
+		out.PostMS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS)
+		v.posted(key, voiceLast{ts: last.ts, text: out.After, at: job.received})
+		if err != nil {
+			out.Error = err.Error()
+		}
+		return out
+	}
 	res, err := v.app.send(postCtx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, nil, nil)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
@@ -254,6 +272,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		return out
 	}
 	out.Permalink = res.Permalink
+	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
 	if landed == nil {
 		go v.late(context.WithoutCancel(ctx), id, res, units, out, edits, jevBegan)
 	}
@@ -264,7 +283,7 @@ func (v *voiceSender) late(ctx context.Context, id identity, res postResult, uni
 	select {
 	case e := <-edits:
 		after := voiceApplied(units, e)
-		late := voiceOutcome{ID: out.ID + "-late", At: time.Now(), Lane: out.Lane, ChannelID: out.ChannelID, ThreadTS: out.ThreadTS, Before: out.Formatted, Formatted: out.Formatted, After: after, Lead: e.lead, Cut: e.cut, Jev: "late: " + cmp.Or(e.note, "answered"), JevMS: time.Since(jevBegan).Milliseconds(), Permalink: res.Permalink}
+		late := voiceOutcome{ID: out.ID + "-late", At: time.Now(), Lane: out.Lane, ChannelID: out.ChannelID, ThreadTS: out.ThreadTS, Before: out.Formatted, Formatted: out.Formatted, After: after, Cut: e.cut, Jev: "late: " + cmp.Or(e.note, "answered"), JevMS: time.Since(jevBegan).Milliseconds(), Permalink: res.Permalink}
 		if after != out.Formatted {
 			ctx, cancel := context.WithTimeout(ctx, voicePostLimit)
 			defer cancel()
@@ -324,15 +343,32 @@ func voiceFormat(text string) string {
 		m := voicePRLink.FindStringSubmatch(link)
 		return "<" + m[1] + "|" + prWords(m[2], m[3]) + ">"
 	})
-	return barePRLink.ReplaceAllString(text, "$1<$2|#$3>")
+	text = barePRLink.ReplaceAllString(text, "$1<$2|#$3>")
+	return spaceBeforeStop.ReplaceAllString(slackLinks(text), "$1$2")
 }
 
 func prWords(number, words string) string {
-	words = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(words), "#"+number))
+	words = strings.TrimSpace(words)
+	if own, ok := strings.CutPrefix(words, "#"+number); ok && len(strings.Fields(own)) <= voiceOwnWords {
+		return strings.Join(append([]string{"#" + number}, strings.Fields(own)...), " ")
+	}
 	if fields := strings.Fields(words); len(fields) > 0 && len(fields) <= voiceLabelWord && !strings.HasPrefix(words, "http") {
 		return "#" + number + " " + strings.Join(fields, " ")
 	}
 	return "#" + number
+}
+
+func slackLinks(text string) string {
+	return bareSlackLink.ReplaceAllStringFunc(text, func(found string) string {
+		m := bareSlackLink.FindStringSubmatch(found)
+		url := strings.TrimRight(m[2], ".,;:)")
+		seconds, err := strconv.ParseInt(m[3], 10, 64)
+		if err != nil {
+			return found
+		}
+		label := time.Unix(seconds, 0).In(pacific).Format("3:04 PM") + " message"
+		return m[1] + "<" + url + "|" + label + ">" + m[2][len(url):]
+	})
 }
 
 func voiceMechanical(text string) string {
@@ -409,47 +445,50 @@ func spokenUnits(units []voiceUnit) ([]string, map[string]int) {
 }
 
 type voiceState struct {
-	Rules string            `json:"rules"`
-	Asked string            `json:"asked,omitempty"`
-	Post  map[string]string `json:"post"`
-	Order []string          `json:"order"`
+	Rules    string            `json:"rules"`
+	Asked    string            `json:"asked,omitempty"`
+	Previous string            `json:"previous,omitempty"`
+	Post     map[string]string `json:"post"`
+	Order    []string          `json:"order"`
 }
 
-func (v *voiceSender) ask(ctx context.Context, rules, asked string, units []voiceUnit) voiceEdits {
+func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, units []voiceUnit) voiceEdits {
 	ids, at := spokenUnits(units)
-	if len(ids) < 2 {
-		return voiceEdits{note: "one unit: nothing to move or cut"}
+	if len(ids) < 2 && previous == "" {
+		return voiceEdits{note: "one unit: nothing to cut"}
 	}
 	post := make(map[string]string, len(ids))
-	options := []spawnllm.Option{{Value: "keep", Description: "Keep the order: the first unit already gives the answer or what changes for him"}}
 	questions := map[string]spawnllm.Question{}
+	if previous != "" {
+		questions["repeat"] = spawnllm.Binary{
+			Instructions: "Does `post` tell him nothing `previous`, the lane's last post minutes ago, did not already tell him: the same news, decision or ask in other words?",
+			Yes:          "A repeat: every fact and ask in it was already in the previous post",
+			No:           "New: it carries at least one fact, change, decision or ask the previous post did not",
+		}
+	}
 	for _, id := range ids {
 		post[id] = units[at[id]].text
-		if id != "u1" && !listLine.MatchString(units[at[id]].text) {
-			options = append(options, spawnllm.Option{Value: id, Description: "Move " + id + " first: it is the answer or what changes for him, and the units before it are lead-in"})
+		if id == "u1" {
+			continue
 		}
 		questions["cut_"+id] = spawnllm.Binary{
-			Instructions: "Following `rules` and its bad and good examples, is unit " + id + " of `post` something he does not need: how the agents, sessions, drive or its tools work inside, his own words restated, an apology, a PR title or list repeating what another unit already names, or progress that changes nothing for him?",
+			Instructions: "Following `rules` and its bad and good examples, is unit " + id + " of `post` something he does not need: how the agents, sessions, builders, readers, card queues, the old drive or its tools work inside, a promise to fix tooling, his own words restated, an apology, a PR title or list repeating what another unit already names, or progress that changes nothing for him? It is never something a later unit refers back to, such as the step an \"If it does\" depends on.",
 			Yes:          "Cut it: the post reads the same to him without it",
 			No:           "Keep it: it carries the answer, a change for him, when he hears next, what needs him, or a fact the other units lean on",
 		}
 	}
-	questions["lead"] = spawnllm.Label{
-		Instructions: "Following `rules`, which unit of `post` should open it: the answer to `asked` when there is one, else what changes for him?",
-		Options:      options,
-	}
-	decision, err := v.decide(ctx, voiceState{Rules: rules, Asked: asked, Post: post, Order: ids}, questions, spawnllm.DecideOpts{Timeout: voiceJevLate})
+	decision, err := v.decide(ctx, voiceState{Rules: rules, Asked: asked, Previous: previous, Post: post, Order: ids}, questions, spawnllm.DecideOpts{Timeout: voiceJevLate})
 	if err != nil {
 		return voiceEdits{note: "failed: " + err.Error()}
 	}
 	e := voiceEdits{scores: map[string]float64{}}
-	if lead, ok := decision.Answers["lead"].(spawnllm.LabelAnswer); ok && lead.Choice != "keep" {
-		e.lead = lead.Choice
+	if repeat, ok := decision.Answers["repeat"].(spawnllm.BinaryAnswer); ok {
+		e.repeat = repeat.PYes
 	}
-	for _, id := range ids {
+	for _, id := range ids[1:] {
 		answer, ok := decision.Answers["cut_"+id].(spawnllm.BinaryAnswer)
 		e.scores[id] = answer.PYes
-		if ok && answer.PYes >= voiceCutAt && id != e.lead && (e.lead != "" || id != "u1") {
+		if ok && answer.PYes >= voiceCutAt {
 			e.cut = append(e.cut, id)
 		}
 	}
@@ -460,27 +499,15 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked string, units []voic
 }
 
 func voiceApplied(units []voiceUnit, e voiceEdits) string {
-	ids, at := spokenUnits(units)
+	_, at := spokenUnits(units)
 	cut := map[int]bool{}
 	for _, id := range e.cut {
 		if n, ok := at[id]; ok {
 			cut[n] = true
 		}
 	}
-	lead := -1
-	if n, ok := at[e.lead]; ok && slices.Contains(ids, e.lead) {
-		lead = n
-	}
 	var b strings.Builder
-	if lead >= 0 {
-		b.WriteString(strings.TrimSpace(units[lead].text))
-		b.WriteString(" ")
-	}
 	for n, u := range units {
-		if n == lead {
-			b.WriteString(strings.TrimLeft(u.after, " "))
-			continue
-		}
 		if cut[n] {
 			if strings.Contains(u.after, "\n") {
 				b.WriteString(u.after)
@@ -539,4 +566,25 @@ func readVoiceLog(path string, last int) ([]voiceOutcome, error) {
 		return nil, err
 	}
 	return all[max(0, len(all)-last):], nil
+}
+
+type voiceLast struct {
+	ts   string
+	text string
+	at   time.Time
+}
+
+func (v *voiceSender) lastPost(key string, now time.Time) voiceLast {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if last, ok := v.last[key]; ok && now.Sub(last.at) <= voiceRepeatFor {
+		return last
+	}
+	return voiceLast{}
+}
+
+func (v *voiceSender) posted(key string, last voiceLast) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.last[key] = last
 }

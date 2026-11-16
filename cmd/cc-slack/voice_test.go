@@ -19,6 +19,8 @@ func TestVoiceFormat(t *testing.T) {
 		{"few words stay beside number", "<https://github.com/acme/app/pull/7|reads old journals> is up", "<https://github.com/acme/app/pull/7|#7 reads old journals> is up"},
 		{"number label kept", "<https://github.com/acme/app/pull/7|#7 the fix>", "<https://github.com/acme/app/pull/7|#7 the fix>"},
 		{"bare link gets a label", "see https://github.com/acme/app/pull/12 now", "see <https://github.com/acme/app/pull/12|#12> now"},
+		{"the writer's own words after the number stay", "<https://github.com/acme/app/pull/57746|#57746 staging's SandDB reads its own bucket>", "<https://github.com/acme/app/pull/57746|#57746 staging's SandDB reads its own bucket>"},
+		{"a bare Slack link reads as its time", "Your card asks: https://acme.slack.com/archives/C0X/p1794869182955989?thread_ts=1794817747.843259&cid=C0X .", "Your card asks: <https://acme.slack.com/archives/C0X/p1794869182955989?thread_ts=1794817747.843259&cid=C0X|2:46 PM message>."},
 		{"other links untouched", "<https://example.com/a|a long page title with many words>", "<https://example.com/a|a long page title with many words>"},
 	}
 	for _, tt := range tests {
@@ -75,7 +77,6 @@ func TestVoiceApplied(t *testing.T) {
 	}{
 		{"no edits", voiceEdits{}, text},
 		{"cut one", voiceEdits{cut: []string{"u2"}}, "You're right. Both are being reworked; the first is ready about 3 PM.\n\nThe delete stays held."},
-		{"lead moves first", voiceEdits{lead: "u3"}, "Both are being reworked; the first is ready about 3 PM. You're right. It came from how two PRs were written.\n\nThe delete stays held."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,15 +103,16 @@ func TestVoiceAsk(t *testing.T) {
 		stub stubDecide
 		want voiceEdits
 	}{
-		{"jev keeps order and cuts a sure unit", stubDecide{answers: map[string]spawnllm.Answer{"lead": spawnllm.LabelAnswer{Choice: "keep"}, "cut_u1": spawnllm.BinaryAnswer{PYes: 0.95}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.5}}}, voiceEdits{cut: []string{"u3"}}},
-		{"lead never cut, at most half cut", stubDecide{answers: map[string]spawnllm.Answer{"lead": spawnllm.LabelAnswer{Choice: "u4"}, "cut_u1": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u2": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.9}}}, voiceEdits{lead: "u4", cut: []string{"u1", "u2"}}},
+		{"the opener is never cut and a sure unit is", stubDecide{answers: map[string]spawnllm.Answer{"cut_u1": spawnllm.BinaryAnswer{PYes: 0.95}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.5}}}, voiceEdits{cut: []string{"u3"}}},
+		{"at most half cut", stubDecide{answers: map[string]spawnllm.Answer{"cut_u1": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u2": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.9}}}, voiceEdits{cut: []string{"u2", "u3"}}},
+		{"a repeat of the last post", stubDecide{answers: map[string]spawnllm.Answer{"repeat": spawnllm.BinaryAnswer{PYes: 0.9}}}, voiceEdits{repeat: 0.9}},
 		{"failed call edits nothing", stubDecide{err: errors.New("timeout")}, voiceEdits{note: "failed: timeout"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v := &voiceSender{decide: tt.stub.decide}
-			got := v.ask(context.Background(), "rules", "", units)
-			if got.lead != tt.want.lead || strings.Join(got.cut, ",") != strings.Join(tt.want.cut, ",") || got.note != tt.want.note {
+			got := v.ask(context.Background(), "rules", "", "the earlier post", units)
+			if got.repeat != tt.want.repeat || strings.Join(got.cut, ",") != strings.Join(tt.want.cut, ",") || got.note != tt.want.note {
 				t.Errorf("ask() = %+v, want %+v", got, tt.want)
 			}
 		})
