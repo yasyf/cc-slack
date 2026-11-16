@@ -8,6 +8,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -204,6 +206,9 @@ func (a *app) buildServer() (*daemon.Server, error) {
 }
 
 func serve(ctx context.Context) error {
+	if err := reachUserBin(); err != nil {
+		return err
+	}
 	cache, err := openReadCache(ctx, cachePath())
 	if err != nil {
 		return err
@@ -240,6 +245,22 @@ func serve(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// reachUserBin appends ~/.local/bin, where Claude Code's installer links claude,
+// to the PATH daemonkit pins into the LaunchAgent, so the card command and Jev
+// find claude in the daemon as they do in a session.
+func reachUserBin() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve the home directory for ~/.local/bin: %w", err)
+	}
+	bin := filepath.Join(home, ".local", "bin")
+	path := os.Getenv("PATH")
+	if slices.Contains(filepath.SplitList(path), bin) {
+		return nil
+	}
+	return os.Setenv("PATH", path+string(os.PathListSeparator)+bin)
 }
 
 func cachedSlackAPI() func(token string) slackAPI {
