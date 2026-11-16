@@ -34,8 +34,8 @@ const (
 	voiceRepeatAt    = 0.8
 	voiceRepeatFor   = 10 * time.Minute
 	voiceMaxUnits    = 16
-	voiceLabelWord   = 6
-	voiceOwnWords    = 8
+	voiceLabelWord   = 10
+	voiceOwnWords    = 10
 	voiceBodyBytes   = 64 << 10
 	voiceIdle        = time.Minute
 	voiceLogName     = "voice.jsonl"
