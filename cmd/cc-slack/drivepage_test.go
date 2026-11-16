@@ -337,33 +337,33 @@ func TestDriveCardsListAPRCardWhosePRsAllEndedAsClosedByItsOutcome(t *testing.T)
 func TestAMovedCardAsksInItsOperatorChannelAndItsDMCardLinksThere(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
-	operatorChannelFor(t, "G0PLATFORM")
+	recordPlatformChannel(t)
 	asked := mergeCard()
 	asked.Drive = "brook"
 	c := postWaiting(t, l, asked)
 
 	var res map[string]string
-	if err := json.Unmarshal(l.do(opMoveCard, map[string]any{"url": c.url(), "channel_id": "G0PLATFORM"}).Body, &res); err != nil {
+	if err := json.Unmarshal(l.do(opMoveCard, map[string]any{"url": c.url(), "channel_id": platformChannel}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
 	ref, err := parsePermalink(res["permalink"])
-	if err != nil || ref.channelID != "G0PLATFORM" {
+	if err != nil || ref.channelID != platformChannel {
 		t.Fatalf("moved to %q, %v; want a card in G0PLATFORM", res["permalink"], err)
 	}
 	listed := driveCards(t, l, "brook")
 	if len(listed.Questions) != 1 || listed.Questions[0].URL != res["permalink"] || len(listed.Closed) != 1 || listed.Closed[0].ReplacedBy != res["permalink"] {
 		t.Fatalf("drive cards = %+v, want the moved card open and the DM card closed, replaced by it", listed)
 	}
-	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Moved to* ") || !strings.Contains(edits[len(edits)-1], "#G0PLATFORM") || strings.Contains(edits[len(edits)-1], cardWaitAction) {
+	if edits := editsOf(l.slack.edited(), c.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "Moved to* ") || !strings.Contains(edits[len(edits)-1], "#"+platformChannel) || strings.Contains(edits[len(edits)-1], cardWaitAction) {
 		t.Fatalf("DM card edits = %v, want its buttons replaced by Moved to and the channel", edits)
 	}
-	moved := postedCard{id: c.id.at("G0PLATFORM"), thread: cmp.Or(ref.threadTS, ref.ts), ts: ref.ts}
-	if bound, err := l.app.poller.threads.bound(l.ctx, "G0PLATFORM", []string{moved.thread}); err != nil || !slices.Contains(bound[moved.thread], l.subID) {
+	moved := postedCard{id: c.id.at(platformChannel), thread: cmp.Or(ref.threadTS, ref.ts), ts: ref.ts}
+	if bound, err := l.app.poller.threads.bound(l.ctx, platformChannel, []string{moved.thread}); err != nil || !slices.Contains(bound[moved.thread], l.subID) {
 		t.Fatalf("sessions on the moved card = %v, %v; want the session that held the DM card", bound, err)
 	}
 	l.tap(moved.id, mergeTap(moved, 1))
-	if ans, done := l.app.cards.answer("G0PLATFORM", moved.thread, "step-3:merge"); !done || ans.Label != "Merge" {
+	if ans, done := l.app.cards.answer(platformChannel, moved.thread, "step-3:merge"); !done || ans.Label != "Merge" {
 		t.Fatalf("answer = %+v, %v, want his tap on the moved card on record", ans, done)
 	}
-	l.refused(opMoveCard, map[string]any{"url": c.url(), "channel_id": "G0PLATFORM"}, "no open card")
+	l.refused(opMoveCard, map[string]any{"url": c.url(), "channel_id": platformChannel}, "no open card")
 }
