@@ -13,7 +13,7 @@ own post to edit or delete. Without one, Jev judges the write against the
 user's own words, their Slack messages included, and their recorded rules,
 and mints the ticket when they permit it. No other check refuses it.
 Reactions, `slack_dm_status`, an edit of the bot's own post in the user's
-DM with the app, reads, `slack_revoke`, and `cc-slack apply` need no ticket. Sessions in any other project write without a ticket.
+DM with the app or one of their operator channels, reads, `slack_revoke`, and `cc-slack apply` need no ticket. Sessions in any other project write without a ticket.
 
 ### Opt a project in
 
