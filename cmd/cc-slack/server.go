@@ -246,9 +246,6 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := markDaemonStarted(); err != nil {
-		log.Printf("record the daemon start for upgrade coalescing: %v", err)
-	}
 	err = s.Serve(ctx)
 	if errors.Is(err, store.ErrUnsupportedSchema) && !errors.Is(err, errLiveCardsStore) {
 		log.Printf("%s predates this build's schema; leaving it for `cc-slack login` to archive: %v", statePath(), err)
