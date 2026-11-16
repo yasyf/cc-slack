@@ -316,6 +316,8 @@ takes their fresh rows in place, as `redrawWithFreshPRLines` gives them.
 neither replaced nor withdrawn, and marks each thread it changed stale, so the
 ref poll redraws it in place with no card command run.
 
+`[lanes] heard_command` names a program, resolved on `PATH` at `login` and off when unset, that hears the engineer in an operator channel other than the DM. Each message of theirs the poller takes there runs it with `--channel`, `--ts`, `--words` (the text), `--link` and, for a reply, `--thread`, and each tap of theirs on a card runs it with the action ts as `--ts` and `--words` naming the label and the question, off the poller, within 30 s, logging a failure. The long-running drive names `lane heard`, which wakes the lane whose channel it is.
+
 `preview_command` names a program, resolved on `PATH` at `login` and off when
 unset, that says where the PRs a post links to stand. Slack cannot draw this: it
 unfurls no private PR for a link an app posts. A post in the bot's DM with the
