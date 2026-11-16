@@ -29,7 +29,7 @@ const (
 	voiceJevBudget = 600 * time.Millisecond
 	voiceJevLate   = 5 * time.Second
 	voicePostLimit = 10 * time.Second
-	voiceCutAt     = 0.8
+	voiceCutAt     = 0.65
 	voiceMaxUnits  = 16
 	voiceLabelWord = 4
 	voiceBodyBytes = 64 << 10
@@ -44,6 +44,7 @@ var (
 	deadTarget    = regexp.MustCompile(`<(?:(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?:[:/][^<>|]*)?|file://[^<>|]*|/[^<>|]*|\s*)(?:\|[^<>]*)?>`)
 	secretShapes  = regexp.MustCompile(`xox[abpors]-[\w-]{10,}|xapp-[\w-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{40,}|sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{40,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[\w-]{20,}\.eyJ[\w-]{20,}\.[\w-]{10,}`)
 	listLine      = regexp.MustCompile(`^\s*(?:[-*•◦]|\d+[.)])\s`)
+	headingLine   = regexp.MustCompile(`^\s*\*[^*\n]+\*\s*$`)
 )
 
 type voiceRequest struct {
@@ -398,7 +399,7 @@ func startsSentence(c byte) bool {
 func spokenUnits(units []voiceUnit) ([]string, map[string]int) {
 	ids, at := []string{}, map[string]int{}
 	for n, u := range units {
-		if strings.TrimSpace(u.text) == "" || strings.HasPrefix(strings.TrimSpace(u.text), "```") || len(ids) == voiceMaxUnits {
+		if strings.TrimSpace(u.text) == "" || strings.HasPrefix(strings.TrimSpace(u.text), "```") || headingLine.MatchString(u.text) || len(ids) == voiceMaxUnits {
 			continue
 		}
 		id := "u" + strconv.Itoa(len(ids)+1)
@@ -424,7 +425,7 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked string, units []voic
 	questions := map[string]spawnllm.Question{}
 	for _, id := range ids {
 		post[id] = units[at[id]].text
-		if id != "u1" {
+		if id != "u1" && !listLine.MatchString(units[at[id]].text) {
 			options = append(options, spawnllm.Option{Value: id, Description: "Move " + id + " first: it is the answer or what changes for him, and the units before it are lead-in"})
 		}
 		questions["cut_"+id] = spawnllm.Binary{
@@ -498,8 +499,24 @@ var (
 )
 
 func tidyVoice(text string) string {
-	text = spaceBeforeBreak.ReplaceAllString(text, "\n")
-	return strings.TrimSpace(extraBreaks.ReplaceAllString(text, "\n\n"))
+	lines := strings.Split(spaceBeforeBreak.ReplaceAllString(text, "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for n, line := range lines {
+		if headingLine.MatchString(line) && !sectionFollows(lines[n+1:]) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(extraBreaks.ReplaceAllString(strings.Join(kept, "\n"), "\n\n"))
+}
+
+func sectionFollows(rest []string) bool {
+	for _, line := range rest {
+		if strings.TrimSpace(line) != "" {
+			return !headingLine.MatchString(line)
+		}
+	}
+	return false
 }
 
 func readVoiceLog(path string, last int) ([]voiceOutcome, error) {

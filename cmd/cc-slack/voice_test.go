@@ -116,3 +116,10 @@ func TestVoiceAsk(t *testing.T) {
 		})
 	}
 }
+
+func TestTidyVoiceDropsAHeadingWhoseSectionWasCut(t *testing.T) {
+	got := tidyVoice("Gone now.\n\n*What changes now*\n• The delete stays held.\n\n*So it doesn't happen again*\n\n")
+	if want := "Gone now.\n\n*What changes now*\n• The delete stays held."; got != want {
+		t.Errorf("tidyVoice() = %q, want %q", got, want)
+	}
+}
