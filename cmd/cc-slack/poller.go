@@ -299,6 +299,13 @@ func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, d
 			}
 		}
 	}
+	if !dmDue {
+		return nil
+	}
+	return p.markDMThreads(ctx, db, api, dmChannelID, threads, subscribers)
+}
+
+func (p *poller) markDMThreads(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, threads map[string]bool, subscribers []string) error {
 	bound, err := p.threads.sessionThreads(ctx, dmChannelID, subscribers...)
 	if err != nil {
 		return err
@@ -312,7 +319,7 @@ func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, d
 			oldest = thread
 		}
 	}
-	if oldest == "" || !dmDue {
+	if oldest == "" {
 		return nil
 	}
 	msgs, err := fetchHistory(ctx, api, dmChannelID, justBefore(oldest), pageLimit)

@@ -580,7 +580,7 @@ func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID strin
 	if err != nil {
 		return nil, fmt.Errorf("bring back watches: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var back []watch
 	for rows.Next() {
 		var w watch
