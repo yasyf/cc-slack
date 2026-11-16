@@ -103,7 +103,7 @@ func TestVoiceAsk(t *testing.T) {
 		stub stubDecide
 		want voiceEdits
 	}{
-		{"the opener is never cut and a sure unit is", stubDecide{answers: map[string]spawnllm.Answer{"cut_u1": spawnllm.BinaryAnswer{PYes: 0.95}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.5}}}, voiceEdits{cut: []string{"u3"}}},
+		{"the opener is cut only when Jev is very sure", stubDecide{answers: map[string]spawnllm.Answer{"cut_u1": spawnllm.BinaryAnswer{PYes: 0.85}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.5}}}, voiceEdits{cut: []string{"u3"}}},
 		{"every sure unit but the opener is cut", stubDecide{answers: map[string]spawnllm.Answer{"cut_u1": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u2": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u3": spawnllm.BinaryAnswer{PYes: 0.9}, "cut_u4": spawnllm.BinaryAnswer{PYes: 0.9}}}, voiceEdits{cut: []string{"u2", "u3", "u4"}}},
 		{"a repeat of the last post", stubDecide{answers: map[string]spawnllm.Answer{"repeat": spawnllm.BinaryAnswer{PYes: 0.9}}}, voiceEdits{repeat: 0.9}},
 		{"failed call edits nothing", stubDecide{err: errors.New("timeout")}, voiceEdits{note: "failed: timeout"}},

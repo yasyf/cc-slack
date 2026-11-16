@@ -25,19 +25,20 @@ import (
 )
 
 const (
-	voicePath      = "/voice"
-	voiceJevBudget = 600 * time.Millisecond
-	voiceJevLate   = 5 * time.Second
-	voicePostLimit = 10 * time.Second
-	voiceCutAt     = 0.65
-	voiceRepeatAt  = 0.8
-	voiceRepeatFor = 10 * time.Minute
-	voiceMaxUnits  = 16
-	voiceLabelWord = 6
-	voiceOwnWords  = 8
-	voiceBodyBytes = 64 << 10
-	voiceIdle      = time.Minute
-	voiceLogName   = "voice.jsonl"
+	voicePath        = "/voice"
+	voiceJevBudget   = 600 * time.Millisecond
+	voiceJevLate     = 5 * time.Second
+	voicePostLimit   = 10 * time.Second
+	voiceCutAt       = 0.65
+	voiceOpenerCutAt = 0.9
+	voiceRepeatAt    = 0.8
+	voiceRepeatFor   = 10 * time.Minute
+	voiceMaxUnits    = 16
+	voiceLabelWord   = 6
+	voiceOwnWords    = 8
+	voiceBodyBytes   = 64 << 10
+	voiceIdle        = time.Minute
+	voiceLogName     = "voice.jsonl"
 )
 
 var (
@@ -468,9 +469,6 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 	}
 	for _, id := range ids {
 		post[id] = units[at[id]].text
-		if id == "u1" {
-			continue
-		}
 		questions["cut_"+id] = spawnllm.Binary{
 			Instructions: "Following `rules` and its bad and good examples, is unit " + id + " of `post` something he does not need: how the agents, sessions, builders, readers, card queues, the old drive or its tools work inside, a promise to fix tooling, his own words restated, an apology, a PR title or list repeating what another unit already names, or progress that changes nothing for him? It is never something a later unit refers back to, such as the step an \"If it does\" depends on.",
 			Yes:          "Cut it: the post reads the same to him without it",
@@ -485,10 +483,10 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 	if repeat, ok := decision.Answers["repeat"].(spawnllm.BinaryAnswer); ok {
 		e.repeat = repeat.PYes
 	}
-	for _, id := range ids[1:] {
+	for n, id := range ids {
 		answer, ok := decision.Answers["cut_"+id].(spawnllm.BinaryAnswer)
 		e.scores[id] = answer.PYes
-		if ok && answer.PYes >= voiceCutAt {
+		if ok && answer.PYes >= voiceCutAt && (n > 0 || answer.PYes >= voiceOpenerCutAt) {
 			e.cut = append(e.cut, id)
 		}
 	}
