@@ -34,6 +34,7 @@ type config struct {
 	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
 	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
 	PRLinks     prLinksConfig  `toml:"pr_links" json:"pr_links"`
+	Lanes       lanesConfig    `toml:"lanes" json:"lanes"`
 	OAuth       oauthConfig    `toml:"oauth" json:"oauth"`
 	Permissions permissions    `toml:"permissions" json:"-"`
 }
@@ -202,7 +203,10 @@ func (c *config) resolveTokens() error {
 	if c.PRLinks.CardCommand, err = resolveCommand("card_command", c.PRLinks.CardCommand); err != nil {
 		return err
 	}
-	c.PRLinks.PreviewCommand, err = resolveCommand("preview_command", c.PRLinks.PreviewCommand)
+	if c.PRLinks.PreviewCommand, err = resolveCommand("preview_command", c.PRLinks.PreviewCommand); err != nil {
+		return err
+	}
+	c.Lanes.HeardCommand, err = resolveCommand("heard_command", c.Lanes.HeardCommand)
 	return err
 }
 

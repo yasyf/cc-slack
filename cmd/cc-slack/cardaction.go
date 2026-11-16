@@ -646,6 +646,7 @@ func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) 
 		p.log.Printf("card action %q: dropped: not a status-card button", a.ActionID)
 		return nil
 	}
+	p.laneHeard(ctx, id, card.Channel, card.ThreadTS, a.ActionTS, tapWords(k))
 	defer p.cards.drawingTap()()
 	if err == nil {
 		err = p.takeTap(ctx, id, card, k)
