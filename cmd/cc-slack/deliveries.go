@@ -346,6 +346,11 @@ func (p *poller) sweepOwnerMessage(ctx context.Context, db *sql.DB, api slackAPI
 		return err
 	}
 	age := now.Sub(o.pickedAt)
+	if owed && age >= redeliverAfter {
+		if owed, err = p.unansweredInThread(ctx, api, id, o); err != nil {
+			return err
+		}
+	}
 	if !owed || age >= ownerMessageTTL {
 		return p.settleOwnerMessage(ctx, api, o, owed)
 	}
@@ -359,6 +364,21 @@ func (p *poller) sweepOwnerMessage(ctx context.Context, db *sql.DB, api slackAPI
 		p.markInFlight(ctx, api, &o, now)
 	}
 	return p.holds.updateOwnerMessage(ctx, o)
+}
+
+func (p *poller) unansweredInThread(ctx context.Context, api slackAPI, id identity, o ownerMessage) (bool, error) {
+	thread := cmp.Or(o.message.ThreadTimestamp, o.ts)
+	msgs, err := p.cache.replies(ctx, api, o.channelID, thread)
+	if err != nil {
+		return true, fmt.Errorf("read thread %s/%s for an answer to %s: %w", o.channelID, thread, o.ts, err)
+	}
+	for _, m := range msgs {
+		if tsLess(o.ts, m.Timestamp) && id.fromClaude(m) && !typedOnDashboard(m) && m.Metadata.EventType != compactionAckEventType {
+			p.log.Printf("owner message %s/%s: answered by %s in its thread", o.channelID, o.ts, m.Timestamp)
+			return false, p.owed.answer(ctx, o.ts)
+		}
+	}
+	return true, nil
 }
 
 func (p *poller) settleOwnerMessage(ctx context.Context, api slackAPI, o ownerMessage, owed bool) error {
