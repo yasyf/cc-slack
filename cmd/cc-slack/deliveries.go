@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -388,8 +389,25 @@ func (p *poller) unansweredInThread(ctx context.Context, api slackAPI, id identi
 	return true, nil
 }
 
+var progressReactions = map[string]bool{pickupReaction: true, workingReaction: true, inFlightReaction: true}
+
+func driveReaction(id identity, m slack.Message) (string, bool) {
+	for _, r := range m.Reactions {
+		if !progressReactions[r.Name] && slices.Contains(r.Users, id.BotUserID) {
+			return r.Name, true
+		}
+	}
+	return "", false
+}
+
 func answeredInThread(id identity, thread []slack.Message, ts string) (string, bool) {
 	for _, m := range thread {
+		if m.Timestamp == ts {
+			if name, ok := driveReaction(id, m); ok {
+				return ":" + name + ":", true
+			}
+			continue
+		}
 		if tsLess(ts, m.Timestamp) && id.fromClaude(m) && !typedOnDashboard(m) && m.Metadata.EventType != compactionAckEventType {
 			return m.Timestamp, true
 		}

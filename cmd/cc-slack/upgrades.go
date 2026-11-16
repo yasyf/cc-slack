@@ -22,9 +22,22 @@ func markDaemonStarted() error {
 	return os.WriteFile(daemonStartedPath(), []byte(appVersion), 0o600)
 }
 
+const unknownOpPrefix = "unknown op: "
+
+type forceUpgradeKey struct{}
+
+func forcingUpgrade(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forceUpgradeKey{}, true)
+}
+
+func upgradeForced(ctx context.Context) bool {
+	forced, _ := ctx.Value(forceUpgradeKey{}).(bool)
+	return forced
+}
+
 func coalesceUpgrade(ensure func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if upgradeHeld(ctx, time.Now()) {
+		if !upgradeForced(ctx) && upgradeHeld(ctx, time.Now()) {
 			return nil
 		}
 		return ensure(ctx)

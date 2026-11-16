@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/yasyf/cc-interact/channel"
@@ -74,6 +75,9 @@ func invokeOnce(ctx context.Context, d cmd.Deps, session, scope string, op daemo
 	reply, err := client.Do(ctx, daemon.Envelope{Op: op, Session: session, ClaudePID: d.ClaudePID(), Scope: scope, Body: body})
 	if err != nil {
 		return daemon.Reply{}, err
+	}
+	if !reply.OK && strings.HasPrefix(reply.Error, unknownOpPrefix) && !upgradeForced(ctx) {
+		return invokeOnce(forcingUpgrade(ctx), d, session, scope, op, body)
 	}
 	if !reply.OK {
 		return reply, errors.New(reply.Error)

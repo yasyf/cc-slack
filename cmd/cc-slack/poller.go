@@ -777,6 +777,8 @@ func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
 			p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
 		}
+	} else if err := p.trackOwed(ctx, id, g.key.channelID, g.key.threadTS, m); err != nil {
+		return err
 	}
 	if g.idle() {
 		return nil
@@ -900,15 +902,15 @@ func (p *poller) dmMessage(ctx context.Context, api slackAPI, id identity, polle
 		p.eyes(ctx, api, id, m)
 		return true, p.cardAction(ctx, id, tap)
 	}
-	return false, p.trackOwed(ctx, id, polledThread, m)
+	return false, p.trackOwed(ctx, id, id.DMChannelID, polledThread, m)
 }
 
-func (p *poller) trackOwed(ctx context.Context, id identity, polledThread string, m slack.Message) error {
+func (p *poller) trackOwed(ctx context.Context, id identity, channelID, polledThread string, m slack.Message) error {
 	if !id.fromOperator(m) || !routedSubtypes[m.SubType] || m.Timestamp == polledThread {
 		return nil
 	}
 	thread := cmp.Or(m.ThreadTimestamp, m.Timestamp)
-	return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(id.DMChannelID, m.Timestamp, thread)})
+	return p.owed.owe(ctx, owedReply{ThreadTS: thread, TS: m.Timestamp, Text: messageText(m), Permalink: id.permalink(channelID, m.Timestamp, thread)})
 }
 
 func (p *poller) newToAny(ctx context.Context, db *sql.DB, watches []watch, m slack.Message) (bool, error) {

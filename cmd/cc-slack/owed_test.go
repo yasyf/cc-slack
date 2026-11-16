@@ -385,7 +385,7 @@ func TestAReplyWithNoLiveSessionIsStillOwed(t *testing.T) {
 func TestADMRootReadAgainInItsThreadIsNotOwedAgain(t *testing.T) {
 	f := newFixture(t)
 	root := slack.Message{Msg: slack.Msg{Timestamp: "1800000001.500000", ThreadTimestamp: "1800000001.500000", User: testUser, Text: "answered", ReplyCount: 1}}
-	if err := f.app.poller.trackOwed(f.ctx, f.id, root.Timestamp, root); err != nil {
+	if err := f.app.poller.trackOwed(f.ctx, f.id, f.id.DMChannelID, root.Timestamp, root); err != nil {
 		t.Fatal(err)
 	}
 
@@ -955,5 +955,28 @@ func TestAnOwedReplyAnsweredByADrivePostInItsThreadLeavesDMOwed(t *testing.T) {
 	}
 	if got := owedStamps(t, f); !slices.Equal(got, []string{"1800000003.500000"}) {
 		t.Fatalf("owed rows %v, want A cleared", got)
+	}
+}
+
+func TestADriveReactionOtherThanProgressAnswersHisMessage(t *testing.T) {
+	id := identity{BotUserID: "UBOT"}
+	his := func(reactions ...slack.ItemReaction) []slack.Message {
+		return []slack.Message{{Msg: slack.Msg{Timestamp: "1800000001.000000", User: testUser, Text: "nice", Reactions: reactions}}}
+	}
+	tests := []struct {
+		name     string
+		thread   []slack.Message
+		answered bool
+	}{
+		{"no reaction", his(), false},
+		{"the drive is still working on it", his(slack.ItemReaction{Name: workingReaction, Users: []string{"UBOT"}}, slack.ItemReaction{Name: pickupReaction, Users: []string{"UBOT"}}), false},
+		{"someone else's +1", his(slack.ItemReaction{Name: "+1", Users: []string{"UOTHER"}}), false},
+		{"the drive's +1", his(slack.ItemReaction{Name: "+1", Users: []string{"UBOT"}}), true},
+		{"the drive marked it done", his(slack.ItemReaction{Name: doneReaction, Users: []string{"UBOT"}}), true},
+	}
+	for _, tt := range tests {
+		if _, got := answeredInThread(id, tt.thread, "1800000001.000000"); got != tt.answered {
+			t.Errorf("%s: answered = %v, want %v", tt.name, got, tt.answered)
+		}
 	}
 }
