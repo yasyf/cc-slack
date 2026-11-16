@@ -229,7 +229,7 @@ func (c refClient) do(ctx context.Context, tok *refToken, req *http.Request) ([]
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: the Buildkite API request the ref poller built from a cited build
 	if err != nil {
 		return nil, nil, err
 	}
