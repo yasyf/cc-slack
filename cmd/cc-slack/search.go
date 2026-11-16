@@ -47,7 +47,7 @@ func (a *app) searchMessages(hc daemon.HandlerCtx, b opBody) daemon.Reply {
 		link, _ := parsePermalink(m.Permalink)
 		out = append(out, readMessage{
 			TS: m.Timestamp, ThreadTS: link.threadTS, User: m.User, UserName: "#" + m.Channel.Name + " " + m.Username,
-			Text: m.Text, Permalink: m.Permalink,
+			Text: m.Text, ChannelID: m.Channel.ID,
 		})
 	}
 	return ok(historyResult{Query: query, Total: found.Total, Messages: out})

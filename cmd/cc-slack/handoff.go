@@ -53,8 +53,23 @@ func incumbentBinary(ctx context.Context) (path, release string, err error) {
 		return newerIncumbent(health, handoffFloor())
 	case errors.Is(probeErr, daemonkit.ErrProtocolMismatch):
 		return newerForeignDaemon(ctx, handoffFloor())
+	case errors.Is(probeErr, daemonkit.ErrAbsent):
+		placed, err := launcher().Daemon.ProgramPath()
+		if err != nil {
+			return "", "", err
+		}
+		path, release := newerPlacedBinary(ctx, placed, handoffFloor())
+		return path, release, nil
 	}
 	return "", "", nil
+}
+
+func newerPlacedBinary(ctx context.Context, placed, floor string) (path, release string) {
+	release, err := reportedRelease(ctx, placed)
+	if err != nil || !version.Newer(release, floor) {
+		return "", ""
+	}
+	return placed, release
 }
 
 func newerForeignDaemon(ctx context.Context, floor string) (path, release string, err error) {

@@ -109,6 +109,8 @@ github.com/yasyf/cc-interact v0.45.0 h1:+D6/Y+ahNQujOw0tynpW/c5fM22wa4574B0FD7Dv
 github.com/yasyf/cc-interact v0.45.0/go.mod h1:H8+/egDVFAqI+Hkl5LjbzXaRMX4Pm6OMvbFjl8n1hU0=
 github.com/yasyf/daemonkit v0.38.0 h1:qGGxt1POY51xMlbL9HknB8KxOOIkt8DJI+lfXHbNc7s=
 github.com/yasyf/daemonkit v0.38.0/go.mod h1:hEUZvGh+jCBOJmltSQa3QZR0kqV6G/ApJoViU1aAMps=
+github.com/yasyf/daemonkit v0.39.0 h1:xv8m9e4+NzFpP/yPA691hj7e6USmyhy0RsCyAvvTxzw=
+github.com/yasyf/daemonkit v0.39.0/go.mod h1:ocZT+VZECRrjft1ITuS+2yuDigBNLm42XYrIxTSVAjs=
 github.com/yasyf/spawnllm/go v0.17.10 h1:jB4BzQeH5HrILZ6d8O8ndvsFGw9ynQdcRms7f2LhijE=
 github.com/yasyf/spawnllm/go v0.17.10/go.mod h1:bwtt6Fi3L9oROPT5h7VzGEC9G/8NaEqihQCBkUQwiuA=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=

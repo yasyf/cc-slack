@@ -573,10 +573,10 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []readMessage{
-		{TS: "1800000000.000300", User: testUser, UserName: "yasyf", authorship: authorship{FromUser: true}, Text: "newest", Permalink: "https://acme.slack.com/archives/C1/p1800000000000300"},
+		{TS: "1800000000.000300", User: testUser, UserName: "yasyf", authorship: authorship{FromUser: true}, Text: "newest"},
 		{
 			TS: "1800000000.000200", UserName: "yasyf", authorship: authorship{FromClaude: true, FromBot: true}, Text: "PR is up\nsecond line",
-			Permalink: "https://acme.slack.com/archives/C1/p1800000000000200", ReplyCount: 2, LatestReply: "1800000000.000400",
+			ReplyCount: 2, LatestReply: "1800000000.000400",
 			Files: []messageFile{chartFile()},
 		},
 	}
@@ -592,7 +592,7 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "2027-01-15 00:00  1800000000.000300") ||
-		!strings.Contains(lines[1], "2 replies") || !strings.HasSuffix(lines[1], "PR is up") {
+		!strings.Contains(lines[1], "2 replies") || !strings.HasSuffix(lines[1], "PR is up") || strings.Contains(buf.String(), "slack.com/archives") {
 		t.Fatalf("rendered history = %q", buf.String())
 	}
 

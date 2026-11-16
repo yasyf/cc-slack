@@ -805,8 +805,8 @@ func renderThread(w io.Writer, res threadResult) {
 func readLine(w io.Writer, m readMessage, text string) {
 	sec, _ := splitTS(m.TS)
 	cells := []string{time.Unix(sec, 0).In(pacific).Format(pacificLayout), m.TS}
-	if m.Permalink != "" {
-		cells = append(cells, m.Permalink)
+	if m.ChannelID != "" {
+		cells = append(cells, m.ChannelID)
 	}
 	sender := m.UserName
 	for _, flag := range []struct {
@@ -831,19 +831,22 @@ func indented(w io.Writer, indent, text string) {
 }
 
 func fileLine(w io.Writer, indent string, f messageFile) {
-	where := cmp.Or(f.Path, f.Permalink)
-	if f.PathError != "" {
-		where += " (not downloaded: " + f.PathError + ")"
+	line := fmt.Sprintf("%sfile %s %s %s", indent, f.ID, f.Name, f.Mimetype)
+	if f.Path != "" {
+		line += ": " + f.Path
 	}
-	_, _ = fmt.Fprintf(w, "%sfile %s %s %s: %s\n", indent, f.ID, f.Name, f.Mimetype, where)
+	if f.PathError != "" {
+		line += " (not downloaded: " + f.PathError + ")"
+	}
+	_, _ = fmt.Fprintln(w, line)
 }
 
 func shareLines(w io.Writer, indent string, s sharedMessage) {
 	if s.Unreadable != "" {
-		_, _ = fmt.Fprintf(w, "%sshared %s, unreadable: %s\n", indent, s.Permalink, s.Unreadable)
+		_, _ = fmt.Fprintf(w, "%sshared %s %s, unreadable: %s\n", indent, s.ChannelID, s.TS, s.Unreadable)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%sshared %s from %s:\n", indent, s.Permalink, s.UserName)
+	_, _ = fmt.Fprintf(w, "%sshared %s %s from %s:\n", indent, s.ChannelID, s.TS, s.UserName)
 	indented(w, indent+"  ", s.Text)
 	for _, f := range s.Files {
 		fileLine(w, indent+"  ", f)

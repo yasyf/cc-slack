@@ -68,6 +68,30 @@ func TestNewerForeignIncumbentOrdersTheSocketHoldersRelease(t *testing.T) {
 	}
 }
 
+func TestNewerPlacedBinaryOrdersTheBuildAlreadyPlaced(t *testing.T) {
+	for _, tc := range []struct {
+		name, placed, want string
+	}{
+		{"newer placed build hands off", "0.4.6", "0.4.6"},
+		{"same placed build stays", "0.4.5", ""},
+		{"older placed build stays", "0.2.3", ""},
+		{"nothing placed stays", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			placed := filepath.Join(t.TempDir(), serviceLabel)
+			if tc.placed != "" {
+				if err := os.WriteFile(placed, []byte("#!/bin/sh\necho '"+binaryName+" version "+tc.placed+"'\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path, release := newerPlacedBinary(context.Background(), placed, "0.4.5")
+			if release != tc.want || (tc.want != "") != (path == placed) {
+				t.Fatalf("newerPlacedBinary = %q, %q, want release %q", path, release, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewerForeignIncumbentRefusesAnEmptySocket(t *testing.T) {
 	_, _, err := newerForeignIncumbent(context.Background(), filepath.Join(t.TempDir(), "absent.sock"), "0.4.5")
 	if err == nil || !strings.Contains(err.Error(), "its process is unreadable") {

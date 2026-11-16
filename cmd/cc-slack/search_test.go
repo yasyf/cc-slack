@@ -34,8 +34,8 @@ func TestSearchFindsMessagesAsTheUserWithItsFilters(t *testing.T) {
 	if res.Query != want || res.Total != 1 || len(res.Messages) != 1 {
 		t.Fatalf("result = %+v, want the one match for %q", res, want)
 	}
-	if m := res.Messages[0]; m.Text != ruling || m.Permalink != user.matches[0].Permalink || m.ThreadTS != "1794690000.000100" || m.TS != "1794700000.000100" {
-		t.Fatalf("match = %+v, want its whole text, permalink and thread", m)
+	if m := res.Messages[0]; m.Text != ruling || m.ChannelID != testChannel || m.ThreadTS != "1794690000.000100" || m.TS != "1794700000.000100" {
+		t.Fatalf("match = %+v, want its whole text, channel and thread", m)
 	}
 }
 

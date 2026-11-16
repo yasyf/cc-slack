@@ -209,7 +209,7 @@ type readMessage struct {
 	Dashboard   bool            `json:"dashboard,omitempty"`
 	Text        string          `json:"text"`
 	Answer      string          `json:"answer,omitempty"`
-	Permalink   string          `json:"permalink,omitempty"`
+	ChannelID   string          `json:"channel_id,omitempty"`
 	ReplyCount  int             `json:"reply_count,omitempty"`
 	LatestReply string          `json:"latest_reply,omitempty"`
 	Files       []messageFile   `json:"files,omitempty"`
@@ -1588,7 +1588,6 @@ func (a *app) handleHistory(hc daemon.HandlerCtx) daemon.Reply {
 		if err != nil {
 			return fail(fallback(actionRead, err))
 		}
-		msg.Permalink = id.permalink(channelID, m.Timestamp, "")
 		out = append(out, msg)
 	}
 	return ok(historyResult{ChannelID: channelID, Messages: out, Partial: partial})
