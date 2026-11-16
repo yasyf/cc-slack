@@ -319,17 +319,22 @@ func (p *poller) recordOwnerMessage(ctx context.Context, db *sql.DB, id identity
 			p.log.Printf("record %s/%s with no transcript to confirm it on: %v", g.key.channelID, m.Timestamp, err)
 		}
 	}
+	p.sweepOpen = true
 	return p.holds.recordOwnerMessage(ctx, g.key.channelID, m, p.now(), holder.SubjectID, mark)
 }
 
 func (p *poller) sweepOwnerMessages(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch) (time.Time, error) {
 	now := p.now()
 	if now.Before(p.swept.Add(sweepEvery)) {
+		if !p.sweepOpen {
+			return time.Time{}, nil
+		}
 		return p.swept.Add(sweepEvery), nil
 	}
 	p.swept = now
 	open, err := p.holds.ownerMessages(ctx)
-	if err != nil || len(open) == 0 {
+	p.sweepOpen = err == nil && len(open) > 0
+	if !p.sweepOpen {
 		return time.Time{}, err
 	}
 	for _, o := range open {

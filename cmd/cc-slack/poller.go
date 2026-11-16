@@ -70,14 +70,15 @@ type poller struct {
 	paused     map[string]time.Time
 	log        *log.Logger
 
-	mu      sync.Mutex
-	marks   uint64
-	pending map[cursorKey]uint64
-	since   map[cursorKey]string
-	compact map[string]transcriptMark
-	swept   time.Time
-	edits   map[string]bool
-	left    []string
+	mu        sync.Mutex
+	marks     uint64
+	pending   map[cursorKey]uint64
+	since     map[cursorKey]string
+	compact   map[string]transcriptMark
+	swept     time.Time
+	sweepOpen bool
+	edits     map[string]bool
+	left      []string
 }
 
 type messageNudge struct {
