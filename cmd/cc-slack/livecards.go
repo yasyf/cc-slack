@@ -2065,7 +2065,7 @@ func (l *liveCards) redrawStoredPRCards() int {
 	for key, t := range l.threads {
 		before := len(listing)
 		for _, m := range t.messages() {
-			if m != nil && !m.Edited && len(m.Card.allPRs()) > 0 {
+			if m != nil && !m.Edited && !t.retired(m) && len(m.Card.allPRs()) > 0 {
 				listing[key+"/"+m.TS] = true
 			}
 		}
@@ -2142,6 +2142,10 @@ func (l *liveCards) refreshPRRows(ctx context.Context, api slackAPI, card cardRe
 		return fmt.Errorf("no PR card %s in thread %s/%s", card.ts, card.channel, card.thread)
 	}
 	m := t.PRCards[i]
+	if m.Edited || t.retired(m) {
+		l.mu.Unlock()
+		return nil
+	}
 	lines := map[string]cardPR{}
 	for _, pr := range drawn.allPRs() {
 		if ref, ok := parseRef(pr.URL); ok {

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A withdrawn PR card, and one edited by hand with `edit --blocks`, stays as last drawn when `redraw-pr-cards --stored` or a redraw of a standing PR's rows runs. Both used to draw the card again from the rows cc-slack stored for it, so a row taken off by hand, such as #54428's on the run-page card, could come back.
+
 ### Changed
 
 - A cc-slack older than the build already placed for the daemon, finding no daemon running, now runs that placed build in its place, which starts the daemon on it. Before, cc-interact v0.45.0 refused to let the older client place itself and the client stopped there, so the daemon stayed down until a current client called. On daemonkit v0.39.0, whose `Daemon.ProgramPath` names the placed build.

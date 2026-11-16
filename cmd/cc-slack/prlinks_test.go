@@ -1736,6 +1736,22 @@ func TestRedrawPRCardsStoredRedrawsEachCardListingAPRInPlaceWithNoCardCommand(t 
 	}
 }
 
+func TestRedrawPRCardsStoredLeavesAWithdrawnCardAsItWasLastDrawn(t *testing.T) {
+	l, _ := linkingDaemon(t)
+	listing := mergeCard()
+	listing.PRs = []cardPR{{URL: tapPR41[0], Staging: testStaging}}
+	posted := postWaiting(t, l, listing)
+	l.do(opCardAnswer, map[string]any{"waits": listing.Waits, "url": posted.url(), "label": "held until cutover", "withdrawn": true, "via": posted.url()})
+	edits := len(editsOf(l.slack.edited(), posted.ts))
+	var redrawn map[string]int
+	if err := json.Unmarshal(l.do(opRedrawPRCards, map[string]any{"stored": true}).Body, &redrawn); err != nil || redrawn["redrawing"] != 0 {
+		t.Fatalf("redraw-pr-cards --stored = %v, %v; want the withdrawn card left out", redrawn, err)
+	}
+	if got := len(editsOf(l.slack.edited(), posted.ts)); got != edits {
+		t.Fatalf("withdrawn card edits went from %d to %d, want it left as drawn", edits, got)
+	}
+}
+
 func TestDrawPRLinesRedrawsTheRowsOfThatPRInPlace(t *testing.T) {
 	l, _ := linkingDaemon(t)
 	listing := mergeCard()
