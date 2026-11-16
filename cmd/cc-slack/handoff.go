@@ -105,6 +105,13 @@ func refuseForeignRollback(ensure func(context.Context) error) func(context.Cont
 	}
 }
 
+// consultsIncumbent excludes --version because reportedRelease runs it on the
+// incumbent's executable: consulting from there probes the same foreign daemon
+// and runs --version on itself without end.
+func consultsIncumbent(args []string) bool {
+	return len(args) == 0 || (args[0] != "daemon" && args[0] != "--version")
+}
+
 func reportedRelease(ctx context.Context, path string) (string, error) {
 	out, err := exec.CommandContext(ctx, path, "--version").Output() //nolint:gosec // G204: argv to the incumbent cc-slack daemon's own executable, never a shell
 	if err != nil {

@@ -85,6 +85,23 @@ func TestReportedReleaseRefusesAForeignVersionLine(t *testing.T) {
 	}
 }
 
+func TestVersionAnswersWithoutConsultingTheIncumbent(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{nil, true},
+		{[]string{"send", "--dm"}, true},
+		{[]string{"daemon"}, false},
+		{[]string{"--version"}, false},
+	}
+	for _, tc := range cases {
+		if got := consultsIncumbent(tc.args); got != tc.want {
+			t.Errorf("consultsIncumbent(%q) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
 func TestNewerIncumbentNamesTheDaemonsOwnExecutable(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
