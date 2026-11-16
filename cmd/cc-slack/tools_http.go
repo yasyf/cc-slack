@@ -162,13 +162,11 @@ func ticketsDir() (string, error) {
 	return filepath.Join(home, ".local", "state", binaryName, "tickets"), nil
 }
 
-func toolUseID(meta map[string]json.RawMessage) (string, error) {
-	var use string
-	raw, ok := meta[toolUseMeta]
-	if !ok {
-		return "", nil
+func toolUseID(meta map[string]json.RawMessage) (use string, err error) {
+	if raw, ok := meta[toolUseMeta]; ok {
+		err = json.Unmarshal(raw, &use)
 	}
-	return use, json.Unmarshal(raw, &use)
+	return use, err
 }
 
 func ticketed(body []byte, logger *log.Logger) ([]byte, error) {
