@@ -162,6 +162,15 @@ func ticketsDir() (string, error) {
 	return filepath.Join(home, ".local", "state", binaryName, "tickets"), nil
 }
 
+func toolUseID(meta map[string]json.RawMessage) (string, error) {
+	var use string
+	raw, ok := meta[toolUseMeta]
+	if !ok {
+		return "", nil
+	}
+	return use, json.Unmarshal(raw, &use)
+}
+
 func ticketed(body []byte, logger *log.Logger) ([]byte, error) {
 	var req map[string]json.RawMessage
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -175,11 +184,9 @@ func ticketed(body []byte, logger *log.Logger) ([]byte, error) {
 	if err := json.Unmarshal(req["params"], &params); err != nil {
 		return nil, err
 	}
-	var use string
-	if raw, ok := params.Meta[toolUseMeta]; ok {
-		if err := json.Unmarshal(raw, &use); err != nil {
-			return nil, err
-		}
+	use, err := toolUseID(params.Meta)
+	if err != nil {
+		return nil, err
 	}
 	metaSeen.Do(func() {
 		logger.Printf("tools/call _meta keys %v, %s %q", slices.Sorted(maps.Keys(params.Meta)), toolUseMeta, use)
