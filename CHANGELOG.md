@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- On cc-interact v0.45.0: a cc-slack older than the newest one already placed no longer installs itself over it, also when it finds no daemon running. It gets the same refusal as against a newer running daemon. Clients on cc-interact v0.44.0 or older, such as sessions still on 0.20.155, 0.20.158 or 0.20.167, keep placing their own binary until they restart.
+
 ### Added
 
 - The daemon logs, every 10 minutes, how many calls it made to each Slack method and which op, the poller, the card sweep or other background work made them, as `slack calls in the last 10m0s: conversations.replies 312 (poller 180, thread 70, …)`, so a run of 429s names its caller; a daemon that stops sooner logs what it counted as it stops.
