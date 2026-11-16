@@ -502,13 +502,18 @@ class SolvedLine(CustomTicketCondition):
 class ClaimLine(CustomTicketCondition):
     def evidence(self, ctx: Context) -> list[Evidence] | None:
         channel = ctx.place["channel"]
-        if ctx.place["thread"]:
-            return None
         write = pending(live(ctx))[0]
         grants = [answer for answer in live_answers(ctx, channel) if f"{GRANT_LABEL}{channel}{CLAIMS}" in answer.get("tags", ())]
         if not grants or write.verb != "post" or write.files or write.fields.get("blocks") or "\n" in write.text.strip() or check_post().check(write.text):
             return None
+        if ctx.place["thread"] and not own_claim(ctx):
+            return None
         return [ruling_evidence(grants[-1])]
+
+
+def own_claim(ctx: Context) -> bool:
+    opener = next((message for message in thread_of(ctx).messages if message.ts == ctx.place["thread"]), None)
+    return opener is not None and opener.from_claude and AGENT_POSTER.sub("", opener.user_name) == AGENT_POSTER.sub("", cc_slack("whoami")["username"])
 
 
 def written_here(ctx: Context) -> list[Ticket]:
@@ -954,6 +959,7 @@ NOT_DM = {
     f"{CC_SLACK} thread": f"thread {DANA_THREAD} in {FOLLOWERS}\n2026-10-12 19:47  {DANA_THREAD}  Dana    {DANA_OPENED['text']}\n",
     f"{CC_SLACK} thread --json": json.dumps({"messages": [DANA_OPENED]}),
     f"{CC_SLACK} history": json.dumps({"channel_id": FOLLOWERS, "messages": []}),
+    f"{CC_SLACK} whoami": json.dumps({"username": "Wren (agent)"}),
     "ccn answer search": "[]",
     "cc-present outcomes": "{}",
 }
@@ -1138,6 +1144,11 @@ def case(write: dict[str, Any] | None = None, **fields: Any) -> Case:
 NEW_ASK = DANA | {"text": "Could you send the raw log from last night?"}
 TOP_LEVEL = {"channel_id": FOLLOWERS, "text": "a top-level post", "no_watch": True}
 CLAIM = TOP_LEVEL | {"text": "testing the chat link fix on staging's API for 30 min per the staging rule, lmk if anyone objects"}
+CLAIM_THREAD = "1794786215.903759"
+CLAIM_OPENED = {"ts": CLAIM_THREAD, "user": "", "user_name": "Wren (claude)", "from_claude": True, "from_bot": True, "text": CLAIM["text"]}
+CLAIM_REPLY = {"channel_id": FOLLOWERS, "thread_ts": CLAIM_THREAD, "no_watch": True}
+EXTENDED = CLAIM_REPLY | {"text": "Extending this claim, per the staging rule, to about 6:45 PM while the release's staging test finishes. Does anyone object?"}
+CLAIM_DONE = CLAIM_REPLY | {"text": "Done: the chat link fix passed on staging's API, and staging is free again."}
 PRIYA_THREAD = {"channel_id": PRIYA_USER, "thread_ts": "1791900000.000400", "text": "and one more thing"}
 LINKED_WORDS = said_evidence(f"respond to this asap {DANA_URL}", PROMPTED_AT, "prompt")
 TAPPED = Evidence(id="ask:dana#0", source="ask", quote="Yes", detail=DANA_ASKED)
@@ -1473,6 +1484,14 @@ on(
             case(CLAIM | {"channel_id": PETS}, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT)) >> DENY,
             case(DANA | {"text": CLAIM["text"]}, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(CLAIM, tool="slack_send", **said("status?"), commands=ruled(CLAIM_GRANT, REVOKED)) >> DENY,
+            case(EXTENDED, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED)) >> ALLOW,
+            case(CLAIM_DONE, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED)) >> ALLOW,
+            case(EXTENDED, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED | {"user_name": "Dana (claude)"})) >> DENY,
+            case(EXTENDED, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED | {"user_name": "Releasebot", "from_claude": False})) >> DENY,
+            case(EXTENDED | {"text": f"{EXTENDED['text']}\nPRs: #12, #13"}, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED)) >> DENY,
+            case(EXTENDED | {"channel_id": PETS}, **said("status?"), commands=ruled(CLAIM_GRANT) | thread_read(CLAIM_OPENED)) >> DENY,
+            case(EXTENDED, **said("status?"), commands=ruled(CLAIM_GRANT, REVOKED) | thread_read(CLAIM_OPENED)) >> DENY,
+            case(EXTENDED, **said("status?"), commands=ruled(CLAIM_GRANT) | {f"{CC_SLACK} thread --json": (1, "ratelimited")}) >> DENY,
             case(command=f"{SLACK_POST} send --channel {FOLLOWERS} --thread {DANA_THREAD} --text 'Could you send the raw log?'", **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED)) >> DENY,
             case(NEW_ASK, **said("status?"), commands=ruled(THREAD_GRANT) | thread_read(DANA_OPENED), decide=THREAD_GRANT_PERMITS) >> ALLOW,
             case(DANA | {"text": "fix is out"}, **said("status?"), commands=ruled(EVERY_THREAD_GRANT) | thread_read(DANA_OPENED), decide={"error": TimeoutError("jev down")}, llm=LLM_SILENT) >> ALLOW,

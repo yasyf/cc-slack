@@ -97,8 +97,10 @@ A claim at a channel's top level, such as a line saying what a session tests on
 staging and for how long and asking whether anyone objects, needs no ask once
 that user's grant is an answer labelled `slack-grant:<channel>/claims`. Such a
 grant passes each top-level post there that is one plain line with no jargon,
-files or blocks, its ask included. Its thread and every other post there go to
-the other rules.
+files or blocks, its ask included. It passes such a line in the thread of a
+claim that user's own agent posted there too, such as the line extending the
+claim or saying it is done. A thread another engineer's agent, a bot or a
+person opened, and every other post there, go to the other rules.
 
 An instruction from the user that says what to post and who gets it is the
 approval for that one post, in the place it names, whether they typed it in
