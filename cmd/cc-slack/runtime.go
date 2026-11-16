@@ -62,7 +62,7 @@ func awaitRestart(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, daemon.UpgradeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, launcher().TransitionBudget())
 	defer cancel()
 	_, err = client.WaitReady(ctx)
 	return err
@@ -86,7 +86,7 @@ func probeIncumbent(ctx context.Context) (daemonkit.Health, error) {
 	if err != nil {
 		return daemonkit.Health{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, daemon.UpgradeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, launcher().TransitionBudget())
 	defer cancel()
 	defer func() { _ = client.Close(ctx) }()
 	return client.Health(ctx)

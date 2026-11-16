@@ -190,6 +190,7 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			s.Background(a.poller.run)
 			s.Background(a.socket.run)
 			s.Background(a.cards.run)
+			s.Background(a.poller.taps.settle)
 			s.Background(func(ctx context.Context) { serveTools(ctx, s) })
 			return nil
 		},
@@ -249,9 +250,6 @@ func serve(ctx context.Context) error {
 		log.Printf("record the daemon start for upgrade coalescing: %v", err)
 	}
 	err = s.Serve(ctx)
-	if !a.poller.taps.drain(tapDrain) {
-		log.Printf("card taps still running %s after stop; exiting without them", tapDrain)
-	}
 	if errors.Is(err, store.ErrUnsupportedSchema) && !errors.Is(err, errLiveCardsStore) {
 		log.Printf("%s predates this build's schema; leaving it for `cc-slack login` to archive: %v", statePath(), err)
 		return nil

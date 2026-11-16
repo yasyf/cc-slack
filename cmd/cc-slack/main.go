@@ -30,9 +30,9 @@ func deps() cmd.Deps {
 		Version:                appVersion,
 		Plugin:                 channelPlugin,
 		NewClient:              newClient,
-		EnsureCurrent:          nameReconnect(requireCurrentState(refuseForeignRollback(coalesceUpgrade(func(ctx context.Context) error { return launcher().EnsureCurrent(ctx, daemon.UpgradeTimeout) })))),
-		EnsureCurrentIfRunning: nameReconnect(requireCurrentState(refuseForeignRollback(coalesceUpgrade(func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) })))),
-		Stop:                   func(ctx context.Context) error { return launcher().Stop(ctx, daemon.UpgradeTimeout) },
+		EnsureCurrent:          nameReconnect(keepIncumbent(requireCurrentState(refuseForeignRollback(coalesceUpgrade(func(ctx context.Context) error { return launcher().EnsureCurrent(ctx) })))),
+		EnsureCurrentIfRunning: nameReconnect(keepIncumbent(requireCurrentState(refuseForeignRollback(coalesceUpgrade(func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) })))),
+		Stop:                   func(ctx context.Context) error { return launcher().Stop(ctx) },
 		ClaudePID:              claudePID,
 		WindowAlive:            procs.LiveClaude,
 		TerminalEvent:          func(string) bool { return false },
@@ -53,6 +53,15 @@ func nameReconnect(ensure func(context.Context) error) func(context.Context) err
 			return fmt.Errorf("%s: %w; this session's %s process is the older build, so run /mcp and reconnect %s, or start a new session, to pick up the current build", binaryName, err, binaryName, binaryName)
 		}
 		return err
+	}
+}
+
+func keepIncumbent(ensure func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := ensure(ctx); !errors.Is(err, daemon.ErrUpgradeDeferred) {
+			return err
+		}
+		return nil
 	}
 }
 

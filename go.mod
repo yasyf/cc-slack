@@ -12,7 +12,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/slack-go/slack v0.29.0
 	github.com/spf13/cobra v1.10.2
-	github.com/yasyf/cc-interact v0.42.3-0.20261113055244-bbaf30762e84
+	github.com/yasyf/cc-interact v0.44.0
 	github.com/yasyf/daemonkit v0.38.0
 	github.com/yasyf/spawnllm/go v0.17.10
 	golang.org/x/image v0.47.0

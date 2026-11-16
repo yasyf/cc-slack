@@ -106,11 +106,13 @@ func sessionStartCmd(d cmd.Deps) *cobra.Command {
 		Short:  "SessionStart hook: create this window's cc-slack subject",
 		Args:   cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(c.Context(), hookDeadline)
+			defer cancel()
 			in, err := readHookInput(c)
 			if err != nil {
 				return err
 			}
-			reply, err := invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opSessionStart, mustJSON(sessionStartBody{Source: in.Source}))
+			reply, err := invoke(ctx, d, in.SessionID, cwdOr(in.Cwd), opSessionStart, mustJSON(sessionStartBody{Source: in.Source}))
 			if err != nil {
 				return err
 			}

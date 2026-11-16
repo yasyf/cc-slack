@@ -103,8 +103,8 @@ github.com/tklauser/go-sysconf v0.3.16 h1:frioLaCQSsF5Cy1jgRBrzr6t502KIIwQ0MArYI
 github.com/tklauser/go-sysconf v0.3.16/go.mod h1:/qNL9xxDhc7tx3HSRsLWNnuzbVfh3e7gh/BmM179nYI=
 github.com/tklauser/numcpus v0.11.0 h1:nSTwhKH5e1dMNsCdVBukSZrURJRoHbSEQjdEbY+9RXw=
 github.com/tklauser/numcpus v0.11.0/go.mod h1:z+LwcLq54uWZTX0u/bGobaV34u6V7KNlTZejzM6/3MQ=
-github.com/yasyf/cc-interact v0.42.3-0.20261113055244-bbaf30762e84 h1:Hv6A51KKAKSwz//8ciXxgSVI14P+jmsypm1sCYAuSMU=
-github.com/yasyf/cc-interact v0.42.3-0.20261113055244-bbaf30762e84/go.mod h1:H8+/egDVFAqI+Hkl5LjbzXaRMX4Pm6OMvbFjl8n1hU0=
+github.com/yasyf/cc-interact v0.44.0 h1:Vdla9k/DYUNdUgBB13OIEYqQBbcOkKfsExr5/vCnQy0=
+github.com/yasyf/cc-interact v0.44.0/go.mod h1:H8+/egDVFAqI+Hkl5LjbzXaRMX4Pm6OMvbFjl8n1hU0=
 github.com/yasyf/daemonkit v0.38.0 h1:qGGxt1POY51xMlbL9HknB8KxOOIkt8DJI+lfXHbNc7s=
 github.com/yasyf/daemonkit v0.38.0/go.mod h1:hEUZvGh+jCBOJmltSQa3QZR0kqV6G/ApJoViU1aAMps=
 github.com/yasyf/spawnllm/go v0.17.10 h1:jB4BzQeH5HrILZ6d8O8ndvsFGw9ynQdcRms7f2LhijE=

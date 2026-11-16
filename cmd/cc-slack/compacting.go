@@ -295,6 +295,8 @@ func preCompactCmd(d cmd.Deps) *cobra.Command {
 		Short:  "PreCompact hook: when the session's transcript stands at its compaction point, the daemon acks each operator DM message not in it 8 seconds after it arrived, until the transcript records the compaction",
 		Args:   cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(c.Context(), hookDeadline)
+			defer cancel()
 			in, err := readHookInput(c)
 			if err != nil {
 				return err
@@ -303,7 +305,7 @@ func preCompactCmd(d cmd.Deps) *cobra.Command {
 			if tail, err := readTranscriptTail(in.TranscriptPath); err == nil {
 				body.Context, body.Point = tail.context, compactionPoint(tail, os.Getenv)
 			}
-			_, err = invoke(c.Context(), d, in.SessionID, cwdOr(in.Cwd), opPreCompact, mustJSON(body))
+			_, err = invoke(ctx, d, in.SessionID, cwdOr(in.Cwd), opPreCompact, mustJSON(body))
 			return err
 		},
 	}

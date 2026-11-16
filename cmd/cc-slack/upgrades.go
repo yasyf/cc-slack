@@ -13,7 +13,7 @@ import (
 
 const (
 	upgradeEvery = 15 * time.Minute
-	tapDrain     = 20 * time.Second
+	hookDeadline = 15 * time.Second
 )
 
 func daemonStartedPath() string { return filepath.Join(appPaths().StateDir(), "daemon-started") }
@@ -57,16 +57,7 @@ func upgradeHeld(ctx context.Context, now time.Time) bool {
 	return err == nil && now.Sub(started.ModTime()) < upgradeEvery
 }
 
-func (q *tapQueue) drain(grace time.Duration) bool {
-	done := make(chan struct{})
-	go func() {
-		q.busy.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return true
-	case <-time.After(grace):
-		return false
-	}
+func (q *tapQueue) settle(ctx context.Context) {
+	<-ctx.Done()
+	q.busy.Wait()
 }
