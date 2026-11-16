@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,7 +37,9 @@ voice.jsonl in the state directory, which also holds each post's timings.`,
 					return err
 				}
 				for _, out := range outs {
-					printVoice(c.OutOrStdout(), out)
+					if err := printVoice(c.OutOrStdout(), out); err != nil {
+						return err
+					}
 				}
 				return nil
 			}
@@ -53,8 +56,7 @@ voice.jsonl in the state directory, which also holds each post's timings.`,
 			if err != nil {
 				return err
 			}
-			printVoice(c.OutOrStdout(), out)
-			return nil
+			return printVoice(c.OutOrStdout(), out)
 		},
 	}
 	c.Flags().StringVar(&req.Rules, "rules", "", "the role page Jev reads the post against")
@@ -80,7 +82,7 @@ func askVoice(req voiceRequest) (voiceOutcome, error) {
 	if err != nil {
 		return voiceOutcome{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return voiceOutcome{}, err
@@ -89,22 +91,26 @@ func askVoice(req voiceRequest) (voiceOutcome, error) {
 		return voiceOutcome{}, fmt.Errorf("voice: %s: %s", resp.Status, bytes.TrimSpace(raw))
 	}
 	var out voiceOutcome
-	return out, json.Unmarshal(raw, &out)
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
 
-func printVoice(w io.Writer, out voiceOutcome) {
-	fmt.Fprintf(w, "── %s %s %s · jev %s · format %dms jev %dms post %dms total %dms\n", out.At.Local().Format(time.Kitchen), out.Lane, out.ID, out.Jev, out.FormatMS, out.JevMS, out.PostMS, out.TotalMS)
+func printVoice(w io.Writer, out voiceOutcome) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "── %s %s %s · jev %s · format %dms jev %dms post %dms total %dms\n", out.At.Local().Format(time.Kitchen), out.Lane, out.ID, out.Jev, out.FormatMS, out.JevMS, out.PostMS, out.TotalMS)
 	if out.Dropped != "" || out.Error != "" {
-		fmt.Fprintf(w, "not sent: %s%s\n", out.Dropped, out.Error)
+		fmt.Fprintf(&b, "not sent: %s%s\n", out.Dropped, out.Error)
 	}
-	fmt.Fprintf(w, "BEFORE\n%s\n\nAFTER\n%s\n", out.Before, out.After)
+	fmt.Fprintf(&b, "BEFORE\n%s\n\nAFTER\n%s\n", out.Before, out.After)
 	if out.Lead != "" || len(out.Cut) > 0 {
-		fmt.Fprintf(w, "(lead %s, cut %v)\n", out.Lead, out.Cut)
+		fmt.Fprintf(&b, "(lead %s, cut %v)\n", out.Lead, out.Cut)
 	}
 	if out.Permalink != "" {
-		fmt.Fprintln(w, out.Permalink)
+		fmt.Fprintln(&b, out.Permalink)
 	}
-	fmt.Fprintln(w)
+	b.WriteString("\n")
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func voiceHere(ctx context.Context, req voiceRequest) (voiceOutcome, error) {

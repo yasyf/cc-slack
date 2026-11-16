@@ -252,18 +252,18 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) voiceOutcome {
 	}
 	out.Permalink = res.Permalink
 	if landed == nil {
-		go v.late(id, res, units, out, edits, jevBegan)
+		go v.late(context.WithoutCancel(ctx), id, res, units, out, edits, jevBegan)
 	}
 	return out
 }
 
-func (v *voiceSender) late(id identity, res postResult, units []voiceUnit, out voiceOutcome, edits chan voiceEdits, jevBegan time.Time) {
+func (v *voiceSender) late(ctx context.Context, id identity, res postResult, units []voiceUnit, out voiceOutcome, edits chan voiceEdits, jevBegan time.Time) {
 	select {
 	case e := <-edits:
 		after := voiceApplied(units, e)
 		late := voiceOutcome{ID: out.ID + "-late", At: time.Now(), Lane: out.Lane, ChannelID: out.ChannelID, ThreadTS: out.ThreadTS, Before: out.Formatted, Formatted: out.Formatted, After: after, Lead: e.lead, Cut: e.cut, Jev: "late: " + cmp.Or(e.note, "answered"), JevMS: time.Since(jevBegan).Milliseconds(), Permalink: res.Permalink}
 		if after != out.Formatted {
-			ctx, cancel := context.WithTimeout(context.Background(), voicePostLimit)
+			ctx, cancel := context.WithTimeout(ctx, voicePostLimit)
 			defer cancel()
 			if _, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(ctx, res.ChannelID, res.TS, textOption(after)); err != nil {
 				late.Error = err.Error()
@@ -310,8 +310,8 @@ func (v *voiceSender) record(out voiceOutcome) {
 		v.log.Printf("voice %s: %v", out.ID, err)
 		return
 	}
-	defer f.Close()
-	if _, err := f.Write(append(line, '\n')); err != nil {
+	_, err = f.Write(append(line, '\n'))
+	if err = errors.Join(err, f.Close()); err != nil {
 		v.log.Printf("voice %s: %v", out.ID, err)
 	}
 }
@@ -503,7 +503,7 @@ func readVoiceLog(path string, last int) ([]voiceOutcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var all []voiceOutcome
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 64<<10), 4<<20)

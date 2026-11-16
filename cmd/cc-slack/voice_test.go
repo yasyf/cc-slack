@@ -18,7 +18,7 @@ func TestVoiceFormat(t *testing.T) {
 		{"full title becomes number", "Reworking <https://github.com/acme/app/pull/53430|the run page and its step fill read a run journal's kept rows only>.", "Reworking <https://github.com/acme/app/pull/53430|#53430>."},
 		{"few words stay beside number", "<https://github.com/acme/app/pull/7|reads old journals> is up", "<https://github.com/acme/app/pull/7|#7 reads old journals> is up"},
 		{"number label kept", "<https://github.com/acme/app/pull/7|#7 the fix>", "<https://github.com/acme/app/pull/7|#7 the fix>"},
-		{"bare link labelled", "see https://github.com/acme/app/pull/12 now", "see <https://github.com/acme/app/pull/12|#12> now"},
+		{"bare link gets a label", "see https://github.com/acme/app/pull/12 now", "see <https://github.com/acme/app/pull/12|#12> now"},
 		{"other links untouched", "<https://example.com/a|a long page title with many words>", "<https://example.com/a|a long page title with many words>"},
 	}
 	for _, tt := range tests {
@@ -55,7 +55,7 @@ func TestVoiceMechanical(t *testing.T) {
 
 func TestVoiceUnitsSplitSentencesOutsideLinks(t *testing.T) {
 	units := voiceUnits("Right. It came from <https://x.example/a.b|two PRs. Both> written.\n\n- a bullet. Still one")
-	var texts []string
+	texts := make([]string, 0, len(units))
 	for _, u := range units {
 		texts = append(texts, u.text)
 	}
