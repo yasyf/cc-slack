@@ -144,6 +144,7 @@ type waitsAnswer struct {
 	undo      string
 	press     cardPress
 	records   bool
+	drawn     bool
 	settled   bool
 	withdrawn bool
 	quotes    bool
@@ -513,19 +514,25 @@ func (p *poller) runQuestionTap(ctx context.Context, id identity, answer questio
 	return tapRecorded, nil
 }
 
-func (p *poller) recordTap(ctx context.Context, id identity, card cardRef, k askTap, press cardPress, at, undoUntil time.Time, answered string) tapRecord {
+func (p *poller) recordTap(ctx context.Context, id identity, card cardRef, k askTap, press cardPress, at, undoUntil time.Time, answered string, drawn bool) tapRecord {
 	if !p.recordsQuestions(id, card, k.ID) {
 		return tapUnrecorded
 	}
 	answer := newQuestionAnswer(id, card, k, false, press)
 	answer.UndoUntil = undoUntil
+	if !drawn {
+		p.drawRecording(ctx, id, card, k, at)
+	}
+	return p.applyQuestionTap(ctx, id, card, owedTap{Card: card.ts, Question: &answer, Line: answered})
+}
+
+func (p *poller) drawRecording(ctx context.Context, id identity, card cardRef, k askTap, at time.Time) {
 	recording := "⏳ *" + mrkdwnEscapes.Replace(clipRunes(k.Label, cardMaxDetailLen)) + "* · recording since " + clock(at, p.now())
 	if _, drawn := p.cards.cardAt(card.channel, card.ts); drawn {
 		if err := p.tapDrawn(card, at, p.markAnswer(ctx, id, card, k.ID, recording)); err != nil {
 			p.log.Printf("waiting card %s: %q is being recorded, but the card still shows its buttons: %v", k.ID, k.Label, err)
 		}
 	}
-	return p.applyQuestionTap(ctx, id, card, owedTap{Card: card.ts, Question: &answer, Line: answered})
 }
 
 func (p *poller) applyQuestionTap(ctx context.Context, id identity, card cardRef, tap owedTap) tapRecord {
@@ -971,6 +978,14 @@ func (p *poller) tapPRCard(ctx context.Context, id identity, a cardActionPush, k
 }
 
 func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool, press cardPress) bool {
+	tap, won := p.claimPRCard(ctx, id, c, label, at, line, applied, press)
+	if !won || applied {
+		return applied
+	}
+	return p.applyPRTap(ctx, id, c.ref, tap)
+}
+
+func (p *poller) claimPRCard(ctx context.Context, id identity, c offeredCard, label string, at time.Time, line string, applied bool, press cardPress) (owedTap, bool) {
 	tap := owedTap{Card: c.ref.ts, Answer: newPRAnswer(c.pr, c.waits, label, press, p.cards.heads(c.ref)), Due: p.now().Add(prCardPatience)}
 	ans := askAnswer{At: at, Label: label}
 	if !applied {
@@ -980,18 +995,15 @@ func (p *poller) answerPRCard(ctx context.Context, id identity, c offeredCard, l
 	switch {
 	case err != nil:
 		p.log.Printf("PR card %s: %q dropped: %v", c.waits, label, err)
-		return applied
+		return tap, false
 	case !won:
 		p.log.Printf("PR card %s: %q dropped: already answered with %q", c.waits, label, prior.Label)
-		return applied
+		return tap, false
 	}
 	if err := p.tapDrawn(c.ref, at, p.markAnswer(ctx, id, c.ref, c.waits, line)); err != nil {
 		p.log.Printf("PR card %s: %q taken, but the card still shows its buttons: %v", c.waits, label, err)
 	}
-	if applied {
-		return true
-	}
-	return p.applyPRTap(ctx, id, c.ref, tap)
+	return tap, true
 }
 
 func (p *poller) answerCopies(ctx context.Context, id identity, tapped cardRef, label string, applied bool, at time.Time, undo string) bool {
@@ -1115,14 +1127,25 @@ func (w waitsAnswer) recorded(now time.Time) askAnswer {
 }
 
 func (p *poller) answerWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
+	if res, won, err := p.claimWaits(w); !won {
+		return res, err
+	}
+	return p.takeWaits(ctx, id, w)
+}
+
+func (p *poller) claimWaits(w waitsAnswer) (cardAnswerResult, bool, error) {
 	won, prior, err := p.cards.claim(w.card.channel, w.card.thread, w.tap.ID, w.recorded(p.now()))
 	if err != nil {
-		return cardAnswerResult{}, err
+		return cardAnswerResult{}, false, err
 	}
 	if !won {
 		p.log.Printf("waiting ask %s: %q dropped: already answered with %q", w.tap.ID, w.tap.Label, prior.Label)
-		return cardAnswerResult{Already: true, Label: prior.Label, Other: prior.Other, At: prior.At}, nil
+		return cardAnswerResult{Already: true, Label: prior.Label, Other: prior.Other, At: prior.At}, false, nil
 	}
+	return cardAnswerResult{}, true, nil
+}
+
+func (p *poller) takeWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {
 	if w.withdrawn {
 		return p.withdrawWaits(ctx, id, w)
 	}
@@ -1222,7 +1245,7 @@ func (p *poller) recordWaits(ctx context.Context, id identity, w waitsAnswer, an
 	if w.via != "" {
 		undoUntil = w.undoUntil()
 	}
-	return p.recordTap(ctx, id, w.card, w.tap, w.press, w.at, undoUntil, answered)
+	return p.recordTap(ctx, id, w.card, w.tap, w.press, w.at, undoUntil, answered, w.drawn)
 }
 
 func (p *poller) waitsWatches(ctx context.Context, db *sql.DB, id identity, w waitsAnswer, rec tapRecord) ([]watch, error) {
@@ -1566,18 +1589,41 @@ func (p *poller) answerElsewhere(ctx context.Context, id identity, named, card, 
 
 func (p *poller) answerWaitsElsewhere(ctx context.Context, id identity, answer waitsAnswer, from string) (cardAnswerResult, error) {
 	answer.undo = p.dashboardUndoKey(id, answer, from)
-	res, err := p.answerWaits(ctx, id, answer)
+	if res, won, err := p.claimWaits(answer); !won {
+		return res, err
+	}
+	if answer.settled || answer.withdrawn || !answer.records || !p.recordsQuestions(id, answer.card, answer.tap.ID) {
+		return p.takeWaitsElsewhere(ctx, id, answer)
+	}
+	answer.drawn = true
+	p.drawRecording(ctx, id, answer.card, answer.tap, answer.at)
+	p.offAck(ctx, answer.card, func(ctx context.Context) {
+		if _, err := p.takeWaitsElsewhere(ctx, id, answer); err != nil {
+			p.log.Printf("waiting ask %s: %q answered %s, but taking it failed: %v", answer.tap.ID, answer.tap.Label, answer.via, err)
+		}
+	})
+	return cardAnswerResult{Answered: true, Label: answer.tap.Label, Other: answer.other, At: answer.at, UndoUntil: answer.undoUntil()}, nil
+}
+
+func (p *poller) takeWaitsElsewhere(ctx context.Context, id identity, answer waitsAnswer) (cardAnswerResult, error) {
+	res, err := p.takeWaits(ctx, id, answer)
 	if errors.Is(err, errNoStatusSession) {
 		answer.settled = true
 		res, err = p.answerWaits(ctx, id, answer)
 	}
 	if err == nil && res.Answered && !answer.other && !answer.withdrawn {
-		if !p.answerCopies(ctx, id, answer.card, answer.tap.Label, false, answer.at, answer.undo) {
-			p.recordPRTap(ctx, id, answer.card, answer.tap.ID, answer.tap.Label, cardPress{"", "answered " + answer.via})
-		}
+		p.offAck(ctx, answer.card, func(ctx context.Context) {
+			if !p.answerCopies(ctx, id, answer.card, answer.tap.Label, false, answer.at, answer.undo) {
+				p.recordPRTap(ctx, id, answer.card, answer.tap.ID, answer.tap.Label, cardPress{"", "answered " + answer.via})
+			}
+		})
 		res.UndoUntil = answer.undoUntil()
 	}
 	return res, err
+}
+
+func (p *poller) offAck(ctx context.Context, card cardRef, apply func(context.Context)) {
+	p.taps.run(context.WithoutCancel(ctx), card.channel+"/"+card.ts, apply)
 }
 
 func (p *poller) waitingCard(ctx context.Context, id identity, r cardRef) (string, liveMessage, error) {
@@ -1693,10 +1739,15 @@ func (p *poller) answerPRCardElsewhere(ctx context.Context, id identity, r cardR
 	at := p.now()
 	card := offeredCard{ref: r, waits: waits, pr: m.Card.refIDs()[0]}
 	line := "✓ *" + mrkdwnEscapes.Replace(label) + "* · answered on " + slackLink(via, name) + " " + clock(at, p.now())
-	if !p.answerPRCard(ctx, id, card, label, at, line, false, cardPress{"", "answered on " + via}) {
+	tap, won := p.claimPRCard(ctx, id, card, label, at, line, false, cardPress{"", "answered on " + via})
+	if !won {
 		return cardAnswerResult{}, fmt.Errorf("PR card %s did not take %q; the daemon log says why", permalink, label)
 	}
-	p.answerCopies(ctx, id, r, label, true, at, "")
+	p.offAck(ctx, r, func(ctx context.Context) {
+		if p.applyPRTap(ctx, id, r, tap) {
+			p.answerCopies(ctx, id, r, label, true, at, "")
+		}
+	})
 	return cardAnswerResult{Answered: true, Label: label, At: at}, nil
 }
 

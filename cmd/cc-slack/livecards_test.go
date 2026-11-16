@@ -822,6 +822,45 @@ func TestAQuestionCardTapAndItsUndoReachTheCardCommandAsHisAnswer(t *testing.T) 
 	}
 }
 
+func TestADashboardAnswerIsAckedAndDrawnBeforeTheCardCommandTakesIt(t *testing.T) {
+	cmd := fakeCardCommand(t, nil)
+	held, release := holdingCardCommand(t, cmd, `"label":"Ring"`)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": held})
+	t.Cleanup(func() { l.app.poller.taps.busy.Wait() })
+	t.Cleanup(release)
+	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "demo:j3-661441", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
+	l.do(opDMStatus, map[string]any{"card": card})
+	reply := l.slack.sent()[0]
+	id, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acked, err := invoke(l.ctx, l.deps, testSession, "/any", opCardAnswer, mustJSON(map[string]any{
+		"waits": card.Waits, "url": id.permalink(id.DMChannelID, reply.ts, ""), "label": "Ring", "via": "http://127.0.0.1:7000/p/asks--ab12",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res cardAnswerResult
+	if err := json.Unmarshal(acked.Body, &res); err != nil || !res.Answered {
+		t.Fatalf("card-answer = %s, %v; want it answered while the card command still holds it", acked.Body, err)
+	}
+	if got := answersOf(cmd.requests(t)); len(got) != 0 {
+		t.Fatalf("card command took %v before card-answer replied, want nothing yet", got)
+	}
+	if edits := editsOf(l.slack.edited(), reply.ts); len(edits) == 0 || !strings.Contains(edits[len(edits)-1], "⏳ *Ring* · recording since") {
+		t.Fatalf("card edits %v when card-answer replied, want the answer drawn as recording", edits)
+	}
+	release()
+	l.app.poller.taps.busy.Wait()
+	if got := answersOf(cmd.requests(t)); len(got) != 1 || !strings.Contains(got[0], `"label":"Ring"`) {
+		t.Fatalf("card command asked %v after its release, want his Ring once", got)
+	}
+	if edits := editsOf(l.slack.edited(), reply.ts); !strings.Contains(edits[len(edits)-1], "✓ *Ring* · answered on") {
+		t.Fatalf("card edits %v, want the recorded answer drawn last", edits)
+	}
+}
+
 func TestADriveQuestionCardLinkingAPRTakesHisTapAsHisAnswerToItsQuestion(t *testing.T) {
 	cmd := fakeCardCommand(t, nil)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})

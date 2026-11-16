@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `card-answer` replies once the card shows the answer, before the card command (`drive card`) takes it. A question card draws `recording since` and a PR card draws the answer, then the reply goes back, and the card command, the redraw that follows it and the answer's copies on other cards run after it, in that card's tap queue. Before, a dashboard answer waited for the card command: at 10:45:42 on Nov 16, `card-answer` took 13 s, 11.77 s of it in `drive card`. A refusal the card command gives later reopens the card and goes to the daemon log, not to the `card-answer` reply.
 - On cc-interact v0.45.0: a cc-slack older than the newest one already placed no longer installs itself over it, also when it finds no daemon running. It gets the same refusal as against a newer running daemon. Clients on cc-interact v0.44.0 or older, such as sessions still on 0.20.155, 0.20.158 or 0.20.167, keep placing their own binary until they restart.
 
 ### Added

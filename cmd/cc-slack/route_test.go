@@ -145,6 +145,9 @@ func (l *liveDaemon) do(op daemon.Op, body any) daemon.Reply {
 	if err != nil {
 		l.t.Fatalf("%s: %v", op, err)
 	}
+	if op == opCardAnswer {
+		l.app.poller.taps.busy.Wait()
+	}
 	return reply
 }
 
