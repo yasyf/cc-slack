@@ -249,6 +249,7 @@ type askAnswer struct {
 	Tap         string    `json:"tap,omitempty"`
 	UndoUntil   time.Time `json:"undo_until,omitzero"`
 	Owed        *owedTap  `json:"owed,omitempty"`
+	Via         string    `json:"via,omitempty"`
 }
 
 func runes(s string) int { return utf8.RuneCountInString(s) }

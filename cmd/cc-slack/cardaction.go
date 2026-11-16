@@ -1129,7 +1129,7 @@ func (p *poller) repeatTap(ctx context.Context, id identity, a cardActionPush, k
 }
 
 func (w waitsAnswer) recorded(now time.Time) askAnswer {
-	ans := askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: w.dedup, Withdrawn: w.withdrawn, Settled: w.settled, Tap: w.undo}
+	ans := askAnswer{At: w.at, Label: w.tap.Label, Other: w.other, Undelivered: w.dedup, Withdrawn: w.withdrawn, Settled: w.settled, Tap: w.undo, Via: w.via}
 	if w.withdrawn || w.settled {
 		ans.Undelivered = ""
 	}

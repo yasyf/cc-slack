@@ -1352,18 +1352,19 @@ func (l *liveCards) answer(channel, thread, askID string) (askAnswer, bool) {
 	return ans, done
 }
 
-func (l *liveCards) lastAnswer(channel, thread string) time.Time {
+func (l *liveCards) recordedAsAnswer(channel, thread, ts string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var last time.Time
-	if t, ok := l.threads[threadKey(channel, thread)]; ok {
-		for _, ans := range t.Answers {
-			if !ans.Withdrawn && ans.Undelivered == "" && ans.At.After(last) {
-				last = ans.At
-			}
+	t, ok := l.threads[threadKey(channel, thread)]
+	if !ok {
+		return false
+	}
+	for _, ans := range t.Answers {
+		if ref, err := parsePermalink(ans.Via); !ans.Withdrawn && ans.Undelivered == "" && err == nil && ref.ts == ts {
+			return true
 		}
 	}
-	return last
+	return false
 }
 
 func (l *liveCards) numberedPick(channel, thread, text string) (string, cardPick, bool) {

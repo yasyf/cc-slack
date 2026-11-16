@@ -2024,7 +2024,7 @@ func (a *app) unansweredByCards(ctx context.Context, replies []owedReply) ([]owe
 		if err != nil {
 			return nil, err
 		}
-		if slackTime(r.TS).After(a.cards.lastAnswer(at.channelID, r.ThreadTS)) {
+		if !a.cards.recordedAsAnswer(at.channelID, r.ThreadTS, r.TS) {
 			owed = append(owed, r)
 			continue
 		}
