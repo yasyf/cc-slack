@@ -146,9 +146,23 @@ func (l *liveDaemon) do(op daemon.Op, body any) daemon.Reply {
 		l.t.Fatalf("%s: %v", op, err)
 	}
 	if op == opCardAnswer {
-		l.app.poller.taps.busy.Wait()
+		l.settleTaps()
 	}
 	return reply
+}
+
+func (l *liveDaemon) settleTaps() {
+	q := &l.app.poller.taps
+	for {
+		q.mu.Lock()
+		queued := len(q.last)
+		q.mu.Unlock()
+		if queued == 0 {
+			q.busy.Wait()
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (l *liveDaemon) inject(agentID string) string {

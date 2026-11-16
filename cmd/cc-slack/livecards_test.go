@@ -826,7 +826,7 @@ func TestADashboardAnswerIsAckedAndDrawnBeforeTheCardCommandTakesIt(t *testing.T
 	cmd := fakeCardCommand(t, nil)
 	held, release := holdingCardCommand(t, cmd, `"label":"Ring"`)
 	l, _ := prLinksDaemon(t, map[string]any{"card_command": held})
-	t.Cleanup(func() { l.app.poller.taps.busy.Wait() })
+	t.Cleanup(l.settleTaps)
 	t.Cleanup(release)
 	card := statusCard{Status: "needs_you", Title: "Which store keeps the tally?", Waits: "demo:j3-661441", Options: []string{"Ring", "Table"}, Recommended: "Ring"}
 	l.do(opDMStatus, map[string]any{"card": card})
@@ -852,7 +852,7 @@ func TestADashboardAnswerIsAckedAndDrawnBeforeTheCardCommandTakesIt(t *testing.T
 		t.Fatalf("card edits %v when card-answer replied, want the answer drawn as recording", edits)
 	}
 	release()
-	l.app.poller.taps.busy.Wait()
+	l.settleTaps()
 	if got := answersOf(cmd.requests(t)); len(got) != 1 || !strings.Contains(got[0], `"label":"Ring"`) {
 		t.Fatalf("card command asked %v after its release, want his Ring once", got)
 	}
