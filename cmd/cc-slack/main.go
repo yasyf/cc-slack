@@ -144,7 +144,7 @@ func root() *cobra.Command {
 }
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "daemon" {
+	if len(os.Args) < 2 || (os.Args[1] != "daemon" && os.Args[1] != "--version") {
 		if err := execResolvedExecutable(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
