@@ -84,6 +84,13 @@ func (id identity) place(channelID string) string {
 	return "this channel"
 }
 
+func (id identity) holding(channelID string) string {
+	if channelID == id.dm() {
+		return "the DM"
+	}
+	return "this operator channel"
+}
+
 func (id identity) operatorChannelIDs() []string {
 	ids := make([]string, 0, 1+len(id.OperatorChannels))
 	ids = append(ids, id.dm())

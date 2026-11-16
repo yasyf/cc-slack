@@ -774,7 +774,7 @@ func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, 
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
 	capture := captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)
 	line := tapLine(who, k, capture, false) +
-		" The session that posted the card has ended, so this comes to you as the session holding " + id.place(a.Channel) + ": route it to the lane it is for."
+		" The session that posted the card has ended, so this comes to you as the session holding " + id.holding(a.Channel) + ": route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
 		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, PosterEnded: true, Permalink: permalink,

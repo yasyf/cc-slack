@@ -55,7 +55,7 @@ func serveTools(ctx context.Context, s *daemon.Server) {
 	var ln net.Listener
 	for {
 		var err error
-		if ln, err = net.Listen("tcp", toolsAddr); err == nil {
+		if ln, err = (&net.ListenConfig{}).Listen(ctx, "tcp", toolsAddr); err == nil {
 			break
 		}
 		logger.Printf("bind %s: %v; retrying", toolsAddr, err)
