@@ -797,7 +797,7 @@ func TestHisMessagesInAnOperatorChannelNoSessionHoldsAreOwed(t *testing.T) {
 	}
 }
 
-func TestACardAnswerInAnOperatorChannelClearsOnlyTheRepliesBeforeIt(t *testing.T) {
+func TestACardAnswerInAnOperatorChannelClearsOnlyTheReplyItRecordedAsItsAnswer(t *testing.T) {
 	shortHome(t)
 	f := newFixture(t)
 	const thread, before, after = "1800000001.000000", "1800000002.000000", "1800000004.000000"
@@ -808,10 +808,10 @@ func TestACardAnswerInAnOperatorChannelClearsOnlyTheRepliesBeforeIt(t *testing.T
 		}
 	}
 	f.app.cards.threads[threadKey(platformChannel, thread)] = &liveThread{Channel: platformChannel, Thread: thread,
-		Answers: map[string]askAnswer{"w": {At: slackTime("1800000003.000000")}}}
+		Answers: map[string]askAnswer{"w": {At: slackTime("1800000003.000000"), Via: f.id.permalink(platformChannel, before, thread)}}}
 
 	if got := owedToHolder(t, f); len(got) != 1 || got[0].TS != after {
-		t.Fatalf("owed %+v, want only the reply after the card's answer in the operator channel", got)
+		t.Fatalf("owed %+v, want only the reply the card did not record as its answer in the operator channel", got)
 	}
 }
 
