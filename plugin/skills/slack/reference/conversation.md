@@ -2,12 +2,15 @@
 
 ## React before you reply
 
-On any message you have read and are acting on but have not answered, add
-`eyes` at once. A message you pick up shows in two steps, in every channel and
-DM, so its readers can see whether it is being read or worked on:
+A message shows where it stands by one reaction: `eyes` once the daemon has
+read it, `construction` once a session has it and is working, and
+`white_check_mark` once the work it asked for is done. A message you pick up
+shows in two steps, in every channel and DM:
 
-1. When you first look at it, call `slack_pickup`. It adds `eyes` and Slack's
-   working line under the thread, together and nothing else. For a reply in
+1. When you start on it, call `slack_pickup`. It swaps `eyes` for
+   `construction` and puts Slack's working line under the thread. The daemon
+   makes the same swap itself once your operator's message is in your
+   transcript or answered. For a reply in
    a thread it reads the thread from Slack when you leave out `thread_ts`,
    since Slack refuses the line under a reply's own ts. Your operator's
    message in your DM with the app already has both: the daemon puts them on
@@ -17,7 +20,7 @@ DM, so its readers can see whether it is being read or worked on:
    `Got it, back in a minute.` in that message's thread and sends you
    `slack.message.acked` with `acked` set to that post's ts: post no ack of
    your own for it. If you decide not to work on it, call `slack_pickup` with
-   `done: true`, which takes both away. Such a message never gets step two.
+   `done: true`. Such a message never gets step two.
 2. Only once you decide to do actual work, call `slack_stream` with
    `recipient` set to the person who asked. It adds each step as its own line
    with a spinner and keeps the working line up. Its first call posts in the
@@ -27,17 +30,21 @@ DM, so its readers can see whether it is being read or worked on:
    because the stream has ended, start a new one with the remaining steps.
 
 When Slack refuses the working line, `slack_pickup` fails with Slack's error
-and the eyes stay on; a `line_error` in a `slack_stream` result means the steps
+and `construction` stays on; a `line_error` in a `slack_stream` result means the steps
 landed without the line. Carry on, and report it to your lane's owner.
 
-When the ask is done, add `white_check_mark` with `slack_react`, then call
-`slack_pickup` with `done: true`.
+When the work the message asked for ends, call `slack_pickup` with `done: true`:
+it takes off `eyes`, `construction` and `hourglass_flowing_sand`, puts on
+`white_check_mark`, clears the working line, and ends the daemon's resend
+watch on it. A session holding the DM or an operator channel calls it for each
+of its operator's messages whose work it finished.
 For a message that needs only acknowledgment and no reply, use `pray`, or `+1`
-in the user's own DM with the bot. Everywhere else, use only these three:
+in the user's own DM with the bot. Everywhere else, use only these four:
 
 | Emoji | Name to pass | When |
 |---|---|---|
-| 👀 | `eyes` | Read, acting on, not yet answered; on a pickup, `slack_pickup` adds it |
+| 👀 | `eyes` | Read by the daemon, no session working on it yet |
+| 🚧 | `construction` | A session has it and is working; `slack_pickup` adds it |
 | ✅ | `white_check_mark` | Ask done |
 | 🙏 | `pray` | Acknowledgment only; no reply needed |
 
@@ -66,8 +73,8 @@ it. This narrows what a lane asks to
 send and changes no permission rule. Questions they ask are not limited:
 write every post so a person can answer it, and answer each reply as it lands.
 
-- React `eyes` the moment you look at a message with `slack_pickup`, and call
-  `slack_stream` when work starts, as above.
+- Call `slack_pickup` the moment you start on a message, `slack_stream` when
+  work starts, and `slack_pickup` with `done: true` when it ends, as above.
 - Answer every question in a watched thread the moment it lands, in that
   thread, before you return to other work. When the answer needs work, say
   in one line what you are doing, then post the answer when you have it.

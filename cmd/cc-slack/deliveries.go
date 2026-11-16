@@ -359,13 +359,17 @@ func (p *poller) sweepOwnerMessage(ctx context.Context, db *sql.DB, api slackAPI
 	if !owed || age >= ownerMessageTTL {
 		return p.settleOwnerMessage(ctx, api, o, owed)
 	}
+	confirmed := o.confirmedAt != 0
 	queued := p.confirm(&o, now)
+	if !confirmed && o.confirmedAt != 0 {
+		p.working(ctx, api, o.channelID, o.ts)
+	}
 	if o.confirmedAt == 0 && age >= redeliverAfter && o.redelivered < maxRedeliveries && now.Sub(o.redeliveredAt) >= redeliverAfter {
 		if err := p.redeliver(ctx, db, api, id, watches, &o, queued, now); err != nil {
 			return err
 		}
 	}
-	if age >= inFlightAfter && o.reactedAt == 0 {
+	if age >= inFlightAfter && o.reactedAt == 0 && o.confirmedAt == 0 {
 		p.markInFlight(ctx, api, &o, now)
 	}
 	return p.holds.updateOwnerMessage(ctx, o)
@@ -394,6 +398,8 @@ func (p *poller) settleOwnerMessage(ctx context.Context, api slackAPI, o ownerMe
 	}
 	if owed {
 		p.log.Printf("owner message %s/%s: still unanswered after %s; no longer tracking it", o.channelID, o.ts, ownerMessageTTL)
+	} else {
+		p.working(ctx, api, o.channelID, o.ts)
 	}
 	return p.holds.settleOwnerMessage(ctx, o)
 }
@@ -535,4 +541,14 @@ WHERE e.subject_id <> ? AND e.type LIKE ? AND json_extract(e.payload, '$.ts') = 
 		takers = append(takers, cmp.Or(s, "?"))
 	}
 	return takers, rows.Err()
+}
+
+func (p *poller) working(ctx context.Context, api slackAPI, channelID, ts string) {
+	ref := slack.NewRefToMessage(channelID, ts)
+	if err := api.RemoveReactionContext(ctx, pickupReaction, ref); err != nil && errorCode(err) != "no_reaction" {
+		p.log.Printf("owner message %s/%s: take off %s: %v", channelID, ts, pickupReaction, err)
+	}
+	if err := api.AddReactionContext(ctx, workingReaction, ref); err != nil && errorCode(err) != "already_reacted" {
+		p.log.Printf("owner message %s/%s: show %s: %v", channelID, ts, workingReaction, err)
+	}
 }

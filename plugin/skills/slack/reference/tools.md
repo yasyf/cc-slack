@@ -37,7 +37,7 @@ The tool names below have the full prefix
 | Hear a channel's alerts, releases or posts as one line per event, not each message | CLI only: `cc-slack subscribe --channel <id> --kind alerts,releases,posts [--match <text>] [--owner <agent id>]`; `slack_unwatch` ends it |
 | End a watch, or stop hearing one thread, such as a DM thread | `slack_unwatch(watch_id)`, or `slack_unwatch(url)` |
 | Update the user's own status DM | `slack_dm_status(text, thread_ts?, files?, blocks?)` |
-| Show you picked up a message: eyes plus Slack's working line, together | `slack_pickup(channel_id, ts, thread_ts?)`; `done: true` takes both away (CLI `cc-slack pickup`) |
+| Show you are working on a message: `construction` plus Slack's working line | `slack_pickup(channel_id, ts, thread_ts?)`; `done: true` swaps it for `white_check_mark` and clears the line (CLI `cc-slack pickup`) |
 | Once you decide to do actual work, show separate steps with a spinner and keep the working line | `slack_stream(channel_id, thread_ts, recipient?, plan?, tasks)` returns `ts`; then `slack_stream(channel_id, thread_ts, ts, tasks)` with only the steps that changed, and `stop: true` to end the steps and clear the working line. Each task is `{id, status, title, details?}`: a stable id, `pending`, `in_progress`, `complete`, or `error`, what the step does, and a line under it (CLI `cc-slack stream`, `--task "id\|in_progress\|title"`) |
 | Create an approved public channel | `slack_channel_create(name)`; the name is lowercase letters, digits, hyphens, and underscores, at most 80 characters, with no leading `#` |
 | Archive an approved channel | `slack_channel_archive(channel_id)` |

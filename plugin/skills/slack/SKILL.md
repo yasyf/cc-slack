@@ -43,7 +43,7 @@ On `agent.relay`, `SendMessage` the named agent a wake only, with no directive c
 
 ## React before you reply
 
-When you pick up a message to act on, call `slack_pickup(channel_id, ts)` to add `eyes` and Slack's working line (already added by the daemon in the user's DM). If you later decide not to act, call `slack_pickup` with `done: true`. Once real work starts, call `slack_stream` with `recipient` set to the requester; its first call posts in the thread and needs a ticket like a reply.
+When you pick up a message to act on, call `slack_pickup(channel_id, ts)` to swap the daemon's `eyes` for `construction` and show Slack's working line. When the work ends, or you decide not to act, call `slack_pickup` with `done: true`, which puts on `white_check_mark`. Once real work starts, call `slack_stream` with `recipient` set to the requester; its first call posts in the thread and needs a ticket like a reply.
 
 When done, react with `white_check_mark`, then call `slack_pickup` with `done: true`. Acknowledgments needing no reply use `pray` in channels or `+1` in the user's DM. React on the message that asked, not the thread root. Never react to a `from_claude` message or substitute a reaction for a reply you owe.
 

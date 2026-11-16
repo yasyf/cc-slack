@@ -10,12 +10,12 @@ import (
 
 const testStreamTS = "1791000000.000900"
 
-func TestPickupShowsEyesAndTheWorkingLineTogetherAndNothingElse(t *testing.T) {
+func TestPickupShowsWorkInProgressAndTheWorkingLineTogetherAndNothingElse(t *testing.T) {
 	l := startDaemon(t)
 	loginAs(t, l, "yasyf")
 	l.do(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.2", "thread_ts": "1.1"})
-	if got := l.slack.reactedTo("1.2"); !slices.Equal(got, []string{"eyes"}) {
-		t.Fatalf("reactions on the picked-up message = %v, want eyes", got)
+	if got := l.slack.reactedTo("1.2"); !slices.Equal(got, []string{workingReaction}) {
+		t.Fatalf("reactions on the picked-up message = %v, want %s", got, workingReaction)
 	}
 	l.slack.mu.Lock()
 	defer l.slack.mu.Unlock()
@@ -44,13 +44,16 @@ func TestAPickupWithAStateNamesItOnTheWorkingLine(t *testing.T) {
 	}
 }
 
-func TestALookWithNoWorkTakesTheEyesAndLineAwayWithNoSteps(t *testing.T) {
+func TestALookWithNoWorkMarksItDoneAndTakesTheLineAwayWithNoSteps(t *testing.T) {
 	l := startDaemon(t)
 	loginAs(t, l, "yasyf")
 	l.do(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.1"})
 	l.do(opPickup, map[string]any{"channel_id": testChannel, "ts": "1.1", "done": true})
-	if n := l.slack.callCount("reactions.remove"); n != 1 {
-		t.Fatalf("reactions.remove calls = %d, want 1", n)
+	if got := l.slack.reactedTo("1.1"); !slices.Equal(got, []string{workingReaction, doneReaction}) {
+		t.Fatalf("reactions added = %v, want %s then %s", got, workingReaction, doneReaction)
+	}
+	if n := l.slack.callCount("reactions.remove"); n != 4 {
+		t.Fatalf("reactions.remove calls = %d, want eyes off at pickup, then eyes, %s and %s off when done", n, workingReaction, inFlightReaction)
 	}
 	if n := l.slack.callCount("chat.startStream"); n != 0 {
 		t.Fatalf("a look with no work started %d streams", n)

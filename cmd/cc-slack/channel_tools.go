@@ -223,7 +223,7 @@ var (
 		},
 		{
 			name:        "slack_pickup",
-			description: "Put eyes and Slack's working line on a message; state updates the line, done clears both.",
+			description: "Mark a message in progress with Slack's working line; state updates the line, done marks it done.",
 			op:          opPickup, failure: actionReact,
 			properties: map[string]any{
 				"channel_id": channelProp,

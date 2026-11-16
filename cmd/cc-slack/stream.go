@@ -20,10 +20,12 @@ type task struct {
 }
 
 const (
-	pickupReaction = "eyes"
-	workingStatus  = "is working…"
-	timelineMode   = "timeline"
-	taskInProgress = "in_progress"
+	pickupReaction  = "eyes"
+	workingReaction = "construction"
+	doneReaction    = "white_check_mark"
+	workingStatus   = "is working…"
+	timelineMode    = "timeline"
+	taskInProgress  = "in_progress"
 )
 
 var (
@@ -115,18 +117,29 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionReact, err))
 	}
-	act, settled, apply, status, loading := actionReact, "already_reacted", slackAPI.AddReactionContext, workingStatus, pickupLoading
+	status, loading, shown, cleared := workingStatus, pickupLoading, workingReaction, []string{pickupReaction}
 	if b.State != "" {
 		loading = []string{b.State}
 	}
 	if b.Done {
-		act, settled, apply, status, loading = actionUnreact, "no_reaction", slackAPI.RemoveReactionContext, "", nil
+		status, loading, shown, cleared = "", nil, doneReaction, []string{pickupReaction, workingReaction, inFlightReaction}
 	}
+	ref := slack.ItemRef{Channel: channelID, Timestamp: b.TS}
 	err = a.joinAndRetry(hc.Ctx, api, channelID, func() error {
-		return apply(api, hc.Ctx, pickupReaction, slack.ItemRef{Channel: channelID, Timestamp: b.TS})
+		return api.AddReactionContext(hc.Ctx, shown, ref)
 	})
-	if err != nil && errorCode(err) != settled {
-		return fail(fallback(act, err))
+	if err != nil && errorCode(err) != "already_reacted" {
+		return fail(fallback(actionReact, err))
+	}
+	for _, name := range cleared {
+		if err := api.RemoveReactionContext(hc.Ctx, name, ref); err != nil && errorCode(err) != "no_reaction" {
+			return fail(fallback(actionUnreact, err))
+		}
+	}
+	if b.Done {
+		if err := a.poller.holds.settleOwnerMessage(hc.Ctx, ownerMessage{channelID: channelID, ts: b.TS}); err != nil {
+			return fail(err.Error())
+		}
 	}
 	thread, err := messageThreadOf(hc.Ctx, api, channelID, b)
 	if err != nil {
@@ -135,7 +148,7 @@ func (a *app) handlePickup(hc daemon.HandlerCtx) daemon.Reply {
 	thread = cmp.Or(thread, b.TS)
 	line := setWorkingLine(hc.Ctx, api, id, channelID, thread, status, loading)
 	if line != "" && !b.Done {
-		return fail(fmt.Sprintf("the eyes are on %s, but Slack refused the working line under thread %s: %s", b.TS, thread, line))
+		return fail(fmt.Sprintf("%s shows :construction:, but Slack refused the working line under thread %s: %s", b.TS, thread, line))
 	}
 	return ok(pickupResult{OK: true, LineError: line})
 }
@@ -235,7 +248,7 @@ func pickupCmd(d cmd.Deps) *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "pickup",
-		Short: "Add eyes to a message and show Slack's working line under its thread; --done takes both away",
+		Short: "Mark a message in progress with :construction: and show Slack's working line under its thread; --done marks it :white_check_mark: and takes the line away",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
@@ -247,7 +260,7 @@ func pickupCmd(d cmd.Deps) *cobra.Command {
 	}
 	f.bind(c)
 	c.Flags().StringVar(&f.ts, "ts", "", "the message you are looking at")
-	c.Flags().BoolVar(&done, "done", false, "take the eyes and the working line away")
+	c.Flags().BoolVar(&done, "done", false, "mark the message done and take the working line away")
 	c.Flags().StringVar(&state, "state", "", "what the working line says you are doing now, such as \"Waiting for a subagent…\"")
 	bindAgent(c, &agentName)
 	return c
