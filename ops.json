@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Merged PR #494 at b87c8d7f797b82f1a4138ecb5ceaa1a2855cc957; release v0.20.117 queued. Commit hooks/lint/vulnerability checks passed; hosted Go race tests running. Six plugin-hook failures match unchanged base 3e0c559e exactly; artifacts slack-batch-plugin-baseline-comparison.json and both logs. Installation observer is bounded to 20 samples at 45-second intervals; no model workers or local load tests."}]}
+{"v":1,"lamport":5,"ops":[{"kind":"set_criterion_status","id":"31f7865a23e65f35d30ce187c4ba9db5","status":"met"}]}
