@@ -815,7 +815,8 @@ func (l *liveCards) regroupInto(channel, thread string, card statusCard) (same c
 	if keep < 0 {
 		keep = 0
 	}
-	return others[keep], true, slices.Delete(others, keep, keep+1)
+	same = others[keep]
+	return same, true, slices.Delete(others, keep, keep+1)
 }
 
 func (l *liveCards) posted(channel, thread string, card statusCard) (same cardRef, found bool, others []cardRef) {
