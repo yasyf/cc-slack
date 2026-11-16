@@ -2456,3 +2456,22 @@ func TestAboutBesideACardSaysToDropAbout(t *testing.T) {
 	card := map[string]any{"status": "needs_you", "title": "Which database?", "waits": "pick-db", "options": []string{"Postgres", "SQLite"}, "recommended": "Postgres"}
 	l.refused(opDMStatus, map[string]any{"about": "pick-db", "card": card}, "a card names its card by card.waits, so drop about")
 }
+
+func TestOperatorChannelRenameRenamesItAsHimAndRecordsTheNewName(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithOAuth(t, l)
+	recordPlatformChannel(t)
+	user := l.user.as(testUser)
+
+	var renamed operatorChannel
+	if err := json.Unmarshal(l.do(opOperatorChan, map[string]any{"name": "durable-agents", "channel_id": platformChannel}).Body, &renamed); err != nil {
+		t.Fatal(err)
+	}
+	if renamed != (operatorChannel{ID: platformChannel, Name: "durable-agents"}) || user.renames()[platformChannel] != "durable-agents" || l.slack.callCount("conversations.rename") != 0 {
+		t.Fatalf("renamed %+v in Slack %v, want the channel renamed with his token", renamed, user.renames())
+	}
+	if stored, _, err := loadJSON[[]operatorChannel](operatorChannelsPath()); err != nil || !slices.Equal(stored, []operatorChannel{renamed}) {
+		t.Fatalf("operator channels = %+v, %v; want the new name recorded", stored, err)
+	}
+	l.refused(opOperatorChan, map[string]any{"name": "team", "channel_id": testChannel}, "not one of your operator channels")
+}

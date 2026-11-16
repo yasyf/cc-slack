@@ -111,6 +111,7 @@ type cursorGroup struct {
 	covering []watch
 	mates    driveMates
 	holder   watch
+	owner    watch
 }
 
 type cursorRow struct {
@@ -345,7 +346,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	holder := dmHolderIn(watches, id.DMChannelID)
-	mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, dmSubjects(watches))
+	mates, err := loadDriveMates(ctx, p.threads, holder.SubjectID, slices.Concat(dmSubjects(watches), heldSubjects(channelHolders(watches, id))))
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -540,14 +541,14 @@ func dmThreadKeys(dmChannelID string, pending map[cursorKey]uint64) []string {
 func groupWatches(watches []watch, id identity, since map[cursorKey]string, bound map[string][]string, mates driveMates) []cursorGroup {
 	var groups []cursorGroup
 	dmChannelID, operators := id.DMChannelID, id.operatorChannelIDs()
-	holder := dmHolderIn(watches, dmChannelID)
+	holder, held := dmHolderIn(watches, dmChannelID), channelHolders(watches, id)
 	index := map[cursorKey]int{}
 	group := func(key cursorKey) *cursorGroup {
 		i, ok := index[key]
 		if !ok {
 			i = len(groups)
 			index[key] = i
-			groups = append(groups, cursorGroup{key: key, mates: mates, holder: holder})
+			groups = append(groups, cursorGroup{key: key, mates: mates.heldBy(held[key.channelID]), holder: holder, owner: held[key.channelID]})
 		}
 		return &groups[i]
 	}
@@ -746,6 +747,8 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 	watching := slices.Concat(g.watches, g.covering)
 	if g.key.channelID != id.DMChannelID && to != addressedToPeople {
 		watching = g.toHolder(watching)
+	} else if to != addressedToPeople {
+		watching = g.toChannelHolder(watching)
 	}
 	rooted := len(g.sessions) > 0 && operatorRoot(id, m) && !g.held()
 	reaching := watching
@@ -759,7 +762,7 @@ func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identit
 		}
 	}
 	if arrived {
-		p.holdAck(ctx, db, reaching, m)
+		p.holdAck(ctx, db, g.key.channelID, reaching, m)
 	}
 	if err := p.routeAll(ctx, db, api, id, watching, m, g.mates, to); err != nil {
 		return err
@@ -941,4 +944,50 @@ func (p *poller) failWatches(ctx context.Context, db *sql.DB, g cursorGroup, cau
 		}
 	}
 	return nil
+}
+
+func holderIn(watches []watch, dmChannelID, channelID string) watch {
+	dm := dmHolderIn(watches, dmChannelID)
+	if channelID == dmChannelID {
+		return dm
+	}
+	if held := channelHolderIn(watches, dm, channelID); held.ID != 0 {
+		return held
+	}
+	return dmHolderIn(watches, channelID)
+}
+
+func channelHolderIn(watches []watch, dm watch, channelID string) watch {
+	for _, w := range slices.Backward(watches) {
+		if w.Kind == kindChannel && w.ChannelID == channelID && w.SubjectID != dm.SubjectID && (dm.ID == 0 || w.PID != dm.PID) {
+			return w
+		}
+	}
+	return watch{}
+}
+
+func channelHolders(watches []watch, id identity) map[string]watch {
+	dm := dmHolderIn(watches, id.DMChannelID)
+	held := map[string]watch{}
+	for _, c := range id.OperatorChannels {
+		if w := channelHolderIn(watches, dm, c.ID); w.ID != 0 {
+			held[c.ID] = w
+		}
+	}
+	return held
+}
+
+func heldSubjects(held map[string]watch) []string {
+	subjects := make([]string, 0, len(held))
+	for _, w := range held {
+		subjects = append(subjects, w.SubjectID)
+	}
+	return subjects
+}
+
+func (g cursorGroup) toChannelHolder(watching []watch) []watch {
+	if g.owner.ID == 0 {
+		return watching
+	}
+	return slices.DeleteFunc(slices.Clone(watching), func(w watch) bool { return w.Kind == kindChannel && w.ID != g.owner.ID })
 }

@@ -828,3 +828,106 @@ func TestDMStatusPostsOnlyInAnOperatorChannel(t *testing.T) {
 		t.Fatalf("dm-status --channel %s went through, want a channel that is not an operator channel refused", testChannel)
 	}
 }
+
+func watchPlatform(t *testing.T, f *fixture, subjectID, kind, thread string) int64 {
+	t.Helper()
+	id, _, err := insertWatch(f.ctx, f.db(), subjectID, agent.TopLevel, kind, platformChannel, thread, beforeEveryPost, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func sessionElsewhere(t *testing.T, f *fixture, subjectID, session string, pid int) subject.Subject {
+	t.Helper()
+	f.alive[pid] = true
+	if _, err := storeSubjects(f).Create(f.ctx, subjectID, "", session, scopeName, pid, statusOpen); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := storeSubjects(f).Get(f.ctx, subjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
+func TestHisWordsInAnOperatorChannelReachOnlyTheNewestSessionHoldingItNeverTheDMHolder(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const asked, replied = "1800000300.000000", "1800000301.000000"
+	recordPlatformChannel(t)
+	holdDM(t, f)
+	watchPlatform(t, f, testSubject, kindChannel, "")
+	older := cardSessionElsewhere(t, f)
+	watchPlatform(t, f, older.ID, kindChannel, "")
+	newest := sessionElsewhere(t, f, "fedcba9876543210fedcba9876543210", "sess-platform", testPID+3)
+	held := watchPlatform(t, f, newest.ID, kindChannel, "")
+	f.tick()
+
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: asked})
+	f.tick()
+	watchPlatform(t, f, testSubject, kindThread, asked)
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: replied, ThreadTimestamp: asked, User: testUser, Text: "and who owns it?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: replied, ThreadTS: asked})
+	f.tick()
+
+	got := deliveredTo(t, f)
+	if his := got[newest.ID]; len(his) != 2 || his[0].TS != asked || his[1].TS != replied || his[0].WatchID != held || !his[0].Operator {
+		t.Fatalf("channel holder got %+v, want his root message and his reply as orders on its channel watch", his)
+	}
+	if len(got[older.ID]) != 0 {
+		t.Fatalf("older channel watcher got %+v, want nothing once a newer session holds the channel", got[older.ID])
+	}
+	if dm := got[testSubject]; len(dm) != 1 || dm[0].TS != replied || dm[0].Kind != kindThread {
+		t.Fatalf("DM holder got %+v, want only the reply its thread watch covers", dm)
+	}
+
+	owed := owedToHolder(t, f)
+	if len(owed) != 2 || owed[0].HolderSession != "sess-platform" || owed[0].ChannelID != platformChannel {
+		t.Fatalf("dm-owed = %+v, want each reply in the operator channel naming the session holding it", owed)
+	}
+}
+
+func TestHisWordsInAnOperatorChannelHeldOnlyByTheDMHolderStillReachIt(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const asked = "1800000310.000000"
+	recordPlatformChannel(t)
+	holdDM(t, f)
+	held := watchPlatform(t, f, testSubject, kindChannel, "")
+	f.tick()
+
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: asked})
+	f.tick()
+
+	if got := payloads(t, f); len(got) != 1 || got[0].WatchID != held || got[0].Relayed {
+		t.Fatalf("delivered %+v, want his message on the DM holder's own watch of the channel", got)
+	}
+	if owed := owedToHolder(t, f); len(owed) != 1 || owed[0].HolderSession != testSession {
+		t.Fatalf("dm-owed = %+v, want the reply naming the DM holder's session", owed)
+	}
+}
+
+func TestACompactingChannelHolderIsAckedInItsOperatorChannel(t *testing.T) {
+	shortHome(t)
+	f := newFixture(t)
+	const asked = "1800000320.000000"
+	recordPlatformChannel(t)
+	watchPlatform(t, f, testSubject, kindChannel, "")
+	f.tick()
+	compactWithTranscript(t, f)
+
+	f.slack.add(platformChannel, slack.Message{Msg: slack.Msg{Timestamp: asked, User: testUser, Text: "why is CI red?"}})
+	f.poller.nudged(messageNudge{Channel: platformChannel, TS: asked})
+	f.tick()
+	f.now = f.now.Add(ackWait)
+	f.tick()
+	f.now = f.now.Add(ackWait)
+	f.tick()
+
+	if acks := compactionAcks(f); len(acks) != 1 || acks[0].channelID != platformChannel || acks[0].threadTS != asked {
+		t.Fatalf("acks = %+v, want one in %s under his message", acks, platformChannel)
+	}
+}

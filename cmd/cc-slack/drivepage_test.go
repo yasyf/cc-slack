@@ -367,3 +367,23 @@ func TestAMovedCardAsksInItsOperatorChannelAndItsDMCardLinksThere(t *testing.T) 
 	}
 	l.refused(opMoveCard, map[string]any{"url": c.url(), "channel_id": platformChannel}, "no open card")
 }
+
+func TestCanvasDrawsAnOperatorChannelsOwnCanvasOnceAndRedrawsItAfter(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	recordPlatformChannel(t)
+
+	made := drawCanvas(t, l, map[string]any{"name": "platform", "text": "# Platform", "channel_id": platformChannel})
+	if page := l.slack.canvasPages()[made.CanvasID]; !made.Created || page.tab != platformChannel || page.page != "# Platform" || l.slack.callCount("canvases.create") != 0 {
+		t.Fatalf("made %+v drawing %+v, want the operator channel's own canvas", made, page)
+	}
+	again := drawCanvas(t, l, map[string]any{"name": "platform", "text": "# Again", "channel_id": platformChannel})
+	if again.Created || again.CanvasID != made.CanvasID || l.slack.canvasPages()[made.CanvasID].page != "# Again" {
+		t.Fatalf("drawn again %+v, want the channel's canvas found and redrawn in place", again)
+	}
+	redrawn := drawCanvas(t, l, map[string]any{"name": "platform", "file_id": made.CanvasID, "text": "# Status", "channel_id": platformChannel})
+	if redrawn.Created || redrawn.CanvasID != made.CanvasID || l.slack.canvasPages()[made.CanvasID].page != "# Status" {
+		t.Fatalf("redrawn %+v, want the same canvas redrawn by its id", redrawn)
+	}
+	l.refused(opCanvas, map[string]any{"name": "team", "text": "# Team", "channel_id": testChannel}, "not one of your operator channels")
+}

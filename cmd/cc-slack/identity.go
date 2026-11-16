@@ -55,6 +55,7 @@ type identity struct {
 	Drive        string `json:"-"`
 
 	OperatorChannels []operatorChannel `json:"operator_channels"`
+	homeDM           string
 }
 
 type operatorChannel struct {
@@ -68,14 +69,24 @@ func operatorChannelsPath() string {
 
 func (id identity) at(channelID string) identity {
 	if slices.ContainsFunc(id.OperatorChannels, func(c operatorChannel) bool { return c.ID == channelID }) {
+		id.homeDM = id.dm()
 		id.DMChannelID = channelID
 	}
 	return id
 }
 
+func (id identity) dm() string { return cmp.Or(id.homeDM, id.DMChannelID) }
+
+func (id identity) place(channelID string) string {
+	if channelID == id.dm() {
+		return "this DM"
+	}
+	return "this channel"
+}
+
 func (id identity) operatorChannelIDs() []string {
 	ids := make([]string, 0, 1+len(id.OperatorChannels))
-	ids = append(ids, id.DMChannelID)
+	ids = append(ids, id.dm())
 	for _, c := range id.OperatorChannels {
 		ids = append(ids, c.ID)
 	}

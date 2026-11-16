@@ -308,12 +308,12 @@ func (p *poller) dmWatches(ctx context.Context, db *sql.DB, channelID, threadTS 
 	return dmSubscriptions(ctx, db, channelID, bound[threadTS])
 }
 
-func (p *poller) cardListeners(ctx context.Context, db *sql.DB, channelID, threadTS string) ([]watch, error) {
+func (p *poller) cardListeners(ctx context.Context, db *sql.DB, id identity, channelID, threadTS string) ([]watch, error) {
 	watches, err := p.dmWatches(ctx, db, channelID, threadTS)
 	if err != nil || len(watches) > 0 {
 		return watches, err
 	}
-	w, held, err := dmHolderWatch(ctx, db, channelID)
+	w, held, err := dmHolderWatch(ctx, db, id.dm(), channelID)
 	if err != nil || !held {
 		return nil, err
 	}
@@ -608,7 +608,7 @@ func (p *poller) askedOn(ctx context.Context, id identity, card cardRef, answer 
 		k.Question = undone[0].question
 	}
 	db := p.plane.DB()
-	watches, err := p.cardListeners(ctx, db, card.channel, card.thread)
+	watches, err := p.cardListeners(ctx, db, id, card.channel, card.thread)
 	if err != nil {
 		return err
 	}
@@ -706,7 +706,7 @@ func (p *poller) handOn(ctx context.Context, id identity, a cardActionPush, k as
 			if err := p.keepTap(ctx, id, a, k); err != nil {
 				return err
 			}
-			line = "🔎 *You asked for more at " + clock(at, p.now()) + ".* The next session to hold this DM explains it in this thread."
+			line = "🔎 *You asked for more at " + clock(at, p.now()) + ".* The next session to hold " + id.place(a.Channel) + " explains it in this thread."
 		}
 		return p.tapDrawn(a.ref(), at, p.markHint(ctx, id, a.ref(), line))
 	}
@@ -753,9 +753,9 @@ func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k 
 		}
 		return fmt.Errorf("%w, and no one else was told: %w", errNoStatusSession, err)
 	}
-	sent := " · kept for the next session to hold this DM"
+	sent := " · kept for the next session to hold " + id.place(a.Channel)
 	if held {
-		sent = " · sent to the session holding this DM"
+		sent = " · sent to the session holding " + id.place(a.Channel)
 		p.cards.answerDelivered(a.Channel, a.ThreadTS, k.ID)
 	}
 	if err := p.markAnswer(ctx, id, a.ref(), k.ID, answered+sent); err != nil {
@@ -767,14 +767,14 @@ func (p *poller) handOver(ctx context.Context, id identity, a cardActionPush, k 
 
 func (p *poller) tellHolder(ctx context.Context, id identity, a cardActionPush, k askTap, permalink string) (bool, error) {
 	db := p.plane.DB()
-	w, held, err := dmHolderWatch(ctx, db, a.Channel)
+	w, held, err := dmHolderWatch(ctx, db, id.dm(), a.Channel)
 	if err != nil || !held {
 		return false, err
 	}
 	who := cardSource(id, tapHow(k), slackTime(a.MessageTS).In(pacific).Format(cardTimeLayout), permalink)
 	capture := captureLine(id, k, slackTime(a.ActionTS), "Slack card "+permalink)
 	line := tapLine(who, k, capture, false) +
-		" The session that posted the card has ended, so this comes to you as the session holding the DM: route it to the lane it is for."
+		" The session that posted the card has ended, so this comes to you as the session holding " + id.place(a.Channel) + ": route it to the lane it is for."
 	msg := actionPayload{
 		WatchID: w.ID, ChannelID: a.Channel, ThreadTS: a.ThreadTS, TS: a.MessageTS, ActionTS: a.ActionTS, Label: k.Label, ID: k.ID,
 		Waits: k.Waits, Other: k.Other, Question: k.Question, Options: k.Options, PosterEnded: true, Permalink: permalink,
@@ -1472,7 +1472,7 @@ func (p *poller) reopen(ctx context.Context, id identity, db *sql.DB, press card
 	}
 	permalink := id.permalink(u.card.channel, u.card.ts, u.card.thread)
 	p.noteSuperseded(ctx, id, u.supersedes, askedAgain(u.question, permalink))
-	watches, err := p.cardListeners(ctx, db, u.card.channel, u.card.thread)
+	watches, err := p.cardListeners(ctx, db, id, u.card.channel, u.card.thread)
 	if err != nil {
 		return err
 	}

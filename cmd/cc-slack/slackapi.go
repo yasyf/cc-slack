@@ -49,6 +49,8 @@ type slackAPI interface {
 	GetFileInfoContext(ctx context.Context, fileID string, count, page int) (*slack.File, []slack.Comment, *slack.Paging, error)
 	GetFileContext(ctx context.Context, downloadURL string, writer io.Writer) error
 	CreateConversationContext(ctx context.Context, params slack.CreateConversationParams) (*slack.Channel, error)
+	RenameConversationContext(ctx context.Context, channelID, channelName string) (*slack.Channel, error)
+	CreateChannelCanvasContext(ctx context.Context, channel string, documentContent slack.DocumentContent, options ...slack.CreateChannelCanvasOption) (string, error)
 	ArchiveConversationContext(ctx context.Context, channelID string) error
 	InviteUsersToConversationContext(ctx context.Context, channelID string, users ...string) (*slack.Channel, error)
 	SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error)

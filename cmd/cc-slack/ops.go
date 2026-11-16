@@ -1998,7 +1998,7 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	holder, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID)
+	holder, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID, id.DMChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -2009,7 +2009,11 @@ func (a *app) handleDMOwed(hc daemon.HandlerCtx) daemon.Reply {
 	if replies, err = a.unansweredByCards(hc.Ctx, replies); err != nil {
 		return fail(err.Error())
 	}
-	return ok(dmOwedResult{Replies: slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] }), HolderSession: holder.session})
+	replies = slices.DeleteFunc(replies, func(r owedReply) bool { return others[r.ThreadTS] })
+	if err := heldReplies(hc.Ctx, hc.DB, id, replies); err != nil {
+		return fail(err.Error())
+	}
+	return ok(dmOwedResult{Replies: replies, HolderSession: holder.session})
 }
 
 func (a *app) unansweredByCards(ctx context.Context, replies []owedReply) ([]owedReply, error) {
@@ -2142,7 +2146,7 @@ func (a *app) handleFollow(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(fallback(actionWatch, err))
 	}
 	if kind == kindChannel && channelID == id.DMChannelID {
-		holder, err := dmHolder(hc.Ctx, hc.DB, channelID)
+		holder, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID, channelID)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -2819,6 +2823,9 @@ func (a *app) handleOperatorChannel(hc daemon.HandlerCtx) daemon.Reply {
 	if err != nil {
 		return fail(fallback(actionChannel, err))
 	}
+	if b.ChannelID != "" {
+		return a.renameOperatorChannel(hc, id, b)
+	}
 	if i := slices.IndexFunc(id.OperatorChannels, func(c operatorChannel) bool { return c.Name == b.Name }); i >= 0 {
 		return ok(id.OperatorChannels[i])
 	}
@@ -2841,12 +2848,33 @@ func (a *app) handleOperatorChannel(hc daemon.HandlerCtx) daemon.Reply {
 	return ok(made)
 }
 
+func (a *app) renameOperatorChannel(hc daemon.HandlerCtx, id identity, b opBody) daemon.Reply {
+	i := slices.IndexFunc(id.OperatorChannels, func(c operatorChannel) bool { return c.ID == b.ChannelID })
+	if i < 0 {
+		return fail(fmt.Sprintf("%s is not one of your operator channels; make one with cc-slack operator-channel <name>", b.ChannelID))
+	}
+	user, err := a.userAPI(hc.Ctx, id)
+	if err != nil {
+		return fail(err.Error())
+	}
+	ch, err := user.RenameConversationContext(hc.Ctx, b.ChannelID, b.Name)
+	if err != nil {
+		return fail(fmt.Sprintf("rename #%s (%s) to #%s as you: %s", id.OperatorChannels[i].Name, b.ChannelID, b.Name, errorCode(err)))
+	}
+	renamed := slices.Clone(id.OperatorChannels)
+	renamed[i].Name = ch.Name
+	if err := storeJSON(operatorChannelsPath(), renamed); err != nil {
+		return fail(fmt.Sprintf("renamed %s to #%s in Slack but could not record it, so fix its name in %s by hand: %v", b.ChannelID, ch.Name, operatorChannelsPath(), err))
+	}
+	return ok(renamed[i])
+}
+
 func (a *app) dmPoster(hc daemon.HandlerCtx, id identity, b opBody) (subject.Subject, error) {
 	caller, _, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, "", lifecycle, false)
 	if err != nil || !b.AsHolder {
 		return caller, err
 	}
-	hold, err := dmHolder(hc.Ctx, hc.DB, id.DMChannelID)
+	hold, err := dmHolder(hc.Ctx, hc.DB, id.dm(), id.DMChannelID)
 	if err != nil || hold.subject == "" {
 		return caller, err
 	}

@@ -93,6 +93,8 @@ type fakeSlack struct {
 	asked     []string
 	clock     int64
 	canvases  map[string]fakeCanvas
+	boards    map[string]string
+	renamed   map[string]string
 	gone      []string
 	elsewhere map[string]bool
 }
@@ -116,6 +118,8 @@ func newFakeSlack() *fakeSlack {
 		invites:   map[string][]string{},
 		topics:    map[string]string{},
 		canvases:  map[string]fakeCanvas{},
+		boards:    map[string]string{},
+		renamed:   map[string]string{},
 		elsewhere: map[string]bool{},
 		clock:     1_800_000_000,
 	}
@@ -283,6 +287,9 @@ func (f *fakeSlack) GetConversationInfoContext(_ context.Context, input *slack.G
 	ch := &slack.Channel{}
 	ch.ID = input.ChannelID
 	ch.Name = strings.ToLower(input.ChannelID)
+	if canvasID, found := f.boards[input.ChannelID]; found {
+		ch.Properties = &slack.Properties{Canvas: slack.Canvas{FileId: canvasID}}
+	}
 	if users, found := f.dms[input.ChannelID]; found {
 		ch.IsIM, ch.IsMpIM = len(users) == 1, len(users) > 1
 		if ch.IsIM {
@@ -789,6 +796,33 @@ func (f *fakeSlack) TabCanvasContext(_ context.Context, channelID, title string,
 	return id, nil
 }
 
+func (f *fakeSlack) CreateChannelCanvasContext(_ context.Context, channel string, page slack.DocumentContent, options ...slack.CreateChannelCanvasOption) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("conversations.canvases.create"); err != nil {
+		return "", err
+	}
+	if _, found := f.boards[channel]; found {
+		return "", slack.SlackErrorResponse{Err: channelCanvasCode}
+	}
+	id := fmt.Sprintf("FCANVAS%d", len(f.canvases)+1)
+	f.canvases[id] = fakeCanvas{channel, "", page.Markdown}
+	f.boards[channel] = id
+	return id, nil
+}
+
+func (f *fakeSlack) RenameConversationContext(_ context.Context, channelID, channelName string) (*slack.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.call("conversations.rename"); err != nil {
+		return nil, err
+	}
+	f.renamed[channelID] = channelName
+	ch := &slack.Channel{}
+	ch.ID, ch.Name = channelID, channelName
+	return ch, nil
+}
+
 func (f *fakeSlack) EditCanvasContext(_ context.Context, params slack.EditCanvasParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -811,8 +845,19 @@ func (f *fakeSlack) DeleteCanvasContext(_ context.Context, canvasID string) erro
 		return err
 	}
 	delete(f.canvases, canvasID)
+	for channel, id := range f.boards {
+		if id == canvasID {
+			delete(f.boards, channel)
+		}
+	}
 	f.gone = append(f.gone, canvasID)
 	return nil
+}
+
+func (f *fakeSlack) renames() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.renamed)
 }
 
 func (f *fakeSlack) deletedCanvases() []string {

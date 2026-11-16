@@ -7,6 +7,7 @@ import (
 type driveMates struct {
 	drives map[string]string
 	holder string
+	held   int64
 }
 
 func loadDriveMates(ctx context.Context, threads *dmThreads, holder string, subjectIDs []string) (driveMates, error) {
@@ -16,7 +17,12 @@ func loadDriveMates(ctx context.Context, threads *dmThreads, holder string, subj
 
 func (d driveMates) holds(w watch) bool {
 	_, drive := d.drives[w.SubjectID]
-	return drive && w.SubjectID == d.holder && (w.Kind == kindDM || w.Relayed)
+	return drive && (w.SubjectID == d.holder && (w.Kind == kindDM || w.Relayed) || d.held != 0 && w.ID == d.held)
+}
+
+func (d driveMates) heldBy(w watch) driveMates {
+	d.held = w.ID
+	return d
 }
 
 func (d driveMates) same(a, b string) bool {

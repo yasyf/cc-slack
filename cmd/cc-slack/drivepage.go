@@ -33,6 +33,8 @@ var goneCanvasCodes = map[string]bool{"canvas_not_found": true, "canvas_deleted"
 
 const fullCanvasCode = "canvas_too_large"
 
+const channelCanvasCode = "channel_canvas_already_exists"
+
 type driveQuestion struct {
 	Question    string     `json:"question"`
 	Options     []string   `json:"options"`
@@ -255,7 +257,7 @@ func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
 	if b.Text == "" || b.FileID == "" && b.Name == "" {
 		return fail("canvas needs text, the page's markdown, and file_id, the canvas to redraw, or name, the title of a new one")
 	}
-	id, err := loadIdentity(hc.Ctx, hc.DB)
+	id, err := operatorIdentity(hc.Ctx, hc.DB, b.ChannelID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -279,11 +281,36 @@ func (a *app) handleCanvas(hc daemon.HandlerCtx) daemon.Reply {
 			return fail(fallback(actionWrite, err))
 		}
 	}
+	if b.ChannelID != "" {
+		return channelCanvas(hc.Ctx, api, id, b.Name, page, replaced)
+	}
 	canvasID, err := api.TabCanvasContext(hc.Ctx, id.DMChannelID, b.Name, page)
 	if err != nil {
 		return fail(fallback(actionWrite, err))
 	}
 	return ok(canvasResult{CanvasID: canvasID, URL: canvasURL(id, canvasID), Created: true, Replaced: replaced})
+}
+
+func channelCanvas(ctx context.Context, api slackAPI, id identity, title string, page slack.DocumentContent, replaced string) daemon.Reply {
+	canvasID, err := api.CreateChannelCanvasContext(ctx, id.DMChannelID, page, slack.CreateChannelCanvasOptionTitle(title))
+	if err == nil {
+		return ok(canvasResult{CanvasID: canvasID, URL: canvasURL(id, canvasID), Created: true, Replaced: replaced})
+	}
+	if errorCode(err) != channelCanvasCode {
+		return fail(fallback(actionWrite, err))
+	}
+	ch, err := api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id.DMChannelID})
+	if err != nil {
+		return fail(fallback(actionWrite, err))
+	}
+	if ch.Properties == nil || ch.Properties.Canvas.FileId == "" {
+		return fail(fmt.Sprintf("Slack says %s already has a canvas but names none, so pass it as --canvas", id.DMChannelID))
+	}
+	canvasID = ch.Properties.Canvas.FileId
+	if err := api.EditCanvasContext(ctx, slack.EditCanvasParams{CanvasID: canvasID, Changes: []slack.CanvasChange{{Operation: "replace", DocumentContent: page}}}); err != nil {
+		return fail(fallback(actionWrite, err))
+	}
+	return ok(canvasResult{CanvasID: canvasID, URL: canvasURL(id, canvasID)})
 }
 
 func deleteFullCanvas(ctx context.Context, api slackAPI, id identity, canvasID, title string) error {
@@ -433,21 +460,22 @@ func driveCard(raw json.RawMessage, waits string) (json.RawMessage, error) {
 
 func canvasCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
-	var title, canvas string
+	var title, canvas, channel string
 	c := &cobra.Command{
 		Use:   "canvas",
-		Short: "Redraw a canvas from the markdown on stdin, or create one as a tab in your DM with the app",
+		Short: "Redraw a canvas from the markdown on stdin, or create one as a tab in your DM with the app, or as the channel canvas of one of your operator channels",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			page, err := io.ReadAll(c.InOrStdin())
 			if err != nil {
 				return err
 			}
-			return runOp(c, d, f, opCanvas, map[string]any{"text": string(page), "name": title, "file_id": canvas})
+			return runOp(c, d, f, opCanvas, map[string]any{"text": string(page), "name": title, "file_id": canvas, "channel_id": channel})
 		},
 	}
 	f.bind(c)
 	c.Flags().StringVar(&title, "title", "", "the title a new canvas gets, and the tab it shows as")
 	c.Flags().StringVar(&canvas, "canvas", "", "the canvas to redraw; with --title, one Slack no longer has is created again, and this app's own tab of that title that Slack calls full is deleted and created again")
+	c.Flags().StringVar(&channel, "channel", "", "id of the operator channel whose own canvas this draws: created the first time, and redrawn after, its id found from the channel when --canvas is left out")
 	return c
 }

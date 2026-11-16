@@ -1012,15 +1012,17 @@ func moveCardCmd(d cmd.Deps) *cobra.Command {
 
 func operatorChannelCmd(d cmd.Deps) *cobra.Command {
 	var f sessionFlags
+	var rename string
 	c := &cobra.Command{
 		Use:   "operator-channel <name>",
-		Short: "Create a private channel as you with the bot in it, which cc-slack then treats as it treats your DM, and print its id",
+		Short: "Create a private channel as you with the bot in it, which cc-slack then treats as it treats your DM, and print its id; with --rename, rename that operator channel to <name> instead",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			return runOp(c, d, f, opOperatorChan, map[string]any{"name": args[0]})
+			return runOp(c, d, f, opOperatorChan, map[string]any{"name": args[0], "channel_id": rename})
 		},
 	}
 	f.bind(c)
+	c.Flags().StringVar(&rename, "rename", "", "id of the operator channel to rename to <name>, as you")
 	return c
 }
 
@@ -1173,7 +1175,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&mirrored, "mirrored", false, "the waiting card already sits on a cc-present board; post it without telling the board, with any --file images on the card")
 	c.Flags().StringVar(&about, "about", "", "waits id of the waiting card this text reply is about; the reply lands in that card's thread")
 	c.Flags().StringVar(&drive, "drive", "", "the drive this session works for, shown in the bot's name as <display name> (<agent> · <drive>); while it hears the DM, a DM holder of that drive leaves replies under its posts to it, and a line waiting on the user with no card posts, since the drive's say judges it")
-	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM when it works for --drive, so the user's replies under the post reach that session; else as this session. Either way it answers none of the user's messages above it in its thread, as an ack or a report on the holder's behalf does")
+	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM, or the operator channel --channel names, when it works for --drive, so the user's replies under the post reach that session; else as this session. Either way it answers none of the user's messages above it in its thread, as an ack or a report on the holder's behalf does")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. With no text, it only draws: the card is redrawn where it sits, or first posted under --thread. With text under --thread, the card goes right under the post and the open card it replaces says so. A link in the text or card draws none")
 	c.Flags().StringVar(&channel, "channel", "", "id of an operator channel from cc-slack operator-channel to post in, as in the DM; the DM when unset")
 	bindAgent(c, &agentName)
