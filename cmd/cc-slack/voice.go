@@ -492,9 +492,6 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 			e.cut = append(e.cut, id)
 		}
 	}
-	if len(e.cut) > len(ids)/2 {
-		e.cut = e.cut[:len(ids)/2]
-	}
 	return e
 }
 
