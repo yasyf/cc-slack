@@ -1164,8 +1164,8 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back != 2 {
-		t.Fatalf("back = %d, want the DM subscription and the DM channel watch", back)
+	if len(back) != 2 {
+		t.Fatalf("back = %d, want the DM subscription and the DM channel watch", len(back))
 	}
 	var kinds []string
 	rows, err := f.db().QueryContext(f.ctx, `SELECT kind FROM watches WHERE subject_id = ? AND status = 'active' ORDER BY kind`, sub.ID)
@@ -1185,8 +1185,8 @@ func TestSessionStartBringsBackTheWatchesARestartOrphaned(t *testing.T) {
 	if !slices.Equal(kinds, []string{kindChannel, kindDM}) || f.watchStatus(stopped) != "stopped" {
 		t.Fatalf("active kinds = %v, thread watch %s: want the channel watch and subscription back and the stopped watch left", kinds, f.watchStatus(stopped))
 	}
-	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, dm); err != nil || again != 0 {
-		t.Fatalf("second pass = %d err=%v, want nothing", again, err)
+	if again, err := reviveWatches(f.ctx, f.db(), sub.ID, dm); err != nil || len(again) != 0 {
+		t.Fatalf("second pass = %d err=%v, want nothing", len(again), err)
 	}
 }
 
@@ -1205,8 +1205,8 @@ func TestARestartedSessionDoesNotTakeBackTheDMFromAnother(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back != 0 {
-		t.Fatalf("back = %d, want the DM left with the session that holds it", back)
+	if len(back) != 0 {
+		t.Fatalf("back = %d, want the DM left with the session that holds it", len(back))
 	}
 }
 
@@ -1390,5 +1390,31 @@ func TestHisLinesToATeammateAtAChannelsRootReachTheChannelsFeedAndNeverTheDMHold
 		if e.SubjectID == holder.ID {
 			t.Fatalf("the session holding the DM got %s, want none of his words to a teammate", e.Payload)
 		}
+	}
+}
+
+func TestASweepRereadsAnActiveWatchAtMostEveryTenMinutesAndNeverAnIdleOne(t *testing.T) {
+	f := newFixture(t)
+	f.watch(agent.TopLevel, testThread)
+	f.tick()
+	calls := f.slack.callCount(methodReplies)
+
+	f.poller.resweep()
+	f.tick()
+	if r := f.slack.callCount(methodReplies) - calls; r != 0 {
+		t.Fatalf("replies calls = %d on a sweep right after a read, want none", r)
+	}
+
+	f.now = f.now.Add(resweepEvery)
+	f.tick()
+	if r := f.slack.callCount(methodReplies) - calls; r != 1 {
+		t.Fatalf("replies calls = %d ten minutes on, want one sweep of the thread", r)
+	}
+
+	f.now = f.now.Add(resweepIdleAfter)
+	calls = f.slack.callCount(methodReplies)
+	f.tick()
+	if r := f.slack.callCount(methodReplies) - calls; r != 0 {
+		t.Fatalf("replies calls = %d on a thread idle over a day, want none", r)
 	}
 }

@@ -554,26 +554,42 @@ func (a *app) watchesBack(ctx context.Context, db *sql.DB, subjectID string) (in
 		return 0, err
 	}
 	back, err := reviveWatches(ctx, db, subjectID, id.DMChannelID)
-	if err != nil || back == 0 {
+	if err != nil || len(back) == 0 {
 		return 0, err
 	}
-	a.poller.reconcileAll()
-	return back, nil
+	keys := make([]cursorKey, 0, len(back))
+	for _, w := range back {
+		if w.Kind == kindDM {
+			a.poller.reconcileAll()
+		}
+		keys = append(keys, cursorKey{w.ChannelID, w.ThreadTS})
+	}
+	a.poller.nudge(keys...)
+	return int64(len(back)), nil
 }
 
-func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) (int64, error) {
-	res, err := db.ExecContext(ctx, `UPDATE watches SET status = 'active' WHERE id IN (
+func reviveWatches(ctx context.Context, db *sql.DB, subjectID, dmChannelID string) ([]watch, error) {
+	rows, err := db.QueryContext(ctx, `UPDATE watches SET status = 'active' WHERE id IN (
 		SELECT MAX(o.id) FROM watches o
 		WHERE o.subject_id = ? AND o.owner_agent_id = ? AND o.status = 'orphaned'
 			AND NOT EXISTS (SELECT 1 FROM watches a WHERE a.subject_id = o.subject_id AND a.owner_agent_id = o.owner_agent_id
 				AND a.kind = o.kind AND a.channel_id = o.channel_id AND a.thread_ts = o.thread_ts AND a.status = 'active')
 			AND NOT (o.kind = 'channel' AND o.channel_id = ? AND EXISTS (SELECT 1 FROM watches h
 				WHERE h.channel_id = o.channel_id AND h.thread_ts = '' AND h.kind = 'channel' AND h.status = 'active'))
-		GROUP BY o.kind, o.channel_id, o.thread_ts)`, subjectID, agent.TopLevel, dmChannelID)
+		GROUP BY o.kind, o.channel_id, o.thread_ts) RETURNING kind, channel_id, thread_ts`, subjectID, agent.TopLevel, dmChannelID)
 	if err != nil {
-		return 0, fmt.Errorf("bring back watches: %w", err)
+		return nil, fmt.Errorf("bring back watches: %w", err)
 	}
-	return res.RowsAffected()
+	defer rows.Close()
+	var back []watch
+	for rows.Next() {
+		var w watch
+		if err := rows.Scan(&w.Kind, &w.ChannelID, &w.ThreadTS); err != nil {
+			return nil, fmt.Errorf("scan a watch brought back: %w", err)
+		}
+		back = append(back, w)
+	}
+	return back, rows.Err()
 }
 
 func (a *app) handleLogin(hc daemon.HandlerCtx) daemon.Reply {

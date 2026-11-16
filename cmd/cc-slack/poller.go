@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	minBackoff     = 10 * time.Second
-	maxBackoff     = 60 * time.Second
-	jitterFraction = 0.2
-	errorRetry     = 10 * time.Second
+	minBackoff       = 10 * time.Second
+	maxBackoff       = 60 * time.Second
+	jitterFraction   = 0.2
+	errorRetry       = 10 * time.Second
+	resweepEvery     = 10 * time.Minute
+	resweepIdleAfter = 24 * time.Hour
 
 	methodReplies  = "conversations.replies"
 	methodHistory  = "conversations.history"
@@ -47,28 +49,31 @@ type plane interface {
 }
 
 type poller struct {
-	recard     func(ctx context.Context, id identity, card cardRef, pr refID)
-	decide     func(ctx context.Context, state any, questions map[string]spawnllm.Question, opts spawnllm.DecideOpts) (spawnllm.Decision, error)
-	keepUser   func(ctx context.Context, id identity) time.Time
-	plane      plane
-	newAPI     func(token string) slackAPI
-	alive      func(pid int) bool
-	now        func() time.Time
-	cache      *readCache
-	owed       *owedReplies
-	holds      *deliveryHolds
-	feeds      *feedStore
-	threads    *dmThreads
-	replay     *replayCursor
-	shortcuts  *shortcutHandler
-	cards      *liveCards
-	taps       tapQueue
-	applyingMu sync.Mutex
-	applying   map[string]bool
-	wakeCh     chan struct{}
-	reconcile  atomic.Bool
-	paused     map[string]time.Time
-	log        *log.Logger
+	recard        func(ctx context.Context, id identity, card cardRef, pr refID)
+	decide        func(ctx context.Context, state any, questions map[string]spawnllm.Question, opts spawnllm.DecideOpts) (spawnllm.Decision, error)
+	keepUser      func(ctx context.Context, id identity) time.Time
+	plane         plane
+	newAPI        func(token string) slackAPI
+	alive         func(pid int) bool
+	now           func() time.Time
+	cache         *readCache
+	owed          *owedReplies
+	holds         *deliveryHolds
+	feeds         *feedStore
+	threads       *dmThreads
+	replay        *replayCursor
+	shortcuts     *shortcutHandler
+	cards         *liveCards
+	taps          tapQueue
+	applyingMu    sync.Mutex
+	applying      map[string]bool
+	wakeCh        chan struct{}
+	reconcile     atomic.Bool
+	reconcileFull atomic.Bool
+	resweepAt     time.Time
+	paused        map[string]time.Time
+	resweptAt     map[cursorKey]time.Time
+	log           *log.Logger
 
 	mu        sync.Mutex
 	marks     uint64
@@ -149,6 +154,12 @@ func (p *poller) takeLeft() []string {
 }
 
 func (p *poller) reconcileAll() {
+	p.reconcileFull.Store(true)
+	p.reconcile.Store(true)
+	p.wake()
+}
+
+func (p *poller) resweep() {
 	p.reconcile.Store(true)
 	p.wake()
 }
@@ -243,21 +254,27 @@ func (p *poller) keepWatched(groups []cursorGroup, seen map[cursorKey]uint64) {
 	p.mu.Unlock()
 }
 
-func (p *poller) reconcileOperators(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch) error {
+func (p *poller) reconcileOperators(ctx context.Context, db *sql.DB, api slackAPI, id identity, watches []watch, full bool) error {
 	for _, channelID := range id.operatorChannelIDs() {
 		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO cursors(channel_id, thread_ts, oldest_ts, next_poll_at) VALUES (?, '', ?, 0)`,
 			channelID, formatTS(p.now())); err != nil {
 			return fmt.Errorf("claim the cursor of %s: %w", channelID, err)
 		}
-		if err := p.markReconciled(ctx, db, api, channelID, watches); err != nil {
+		if err := p.markReconciled(ctx, db, api, channelID, watches, full); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, watches []watch) error {
-	p.mark(cursorKey{dmChannelID, ""})
+func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, dmChannelID string, watches []watch, full bool) error {
+	dmDue, err := p.resweepDue(ctx, db, cursorKey{dmChannelID, ""}, full)
+	if err != nil {
+		return err
+	}
+	if dmDue {
+		p.mark(cursorKey{dmChannelID, ""})
+	}
 	running, err := p.feeds.running(ctx)
 	if err != nil {
 		return err
@@ -272,7 +289,14 @@ func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, d
 		case w.ChannelID == dmChannelID && w.ThreadTS != "":
 			threads[w.ThreadTS] = true
 		default:
-			p.mark(cursorKey{w.ChannelID, w.ThreadTS})
+			key := cursorKey{w.ChannelID, w.ThreadTS}
+			due, err := p.resweepDue(ctx, db, key, full)
+			if err != nil {
+				return err
+			}
+			if due {
+				p.mark(key)
+			}
 		}
 	}
 	bound, err := p.threads.sessionThreads(ctx, dmChannelID, subscribers...)
@@ -288,7 +312,7 @@ func (p *poller) markReconciled(ctx context.Context, db *sql.DB, api slackAPI, d
 			oldest = thread
 		}
 	}
-	if oldest == "" {
+	if oldest == "" || !dmDue {
 		return nil
 	}
 	msgs, err := fetchHistory(ctx, api, dmChannelID, justBefore(oldest), pageLimit)
@@ -367,9 +391,15 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	api := p.newAPI(id.Token)
+	if now := p.now(); now.Sub(p.resweepAt) >= resweepEvery {
+		p.resweepAt = now
+		p.reconcile.Store(true)
+	}
 	if p.reconcile.Swap(false) {
-		if err := p.reconcileOperators(ctx, db, api, id, watches); err != nil {
+		full := p.reconcileFull.Swap(false)
+		if err := p.reconcileOperators(ctx, db, api, id, watches, full); err != nil {
 			p.reconcile.Store(true)
+			p.reconcileFull.Store(full)
 			return time.Time{}, err
 		}
 	}
@@ -1038,4 +1068,31 @@ func (p *poller) pollGroups(ctx, settled context.Context, db *sql.DB, api slackA
 		}
 	}
 	return next, nil
+}
+
+func (p *poller) resweepDue(ctx context.Context, db *sql.DB, key cursorKey, full bool) (bool, error) {
+	now := p.now()
+	if p.resweptAt == nil {
+		p.resweptAt = map[cursorKey]time.Time{}
+	}
+	if full {
+		p.resweptAt[key] = now
+		return true, nil
+	}
+	if at, ok := p.resweptAt[key]; ok && now.Sub(at) < resweepEvery {
+		return false, nil
+	}
+	c, err := loadCursor(ctx, db, key)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	latest := c.oldest
+	if latest == "" {
+		latest = key.threadTS
+	}
+	if latest != "" && now.Sub(tsTime(latest)) > resweepIdleAfter {
+		return false, nil
+	}
+	p.resweptAt[key] = now
+	return true, nil
 }

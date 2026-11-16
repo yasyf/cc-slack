@@ -556,7 +556,10 @@ still ends the hold.
 A daemon with no saved `seq`, or one more than 1 h 45 min old, says hello
 without `since` and reads every watch once instead. A reply sent while the
 socket was down, in a thread only a channel watch covers, is then not
-recovered. A rate-limited read pauses that method until `Retry-After`, and a
+recovered. Outside that, the poller reads a thread or channel only when a
+nudge names it. A safety sweep every 10 minutes rereads each watch not read in
+the last 10 minutes, skipping any whose newest message is over a day old. A
+session that comes back reads only the watches it brought back. A rate-limited read pauses that method until `Retry-After`, and a
 failed read retries after a backoff that doubles from 10 s to 60 s. A thread in
 the engineer's DM or an operator channel takes no backoff: a 429 there reads
 it again once `Retry-After` passes. The poller's thread reads never wait out a
