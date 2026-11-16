@@ -127,8 +127,8 @@ func TestAPickupSlackRefusesTheWorkingLineForFailsAndSaysWhy(t *testing.T) {
 	loginAs(t, l, "yasyf")
 	l.slack.fail("assistant.threads.setStatus", slack.SlackErrorResponse{Err: "invalid_thread_ts"})
 	l.refused(opPickup, map[string]string{"channel_id": testChannel, "ts": "1.2", "thread_ts": "1.1"}, "refused the working line under thread 1.1: invalid_thread_ts")
-	if got := l.slack.reactedTo("1.2"); !slices.Equal(got, []string{"eyes"}) {
-		t.Fatalf("reactions = %v, want the eyes kept", got)
+	if got := l.slack.reactedTo("1.2"); !slices.Equal(got, []string{workingReaction}) {
+		t.Fatalf("reactions = %v, want %s kept", got, workingReaction)
 	}
 }
 
