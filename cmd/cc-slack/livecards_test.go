@@ -196,6 +196,56 @@ func editsOf(edits []fakeEdit, ts string) []string {
 	return out
 }
 
+func TestNewLiveRefDoesNotRefreshKnownRefsOrPostponeTheirPoll(t *testing.T) {
+	l := startDaemon(t)
+	loggedInWithRefs(t, l)
+	refs, srv := serveRefs(t)
+	clock := &testClock{}
+	clock.at.Store(time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC).UnixNano())
+	cards := standaloneCards(t, l, srv, clock)
+	links := []cardLink{{URL: testPRURL}}
+	for n := 100; n < 150; n++ {
+		id := refID{Kind: refPR, Owner: "acme", Repo: "app", Number: n}
+		links = append(links, cardLink{URL: prURL(id)})
+		cards.refs[id.key()] = refState{State: "open"}
+	}
+	seedLiveThread(cards, statusCard{Status: "progress", Title: "Landing", Refs: links}, clock.now())
+	identity, err := loadIdentity(l.ctx, l.srv.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := cards.host(refHostGitHub, identity.Config)
+	due := clock.now().Add(30 * time.Second)
+	host.due = due
+
+	if wait := cards.tick(l.ctx); wait != 30*time.Second {
+		t.Fatalf("next poll in %s, want 30s", wait)
+	}
+	if refs.calls() != 1 {
+		t.Fatalf("new ref fetched in %d calls, want one", refs.calls())
+	}
+	query := refs.query("/graphql")
+	if !strings.Contains(query, "number: 41") || strings.Contains(query, "number: 1") {
+		t.Fatalf("new ref query included known refs: %s", query)
+	}
+	if !host.due.Equal(due) {
+		t.Fatalf("known refs moved from %s to %s", due, host.due)
+	}
+	id, _ := parseRef(testPRURL)
+	if _, known := cards.refs[id.key()]; !known {
+		t.Fatal("new ref was not recorded")
+	}
+	cards.tick(l.ctx)
+	if refs.calls() != 1 {
+		t.Fatal("known refs fetched again before due")
+	}
+	clock.advance(30 * time.Second)
+	cards.tick(l.ctx)
+	if refs.calls() != 4 {
+		t.Fatalf("scheduled refresh made %d total calls, want initial lookup plus three batches", refs.calls())
+	}
+}
+
 func TestLiveRefsRedrawTheCardWhenStateChangesThenStopPolling(t *testing.T) {
 	l := startDaemon(t)
 	loggedInWithRefs(t, l)

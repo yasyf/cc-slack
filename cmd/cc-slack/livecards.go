@@ -1589,13 +1589,13 @@ func (t *liveThread) drop(m *liveMessage) {
 	t.PRCards = slices.DeleteFunc(t.PRCards, func(k *liveMessage) bool { return k == m })
 }
 
-func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool, time.Time) {
+func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string][]refID, time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	removed := l.prune()
 	byHost := map[string][]refID{}
 	seen := map[string]bool{}
-	var unknown map[string]bool
+	unknown := map[string][]refID{}
 	var expiry time.Time
 	for _, t := range l.threads {
 		expiry = earliest(expiry, t.nextExpiry(now))
@@ -1616,10 +1616,7 @@ func (l *liveCards) pending(now time.Time) (map[string][]refID, map[string]bool,
 				}
 				byHost[host] = append(byHost[host], id)
 				if !known {
-					if unknown == nil {
-						unknown = map[string]bool{}
-					}
-					unknown[host] = true
+					unknown[host] = append(unknown[host], id)
 				}
 			}
 		}
@@ -1730,11 +1727,16 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		if h == nil {
 			continue
 		}
-		if now.Before(h.due) && (h.backoff > 0 || !unknown[name]) {
+		early := now.Before(h.due)
+		if early && (h.backoff > 0 || len(unknown[name]) == 0) {
 			next = earliest(next, h.due)
 			continue
 		}
-		states, err := l.fetch(ctx, name, h, byHost[name])
+		refs := byHost[name]
+		if early {
+			refs = unknown[name]
+		}
+		states, err := l.fetch(ctx, name, h, refs)
 		l.mu.Lock()
 		var changedRefs []string
 		for k, s := range states {
@@ -1747,7 +1749,9 @@ func (l *liveCards) tick(ctx context.Context) time.Duration {
 		}
 		l.save(nil, changedRefs)
 		l.mu.Unlock()
-		h.due = now.Add(refPollEvery)
+		if !early {
+			h.due = now.Add(refPollEvery)
+		}
 		if err != nil {
 			h.backoff = min(max(2*h.backoff, refPollEvery), refMaxBackoff)
 			h.due = now.Add(h.backoff)
