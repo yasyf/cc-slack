@@ -55,6 +55,7 @@ var (
 
 type voiceRequest struct {
 	Lane      string `json:"lane"`
+	Drive     string `json:"drive,omitempty"`
 	ChannelID string `json:"channel_id"`
 	ThreadTS  string `json:"thread_ts,omitempty"`
 	Text      string `json:"text"`
@@ -256,7 +257,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postBegan := time.Now()
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
-	id.Agent = cmp.Or(job.req.Lane, defaultAgent)
+	id.Agent, id.Drive = "claude", job.req.Drive
 	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
 		_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(postCtx, job.req.ChannelID, last.ts, textOption(out.After))
 		out.PostMS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS)
@@ -462,9 +463,9 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 	questions := map[string]spawnllm.Question{}
 	if previous != "" {
 		questions["repeat"] = spawnllm.Binary{
-			Instructions: "Does `post` tell him nothing `previous`, the lane's last post minutes ago, did not already tell him: the same news, decision or ask in other words?",
-			Yes:          "A repeat: every fact and ask in it was already in the previous post",
-			No:           "New: it carries at least one fact, change, decision or ask the previous post did not",
+			Instructions: "Is `post` a second take on the news `previous`, the lane's post minutes ago, already gave him: the same PRs and the same state, retold or with its ask added, so that he needs only one of the two?",
+			Yes:          "A second take: one post would have said both",
+			No:           "Different news: another PR, another state, or a change since the previous post",
 		}
 	}
 	for _, id := range ids {
@@ -490,6 +491,7 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 			e.cut = append(e.cut, id)
 		}
 	}
+	e.cut = leaned(ids, post, e.cut)
 	return e
 }
 
@@ -582,4 +584,25 @@ func (v *voiceSender) posted(key string, last voiceLast) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.last[key] = last
+}
+
+var leansBack = regexp.MustCompile(`^(?:[*_]*)(?:It|Its|It's|This|That|These|Those|They|Their|Them|Then|So|If (?:it|so|that|they)|When (?:it|that|they)|Once (?:it|that|they)|Both|Neither|Either|The (?:same|other|second|first|fix|one)|Which)\b`)
+
+func leaned(ids []string, post map[string]string, cut []string) []string {
+	cutting := map[string]bool{}
+	for _, id := range cut {
+		cutting[id] = true
+	}
+	for n := len(ids) - 1; n > 0; n-- {
+		if !cutting[ids[n]] && cutting[ids[n-1]] && leansBack.MatchString(strings.TrimSpace(post[ids[n]])) {
+			delete(cutting, ids[n-1])
+		}
+	}
+	kept := cut[:0:0]
+	for _, id := range cut {
+		if cutting[id] {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }

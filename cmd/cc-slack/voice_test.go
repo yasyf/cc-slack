@@ -125,3 +125,11 @@ func TestTidyVoiceDropsAHeadingWhoseSectionWasCut(t *testing.T) {
 		t.Errorf("tidyVoice() = %q, want %q", got, want)
 	}
 }
+
+func TestLeanedKeepsTheSentenceALaterOneRefersBackTo(t *testing.T) {
+	post := map[string]string{"u1": "A builder is on Josh's Mac.", "u2": "Its first step is checking his build.", "u3": "If it does, I'll tell you.", "u4": "I'm fixing the tooling.", "u5": "The release waits on you."}
+	got := leaned([]string{"u1", "u2", "u3", "u4", "u5"}, post, []string{"u2", "u4"})
+	if strings.Join(got, ",") != "u4" {
+		t.Errorf("leaned() = %v, want [u4]", got)
+	}
+}
