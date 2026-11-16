@@ -197,13 +197,11 @@ func (r receipt) channelResult(replayed bool) channelResult {
 }
 
 type readMessage struct {
-	TS          string          `json:"ts"`
-	ThreadTS    string          `json:"thread_ts,omitempty"`
-	User        string          `json:"user"`
-	UserName    string          `json:"user_name"`
-	FromUser    bool            `json:"from_user,omitempty"`
-	FromClaude  bool            `json:"from_claude"`
-	FromBot     bool            `json:"from_bot,omitempty"`
+	TS       string `json:"ts"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+	User     string `json:"user"`
+	UserName string `json:"user_name"`
+	authorship
 	Dashboard   bool            `json:"dashboard,omitempty"`
 	Text        string          `json:"text"`
 	Answer      string          `json:"answer,omitempty"`
@@ -1584,8 +1582,8 @@ func (a *app) readMessageOf(ctx, shareCtx context.Context, api slackAPI, id iden
 	}
 	return readMessage{
 		TS: m.Timestamp, ThreadTS: m.ThreadTimestamp, User: m.User, UserName: a.cache.name(ctx, api, m),
-		FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != "", Dashboard: typedOnDashboard(m), Text: ownText(m),
-		ReplyCount: m.ReplyCount, LatestReply: m.LatestReply, Files: files, Shares: a.sharedMessages(shareCtx, api, m),
+		authorship: id.authorship(m), Dashboard: typedOnDashboard(m), Text: ownText(m),
+		ReplyCount: m.ReplyCount, LatestReply: m.LatestReply, Files: files, Shares: a.sharedMessages(shareCtx, api, id, m),
 		Unfurls: linkUnfurls(m), Buttons: messageButtons(m), Raw: raw,
 	}, nil
 }
@@ -2092,6 +2090,16 @@ func peerNames(ctx context.Context, api slackAPI, peer, name string) []string {
 }
 
 var fallbackMarker = regexp.MustCompile(`^\s*_\([^)\n]+['’]s Claude\)_`)
+
+type authorship struct {
+	FromUser   bool `json:"from_user,omitempty"`
+	FromClaude bool `json:"from_claude"`
+	FromBot    bool `json:"from_bot,omitempty"`
+}
+
+func (id identity) authorship(m slack.Message) authorship {
+	return authorship{FromUser: m.User == id.UserID, FromClaude: id.fromClaude(m), FromBot: m.BotID != ""}
+}
 
 func (id identity) fromClaude(m slack.Message) bool {
 	return id.botPosted(m) || fallbackMarker.MatchString(m.Text)

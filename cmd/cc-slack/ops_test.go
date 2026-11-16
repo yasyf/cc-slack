@@ -576,9 +576,9 @@ func TestHistoryReturnsTopLevelMessagesNewestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []readMessage{
-		{TS: "1800000000.000300", User: testUser, UserName: "yasyf", FromUser: true, Text: "newest", Permalink: "https://acme.slack.com/archives/C1/p1800000000000300"},
+		{TS: "1800000000.000300", User: testUser, UserName: "yasyf", authorship: authorship{FromUser: true}, Text: "newest", Permalink: "https://acme.slack.com/archives/C1/p1800000000000300"},
 		{
-			TS: "1800000000.000200", UserName: "yasyf", FromClaude: true, FromBot: true, Text: "PR is up\nsecond line",
+			TS: "1800000000.000200", UserName: "yasyf", authorship: authorship{FromClaude: true, FromBot: true}, Text: "PR is up\nsecond line",
 			Permalink: "https://acme.slack.com/archives/C1/p1800000000000200", ReplyCount: 2, LatestReply: "1800000000.000400",
 			Files: []messageFile{chartFile()},
 		},
@@ -786,6 +786,41 @@ func TestAThreadLeavesAShareWhoseThreadIsNotCachedAsItsLinkWithNoSlackRead(t *te
 	}
 	if n := l.slack.callCount(methodReplies); n != 1 {
 		t.Fatalf("replies calls = %d, want 1: a share never reads its own thread from Slack", n)
+	}
+}
+
+func TestAShareSaysWhetherTheUserThisAppAnotherBotOrAPersonWroteIt(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.setUser(&slack.User{ID: "U0ALERTS", IsBot: true, Profile: slack.UserProfile{DisplayName: "Alerts", BotID: "B0ALERTS"}})
+	ours := "1799999000.000300"
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: originTS, User: "U0JOSH", Text: originalText}})
+	l.slack.add(originChan, slack.Message{Msg: slack.Msg{Timestamp: ours, ThreadTimestamp: originTS, User: "UBOT", BotID: "BBOT", Text: "PR is up"}})
+	l.do(opThread, map[string]string{"channel_id": originChan, "thread_ts": originTS})
+	uncached := "https://acme.slack.com/archives/C0ELSE/p1799990000000100"
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
+		Timestamp: "1800000000.000100", User: testUser, Text: sharerText,
+		Attachments: []slack.Attachment{
+			{FromURL: originLink, AuthorID: "U0JOSH", Text: originalText},
+			{FromURL: "https://acme.slack.com/archives/C0ORIGIN/p1799999000000300?thread_ts=" + originTS, AuthorName: "yasyf (claude)", Text: "PR is up"},
+			{FromURL: uncached, AuthorID: "U0JOSH", Text: "the run page is blank"},
+			{FromURL: uncached, AuthorID: "U0ALERTS", Text: "monitor triggered"},
+			{FromURL: uncached, AuthorName: "Platy", Text: "release paused"},
+			{FromURL: uncached, AuthorID: testUser, Text: "look at this"},
+		},
+	}})
+
+	var res threadResult
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"channel_id": testChannel, "thread_ts": "1800000000.000100"}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]authorship, 0, len(res.Messages[0].Shares))
+	for _, share := range res.Messages[0].Shares {
+		got = append(got, share.authorship)
+	}
+	want := []authorship{{}, {FromClaude: true, FromBot: true}, {}, {FromBot: true}, {FromBot: true}, {FromUser: true}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("shares' authorship = %+v, want %+v: a cached original's own flags, else the unfurl's author by users.info", got, want)
 	}
 }
 

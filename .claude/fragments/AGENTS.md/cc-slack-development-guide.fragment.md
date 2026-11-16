@@ -653,15 +653,18 @@ so its fetch never takes the transport's four tries. A thread never read
 before waits the same way. A shared message's original comes from the cache alone, since
 a thread holding dozens of shares would otherwise read each one's thread: a
 share whose thread is not cached keeps its link and the author and text Slack
-attached to it. A fetch that runs past 1,000
+attached to it. Each share carries `from_user`, `from_claude` and `from_bot` as
+a message read does: from its original when cached, else from the author Slack
+attached, whose bot id `users.info` gives, an author-less unfurl reading as a
+bot's. A fetch that runs past 1,000
 messages fails instead of caching only the oldest of them.
 
 The poller merges each poll of a watched thread into its cached copy, so
 reading a watched thread costs no Slack call. A post, reply, edit, or delete by the
 bot marks its thread for a fresh read. Threads are evicted least recently
-read first once the cache passes 64 MiB. Display names from `users.info` are
-kept for 24 hours, and an expired name still answers while Slack refuses the
-lookup.
+read first once the cache passes 64 MiB. Display names and bot ids from
+`users.info` are kept for 24 hours, and an expired one still answers while
+Slack refuses the lookup.
 
 ## Fallback
 

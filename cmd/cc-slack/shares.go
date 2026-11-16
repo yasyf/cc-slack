@@ -11,11 +11,12 @@ import (
 )
 
 type sharedMessage struct {
-	Permalink  string          `json:"permalink"`
-	ChannelID  string          `json:"channel_id"`
-	TS         string          `json:"ts"`
-	User       string          `json:"user"`
-	UserName   string          `json:"user_name"`
+	Permalink string `json:"permalink"`
+	ChannelID string `json:"channel_id"`
+	TS        string `json:"ts"`
+	User      string `json:"user"`
+	UserName  string `json:"user_name"`
+	authorship
 	Text       string          `json:"text"`
 	Files      []messageFile   `json:"files,omitempty"`
 	Shares     []sharedMessage `json:"shares,omitempty"`
@@ -47,21 +48,24 @@ func linkUnfurls(m slack.Message) []string {
 	return out
 }
 
-func (a *app) sharedMessages(ctx context.Context, api slackAPI, m slack.Message) []sharedMessage {
+func (a *app) sharedMessages(ctx context.Context, api slackAPI, id identity, m slack.Message) []sharedMessage {
 	var out []sharedMessage
 	for _, at := range m.Attachments {
 		if ref, shared := shareRef(at); shared {
-			out = append(out, a.sharedMessage(ctx, api, at, ref))
+			out = append(out, a.sharedMessage(ctx, api, id, at, ref))
 		}
 	}
 	return out
 }
 
-func (a *app) sharedMessage(ctx context.Context, api slackAPI, at slack.Attachment, ref permalinkRef) sharedMessage {
+func (a *app) sharedMessage(ctx context.Context, api slackAPI, id identity, at slack.Attachment, ref permalinkRef) sharedMessage {
 	share := sharedMessage{
 		Permalink: shareLink(at), ChannelID: ref.channelID, TS: ref.ts, User: at.AuthorID, UserName: shareAuthor(at), Text: cmp.Or(at.Text, at.Fallback),
 	}
 	original, found, err := a.originalMessage(ctx, ref)
+	if err != nil || !found {
+		share.authorship = a.unfurledAuthorship(ctx, api, id, at, share.Text)
+	}
 	if err != nil {
 		share.Unreadable = fallback(actionRead, err)
 		return share
@@ -69,14 +73,23 @@ func (a *app) sharedMessage(ctx context.Context, api slackAPI, at slack.Attachme
 	if !found {
 		return share
 	}
+	share.authorship = id.authorship(original)
 	files, err := messageFiles(ctx, api, original)
 	if err != nil {
 		share.Unreadable = fallback(actionRead, err)
 		return share
 	}
 	share.User, share.UserName = cmp.Or(original.User, at.AuthorID), cmp.Or(a.cache.name(ctx, api, original), share.UserName)
-	share.Text, share.Files, share.Shares = ownText(original), files, a.sharedMessages(ctx, api, original)
+	share.Text, share.Files, share.Shares = ownText(original), files, a.sharedMessages(ctx, api, id, original)
 	return share
+}
+
+func (a *app) unfurledAuthorship(ctx context.Context, api slackAPI, id identity, at slack.Attachment, text string) authorship {
+	// Slack's unfurl of a message names no author_id only when a bot posted it.
+	if at.AuthorID == "" {
+		return authorship{FromBot: true}
+	}
+	return id.authorship(slack.Message{Msg: slack.Msg{User: at.AuthorID, BotID: a.cache.user(ctx, api, at.AuthorID).botID, Text: text}})
 }
 
 func (a *app) originalMessage(ctx context.Context, ref permalinkRef) (slack.Message, bool, error) {

@@ -46,6 +46,7 @@ CREATE INDEX idx_threads_used ON threads(used_at);
 CREATE TABLE users (
   user_id    TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
+  bot_id     TEXT NOT NULL,
   fetched_at INTEGER NOT NULL
 );
 `}
@@ -394,38 +395,44 @@ func (c *readCache) name(ctx context.Context, api slackAPI, m slack.Message) str
 	if m.User == "" {
 		return m.BotID
 	}
+	return c.user(ctx, api, m.User).name
+}
+
+type cachedUser struct{ name, botID string }
+
+func (c *readCache) user(ctx context.Context, api slackAPI, userID string) cachedUser {
 	db := c.st.DB()
 	var (
-		cached    string
+		cached    cachedUser
 		fetchedAt int64
 	)
-	err := db.QueryRowContext(ctx, `SELECT name, fetched_at FROM users WHERE user_id = ?`, m.User).Scan(&cached, &fetchedAt)
+	err := db.QueryRowContext(ctx, `SELECT name, bot_id, fetched_at FROM users WHERE user_id = ?`, userID).Scan(&cached.name, &cached.botID, &fetchedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		c.log.Printf("load cached name %s: %v", m.User, err)
+		c.log.Printf("load cached name %s: %v", userID, err)
 	}
 	if err == nil && c.now().Sub(time.UnixMilli(fetchedAt)) < nameTTL {
 		return cached
 	}
-	u, apiErr := api.GetUserInfoContext(ctx, m.User)
+	u, apiErr := api.GetUserInfoContext(ctx, userID)
 	if apiErr != nil {
 		if err == nil {
 			return cached
 		}
-		return m.User
+		return cachedUser{name: userID}
 	}
-	name := u.Profile.DisplayName
-	if name == "" {
-		name = u.RealName
+	fetched := cachedUser{name: u.Profile.DisplayName, botID: u.Profile.BotID}
+	if fetched.name == "" {
+		fetched.name = u.RealName
 	}
-	if name == "" {
-		name = u.Name
+	if fetched.name == "" {
+		fetched.name = u.Name
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO users(user_id, name, fetched_at) VALUES (?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET name = excluded.name, fetched_at = excluded.fetched_at`,
-		m.User, name, c.now().UnixMilli()); err != nil {
-		c.log.Printf("save cached name %s: %v", m.User, err)
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(user_id, name, bot_id, fetched_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET name = excluded.name, bot_id = excluded.bot_id, fetched_at = excluded.fetched_at`,
+		userID, fetched.name, fetched.botID, c.now().UnixMilli()); err != nil {
+		c.log.Printf("save cached name %s: %v", userID, err)
 	}
-	return name
+	return fetched
 }
 
 func (e threadEntry) newest() string { return newestTS(e.msgs) }
