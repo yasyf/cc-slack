@@ -57,27 +57,28 @@ type voiceRequest struct {
 }
 
 type voiceOutcome struct {
-	ID        string    `json:"id"`
-	At        time.Time `json:"at"`
-	Lane      string    `json:"lane"`
-	ChannelID string    `json:"channel_id"`
-	ThreadTS  string    `json:"thread_ts,omitempty"`
-	Before    string    `json:"before"`
-	Formatted string    `json:"formatted"`
-	After     string    `json:"after"`
-	Lead      string    `json:"lead,omitempty"`
-	Cut       []string  `json:"cut,omitempty"`
-	Dropped   string    `json:"dropped,omitempty"`
-	Jev       string    `json:"jev"`
-	Edited    bool      `json:"edited,omitempty"`
-	Permalink string    `json:"permalink,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	DryRun    bool      `json:"dry_run,omitempty"`
-	QueuedMS  int64     `json:"queued_ms"`
-	FormatMS  int64     `json:"format_ms"`
-	JevMS     int64     `json:"jev_ms"`
-	PostMS    int64     `json:"post_ms"`
-	TotalMS   int64     `json:"total_ms"`
+	ID        string             `json:"id"`
+	At        time.Time          `json:"at"`
+	Lane      string             `json:"lane"`
+	ChannelID string             `json:"channel_id"`
+	ThreadTS  string             `json:"thread_ts,omitempty"`
+	Before    string             `json:"before"`
+	Formatted string             `json:"formatted"`
+	After     string             `json:"after"`
+	Lead      string             `json:"lead,omitempty"`
+	Scores    map[string]float64 `json:"scores,omitempty"`
+	Cut       []string           `json:"cut,omitempty"`
+	Dropped   string             `json:"dropped,omitempty"`
+	Jev       string             `json:"jev"`
+	Edited    bool               `json:"edited,omitempty"`
+	Permalink string             `json:"permalink,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	DryRun    bool               `json:"dry_run,omitempty"`
+	QueuedMS  int64              `json:"queued_ms"`
+	FormatMS  int64              `json:"format_ms"`
+	JevMS     int64              `json:"jev_ms"`
+	PostMS    int64              `json:"post_ms"`
+	TotalMS   int64              `json:"total_ms"`
 }
 
 type voiceUnit struct {
@@ -86,9 +87,10 @@ type voiceUnit struct {
 }
 
 type voiceEdits struct {
-	lead string
-	cut  []string
-	note string
+	lead   string
+	cut    []string
+	note   string
+	scores map[string]float64
 }
 
 type voiceJob struct {
@@ -189,9 +191,9 @@ func (v *voiceSender) drain(key string, q chan voiceJob) {
 	}
 }
 
-func (v *voiceSender) run(ctx context.Context, job voiceJob) voiceOutcome {
+func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) {
 	began := time.Now()
-	out := voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds()}
+	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds()}
 	defer func() {
 		out.TotalMS = time.Since(job.received).Milliseconds()
 		v.record(out)
@@ -230,12 +232,12 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) voiceOutcome {
 	}
 	out.After = formatted
 	if landed != nil {
-		out.After, out.Lead, out.Cut = voiceApplied(units, *landed), landed.lead, landed.cut
+		out.After, out.Lead, out.Cut, out.Scores = voiceApplied(units, *landed), landed.lead, landed.cut, landed.scores
 	}
 	if job.req.DryRun {
 		if landed == nil {
 			e := <-edits
-			out.After, out.Lead, out.Cut, out.Jev = voiceApplied(units, e), e.lead, e.cut, "late: "+cmp.Or(e.note, "answered")
+			out.After, out.Lead, out.Cut, out.Scores, out.Jev = voiceApplied(units, e), e.lead, e.cut, e.scores, "late: "+cmp.Or(e.note, "answered")
 			out.JevMS = time.Since(jevBegan).Milliseconds()
 		}
 		return out
@@ -439,12 +441,14 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked string, units []voic
 	if err != nil {
 		return voiceEdits{note: "failed: " + err.Error()}
 	}
-	var e voiceEdits
+	e := voiceEdits{scores: map[string]float64{}}
 	if lead, ok := decision.Answers["lead"].(spawnllm.LabelAnswer); ok && lead.Choice != "keep" {
 		e.lead = lead.Choice
 	}
 	for _, id := range ids {
-		if answer, ok := decision.Answers["cut_"+id].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceCutAt && id != e.lead && (e.lead != "" || id != "u1") {
+		answer, ok := decision.Answers["cut_"+id].(spawnllm.BinaryAnswer)
+		e.scores[id] = answer.PYes
+		if ok && answer.PYes >= voiceCutAt && id != e.lead && (e.lead != "" || id != "u1") {
 			e.cut = append(e.cut, id)
 		}
 	}

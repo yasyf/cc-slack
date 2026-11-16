@@ -105,6 +105,9 @@ func printVoice(w io.Writer, out voiceOutcome) error {
 	if out.Lead != "" || len(out.Cut) > 0 {
 		fmt.Fprintf(&b, "(lead %s, cut %v)\n", out.Lead, out.Cut)
 	}
+	if len(out.Scores) > 0 {
+		fmt.Fprintf(&b, "jev cut scores %v\n", out.Scores)
+	}
 	if out.Permalink != "" {
 		fmt.Fprintln(&b, out.Permalink)
 	}
@@ -130,7 +133,7 @@ func voiceHere(ctx context.Context, req voiceRequest) (voiceOutcome, error) {
 	jev := time.Now()
 	e := v.ask(ctx, rules, req.Asked, units)
 	out.JevMS, out.Jev = time.Since(jev).Milliseconds(), cmp.Or(e.note, "answered")
-	out.After, out.Lead, out.Cut = voiceApplied(units, e), e.lead, e.cut
+	out.After, out.Lead, out.Cut, out.Scores = voiceApplied(units, e), e.lead, e.cut, e.scores
 	out.TotalMS = time.Since(began).Milliseconds()
 	return out, nil
 }
