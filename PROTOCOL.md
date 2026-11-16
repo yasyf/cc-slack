@@ -97,6 +97,17 @@ backend sends coordinates, never the message text; the daemon reads the
 message itself through `conversations.replies` or `conversations.history`,
 and only for a thread or channel a live watch covers.
 
+One exception: a message whose author has a connection of their own also
+goes to that author's connections with `message`, the Slack message event
+whole. Every other connection, and the nudge log a reconnect replays, gets
+coordinates only. A daemon routes its own engineer's words from `message`
+with no read, so they reach the session within seconds even while Slack
+limits `conversations.replies`, which every thread read on the workspace
+shares. No one else's words travel in a frame. A daemon ignores a
+`message` its engineer did not write, and still reads the thread or channel
+later, skipping the message it already routed. A backend that never sends
+`message` keeps working as before.
+
 | Field | Required | Meaning |
 |---|---|---|
 | `channel` | yes | Conversation ID |
@@ -104,8 +115,9 @@ and only for a thread or channel a live watch covers.
 | `thread_ts` | no | The thread's root timestamp, for a reply |
 | `subtype` | no | Slack's message subtype; the daemon routes `""`, `bot_message`, `thread_broadcast`, `file_share`, and `me_message` |
 | `seq` | yes | The frame's sequence number |
+| `message` | no | The Slack message event whole, sent only to the connections of the user who wrote it |
 
-Fixture: `message.json`.
+Fixtures: `message.json`, and `message_own.json` for a frame to the author's own connections.
 
 #### `cc_slack_action`
 

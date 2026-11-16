@@ -77,16 +77,19 @@ type poller struct {
 	compact   map[string]transcriptMark
 	swept     time.Time
 	sweepOpen bool
+	pushed    []pushedMessage
+	taken     map[string]bool
 	edits     map[string]bool
 	left      []string
 }
 
 type messageNudge struct {
-	Channel  string `json:"channel"`
-	TS       string `json:"ts"`
-	ThreadTS string `json:"thread_ts"`
-	Subtype  string `json:"subtype"`
-	Seq      string `json:"seq"`
+	Channel  string         `json:"channel"`
+	TS       string         `json:"ts"`
+	ThreadTS string         `json:"thread_ts"`
+	Subtype  string         `json:"subtype"`
+	Seq      string         `json:"seq"`
+	Message  *slack.Message `json:"message,omitempty"`
 }
 
 type watch struct {
@@ -169,6 +172,11 @@ func (p *poller) markLocked(keys ...cursorKey) {
 }
 
 func (p *poller) nudged(n messageNudge) {
+	if n.Message != nil && n.Message.Timestamp == n.TS && routedSubtypes[n.Subtype] {
+		p.mu.Lock()
+		p.pushed = append(p.pushed, pushedMessage{key: nudgedKey(n), m: *n.Message})
+		p.mu.Unlock()
+	}
 	if n.Subtype == editedSubtype {
 		p.edited(n.Channel)
 		p.wake()
@@ -374,6 +382,7 @@ func (p *poller) tick(ctx context.Context) (time.Time, error) {
 	p.keepWatched(groups, seen)
 	settled, done := drainable(ctx, drainGrace)
 	defer done()
+	p.takeAllPushed(settled, db, api, id, groups)
 	next, err := p.pollGroups(ctx, settled, db, api, id, groups)
 	if err != nil {
 		return next, err
@@ -696,31 +705,10 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 			continue
 		}
 		latest = m.Timestamp
-		if g.key.channelID == id.DMChannelID {
-			m = dashboardWords(id, m)
-		}
-		if g.root && isShortcutMessage(id, m) {
-			if err := p.shortcuts.fromDM(ctx, id, m); err != nil {
-				return c, err
-			}
+		if p.tookPushed(g.key.channelID, m.Timestamp) {
 			continue
 		}
-		if g.key.channelID == id.DMChannelID {
-			tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m)
-			if err != nil {
-				return c, err
-			}
-			if tapped {
-				continue
-			}
-			if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
-				p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
-			}
-		}
-		if g.idle() {
-			continue
-		}
-		if err := p.route(ctx, db, api, id, g, m); err != nil {
+		if err := p.take(ctx, db, api, id, g, m); err != nil {
 			return c, err
 		}
 	}
@@ -732,6 +720,28 @@ func (p *poller) poll(ctx context.Context, db *sql.DB, api slackAPI, id identity
 	}
 	p.consumed(g.key, g.since)
 	return c, nil
+}
+
+func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, m slack.Message) error {
+	if g.key.channelID == id.DMChannelID {
+		m = dashboardWords(id, m)
+	}
+	if g.root && isShortcutMessage(id, m) {
+		return p.shortcuts.fromDM(ctx, id, m)
+	}
+	if g.key.channelID == id.DMChannelID {
+		tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m)
+		if err != nil || tapped {
+			return err
+		}
+		if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
+			p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
+		}
+	}
+	if g.idle() {
+		return nil
+	}
+	return p.route(ctx, db, api, id, g, m)
 }
 
 func (p *poller) route(ctx context.Context, db *sql.DB, api slackAPI, id identity, g cursorGroup, m slack.Message) error {

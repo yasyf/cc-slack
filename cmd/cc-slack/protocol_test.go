@@ -86,6 +86,15 @@ func TestProtocolMessageNudgeDecodes(t *testing.T) {
 	}
 }
 
+func TestProtocolOwnMessageNudgeCarriesHisMessage(t *testing.T) {
+	t.Parallel()
+	var n messageNudge
+	decodePush(t, "message_own.json", nudgeEventType, &n)
+	if n.Message == nil || n.Message.User != "U0123ABCDE" || n.Message.Text != "ship it" || n.Message.Timestamp != n.TS || n.Message.ThreadTimestamp != n.ThreadTS {
+		t.Fatalf("message = %+v, want his words at the nudge's ts and thread", n.Message)
+	}
+}
+
 func TestProtocolCardAskDecodes(t *testing.T) {
 	t.Parallel()
 	var a cardActionPush

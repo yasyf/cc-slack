@@ -1,0 +1,1 @@
+{"event_type":"cc_slack_message","event_payload":{"channel":"D0123ABCDE","ts":"1800000000.000200","thread_ts":"1800000000.000100","subtype":"","seq":"001800000001000-a1b2c3","message":{"type":"message","user":"U0123ABCDE","text":"ship it","ts":"1800000000.000200","thread_ts":"1800000000.000100","channel":"D0123ABCDE","channel_type":"im"}}}
