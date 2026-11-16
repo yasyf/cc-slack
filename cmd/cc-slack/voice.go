@@ -38,7 +38,7 @@ const (
 )
 
 var (
-	prLink        = regexp.MustCompile(`<(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))(?:\|([^<>]*))?>`)
+	voicePRLink   = regexp.MustCompile(`<(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))(?:\|([^<>]*))?>`)
 	barePRLink    = regexp.MustCompile(`(^|[\s(])(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))\b`)
 	unresolvedRef = regexp.MustCompile(`\{(?:pr|card|order|record|answer|started|at|release):[^{}]*\}`)
 	deadTarget    = regexp.MustCompile(`<(?:(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?:[:/][^<>|]*)?|file://[^<>|]*|/[^<>|]*|\s*)(?:\|[^<>]*)?>`)
@@ -317,8 +317,8 @@ func (v *voiceSender) record(out voiceOutcome) {
 }
 
 func voiceFormat(text string) string {
-	text = prLink.ReplaceAllStringFunc(strings.TrimSpace(text), func(link string) string {
-		m := prLink.FindStringSubmatch(link)
+	text = voicePRLink.ReplaceAllStringFunc(strings.TrimSpace(text), func(link string) string {
+		m := voicePRLink.FindStringSubmatch(link)
 		return "<" + m[1] + "|" + prWords(m[2], m[3]) + ">"
 	})
 	return barePRLink.ReplaceAllString(text, "$1<$2|#$3>")
