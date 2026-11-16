@@ -194,6 +194,9 @@ func shareFiles(ctx context.Context, api slackAPI, id identity, channelID, threa
 
 func shareUploaded(ctx context.Context, api slackAPI, id identity, channelID, threadTS, text string, files []slack.FileSummary) (string, error) {
 	share := fileShare{files: files, channelID: channelID, threadTS: threadTS, text: text, username: id.username(), iconURL: id.AvatarURL}
+	if _, blocks := fitText(text, nil); len(blocks) > 0 {
+		share.text, share.blocks = "", blocks
+	}
 	if err := api.ShareFilesContext(ctx, share); err != nil {
 		return "", err
 	}

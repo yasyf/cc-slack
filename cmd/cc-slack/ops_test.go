@@ -1801,6 +1801,22 @@ func TestALinkWhoseURLCarriesAnAmpersandReachesSlackInBlocks(t *testing.T) {
 	}
 }
 
+func TestAFileSharesWordsWithAnAmpersandLinkInBlocks(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	notes := writeFile(t, "notes.txt", "edge reference 18.2f3a")
+
+	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": "Answered in " + replyLinkPosted, "files": []string{notes}})
+	l.post(opReply, map[string]any{"channel_id": testChannel, "thread_ts": testThread, "text": "the <https://example.com/runbook?step=2|runbook>", "files": []string{notes}})
+	shares := l.slack.sent()
+	if len(shares) != 2 || shares[0].text != "" || !sectionsHold(t, shares[0].blocks, replyLinkPosted) {
+		t.Fatalf("shares = %+v, want the first to carry its words as blocks holding %s with its & as written and no initial_comment", shares, replyLinkPosted)
+	}
+	if shares[1].text != "the <https://example.com/runbook?step=2|runbook>" || shares[1].blocks != "" {
+		t.Fatalf("share = %+v, want words whose link carries no & to go out as the initial_comment alone", shares[1])
+	}
+}
+
 func TestALinkWithAnAmpersandSentAgainAsTheUserReachesSlackInBlocks(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
