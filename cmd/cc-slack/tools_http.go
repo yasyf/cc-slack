@@ -55,7 +55,7 @@ type registryEntry struct {
 	Cwd       string `json:"cwd"`
 }
 
-func serveTools(ctx context.Context, s *daemon.Server) {
+func serveTools(ctx context.Context, s *daemon.Server, voice http.Handler) {
 	logger := log.New(os.Stderr, "["+binaryName+" tools] ", log.LstdFlags)
 	var ln net.Listener
 	for {
@@ -71,7 +71,7 @@ func serveTools(ctx context.Context, s *daemon.Server) {
 		}
 	}
 	srv := &http.Server{
-		Handler:           toolsHandler(s, logger),
+		Handler:           voiceOr(voice, toolsHandler(s, logger)),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -345,4 +345,14 @@ func stageWithin(ctx context.Context, body json.RawMessage) (json.RawMessage, fu
 	case <-time.After(toolsStageWait):
 		return nil, nil, fmt.Errorf("the %s daemon could not read an attachment within %s: a launchd daemon has no macOS privacy grant for folders such as ~/Documents, so copy the file outside them and attach the copy", binaryName, toolsStageWait)
 	}
+}
+
+func voiceOr(voice, tools http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == voicePath && r.Method == http.MethodPost && r.Header.Get("Origin") == "" {
+			voice.ServeHTTP(w, r)
+			return
+		}
+		tools.ServeHTTP(w, r)
+	})
 }
