@@ -2572,3 +2572,26 @@ func TestATapPRWithNoCardCarriesWhatTheCardCommandSaid(t *testing.T) {
 	l, _ := cardingDaemon(t, argv, "acme/app#41")
 	lineRefused(t, l, map[string]any{"text": "#41 is green", "tap_prs": tapPR41}, tapPR41[0]+": drive card: acme/app#41 is in no drive")
 }
+
+func TestADryRunDrawReturnsEachCardsBlocksAndPostsNothing(t *testing.T) {
+	cmd := fakeCardCommand(t, []string{"acme/app#41"}, mergeRowCard())
+	l, _ := cardingDaemon(t, cmd.argv, "acme/app#41")
+	var got struct {
+		Verdict string `json:"verdict"`
+		Cards   []struct {
+			Repo   string            `json:"repo"`
+			Number int               `json:"number"`
+			Blocks []json.RawMessage `json:"blocks"`
+		} `json:"cards"`
+	}
+	if err := json.Unmarshal(l.do(opDMStatus, map[string]any{"tap_prs": tapPR41, "dry_run": true}).Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Verdict != "ok" || len(got.Cards) != 1 || got.Cards[0].Number != 41 || len(got.Cards[0].Blocks) == 0 {
+		t.Fatalf("dry run = %+v, want #41's card drawn as blocks", got)
+	}
+	if posts := l.slack.sentTo(testDM); len(posts) != 0 {
+		t.Fatalf("posts = %+v, want nothing posted by a dry run", posts)
+	}
+	l.refused(opDMStatus, map[string]any{"text": "#41 is green", "tap_prs": tapPR41, "dry_run": true}, "dm-status dry_run only draws cards: pass tap_prs and no text, card, blocks or files; nothing was sent")
+}

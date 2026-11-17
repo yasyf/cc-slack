@@ -141,6 +141,7 @@ type opBody struct {
 	Drive     string   `json:"drive"`
 	AsHolder  bool     `json:"as_holder"`
 	TapPRs    []string `json:"tap_prs"`
+	DryRun    bool     `json:"dry_run,omitempty"`
 	PR        string   `json:"pr"`
 	Stored    bool     `json:"stored"`
 	Lines     []cardPR `json:"lines"`
@@ -2751,6 +2752,9 @@ func (a *app) handleDMStatus(hc daemon.HandlerCtx) daemon.Reply {
 	if len(b.TapPRs) > 0 && b.Card == nil && b.Text == "" && len(b.Blocks) == 0 && len(b.Files) == 0 && b.About == "" {
 		return a.drawCardsOnly(hc, id, b)
 	}
+	if b.DryRun {
+		return fail("dm-status dry_run only draws cards: pass tap_prs and no text, card, blocks or files; nothing was sent")
+	}
 	return a.postDMStatus(hc, id, b)
 }
 
@@ -2992,6 +2996,9 @@ func (a *app) drawCardsOnly(hc daemon.HandlerCtx, id identity, b opBody) daemon.
 	if said := undrawnAsked(b.TapPRs, t.undrawn); len(said) > 0 {
 		return fail("drew no card for tap_prs " + strings.Join(said, "; ") + "; nothing was sent")
 	}
+	if b.DryRun {
+		return ok(a.dryCards(id, t))
+	}
 	sub, err := a.dmPoster(hc, id, b)
 	if err != nil {
 		return fail(err.Error())
@@ -3008,6 +3015,22 @@ func (a *app) drawCardsOnly(hc daemon.HandlerCtx, id identity, b opBody) daemon.
 		return fail(fmt.Sprintf("drew no card for tap_prs %s: its card was neither redrawn nor posted; the daemon log says why", prURLs(missed)))
 	}
 	return a.tappedReply(hc, sub, id, placed[0].thread, placed[0].ts, b, nil, tapDrawn{cards: placed})
+}
+
+// dryCards is a draw-only dm-status run with dry_run: each card the card command drew, checked and laid out as it would post, and nothing posted, bound or recorded, so a drive renders his Approve cards before an install goes live.
+func (a *app) dryCards(id identity, t tapCards) map[string]any {
+	now := a.now()
+	verdict, reasons := "ok", []string{}
+	drawn := []map[string]any{}
+	for _, p := range t.provided {
+		if err := p.Card.check(now, false, id.Config.Links.Tailnet); err != nil {
+			verdict, reasons = "refused", append(reasons, fmt.Sprintf("%s#%d: %v", p.Repo, p.Number, err))
+			continue
+		}
+		blocks, fold := p.Card.layout(cardView{at: now, now: now})
+		drawn = append(drawn, map[string]any{"repo": p.Repo, "number": p.Number, "text": p.Card.text(), "blocks": blocks, "fold": fold})
+	}
+	return map[string]any{"verdict": verdict, "reason": strings.Join(reasons, "; "), "cards": drawn}
 }
 
 func (a *app) missingDMThread(ctx context.Context, id identity, thread string) error {

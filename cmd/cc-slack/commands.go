@@ -1190,13 +1190,14 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 		tapPRs    []string
 		key       string
 		channel   string
+		dryRun    bool
 	)
 	c := &cobra.Command{
 		Use:   "dm-status [text]",
 		Short: "Post status to your DM with the app, as a top-level message with its own thread",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs, "channel_id": channel}
+			body := map[string]any{"thread_ts": thread, "files": absPaths(cwdOr(f.cwd), files), "agent": agentName, "root_only": rootOnly, "mirrored": mirrored, "about": about, "drive": drive, "as_holder": asHolder, "tap_prs": tapPRs, "channel_id": channel, "dry_run": dryRun}
 			if len(args) > 0 {
 				body["text"] = args[0]
 			}
@@ -1222,6 +1223,7 @@ func dmStatusCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().BoolVar(&asHolder, "as-holder", false, "post, bind the thread and find earlier cards as the session holding the DM, or the operator channel --channel names, when it works for --drive, so the user's replies under the post reach that session; else as this session. Either way it answers none of the user's messages above it in its thread, as an ack or a report on the holder's behalf does")
 	c.Flags().StringArrayVar(&tapPRs, "tap-pr", nil, "URL of a pull request waiting on the user's tap, to draw its one card with buttons; repeatable. With no text, it only draws: the card is redrawn where it sits, or first posted under --thread. With text under --thread, the card goes right under the post and the open card it replaces says so. A link in the text or card draws none")
 	c.Flags().StringVar(&channel, "channel", "", "id of an operator channel from cc-slack operator-channel to post in, as in the DM; the DM when unset")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "with --tap-pr and no text, draw each card as it would post and print its verdict and blocks as JSON, posting nothing")
 	bindAgent(c, &agentName)
 	bindRequestKey(c, &key)
 	return c
