@@ -47,8 +47,6 @@ const (
 	voiceRepeatAt      = 0.8
 	voiceRepeatFor     = time.Hour
 	voiceMaxUnits      = 16
-	voiceLabelWord     = 10
-	voiceOwnWords      = 10
 	voiceBodyBytes     = 64 << 10
 	voiceIdle          = time.Minute
 	voiceLogName       = "voice.jsonl"
@@ -456,10 +454,10 @@ func voiceFormat(text string) string {
 
 func prWords(number, words string) string {
 	words = strings.TrimSpace(words)
-	if own, ok := strings.CutPrefix(words, "#"+number); ok && len(strings.Fields(own)) <= voiceOwnWords {
+	if own, ok := strings.CutPrefix(words, "#"+number); ok {
 		return strings.Join(append([]string{"#" + number}, strings.Fields(own)...), " ")
 	}
-	if fields := strings.Fields(words); len(fields) > 0 && len(fields) <= voiceLabelWord && !strings.HasPrefix(words, "http") {
+	if fields := strings.Fields(words); len(fields) > 0 && !strings.HasPrefix(words, "http") {
 		return "#" + number + " " + strings.Join(fields, " ")
 	}
 	return "#" + number

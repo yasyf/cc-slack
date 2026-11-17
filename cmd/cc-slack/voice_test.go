@@ -22,7 +22,7 @@ func TestVoiceFormat(t *testing.T) {
 		text string
 		want string
 	}{
-		{"full title becomes number", "Reworking <https://github.com/acme/app/pull/53430|the run page and its step fill read a run journal's kept rows only>.", "Reworking <https://github.com/acme/app/pull/53430|#53430>."},
+		{"a long label stays whole beside its number", "Reworking <https://github.com/acme/app/pull/53430|the run page and its step fill read a run journal's kept rows only>.", "Reworking <https://github.com/acme/app/pull/53430|#53430 the run page and its step fill read a run journal's kept rows only>."},
 		{"few words stay beside number", "<https://github.com/acme/app/pull/7|reads old journals> is up", "<https://github.com/acme/app/pull/7|#7 reads old journals> is up"},
 		{"number label kept", "<https://github.com/acme/app/pull/7|#7 the fix>", "<https://github.com/acme/app/pull/7|#7 the fix>"},
 		{"bare link gets a label", "see https://github.com/acme/app/pull/12 now", "see <https://github.com/acme/app/pull/12|#12> now"},
