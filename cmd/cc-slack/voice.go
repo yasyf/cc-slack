@@ -161,10 +161,12 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := voiceOptionsCheck(req.Options); err != nil {
+		v.refused(req, err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(req.Options) == 0 && !req.DryRun && v.typedChoice(r.Context(), req.Text) {
+		v.refused(req, voiceTypedChoice)
 		http.Error(w, voiceTypedChoice, http.StatusUnprocessableEntity)
 		return
 	}
@@ -709,4 +711,9 @@ func (v *voiceSender) typedChoice(ctx context.Context, text string) bool {
 	}
 	answer, ok := decision.Answers["typed"].(spawnllm.BinaryAnswer)
 	return ok && answer.PYes >= voiceTypedChoiceAt
+}
+
+// refused logs a post /voice turned away before it queued, with its lane and why, so a lane refused again and again shows in voice.jsonl.
+func (v *voiceSender) refused(req voiceRequest, why string) {
+	v.record(voiceOutcome{ID: voiceID(), At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "refused: " + why})
 }
