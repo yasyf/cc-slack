@@ -191,7 +191,11 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			s.Background(a.socket.run)
 			s.Background(a.cards.run)
 			s.Background(a.poller.taps.settle)
-			s.Background(func(ctx context.Context) { serveTools(ctx, s, newVoiceSender(a, spawnllm.Decide)) })
+			s.Background(func(ctx context.Context) {
+				voice := newVoiceSender(a, spawnllm.Decide)
+				go voice.backfill(ctx)
+				serveTools(ctx, s, voice)
+			})
 			return nil
 		},
 		AgentGreeting: agentGreeting,

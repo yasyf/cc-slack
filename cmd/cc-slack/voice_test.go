@@ -250,3 +250,45 @@ func TestVoiceLinksAnEarlierTypedAskInTheCardsThreadToTheCard(t *testing.T) {
 		t.Fatalf("log = %s, want one link from the 4:30 post to the card", written)
 	}
 }
+
+func TestVoiceALongQuestionKeepsItsFirstLineWhateverJevCuts(t *testing.T) {
+	units := voiceUnits("*Approve #58012 as built, with the note required and shown at the chat's end only, or change it first?* It changes two builtins. The builder ran out of tokens once.")
+	ids, _ := spokenUnits(units)
+	kept := keptOpener(units, voiceEdits{cut: ids})
+	if got := voiceApplied(units, kept); !strings.HasPrefix(got, "*Approve #58012 as built") {
+		t.Fatalf("question = %q, want its first line kept", got)
+	}
+}
+
+func TestVoiceNoRawAngleBracketReachesACard(t *testing.T) {
+	blocks := voiceQuestionBlocks(voiceFormat("Merge <https://github.com/acme/app/pull/7|#7 the fix> now? It was <<https://github.com/acme/app/pull/8|#8>> wrapped twice."), []string{"Merge", "Hold"})
+	text := blocks[0].(*slack.SectionBlock).Text.Text
+	if strings.Contains(text, "<<") || strings.Contains(text, ">>") {
+		t.Fatalf("card text = %q, want no raw doubled brackets", text)
+	}
+}
+
+func TestVoiceReplaceInPlaceOnlyRewritesTheSameThreadsLastPost(t *testing.T) {
+	v := &voiceSender{last: map[string]voiceLast{}}
+	now := time.Now()
+	v.posted("C1/1.1", voiceLast{ts: "1.2", text: "#7 is green.", at: now})
+	if got := v.lastPost("C1/2.2", now); got.ts != "" {
+		t.Fatalf("lastPost in another thread = %+v, want none", got)
+	}
+	if got := v.lastPost("C1/1.1", now.Add(voiceRepeatFor+time.Minute)); got.ts != "" {
+		t.Fatalf("lastPost past %v = %+v, want none", voiceRepeatFor, got)
+	}
+	if got := v.lastPost("C1/1.1", now); got.ts != "1.2" {
+		t.Fatalf("lastPost = %+v, want the thread's own last post", got)
+	}
+}
+
+func TestVoiceRefusesOnceThenWarns(t *testing.T) {
+	v := &voiceSender{warned: map[string]time.Time{}}
+	if v.warnedBefore("iris", voiceTypedChoice) {
+		t.Fatal("first refusal warned, want it to refuse")
+	}
+	if !v.warnedBefore("iris", voiceTypedChoice) {
+		t.Fatal("second try refused again, want it to post with a warning")
+	}
+}

@@ -28,37 +28,41 @@ import (
 )
 
 const (
-	voicePath         = "/voice"
-	voicePostsPath    = voicePath + "/posts"
-	voiceSettlePath   = voicePath + "/settle"
-	voiceReactPath    = voicePath + "/react"
-	voiceLinkPath     = voicePath + "/link"
-	voiceStateBlock   = "voice-state"
-	voiceJevBudget    = 600 * time.Millisecond
-	voiceJevLate      = 5 * time.Second
-	voicePostLimit    = 10 * time.Second
-	voiceCutAt        = 0.65
-	voiceOpenerCutAt  = 0.9
-	voiceRepeatAt     = 0.8
-	voiceRepeatFor    = 10 * time.Minute
-	voiceMaxUnits     = 16
-	voiceLabelWord    = 10
-	voiceOwnWords     = 10
-	voiceBodyBytes    = 64 << 10
-	voiceIdle         = time.Minute
-	voiceLogName      = "voice.jsonl"
-	voiceMaxOptions   = 5
-	voiceOptionRunes  = 24
-	voiceOptionWords  = 4
-	voiceSectionRunes = 3000
-	voiceOptionAction = cardActionPrefix + ":voice:"
-	voiceHoldAt       = 0.7
+	voicePath          = "/voice"
+	voicePostsPath     = voicePath + "/posts"
+	voiceSettlePath    = voicePath + "/settle"
+	voiceReactPath     = voicePath + "/react"
+	voiceLinkPath      = voicePath + "/link"
+	voiceStatusPath    = voicePath + "/status"
+	voiceWarnFor       = 30 * time.Minute
+	voiceBackfillEvery = 10 * time.Minute
+	voiceStateBlock    = "voice-state"
+	voiceJevBudget     = 600 * time.Millisecond
+	voiceJevLate       = 5 * time.Second
+	voicePostLimit     = 10 * time.Second
+	voiceCutAt         = 0.65
+	voiceOpenerCutAt   = 0.9
+	voiceRepeatAt      = 0.8
+	voiceRepeatFor     = 10 * time.Minute
+	voiceMaxUnits      = 16
+	voiceLabelWord     = 10
+	voiceOwnWords      = 10
+	voiceBodyBytes     = 64 << 10
+	voiceIdle          = time.Minute
+	voiceLogName       = "voice.jsonl"
+	voiceMaxOptions    = 5
+	voiceOptionRunes   = 24
+	voiceOptionWords   = 4
+	voiceSectionRunes  = 3000
+	voiceOptionAction  = cardActionPrefix + ":voice:"
+	voiceHoldAt        = 0.7
 )
 
 var (
 	voicePRLink     = regexp.MustCompile(`<(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))(?:\|([^<>]*))?>`)
 	barePRLink      = regexp.MustCompile(`(^|[\s(])(https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+))\b`)
 	bareSlackLink   = regexp.MustCompile(`(^|[\s(])(https://[\w-]+\.slack\.com/archives/[A-Z0-9]+/p(\d{10})\d{6}[^\s<>]*)`)
+	doubledLink     = regexp.MustCompile(`<(<[^<>\s][^<>]*>)>`)
 	spaceBeforeStop = regexp.MustCompile(`(>) +([.,;])`)
 	unresolvedRef   = regexp.MustCompile(`\{(?:pr|card|order|record|answer|started|at|release):[^{}]*\}`)
 	deadTarget      = regexp.MustCompile(`<(?:(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?:[:/][^<>|]*)?|file://[^<>|]*|/[^<>|]*|\s*)(?:\|[^<>]*)?>`)
@@ -78,6 +82,7 @@ type voiceRequest struct {
 	Options   []string            `json:"options,omitempty"`
 	PRs       []voicePR           `json:"prs,omitempty"`
 	EditTS    string              `json:"edit_ts,omitempty"`
+	Files     []string            `json:"files,omitempty"`
 	About     []map[string]string `json:"about,omitempty"`
 	DryRun    bool                `json:"dry_run,omitempty"`
 }
@@ -143,6 +148,8 @@ type voiceSender struct {
 	last   map[string]voiceLast
 	rules  map[string]voiceRules
 	write  sync.Mutex
+	warned map[string]time.Time
+	looked map[string]bool
 }
 
 type voiceRules struct {
@@ -159,6 +166,8 @@ func newVoiceSender(a *app, decide voiceDecide) *voiceSender {
 		queues: map[string]chan voiceJob{},
 		last:   map[string]voiceLast{},
 		rules:  map[string]voiceRules{},
+		warned: map[string]time.Time{},
+		looked: map[string]bool{},
 	}
 }
 
@@ -180,6 +189,9 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == voiceLinkPath && r.Method == http.MethodPost:
 		v.serveLink(w, r)
 		return
+	case r.URL.Path == voiceStatusPath && r.Method == http.MethodPost:
+		v.serveStatus(w, r)
+		return
 	case r.URL.Path != voicePath || r.Method != http.MethodPost:
 		http.NotFound(w, r)
 		return
@@ -199,6 +211,10 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	why, attached := v.held(r.Context(), req)
+	if why != "" && !req.DryRun && v.warnedBefore(req.Lane, why) {
+		v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
+		why = ""
+	}
 	if why != "" && !req.DryRun {
 		v.refused(req, why)
 		http.Error(w, why, http.StatusUnprocessableEntity)
@@ -331,7 +347,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		}
 		return out
 	}
-	res, err := v.app.send(postCtx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, nil, nil)
+	res, err := v.app.send(postCtx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, nil, job.req.Files)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
 		out.Error = err.Error()
@@ -405,7 +421,7 @@ func (v *voiceSender) record(out voiceOutcome) {
 }
 
 func voiceFormat(text string) string {
-	text = voicePRLink.ReplaceAllStringFunc(strings.TrimSpace(text), func(link string) string {
+	text = voicePRLink.ReplaceAllStringFunc(doubledLink.ReplaceAllString(strings.TrimSpace(text), "$1"), func(link string) string {
 		m := voicePRLink.FindStringSubmatch(link)
 		return "<" + m[1] + "|" + prWords(m[2], m[3]) + ">"
 	})
@@ -698,10 +714,9 @@ func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJo
 		out.Scores, out.Repeat, out.Jev = e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
 		out.JevMS = time.Since(jevBegan).Milliseconds()
 	}
-	kept := *landed
-	kept.cut = slices.DeleteFunc(slices.Clone(kept.cut), func(id string) bool { ids, _ := spokenUnits(units); return len(ids) > 0 && id == ids[0] })
+	kept := keptOpener(units, *landed)
 	out.After, out.Cut = voiceApplied(units, kept), kept.cut
-	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceQuestionBlocks(out.After, job.req.Options), nil)
+	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceQuestionBlocks(out.After, job.req.Options), job.req.Files)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
 		out.Error = err.Error()
@@ -1123,4 +1138,111 @@ func (v *voiceSender) threadPosts(channelID, threadTS, lane, before string) []vo
 		found = append(found, out)
 	}
 	return found
+}
+
+// warnedBefore reads whether the same lane was refused for the same reason in the last voiceWarnFor, and notes this refusal: his rule that tooling blocks at most once, then warns ("I thought we made it so this can only blcokk once then it warns? its not acceptable for tooling to get in the way like this"), so the second try posts with a warning logged.
+func (v *voiceSender) warnedBefore(lane, why string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	key, now := lane+"\x00"+why, time.Now()
+	if at, ok := v.warned[key]; ok && now.Sub(at) < voiceWarnFor {
+		delete(v.warned, key)
+		return true
+	}
+	v.warned[key] = now
+	return false
+}
+
+type voiceStatus struct {
+	ChannelID string `json:"channel_id"`
+	ThreadTS  string `json:"thread_ts"`
+	Status    string `json:"status"`
+}
+
+// serveStatus sets the loader line under his thread, where a status update belongs rather than a whole message ("these kind of status iupdates should just be in the spinner/loader slack agent thing"); an empty status clears it. Slack draws the loader only in his DM's threads with the app.
+func (v *voiceSender) serveStatus(w http.ResponseWriter, r *http.Request) {
+	var s voiceStatus
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || s.ChannelID == "" || !slackTSPattern.MatchString(s.ThreadTS) {
+		http.Error(w, "voice status needs channel_id and thread_ts", http.StatusBadRequest)
+		return
+	}
+	id, err := loadIdentity(r.Context(), v.app.poller.plane.DB())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !slices.Contains(id.operatorChannelIDs(), s.ChannelID) {
+		http.Error(w, s.ChannelID+" is not one of the operator's channels", http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), voicePostLimit)
+	defer cancel()
+	if failed := setWorkingLine(ctx, v.app.newAPI(id.Token), id, s.ChannelID, s.ThreadTS, s.Status, nil); failed != "" {
+		http.Error(w, "Slack drew no loader there: "+failed+"; it draws one only in his DM's threads", http.StatusUnprocessableEntity)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// backfill links, every voiceBackfillEvery, each question the voice posted in the last day that was never linked to the earlier posts in its thread asking the same question, a card from before its links were made included: one whose buttons Slack still shows, so old threads settle on his tap as new ones do.
+func (v *voiceSender) backfill(ctx context.Context) {
+	for {
+		v.backfillOnce(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(voiceBackfillEvery):
+		}
+	}
+}
+
+func (v *voiceSender) backfillOnce(ctx context.Context) {
+	id, err := loadIdentity(ctx, v.app.poller.plane.DB())
+	if err != nil {
+		return
+	}
+	api := v.app.newAPI(id.Token)
+	for _, post := range v.recentPosts(time.Now().Add(-24 * time.Hour)) {
+		v.mu.Lock()
+		seen := v.looked[post.TS]
+		v.looked[post.TS] = true
+		v.mu.Unlock()
+		if seen {
+			continue
+		}
+		if len(post.Options) == 0 {
+			m, err := messageAt(ctx, api, post.ChannelID, cmp.Or(post.ThreadTS, post.TS), post.TS)
+			if err != nil || !slices.ContainsFunc(m.Blocks.BlockSet, func(b slack.Block) bool { return b.BlockType() == slack.MBTAction }) {
+				continue
+			}
+		}
+		v.linkEarlier(ctx, voiceJob{req: voiceRequest{Lane: post.Lane, ChannelID: post.ChannelID, ThreadTS: post.ThreadTS}}, post.TS, post.After)
+	}
+}
+
+func (v *voiceSender) recentPosts(since time.Time) []voiceOutcome {
+	f, err := os.Open(v.logTo)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var posts []voiceOutcome
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	for scan.Scan() {
+		var out voiceOutcome
+		if json.Unmarshal(scan.Bytes(), &out) != nil || out.DryRun || out.Permalink == "" || out.Lane == "" || out.At.Before(since) {
+			continue
+		}
+		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
+		posts = append(posts, out)
+	}
+	return posts
+}
+
+// keptOpener is Jev's edits to a question with its first spoken unit never cut, the question his tap names.
+func keptOpener(units []voiceUnit, e voiceEdits) voiceEdits {
+	ids, _ := spokenUnits(units)
+	e.cut = slices.DeleteFunc(slices.Clone(e.cut), func(id string) bool { return len(ids) > 0 && id == ids[0] })
+	return e
 }
