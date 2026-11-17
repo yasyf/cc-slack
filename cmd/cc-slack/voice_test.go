@@ -486,7 +486,7 @@ func TestASecondCorrectionEditsTheLanesLatestPostInItsThread(t *testing.T) {
 }
 
 func contextText(block slack.Block) string {
-	context, _ := block.(*slack.ContextBlock)
-	text, _ := context.ContextElements.Elements[0].(*slack.TextBlockObject)
+	contextBlock, _ := block.(*slack.ContextBlock)
+	text, _ := contextBlock.ContextElements.Elements[0].(*slack.TextBlockObject)
 	return text.Text
 }

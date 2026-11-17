@@ -315,10 +315,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		out.Error = err.Error()
 		return out
 	}
-	units := voiceUnits(formatted)
-	edits := make(chan voiceEdits, 1)
-	jevBegan := time.Now()
-	key := job.req.ChannelID + "/" + job.req.ThreadTS
+	units, edits, jevBegan, key := voiceUnits(formatted), make(chan voiceEdits, 1), time.Now(), job.req.ChannelID+"/"+job.req.ThreadTS
 	last := v.lastPost(key, job.received)
 	go func() { edits <- v.ask(context.WithoutCancel(ctx), rules, job.req.Asked, last.text, units) }()
 	var landed *voiceEdits
@@ -343,8 +340,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postBegan := time.Now()
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
-	id.Agent, id.Drive = "claude", job.req.Drive
-	out.PRs, out.About, out.Options = job.req.PRs, job.req.About, job.req.Options
+	id.Agent, id.Drive, out.PRs, out.About, out.Options = "claude", job.req.Drive, job.req.PRs, job.req.About, job.req.Options
 	if job.req.EditTS != "" {
 		return v.editPost(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
