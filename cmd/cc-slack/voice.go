@@ -648,13 +648,17 @@ func voiceOptionsCheck(options []string) error {
 	return nil
 }
 
-// postQuestion posts a lane's question with a button per option, waiting on Jev's edits rather than editing late, since a late text edit would drop the buttons.
+// postQuestion posts a lane's question with a button per option, waiting on Jev's edits rather than editing late, since a late text edit would drop the buttons, and never cutting its first line, the question a tap names and a card's tap is matched by.
 func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJob, out voiceOutcome, units []voiceUnit, landed *voiceEdits, edits chan voiceEdits, jevBegan, postBegan time.Time, key string) voiceOutcome {
 	if landed == nil {
 		e := <-edits
-		out.After, out.Cut, out.Scores, out.Repeat, out.Jev = voiceApplied(units, e), e.cut, e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
+		landed = &e
+		out.Scores, out.Repeat, out.Jev = e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
 		out.JevMS = time.Since(jevBegan).Milliseconds()
 	}
+	kept := *landed
+	kept.cut = slices.DeleteFunc(slices.Clone(kept.cut), func(id string) bool { ids, _ := spokenUnits(units); return len(ids) > 0 && id == ids[0] })
+	out.After, out.Cut = voiceApplied(units, kept), kept.cut
 	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceQuestionBlocks(out.After, job.req.Options), nil)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
