@@ -229,6 +229,11 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	why, attached, warning, score := v.held(r.Context(), req)
+	if strings.HasPrefix(why, voiceCorrection) && !req.DryRun && v.warnedBefore(req.Lane, why) {
+		if ts := v.corrected(req); ts != "" {
+			req.EditTS, why = ts, ""
+		}
+	}
 	if why != "" && !req.DryRun && v.warnedBefore(req.Lane, why) {
 		v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
 		why = ""
@@ -596,7 +601,9 @@ func (v *voiceSender) ask(ctx context.Context, rules, asked, previous string, un
 			e.cut = append(e.cut, id)
 		}
 	}
-	e.cut = leaned(ids, post, e.cut)
+	if e.cut = leaned(ids, post, e.cut); len(e.cut) == len(ids) {
+		e.cut = e.cut[1:]
+	}
 	return e
 }
 
@@ -1677,6 +1684,16 @@ const (
 	voiceCorrection = "refused, not posted: it corrects an earlier post as a new one. A correction rewords the post it corrects in place, with lane say --edit <its ts>, and says no sorry"
 	voicePlumbing   = "refused, not posted: it tells him about the drive's own machinery (builders, lanes, tools, passes, sessions). Say what happened to his work and when he hears next, never who in the drive is doing it"
 )
+
+// corrected names the lane's latest post in the same thread within six hours, the one a correction sent twice edits in place: the second try's fix is known, so it is applied rather than posted beside the post it corrects.
+func (v *voiceSender) corrected(req voiceRequest) string {
+	for _, out := range slices.Backward(v.logged(time.Now().Add(-6 * time.Hour))) {
+		if out.Lane == req.Lane && out.sent() && out.ChannelID == req.ChannelID && out.ThreadTS == req.ThreadTS {
+			return cmp.Or(out.TS, permalinkTS(out.Permalink))
+		}
+	}
+	return ""
+}
 
 func (v *voiceSender) correction(lane string) string {
 	var recent []string

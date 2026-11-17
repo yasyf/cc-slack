@@ -471,3 +471,16 @@ func TestVoiceLogsTheLanesOwnWordsBesideEachPost(t *testing.T) {
 		t.Fatalf("rows = %+v, %v; want the lane's own words logged", rows, err)
 	}
 }
+
+func TestASecondCorrectionEditsTheLanesLatestPostInItsThread(t *testing.T) {
+	log := filepath.Join(t.TempDir(), voiceLogName)
+	v := &voiceSender{logTo: log}
+	v.record(voiceOutcome{ID: "a", At: time.Now(), Lane: "sandsql-engine", ChannelID: "C1", ThreadTS: "1794817727.413579", TS: "1794817887.000100", Permalink: "https://x.slack.com/archives/C1/p1794817887000100"})
+	v.record(voiceOutcome{ID: "b", At: time.Now(), Lane: "sandsql-engine", ChannelID: "C1", ThreadTS: "1.1", TS: "1794817890.000100", Permalink: "https://x.slack.com/archives/C1/p1794817890000100"})
+	if ts := v.corrected(voiceRequest{Lane: "sandsql-engine", ChannelID: "C1", ThreadTS: "1794817727.413579"}); ts != "1794817887.000100" {
+		t.Fatalf("corrected = %q, want the lane's latest post in the same thread", ts)
+	}
+	if ts := v.corrected(voiceRequest{Lane: "sandsql-engine", ChannelID: "C1", ThreadTS: "9.9"}); ts != "" {
+		t.Fatalf("corrected = %q, want none in a thread the lane never posted in", ts)
+	}
+}
