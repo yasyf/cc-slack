@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +222,31 @@ func TestVoiceRefusesAnAskToApproveWhatHeAlreadyApproved(t *testing.T) {
 	why, options = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
 	if why != "" || len(options) != 2 {
 		t.Fatalf("held = %q, %q; want a PR with no Approve to post with its buttons", why, options)
+	}
+}
+
+func TestVoiceLinksAnEarlierTypedAskInTheCardsThreadToTheCard(t *testing.T) {
+	logTo := filepath.Join(t.TempDir(), voiceLogName)
+	at := time.Now().Add(-time.Hour)
+	var lines []byte
+	for _, out := range []voiceOutcome{
+		{ID: "a", At: at, Lane: "iris", ChannelID: "C1", TS: "1794875438.095139", Permalink: "https://x.slack.com/archives/C1/p1794875438095139", After: "Hotfix the two now, or wait? Say hotfix or wait."},
+		{ID: "b", At: at, Lane: "iris", ChannelID: "C1", TS: "1794875500.000100", ThreadTS: "1794875438.095139", Permalink: "https://x.slack.com/archives/C1/p1794875500000100", After: "CI on #57810 is green."},
+		{ID: "c", At: at, Lane: "other", ChannelID: "C1", TS: "1794875600.000100", ThreadTS: "1794875438.095139", Permalink: "https://x.slack.com/archives/C1/p1794875600000100", After: "Hotfix or wait?"},
+	} {
+		line, _ := json.Marshal(out)
+		lines = append(append(lines, line...), '\n')
+	}
+	if err := os.WriteFile(logTo, lines, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	same := stubDecide{answers: map[string]spawnllm.Answer{"p0": spawnllm.BinaryAnswer{PYes: 0.9}, "p1": spawnllm.BinaryAnswer{PYes: 0.1}}}
+	v := &voiceSender{decide: same.decide, logTo: logTo}
+	v.linkEarlier(context.Background(), voiceJob{req: voiceRequest{Lane: "iris", ChannelID: "C1", ThreadTS: "1794875438.095139"}}, "1794877409.837249", "Hotfix #57810 and #57835 now, or wait?")
+	written, _ := os.ReadFile(logTo)
+	last := strings.Split(strings.TrimSpace(string(written)), "\n")
+	var linked voiceOutcome
+	if err := json.Unmarshal([]byte(last[len(last)-1]), &linked); err != nil || !strings.HasSuffix(linked.ID, "-asks") || linked.TS != "1794875438.095139" || linked.About[0]["ts"] != "1794877409.837249" || len(last) != 4 {
+		t.Fatalf("log = %s, want one link from the 4:30 post to the card", written)
 	}
 }

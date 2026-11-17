@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/yasyf/cc-interact/procs"
 	spawnllm "github.com/yasyf/spawnllm/go"
 )
 
@@ -29,6 +31,8 @@ const (
 	voicePath         = "/voice"
 	voicePostsPath    = voicePath + "/posts"
 	voiceSettlePath   = voicePath + "/settle"
+	voiceReactPath    = voicePath + "/react"
+	voiceLinkPath     = voicePath + "/link"
 	voiceStateBlock   = "voice-state"
 	voiceJevBudget    = 600 * time.Millisecond
 	voiceJevLate      = 5 * time.Second
@@ -158,7 +162,7 @@ func newVoiceSender(a *app, decide voiceDecide) *voiceSender {
 }
 
 func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if _, err := callerWindow(r); err != nil {
+	if _, err := callerWindow(r); err != nil && !laneSupervisor(r) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
@@ -168,6 +172,12 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.URL.Path == voiceSettlePath && r.Method == http.MethodPost:
 		v.serveSettle(w, r)
+		return
+	case r.URL.Path == voiceReactPath && r.Method == http.MethodPost:
+		v.serveReact(w, r)
+		return
+	case r.URL.Path == voiceLinkPath && r.Method == http.MethodPost:
+		v.serveLink(w, r)
 		return
 	case r.URL.Path != voicePath || r.Method != http.MethodPost:
 		http.NotFound(w, r)
@@ -303,7 +313,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
 	id.Agent, id.Drive = "claude", job.req.Drive
-	out.PRs, out.About = job.req.PRs, job.req.About
+	out.PRs, out.About, out.Options = job.req.PRs, job.req.About, job.req.Options
 	if job.req.EditTS != "" {
 		return v.editPost(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
@@ -691,6 +701,7 @@ func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJo
 	}
 	out.Permalink, out.TS = res.Permalink, res.TS
 	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
+	go v.linkEarlier(context.WithoutCancel(ctx), job, res.TS, out.After)
 	return out
 }
 
@@ -858,7 +869,7 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	posts, taps := []voiceOutcome{}, map[string]string{}
+	posts, taps, asks := []voiceOutcome{}, map[string]string{}, map[string][]map[string]string{}
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
 	for scan.Scan() {
@@ -870,11 +881,18 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 			taps[out.TS] = out.After
 			continue
 		}
+		if strings.HasSuffix(out.ID, "-asks") {
+			asks[out.TS] = append(asks[out.TS], out.About...)
+			continue
+		}
 		if out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
 			continue
 		}
 		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
 		posts = append(posts, out)
+	}
+	for n := range posts {
+		posts[n].About = append(posts[n].About, asks[posts[n].TS]...)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"posts": posts, "taps": taps})
@@ -963,4 +981,132 @@ func voiceTapped(channelID, ts, label string) error {
 	}
 	_, err = f.Write(append(line, '\n'))
 	return errors.Join(err, f.Close())
+}
+
+// laneSupervisor reads whether a request comes from a drive's lane supervisor, a launchd process and no Claude session, by its pid header naming that process or one under it: its argv runs lane with supervise.
+func laneSupervisor(r *http.Request) bool {
+	pid, err := strconv.Atoi(r.Header.Get(toolsPIDHeader))
+	if err != nil {
+		return false
+	}
+	return procs.FindAncestor(pid, func(argv []string) bool {
+		return slices.Contains(argv, "supervise") && slices.ContainsFunc(argv, func(arg string) bool { return arg == "lane" || strings.HasSuffix(arg, "/lane") })
+	}) != 0
+}
+
+type voiceReact struct {
+	ChannelID string   `json:"channel_id"`
+	TS        string   `json:"ts"`
+	Add       string   `json:"add,omitempty"`
+	Remove    []string `json:"remove,omitempty"`
+}
+
+// serveReact swaps reactions on his message in one of his channels, such as 🚧 for 👀 when a lane's owner starts on it, so the reaction says where his message stands.
+func (v *voiceSender) serveReact(w http.ResponseWriter, r *http.Request) {
+	var s voiceReact
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || s.ChannelID == "" || !slackTSPattern.MatchString(s.TS) {
+		http.Error(w, "voice react needs channel_id and ts", http.StatusBadRequest)
+		return
+	}
+	id, err := loadIdentity(r.Context(), v.app.poller.plane.DB())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !slices.Contains(id.operatorChannelIDs(), s.ChannelID) {
+		http.Error(w, s.ChannelID+" is not one of the operator's channels", http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), voicePostLimit)
+	defer cancel()
+	api, ref := v.app.newAPI(id.Token), slack.NewRefToMessage(s.ChannelID, s.TS)
+	for _, name := range s.Remove {
+		if err := api.RemoveReactionContext(ctx, name, ref); err != nil && errorCode(err) != "no_reaction" {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+	}
+	if s.Add != "" {
+		if err := api.AddReactionContext(ctx, s.Add, ref); err != nil && errorCode(err) != "already_reacted" {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type voiceLink struct {
+	ChannelID string `json:"channel_id"`
+	TS        string `json:"ts"`
+	CardTS    string `json:"card_ts"`
+}
+
+// serveLink records that an earlier post asks the question a card asks, so the post settles with the card's answer.
+func (v *voiceSender) serveLink(w http.ResponseWriter, r *http.Request) {
+	var s voiceLink
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || !slackTSPattern.MatchString(s.TS) || !slackTSPattern.MatchString(s.CardTS) {
+		http.Error(w, "voice link needs ts and card_ts", http.StatusBadRequest)
+		return
+	}
+	v.linked(s.ChannelID, s.TS, s.CardTS)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (v *voiceSender) linked(channelID, ts, cardTS string) {
+	v.record(voiceOutcome{ID: voiceID() + "-asks", At: time.Now(), ChannelID: channelID, TS: ts, About: []map[string]string{{"kind": "card", "ts": cardTS}}, DryRun: true})
+}
+
+// linkEarlier asks Jev, once per earlier lane post in the card's thread within FOLLOWED hours, whether it asks the question the card asks, and links each that does, so a typed ask the card replaced settles when he taps the card.
+func (v *voiceSender) linkEarlier(ctx context.Context, job voiceJob, cardTS, question string) {
+	earlier := v.threadPosts(job.req.ChannelID, job.req.ThreadTS, job.req.Lane, cardTS)
+	if len(earlier) == 0 {
+		return
+	}
+	post := map[string]string{"card": question}
+	questions := map[string]spawnllm.Question{}
+	for n, e := range earlier {
+		key := fmt.Sprintf("p%d", n)
+		post[key] = e.After
+		questions[key] = spawnllm.Binary{
+			Instructions: "Does `post` " + key + " ask him the same question `post` card asks, so his answer on the card answers it too?",
+			Yes:          "The same question",
+			No:           "Another question, or no question",
+		}
+	}
+	decision, err := v.decide(ctx, voiceState{Post: post, Order: slices.Sorted(maps.Keys(post))}, questions, spawnllm.DecideOpts{Timeout: voiceJevLate})
+	if err != nil {
+		v.log.Printf("voice link %s: %v", cardTS, err)
+		return
+	}
+	for n, e := range earlier {
+		if answer, ok := decision.Answers[fmt.Sprintf("p%d", n)].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceHoldAt {
+			v.linked(job.req.ChannelID, e.TS, cardTS)
+		}
+	}
+}
+
+// threadPosts are the lane's posts in one thread of a channel in the last day, before the given ts.
+func (v *voiceSender) threadPosts(channelID, threadTS, lane, before string) []voiceOutcome {
+	f, err := os.Open(v.logTo)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var found []voiceOutcome
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	since := time.Now().Add(-24 * time.Hour)
+	for scan.Scan() {
+		var out voiceOutcome
+		if json.Unmarshal(scan.Bytes(), &out) != nil || out.DryRun || out.Lane != lane || out.ChannelID != channelID || out.At.Before(since) {
+			continue
+		}
+		ts := cmp.Or(out.TS, permalinkTS(out.Permalink))
+		if ts == "" || ts >= before || cmp.Or(out.ThreadTS, ts) != cmp.Or(threadTS, before) {
+			continue
+		}
+		out.TS = ts
+		found = append(found, out)
+	}
+	return found
 }

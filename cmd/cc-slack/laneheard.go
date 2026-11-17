@@ -14,6 +14,8 @@ import (
 
 const laneHeardLimit = 30 * time.Second
 
+const laneHeardReaction = "eyes"
+
 type lanesConfig struct {
 	HeardCommand []string `toml:"heard_command" json:"heard_command,omitempty"`
 }
@@ -30,8 +32,16 @@ func (p *poller) laneHeard(ctx context.Context, id identity, channelID, threadTS
 	go func(ctx context.Context) {
 		ctx, cancel := context.WithTimeout(ctx, laneHeardLimit)
 		defer cancel()
-		if out, err := exec.CommandContext(ctx, command[0], args...).CombinedOutput(); err != nil { //nolint:gosec // G204: argv to the heard_command login resolved, never a shell
+		out, err := exec.CommandContext(ctx, command[0], args...).CombinedOutput() //nolint:gosec // G204: argv to the heard_command login resolved, never a shell
+		if err != nil {
 			p.log.Printf("lane heard %s/%s: %v: %s", channelID, ts, err, strings.TrimSpace(string(out)))
+			return
+		}
+		if strings.HasPrefix(words, "tapped ") || !strings.Contains(string(out), " new") {
+			return
+		}
+		if err := p.newAPI(id.Token).AddReactionContext(ctx, laneHeardReaction, slack.NewRefToMessage(channelID, ts)); err != nil && errorCode(err) != "already_reacted" {
+			p.log.Printf("lane heard %s/%s: no %s: %v", channelID, ts, laneHeardReaction, err)
 		}
 	}(context.WithoutCancel(ctx))
 }
