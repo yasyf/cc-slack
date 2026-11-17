@@ -79,7 +79,7 @@ func startDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 func launchDaemon(t *testing.T, setup ...func(*app)) *liveDaemon {
 	t.Helper()
 	fs := newFakeSlack()
-	a := newApp(func(string) slackAPI { return fs }, func(int) bool { return true }, openTestCache(t), openTestOwed(t), openTestHolds(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t), openTestTransport(t))
+	a := newApp(func(string) slackAPI { return fs }, func(int) bool { return true }, openTestCache(t), openTestOwed(t), openTestHolds(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t), nil)
 	t.Cleanup(func() {
 		a.cardWork.Wait()
 		_ = a.cards.close()

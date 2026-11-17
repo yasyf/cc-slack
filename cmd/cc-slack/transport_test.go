@@ -18,6 +18,8 @@ import (
 func transportFixture(t *testing.T, subscriber bool) *fixture {
 	t.Helper()
 	f := newFixture(t)
+	f.app.transport = openTestTransport(t)
+	f.poller.transport = f.app.transport
 	f.id.Config.Transport.Subscriber = subscriber
 	if err := saveIdentity(f.ctx, f.plane.st.DB(), f.id); err != nil {
 		t.Fatal(err)
