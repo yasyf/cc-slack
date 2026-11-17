@@ -109,6 +109,7 @@ type voiceOutcome struct {
 	DryRun    bool                `json:"dry_run,omitempty"`
 	TS        string              `json:"ts,omitempty"`
 	Sent      bool                `json:"sent"`
+	Score     *float64            `json:"score,omitempty"`
 	Verdict   string              `json:"verdict,omitempty"`
 	Reason    string              `json:"reason,omitempty"`
 	Warning   string              `json:"warning,omitempty"`
@@ -140,6 +141,7 @@ type voiceJob struct {
 	req      voiceRequest
 	id       string
 	received time.Time
+	score    float64
 }
 
 type voiceDecide func(ctx context.Context, state any, questions map[string]spawnllm.Question, opts spawnllm.DecideOpts) (spawnllm.Decision, error)
@@ -226,7 +228,7 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	why, attached, warning := v.held(r.Context(), req)
+	why, attached, warning, score := v.held(r.Context(), req)
 	if why != "" && !req.DryRun && v.warnedBefore(req.Lane, why) {
 		v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
 		why = ""
@@ -239,7 +241,7 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(req.Options) == 0 {
 		req.Options = attached
 	}
-	job := voiceJob{req: req, id: voiceID(), received: time.Now()}
+	job := voiceJob{req: req, id: voiceID(), received: time.Now(), score: score}
 	w.Header().Set("Content-Type", "application/json")
 	if req.DryRun {
 		out := v.run(r.Context(), job)
@@ -295,7 +297,7 @@ func (v *voiceSender) drain(key string, q chan voiceJob) {
 
 func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) {
 	began := time.Now()
-	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds()}
+	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds(), Score: &job.score}
 	defer func() {
 		out.TotalMS = time.Since(job.received).Milliseconds()
 		if !job.req.DryRun {
@@ -816,7 +818,13 @@ type voicePR struct {
 const voiceMaxApprovePRs = 2
 
 // held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry; a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count; and a post asking his Approve or tap on a PR, which never goes out without the buttons it asks him to press and never about a PR already merged or closed. It answers why the post is held, or "", and the Approve and Hold buttons to attach to an ask for his Approve that carries none; a Jev that cannot answer within the budget lets the post through as written.
-func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string, string) {
+func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string, string, float64) {
+	score := 1.0
+	why, attached, warning := v.judge(ctx, req, &score)
+	return why, attached, warning, score
+}
+
+func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float64) (string, []string, string) {
 	numbers := voicePRNumbers(req.PRs, req.Text)
 	if nestedLink.MatchString(req.Text) {
 		return voiceNestedLink, nil, ""
@@ -914,6 +922,11 @@ func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []str
 	}
 	if err != nil {
 		return "", nil, ""
+	}
+	for _, answer := range decision.Answers {
+		if binary, ok := answer.(spawnllm.BinaryAnswer); ok {
+			*score = min(*score, 1-binary.PYes)
+		}
 	}
 	yes := func(key string) bool {
 		answer, ok := decision.Answers[key].(spawnllm.BinaryAnswer)

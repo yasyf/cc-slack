@@ -180,7 +180,7 @@ func TestVoiceHoldsATypedChoiceOrAMiscountAndLetsItThroughWhenJevCannotAnswer(t 
 		{stubDecide{err: errors.New("timeout")}, nil, ""},
 	} {
 		v := &voiceSender{decide: tt.stub.decide}
-		if got, _, _ := v.held(context.Background(), voiceRequest{Text: "All six are green: #1, #2.", Options: tt.options}); got != tt.want {
+		if got, _, _, _ := v.held(context.Background(), voiceRequest{Text: "All six are green: #1, #2.", Options: tt.options}); got != tt.want {
 			t.Errorf("held with %+v = %q, want %q", tt.stub, got, tt.want)
 		}
 	}
@@ -189,11 +189,11 @@ func TestVoiceHoldsATypedChoiceOrAMiscountAndLetsItThroughWhenJevCannotAnswer(t 
 func TestVoiceAnAskForHisApproveGetsItsButtonsAndNeverNamesASettledPR(t *testing.T) {
 	asks := stubDecide{answers: map[string]spawnllm.Answer{"approve": spawnllm.BinaryAnswer{PYes: 0.95}, "typed": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: asks.decide}
-	why, options, _ := v.held(context.Background(), voiceRequest{Text: "#57894 is green and needs your Approve to merge.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
+	why, options, _, _ := v.held(context.Background(), voiceRequest{Text: "#57894 is green and needs your Approve to merge.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
 	if why != "" || strings.Join(options, "|") != "Approve #57894|Hold #57894" {
 		t.Fatalf("held = %q, %q; want the Approve and Hold buttons attached", why, options)
 	}
-	why, options, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "MERGED"}}})
+	why, options, _, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "MERGED"}}})
 	if !strings.Contains(why, "#57894 is merged") || options != nil {
 		t.Fatalf("held = %q, %q; want a refusal naming the merged PR", why, options)
 	}
@@ -216,11 +216,11 @@ func TestVoiceRefusesAnAskToApproveWhatHeAlreadyApproved(t *testing.T) {
 	asks := stubDecide{answers: map[string]spawnllm.Answer{"approve": spawnllm.BinaryAnswer{PYes: 0.95}}}
 	v := &voiceSender{decide: asks.decide}
 	approved := []voicePR{{Repo: "Forge-AI/monorepo", Number: 53305, State: "OPEN", Approved: true}, {Repo: "Forge-AI/monorepo", Number: 53810, State: "OPEN", Approved: true}}
-	why, options, _ := v.held(context.Background(), voiceRequest{Text: "Run page v3 is ready to merge: tap and they go in now.", Options: []string{"Merge v3 now", "Hold for now"}, PRs: approved})
+	why, options, _, _ := v.held(context.Background(), voiceRequest{Text: "Run page v3 is ready to merge: tap and they go in now.", Options: []string{"Merge v3 now", "Hold for now"}, PRs: approved})
 	if !strings.Contains(why, "already approved #53305, #53810") || options != nil {
 		t.Fatalf("held = %q, %q; want a refusal saying he already approved them", why, options)
 	}
-	why, options, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
+	why, options, _, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
 	if why != "" || len(options) != 2 {
 		t.Fatalf("held = %q, %q; want a PR with no Approve to post with its buttons", why, options)
 	}
@@ -297,7 +297,7 @@ func TestVoiceRefusesOnceThenWarns(t *testing.T) {
 func TestVoiceWarnsAPostThatAnnouncesAGapWithNoOwnerButPostsIt(t *testing.T) {
 	gap := stubDecide{answers: map[string]spawnllm.Answer{"gap": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: gap.decide}
-	why, options, warning := v.held(context.Background(), voiceRequest{Text: "Two follow-ups came out of the review. No job carries these yet."})
+	why, options, warning, _ := v.held(context.Background(), voiceRequest{Text: "Two follow-ups came out of the review. No job carries these yet."})
 	if why != "" || options != nil || warning != voiceGap {
 		t.Fatalf("held = %q, %q, %q; want no refusal and the gap warning", why, options, warning)
 	}
@@ -306,7 +306,7 @@ func TestVoiceWarnsAPostThatAnnouncesAGapWithNoOwnerButPostsIt(t *testing.T) {
 func TestVoiceRefusesAButtonSlackWouldCutOrThatSaysNothing(t *testing.T) {
 	unclear := stubDecide{answers: map[string]spawnllm.Answer{"buttons": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: unclear.decide}
-	if why, _, _ := v.held(context.Background(), voiceRequest{Text: "Which shimmer should the chat show?", Options: []string{"Shimmer only on a", "Both"}}); why != voiceUnclearButton {
+	if why, _, _, _ := v.held(context.Background(), voiceRequest{Text: "Which shimmer should the chat show?", Options: []string{"Shimmer only on a", "Both"}}); why != voiceUnclearButton {
 		t.Fatalf("held = %q, want the unclear-button refusal", why)
 	}
 }
@@ -321,7 +321,7 @@ func TestVoiceAttachesButtonsOnlyForPRsHeHasNotApproved(t *testing.T) {
 func TestVoiceRefusesABareLabelLead(t *testing.T) {
 	bare := stubDecide{answers: map[string]spawnllm.Answer{"lead": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: bare.decide}
-	if why, _, _ := v.held(context.Background(), voiceRequest{Text: "Release 3 status.\n• Staging's switch-back test didn't run."}); why != voiceBareLead {
+	if why, _, _, _ := v.held(context.Background(), voiceRequest{Text: "Release 3 status.\n• Staging's switch-back test didn't run."}); why != voiceBareLead {
 		t.Fatalf("held = %q, want the bare-lead refusal", why)
 	}
 }
@@ -330,7 +330,7 @@ func TestVoiceRefusesACardHisRulingAlreadyAnswers(t *testing.T) {
 	ruled := stubDecide{answers: map[string]spawnllm.Answer{"ruling": spawnllm.LabelAnswer{Choice: "r0", Probabilities: map[string]float64{"r0": 0.9}}, "pick": spawnllm.LabelAnswer{Choice: "Rehearsal fleet"}}}
 	v := &voiceSender{decide: ruled.decide}
 	req := voiceRequest{Text: "Release 3: where should staging test the switch back and forward?", Options: []string{"Rehearsal fleet", "Freeze shared staging"}, Rulings: []voiceRuling{{At: "4:58 PM", Binds: "no staging hold"}}}
-	if why, _, _ := v.held(context.Background(), req); !strings.Contains(why, "his 4:58 PM ruling already answers") {
+	if why, _, _, _ := v.held(context.Background(), req); !strings.Contains(why, "his 4:58 PM ruling already answers") {
 		t.Fatalf("held = %q, want the ruling refusal", why)
 	}
 	if ruling, pick := v.ruledBy(context.Background(), req.Text, req.Options, req.Rulings, time.Second); ruling == nil || pick != "Rehearsal fleet" {
@@ -360,10 +360,10 @@ func TestVoiceRefusesAPostThatOverwhelmsTheScreenByJudgementNotCount(t *testing.
 	}
 	text := "These wait on your Approve:\n" + strings.Join(lines, "\n")
 	wall := stubDecide{answers: map[string]spawnllm.Answer{"overwhelming": spawnllm.BinaryAnswer{PYes: 0.9}}}
-	if why, _, _ := (&voiceSender{decide: wall.decide}).held(context.Background(), voiceRequest{Text: text}); why != voiceOverwhelming {
+	if why, _, _, _ := (&voiceSender{decide: wall.decide}).held(context.Background(), voiceRequest{Text: text}); why != voiceOverwhelming {
 		t.Fatalf("held = %q, want the overwhelming refusal", why)
 	}
-	if why, _, _ := (&voiceSender{decide: stubDecide{}.decide}).held(context.Background(), voiceRequest{Text: text}); why != "" {
+	if why, _, _, _ := (&voiceSender{decide: stubDecide{}.decide}).held(context.Background(), voiceRequest{Text: text}); why != "" {
 		t.Fatalf("held with Jev reading it fine = %q, want no count cap", why)
 	}
 }
@@ -374,7 +374,7 @@ func TestVoiceRefusesALinkInsideALinksLabel(t *testing.T) {
 		"<https://github.com/o/r/pull/57535|#57535 tools/ci mac-box prove <https://github.com/o/r/pull/57535|#57535>> is green.",
 		"#56808 [#56570](<https://github.com/o/r/pull/56570|#56570>) drew the page.",
 	} {
-		if why, _, _ := v.held(context.Background(), voiceRequest{Text: text}); why != voiceNestedLink {
+		if why, _, _, _ := v.held(context.Background(), voiceRequest{Text: text}); why != voiceNestedLink {
 			t.Errorf("held(%q) = %q, want the nested-link refusal", text, why)
 		}
 	}
@@ -383,7 +383,7 @@ func TestVoiceRefusesALinkInsideALinksLabel(t *testing.T) {
 func TestVoiceRefusesALabelBuiltFromABodyFragment(t *testing.T) {
 	fragment := stubDecide{answers: map[string]spawnllm.Answer{"labels": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: fragment.decide}
-	if why, _, _ := v.held(context.Background(), voiceRequest{Text: "<https://github.com/o/r/pull/57192|#57192 Old tree only. Your words> is green."}); why != voiceFragmentLabel {
+	if why, _, _, _ := v.held(context.Background(), voiceRequest{Text: "<https://github.com/o/r/pull/57192|#57192 Old tree only. Your words> is green."}); why != voiceFragmentLabel {
 		t.Fatalf("held = %q, want the fragment-label refusal", why)
 	}
 }
@@ -396,15 +396,15 @@ func TestVoiceRefusesASecondCardOnTheSamePRsWithinTheHour(t *testing.T) {
 	}
 	v := &voiceSender{decide: stubDecide{}.decide, logTo: log}
 	req := voiceRequest{Lane: "sandsql-engine", Text: "Approve these?", Options: []string{"Approve all", "Hold"}, PRs: []voicePR{{Number: 57944}, {Number: 57950}}}
-	if why, _, _ := v.held(context.Background(), req); !strings.Contains(why, "already asks him about #57944") {
+	if why, _, _, _ := v.held(context.Background(), req); !strings.Contains(why, "already asks him about #57944") {
 		t.Fatalf("held = %q, want the second-card refusal", why)
 	}
 	req.EditTS = "1794881988.266319"
-	if why, _, _ := v.held(context.Background(), req); why != "" {
+	if why, _, _, _ := v.held(context.Background(), req); why != "" {
 		t.Fatalf("held on an edit of that card = %q, want it through", why)
 	}
 	req.EditTS, req.Lane = "", "blobstore"
-	if why, _, _ := v.held(context.Background(), req); why != "" {
+	if why, _, _, _ := v.held(context.Background(), req); why != "" {
 		t.Fatalf("held from another lane = %q, want it through", why)
 	}
 }
@@ -430,12 +430,12 @@ func TestVoiceLogListsOnlyRowsThatWereSentUnlessAskedForAll(t *testing.T) {
 func TestVoiceRefusesACorrectionPostedAsANewPostAndPlumbingTalk(t *testing.T) {
 	for key, want := range map[string]string{"correction": voiceCorrection, "plumbing": voicePlumbing} {
 		v := &voiceSender{decide: stubDecide{answers: map[string]spawnllm.Answer{key: spawnllm.BinaryAnswer{PYes: 0.9}}}.decide, logTo: filepath.Join(t.TempDir(), voiceLogName)}
-		if why, _, _ := v.held(context.Background(), voiceRequest{Lane: "releases", Text: "Correction: four are going in, and a builder is on it."}); why != want {
+		if why, _, _, _ := v.held(context.Background(), voiceRequest{Lane: "releases", Text: "Correction: four are going in, and a builder is on it."}); why != want {
 			t.Errorf("held with %s = %q, want %q", key, why, want)
 		}
 	}
 	v := &voiceSender{decide: stubDecide{answers: map[string]spawnllm.Answer{"correction": spawnllm.BinaryAnswer{PYes: 0.9}}}.decide}
-	if why, _, _ := v.held(context.Background(), voiceRequest{Text: "Four are going in.", EditTS: "1.1"}); why != "" {
+	if why, _, _, _ := v.held(context.Background(), voiceRequest{Text: "Four are going in.", EditTS: "1.1"}); why != "" {
 		t.Fatalf("held on an edit = %q, want a correction in place let through", why)
 	}
 }
@@ -451,5 +451,13 @@ func TestVoiceAPostThatNeverReachedSlackIsListedUnsentForItsLane(t *testing.T) {
 		if got := out.unsent(); got != want {
 			t.Errorf("unsent(%+v) = %v, want %v", *out, got, want)
 		}
+	}
+}
+
+func TestVoiceScoresAPostByItsWorstCheck(t *testing.T) {
+	leaning := stubDecide{answers: map[string]spawnllm.Answer{"lead": spawnllm.BinaryAnswer{PYes: 0.2}, "gap": spawnllm.BinaryAnswer{PYes: 0.4}}}
+	why, _, _, score := (&voiceSender{decide: leaning.decide}).held(context.Background(), voiceRequest{Text: "Release 3's staging test passed."})
+	if why != "" || score < 0.59 || score > 0.61 {
+		t.Fatalf("held = %q, score %v; want no refusal and 0.6", why, score)
 	}
 }
