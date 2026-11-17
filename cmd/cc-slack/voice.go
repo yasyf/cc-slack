@@ -1030,7 +1030,7 @@ func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, o
 	return out
 }
 
-// servePosts answers the lane posts the voice sent since a moment, each with the subjects it named, and his taps on its questions by question ts, so the drive can change a post when what it says changes underneath it.
+// servePosts answers the lane posts the voice sent since a moment, never a send or edit Slack refused, each with the subjects it named, and his taps on its questions by question ts, so the drive can change a post when what it says changes underneath it.
 func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 	since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
 	if err != nil {
@@ -1063,7 +1063,7 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 			unsent = append(unsent, out)
 			continue
 		}
-		if out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
+		if out.DryRun || out.Permalink == "" || out.Error != "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
 			continue
 		}
 		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
@@ -1690,16 +1690,19 @@ func (v *voiceSender) retried(req *voiceRequest, why string) string {
 	return ""
 }
 
-// editAt names the post an edit rewrites by its Slack ts: a lane that names its earlier post by the voice id its say returned, as new-tree-cutover did at 8:26 PM with 9fa27f1881f3, gets that post's ts from the log, and an edit naming neither is refused before it is queued, so no edit is logged against a ts Slack never gave.
+// editAt names the post an edit rewrites, by its ts or voice id, with the channel and thread the log says it went out in, so an edit reaches a post its lane left behind in his DM when its home moved; an id the log does not hold is refused.
 func (v *voiceSender) editAt(req *voiceRequest) error {
-	if req.EditTS == "" || slackTSPattern.MatchString(req.EditTS) {
+	if req.EditTS == "" {
 		return nil
 	}
 	for _, out := range slices.Backward(v.logged(time.Now().Add(-voiceEditFor))) {
-		if out.ID == req.EditTS && out.sent() && out.TS != "" {
-			req.EditTS = out.TS
+		if out.sent() && out.TS != "" && (out.ID == req.EditTS || out.TS == req.EditTS) {
+			req.EditTS, req.ChannelID, req.ThreadTS = out.TS, out.ChannelID, out.ThreadTS
 			return nil
 		}
+	}
+	if slackTSPattern.MatchString(req.EditTS) {
+		return nil
 	}
 	return fmt.Errorf("edit_ts %q is no Slack ts and names no post the voice sent in the last %s: name the post by its ts or permalink", req.EditTS, voiceEditFor)
 }
