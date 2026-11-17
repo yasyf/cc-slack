@@ -207,3 +207,17 @@ func TestVoiceSettledReplacesTheStateLineAndDropsTheButtons(t *testing.T) {
 		t.Fatalf("a plain post settled = %#v, want its text as a section and the state line", plain)
 	}
 }
+
+func TestVoiceRefusesAnAskToApproveWhatHeAlreadyApproved(t *testing.T) {
+	asks := stubDecide{answers: map[string]spawnllm.Answer{"approve": spawnllm.BinaryAnswer{PYes: 0.95}}}
+	v := &voiceSender{decide: asks.decide}
+	approved := []voicePR{{Repo: "Forge-AI/monorepo", Number: 53305, State: "OPEN", Approved: true}, {Repo: "Forge-AI/monorepo", Number: 53810, State: "OPEN", Approved: true}}
+	why, options := v.held(context.Background(), voiceRequest{Text: "Run page v3 is ready to merge: tap and they go in now.", Options: []string{"Merge v3 now", "Hold for now"}, PRs: approved})
+	if !strings.Contains(why, "already approved #53305, #53810") || options != nil {
+		t.Fatalf("held = %q, %q; want a refusal saying he already approved them", why, options)
+	}
+	why, options = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
+	if why != "" || len(options) != 2 {
+		t.Fatalf("held = %q, %q; want a PR with no Approve to post with its buttons", why, options)
+	}
+}

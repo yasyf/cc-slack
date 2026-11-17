@@ -63,46 +63,48 @@ var (
 )
 
 type voiceRequest struct {
-	Lane      string    `json:"lane"`
-	Drive     string    `json:"drive,omitempty"`
-	ChannelID string    `json:"channel_id"`
-	ThreadTS  string    `json:"thread_ts,omitempty"`
-	Text      string    `json:"text"`
-	Rules     string    `json:"rules"`
-	Asked     string    `json:"asked,omitempty"`
-	Options   []string  `json:"options,omitempty"`
-	PRs       []voicePR `json:"prs,omitempty"`
-	EditTS    string    `json:"edit_ts,omitempty"`
-	DryRun    bool      `json:"dry_run,omitempty"`
+	Lane      string              `json:"lane"`
+	Drive     string              `json:"drive,omitempty"`
+	ChannelID string              `json:"channel_id"`
+	ThreadTS  string              `json:"thread_ts,omitempty"`
+	Text      string              `json:"text"`
+	Rules     string              `json:"rules"`
+	Asked     string              `json:"asked,omitempty"`
+	Options   []string            `json:"options,omitempty"`
+	PRs       []voicePR           `json:"prs,omitempty"`
+	EditTS    string              `json:"edit_ts,omitempty"`
+	About     []map[string]string `json:"about,omitempty"`
+	DryRun    bool                `json:"dry_run,omitempty"`
 }
 
 type voiceOutcome struct {
-	ID        string             `json:"id"`
-	At        time.Time          `json:"at"`
-	Lane      string             `json:"lane"`
-	ChannelID string             `json:"channel_id"`
-	ThreadTS  string             `json:"thread_ts,omitempty"`
-	Before    string             `json:"before"`
-	Formatted string             `json:"formatted"`
-	After     string             `json:"after"`
-	Repeat    float64            `json:"repeat,omitempty"`
-	Scores    map[string]float64 `json:"scores,omitempty"`
-	Cut       []string           `json:"cut,omitempty"`
-	Dropped   string             `json:"dropped,omitempty"`
-	Jev       string             `json:"jev"`
-	Edited    bool               `json:"edited,omitempty"`
-	Permalink string             `json:"permalink,omitempty"`
-	Error     string             `json:"error,omitempty"`
-	DryRun    bool               `json:"dry_run,omitempty"`
-	TS        string             `json:"ts,omitempty"`
-	PRs       []voicePR          `json:"prs,omitempty"`
-	Held      string             `json:"held,omitempty"`
-	Options   []string           `json:"options,omitempty"`
-	QueuedMS  int64              `json:"queued_ms"`
-	FormatMS  int64              `json:"format_ms"`
-	JevMS     int64              `json:"jev_ms"`
-	PostMS    int64              `json:"post_ms"`
-	TotalMS   int64              `json:"total_ms"`
+	ID        string              `json:"id"`
+	At        time.Time           `json:"at"`
+	Lane      string              `json:"lane"`
+	ChannelID string              `json:"channel_id"`
+	ThreadTS  string              `json:"thread_ts,omitempty"`
+	Before    string              `json:"before"`
+	Formatted string              `json:"formatted"`
+	After     string              `json:"after"`
+	Repeat    float64             `json:"repeat,omitempty"`
+	Scores    map[string]float64  `json:"scores,omitempty"`
+	Cut       []string            `json:"cut,omitempty"`
+	Dropped   string              `json:"dropped,omitempty"`
+	Jev       string              `json:"jev"`
+	Edited    bool                `json:"edited,omitempty"`
+	Permalink string              `json:"permalink,omitempty"`
+	Error     string              `json:"error,omitempty"`
+	DryRun    bool                `json:"dry_run,omitempty"`
+	TS        string              `json:"ts,omitempty"`
+	PRs       []voicePR           `json:"prs,omitempty"`
+	About     []map[string]string `json:"about,omitempty"`
+	Held      string              `json:"held,omitempty"`
+	Options   []string            `json:"options,omitempty"`
+	QueuedMS  int64               `json:"queued_ms"`
+	FormatMS  int64               `json:"format_ms"`
+	JevMS     int64               `json:"jev_ms"`
+	PostMS    int64               `json:"post_ms"`
+	TotalMS   int64               `json:"total_ms"`
 }
 
 type voiceUnit struct {
@@ -204,7 +206,7 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	v.enqueue(job)
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"id": job.id})
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": job.id, "attached": attached})
 }
 
 func voiceID() string {
@@ -301,7 +303,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
 	id.Agent, id.Drive = "claude", job.req.Drive
-	out.PRs = job.req.PRs
+	out.PRs, out.About = job.req.PRs, job.req.About
 	if job.req.EditTS != "" {
 		return v.editPost(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
@@ -734,10 +736,11 @@ const voiceTypedChoice = "refused, not posted: this asks him to type a word to c
 const voiceMiscount = "refused, not posted: it counts a set (such as \"all six\") but lists a different number of them. List every member of a set you count, or fix the number, then post it again"
 
 type voicePR struct {
-	Repo   string `json:"repo"`
-	Number int    `json:"number"`
-	State  string `json:"state,omitempty"`
-	Head   string `json:"head,omitempty"`
+	Repo     string `json:"repo"`
+	Number   int    `json:"number"`
+	State    string `json:"state,omitempty"`
+	Head     string `json:"head,omitempty"`
+	Approved bool   `json:"approved,omitempty"`
 }
 
 const voiceMaxApprovePRs = 2
@@ -799,6 +802,9 @@ func voiceApproveAsk(req voiceRequest) (string, []string) {
 	if len(settled) > 0 {
 		return "refused, not posted: it asks his Approve or tap on a PR that is no longer open (" + strings.Join(settled, ", ") + "). Say what happened to it instead", nil
 	}
+	if !slices.ContainsFunc(req.PRs, func(pr voicePR) bool { return !pr.Approved }) {
+		return fmt.Sprintf("refused, not posted: he already approved %s at its head, so it is decided (\"if I approve something its approved\"). Land it, and ask him nothing about it", voicePRNames(req.PRs)), nil
+	}
 	if len(req.Options) > 0 {
 		return "", nil
 	}
@@ -839,7 +845,7 @@ func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, o
 	return out
 }
 
-// servePosts answers the lane posts the voice sent since a moment, each with the subjects it named, so the drive can change a post when what it says changes underneath it.
+// servePosts answers the lane posts the voice sent since a moment, each with the subjects it named, and his taps on its questions by question ts, so the drive can change a post when what it says changes underneath it.
 func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 	since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
 	if err != nil {
@@ -852,19 +858,26 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	var posts []voiceOutcome
+	posts, taps := []voiceOutcome{}, map[string]string{}
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
 	for scan.Scan() {
 		var out voiceOutcome
-		if json.Unmarshal(scan.Bytes(), &out) != nil || out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
+		if json.Unmarshal(scan.Bytes(), &out) != nil {
+			continue
+		}
+		if strings.HasSuffix(out.ID, "-tapped") && !out.At.Before(since) {
+			taps[out.TS] = out.After
+			continue
+		}
+		if out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
 			continue
 		}
 		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
 		posts = append(posts, out)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(posts)
+	_ = json.NewEncoder(w).Encode(map[string]any{"posts": posts, "taps": taps})
 }
 
 func permalinkTS(link string) string {
@@ -928,4 +941,26 @@ func voiceSettled(blocks []slack.Block, text, line string, buttons bool) []slack
 		return !buttons && b.BlockType() == slack.MBTAction
 	})
 	return append(kept, slack.NewContextBlock(voiceStateBlock, slack.NewTextBlockObject(slack.MarkdownType, line, false, false)))
+}
+
+func voicePRNames(prs []voicePR) string {
+	names := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		names = append(names, fmt.Sprintf("#%d", pr.Number))
+	}
+	return strings.Join(names, ", ")
+}
+
+// voiceTapped logs the operator's tap on a voice question, by the question's ts and the label he pressed, as one appended line beside the sender's own, so a post naming that card follows his answer.
+func voiceTapped(channelID, ts, label string) error {
+	line, err := json.Marshal(voiceOutcome{ID: voiceID() + "-tapped", At: time.Now(), ChannelID: channelID, TS: ts, After: label, DryRun: true})
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(appPaths().StateDir(), voiceLogName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(append(line, '\n'))
+	return errors.Join(err, f.Close())
 }

@@ -61,5 +61,8 @@ func (p *poller) voiceAnswer(ctx context.Context, id identity, a cardActionPush)
 	}
 	question, _, _ := strings.Cut(strings.TrimSpace(m.Text), "\n")
 	p.laneHeard(ctx, id, a.Channel, thread, a.MessageTS, tapWords(askTap{Label: a.Value, Question: clipRunes(question, 200)}))
+	if err := voiceTapped(a.Channel, a.MessageTS, a.Value); err != nil {
+		p.log.Printf("voice option %s on %s: tap not logged: %v", a.ActionID, a.MessageTS, err)
+	}
 	return updateMessage(ctx, api, a.Channel, a.MessageTS, m.Text, voiceAnswered(m.Blocks.BlockSet, a.Value, slackTime(a.ActionTS)))
 }
