@@ -145,10 +145,20 @@ func TestTransportHandsEveryTapEditDeleteAndReactionOfHisToTheSubscriberUntilAck
 	}
 }
 
-func TestTransportKeepsNothingFromAnotherUserOrWithTheSubscriberSwitchOff(t *testing.T) {
+func TestTransportKeepsATeammatesMessageButNoneOfTheirTapsOrReactionsAndNothingWithTheSwitchOff(t *testing.T) {
 	t.Parallel()
 	on := transportFixture(t, true)
 	if err := on.app.transport.keep(on.ctx, on.id, reactionEvent(on.id, reactionPush{User: "UOTHER", Reaction: "eyes", Channel: "C1", TS: "1.0", Added: true})); err != nil {
+		t.Fatal(err)
+	}
+	teammate := heardEvent(on.id, "C1", "", slack.Message{Msg: slack.Msg{User: "UOTHER", Timestamp: "2.0", Text: "is it back?"}})
+	if err := on.app.transport.keep(on.ctx, on.id, teammate); err != nil {
+		t.Fatal(err)
+	}
+	if rows, bodies, err := on.app.transport.unacked(on.ctx, 0); err != nil || len(rows) != 1 || !strings.Contains(bodies[0], `"user":"UOTHER"`) {
+		t.Fatalf("a teammate's message kept as %v (%v), want it alone", bodies, err)
+	}
+	if err := on.app.transport.ack(on.ctx, teammate.ID); err != nil {
 		t.Fatal(err)
 	}
 	off := transportFixture(t, false)

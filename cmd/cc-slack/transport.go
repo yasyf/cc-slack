@@ -106,7 +106,7 @@ func openTransport(ctx context.Context, path string) (*transport, error) {
 func (t *transport) Close() error { return t.st.Close() }
 
 func (t *transport) keep(ctx context.Context, id identity, e transportEvent) error {
-	if !id.Config.Transport.Subscriber || e.User != id.UserID {
+	if !id.Config.Transport.Subscriber || e.Kind != "message" && e.User != id.UserID {
 		return nil
 	}
 	body, err := json.Marshal(e)
