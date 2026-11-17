@@ -1019,7 +1019,11 @@ func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, o
 	if len(job.req.Options) > 0 {
 		blocks = voiceCarded(voiceQuestionBlocks(out.After, job.req.Options), job.req.Card)
 	}
-	err := updateMessage(ctx, v.app.newAPI(id.Token), job.req.ChannelID, job.req.EditTS, out.After, blocks)
+	api := v.app.newAPI(id.Token)
+	if was, err := messageAt(ctx, api, job.req.ChannelID, cmp.Or(job.req.ThreadTS, job.req.EditTS), job.req.EditTS); err == nil {
+		blocks = append(blocks, voiceStateOf(was.Blocks.BlockSet)...)
+	}
+	err := updateMessage(ctx, api, job.req.ChannelID, job.req.EditTS, out.After, blocks)
 	out.PostMS, out.Edited = time.Since(postBegan).Milliseconds(), err == nil
 	if err != nil {
 		out.Error = err.Error()
@@ -1137,6 +1141,14 @@ func (v *voiceSender) serveSettle(w http.ResponseWriter, r *http.Request) {
 	v.record(voiceOutcome{ID: voiceID() + "-settled", At: time.Now(), ChannelID: s.ChannelID, ThreadTS: s.ThreadTS, TS: s.TS, Before: m.Text, Formatted: m.Text, After: s.Line, Edited: true, DryRun: true})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"permalink": id.permalink(s.ChannelID, s.TS, s.ThreadTS)})
+}
+
+// voiceStateOf is the state line settle gave a post, which an edit of the post's words keeps (defect c066: a lane's say --edit dropped '✅ #57630 merged 6:45 PM' from the release 3 post).
+func voiceStateOf(blocks []slack.Block) []slack.Block {
+	return slices.DeleteFunc(slices.Clone(blocks), func(b slack.Block) bool {
+		c, ok := b.(*slack.ContextBlock)
+		return !ok || c.BlockID != voiceStateBlock
+	})
 }
 
 func voiceSettled(blocks []slack.Block, text, line string, buttons bool) []slack.Block {

@@ -523,3 +523,14 @@ func TestAnEditOfAPostLeftInHisDMGoesThereAndAFailedEditIsNoPostToFollow(t *test
 		t.Fatalf("posts = %s, %v; want only the post Slack holds", rec.Body, err)
 	}
 }
+
+func TestAnEditOfAPostsWordsKeepsTheStateLineSettleGaveIt(t *testing.T) {
+	settled := voiceSettled(voiceSections("#57630 has your Approve but hasn't merged."), "#57630 has your Approve but hasn't merged.", "✅ #57630 merged 6:45 PM", false)
+	kept := voiceStateOf(settled)
+	if len(kept) != 1 || contextText(kept[0]) != "✅ #57630 merged 6:45 PM" {
+		t.Fatalf("state kept = %#v, want the one state line", kept)
+	}
+	if len(voiceStateOf(voiceSections("no state"))) != 0 {
+		t.Fatal("a post with no state line gave one")
+	}
+}
