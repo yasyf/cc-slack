@@ -628,6 +628,9 @@ func (p *poller) redrawOffer(ctx context.Context, id identity, card cardRef, ask
 }
 
 func (p *poller) cardAction(ctx context.Context, id identity, a cardActionPush) error {
+	if strings.HasPrefix(a.ActionID, voiceOptionAction) {
+		return p.voiceAnswer(ctx, id, a)
+	}
 	id = id.at(a.Channel)
 	if err := a.check(id); err != nil {
 		p.log.Printf("card action %s: dropped: %v", a.ActionID, err)

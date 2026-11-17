@@ -21,24 +21,29 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slack-go/slack"
 	spawnllm "github.com/yasyf/spawnllm/go"
 )
 
 const (
-	voicePath        = "/voice"
-	voiceJevBudget   = 600 * time.Millisecond
-	voiceJevLate     = 5 * time.Second
-	voicePostLimit   = 10 * time.Second
-	voiceCutAt       = 0.65
-	voiceOpenerCutAt = 0.9
-	voiceRepeatAt    = 0.8
-	voiceRepeatFor   = 10 * time.Minute
-	voiceMaxUnits    = 16
-	voiceLabelWord   = 10
-	voiceOwnWords    = 10
-	voiceBodyBytes   = 64 << 10
-	voiceIdle        = time.Minute
-	voiceLogName     = "voice.jsonl"
+	voicePath         = "/voice"
+	voiceJevBudget    = 600 * time.Millisecond
+	voiceJevLate      = 5 * time.Second
+	voicePostLimit    = 10 * time.Second
+	voiceCutAt        = 0.65
+	voiceOpenerCutAt  = 0.9
+	voiceRepeatAt     = 0.8
+	voiceRepeatFor    = 10 * time.Minute
+	voiceMaxUnits     = 16
+	voiceLabelWord    = 10
+	voiceOwnWords     = 10
+	voiceBodyBytes    = 64 << 10
+	voiceIdle         = time.Minute
+	voiceLogName      = "voice.jsonl"
+	voiceMaxOptions   = 5
+	voiceOptionRunes  = 75
+	voiceSectionRunes = 3000
+	voiceOptionAction = cardActionPrefix + ":voice:"
 )
 
 var (
@@ -54,14 +59,15 @@ var (
 )
 
 type voiceRequest struct {
-	Lane      string `json:"lane"`
-	Drive     string `json:"drive,omitempty"`
-	ChannelID string `json:"channel_id"`
-	ThreadTS  string `json:"thread_ts,omitempty"`
-	Text      string `json:"text"`
-	Rules     string `json:"rules"`
-	Asked     string `json:"asked,omitempty"`
-	DryRun    bool   `json:"dry_run,omitempty"`
+	Lane      string   `json:"lane"`
+	Drive     string   `json:"drive,omitempty"`
+	ChannelID string   `json:"channel_id"`
+	ThreadTS  string   `json:"thread_ts,omitempty"`
+	Text      string   `json:"text"`
+	Rules     string   `json:"rules"`
+	Asked     string   `json:"asked,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	DryRun    bool     `json:"dry_run,omitempty"`
 }
 
 type voiceOutcome struct {
@@ -151,6 +157,10 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ChannelID == "" || strings.TrimSpace(req.Text) == "" || req.Rules == "" {
 		http.Error(w, "voice needs channel_id, text and rules", http.StatusBadRequest)
+		return
+	}
+	if err := voiceOptionsCheck(req.Options); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	job := voiceJob{req: req, id: voiceID(), received: time.Now()}
@@ -258,6 +268,9 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
 	id.Agent, id.Drive = "claude", job.req.Drive
+	if len(job.req.Options) > 0 {
+		return v.postQuestion(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
+	}
 	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
 		_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(postCtx, job.req.ChannelID, last.ts, textOption(out.After))
 		out.PostMS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS)
@@ -605,4 +618,71 @@ func leaned(ids []string, post map[string]string, cut []string) []string {
 		}
 	}
 	return kept
+}
+
+func voiceOptionsCheck(options []string) error {
+	if len(options) > voiceMaxOptions {
+		return fmt.Errorf("voice takes at most %d options, not %d", voiceMaxOptions, len(options))
+	}
+	for _, option := range options {
+		if strings.TrimSpace(option) == "" || runes(option) > voiceOptionRunes {
+			return fmt.Errorf("voice option %q must be 1 to %d characters", option, voiceOptionRunes)
+		}
+	}
+	return nil
+}
+
+// postQuestion posts a lane's question with a button per option, waiting on Jev's edits rather than editing late, since a late text edit would drop the buttons.
+func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJob, out voiceOutcome, units []voiceUnit, landed *voiceEdits, edits chan voiceEdits, jevBegan, postBegan time.Time, key string) voiceOutcome {
+	if landed == nil {
+		e := <-edits
+		out.After, out.Cut, out.Scores, out.Repeat, out.Jev = voiceApplied(units, e), e.cut, e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
+		out.JevMS = time.Since(jevBegan).Milliseconds()
+	}
+	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceQuestionBlocks(out.After, job.req.Options), nil)
+	out.PostMS = time.Since(postBegan).Milliseconds()
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	out.Permalink = res.Permalink
+	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
+	return out
+}
+
+func voiceQuestionBlocks(text string, options []string) []slack.Block {
+	blocks := voiceSections(text)
+	buttons := make([]slack.BlockElement, 0, len(options))
+	for n, option := range options {
+		button := slack.NewButtonBlockElement(fmt.Sprintf("%s%d", voiceOptionAction, n), option, slack.NewTextBlockObject(slack.PlainTextType, option, false, false))
+		if n == 0 {
+			button.Style = slack.StylePrimary
+		}
+		buttons = append(buttons, button)
+	}
+	return append(blocks, slack.NewActionBlock("voice-options", buttons...))
+}
+
+func voiceSections(text string) []slack.Block {
+	var blocks []slack.Block
+	var chunk strings.Builder
+	flush := func() {
+		if chunk.Len() > 0 {
+			blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, chunk.String(), false, false), nil, nil))
+			chunk.Reset()
+		}
+	}
+	for _, paragraph := range strings.SplitAfter(explicitLinks(text), "\n\n") {
+		if runes(chunk.String())+runes(paragraph) > voiceSectionRunes {
+			flush()
+		}
+		chunk.WriteString(paragraph)
+	}
+	flush()
+	return blocks
+}
+
+func voiceAnswered(blocks []slack.Block, label string, at time.Time) []slack.Block {
+	kept := slices.DeleteFunc(slices.Clone(blocks), func(b slack.Block) bool { return b.BlockType() == slack.MBTAction })
+	return append(kept, slack.NewContextBlock("voice-answered", slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("✅ *%s* · %s", mrkdwnEscapes.Replace(label), at.In(pacific).Format("3:04 PM")), false, false)))
 }

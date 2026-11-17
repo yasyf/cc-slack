@@ -1,12 +1,15 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os/exec"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/slack-go/slack"
 )
 
 const laneHeardLimit = 30 * time.Second
@@ -38,4 +41,25 @@ func tapWords(k askTap) string {
 		return fmt.Sprintf("tapped %q", k.Label)
 	}
 	return fmt.Sprintf("tapped %q on %q", k.Label, k.Question)
+}
+
+// voiceAnswer takes the operator's tap on a lane question the voice sender posted: it reaches the lane as his words, and the card loses its buttons for a line naming his pick, so a second tap has nothing to press.
+func (p *poller) voiceAnswer(ctx context.Context, id identity, a cardActionPush) error {
+	if a.User != id.UserID || !slices.Contains(id.operatorChannelIDs(), a.Channel) || !slackTSPattern.MatchString(a.MessageTS) {
+		p.log.Printf("voice option %s: dropped: tap by %s in %s is not the operator's in one of his channels", a.ActionID, a.User, a.Channel)
+		return nil
+	}
+	thread := cmp.Or(a.ThreadTS, a.MessageTS)
+	api := p.newAPI(id.Token)
+	m, err := messageAt(ctx, api, a.Channel, thread, a.MessageTS)
+	if err != nil {
+		return fmt.Errorf("voice option %s: read the question: %w", a.ActionID, err)
+	}
+	if !slices.ContainsFunc(m.Blocks.BlockSet, func(b slack.Block) bool { return b.BlockType() == slack.MBTAction }) {
+		p.log.Printf("voice option %s on %s: dropped: already answered", a.ActionID, a.MessageTS)
+		return nil
+	}
+	question, _, _ := strings.Cut(strings.TrimSpace(m.Text), "\n")
+	p.laneHeard(ctx, id, a.Channel, thread, a.MessageTS, tapWords(askTap{Label: a.Value, Question: clipRunes(question, 200)}))
+	return updateMessage(ctx, api, a.Channel, a.MessageTS, m.Text, voiceAnswered(m.Blocks.BlockSet, a.Value, slackTime(a.ActionTS)))
 }

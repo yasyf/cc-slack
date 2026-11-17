@@ -5,6 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/slack-go/slack"
 
 	spawnllm "github.com/yasyf/spawnllm/go"
 )
@@ -131,5 +134,32 @@ func TestLeanedKeepsTheSentenceALaterOneRefersBackTo(t *testing.T) {
 	got := leaned([]string{"u1", "u2", "u3", "u4", "u5"}, post, []string{"u2", "u4"})
 	if strings.Join(got, ",") != "u4" {
 		t.Errorf("leaned() = %v, want [u4]", got)
+	}
+}
+
+func TestVoiceQuestionCarriesAButtonPerOptionAndAnsweringLeavesOnlyHisPick(t *testing.T) {
+	blocks := voiceQuestionBlocks("*Hotfix #57810 now, or wait for the Iris hotfix?*\n\nThe hotfix ships in 20 minutes.", []string{"Hotfix", "Wait"})
+	actions, ok := blocks[len(blocks)-1].(*slack.ActionBlock)
+	if !ok || len(actions.Elements.ElementSet) != 2 {
+		t.Fatalf("last block = %#v, want an action block with two buttons", blocks[len(blocks)-1])
+	}
+	first := actions.Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	if first.ActionID != voiceOptionAction+"0" || first.Value != "Hotfix" || first.Style != slack.StylePrimary {
+		t.Fatalf("first button = %+v", first)
+	}
+	answered := voiceAnswered(blocks, "Hotfix", time.Date(2026, 11, 17, 1, 5, 0, 0, time.UTC))
+	if len(answered) != len(blocks) || answered[len(answered)-1].BlockType() != slack.MBTContext {
+		t.Fatalf("answered = %#v, want the buttons replaced by one context line", answered)
+	}
+}
+
+func TestVoiceOptionsAreOneToFiveShortLabels(t *testing.T) {
+	for _, options := range [][]string{{"a", "b", "c", "d", "e", "f"}, {" "}, {strings.Repeat("x", voiceOptionRunes+1)}} {
+		if voiceOptionsCheck(options) == nil {
+			t.Errorf("voiceOptionsCheck(%q) = nil, want a refusal", options)
+		}
+	}
+	if err := voiceOptionsCheck([]string{"Hotfix", "Wait"}); err != nil {
+		t.Errorf("voiceOptionsCheck = %v", err)
 	}
 }
