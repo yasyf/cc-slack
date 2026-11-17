@@ -98,7 +98,7 @@ const (
 	cardStoredData    = "Stored data"
 	cardHateMost      = "What you'll hate most"
 	cardPlan          = "Differs from the plan"
-	cardPRHint        = "Tap an option or reply with its number, or tap Other to write your own answer."
+	cardPRHint        = "Tap an option, or tap Other to write your own answer."
 )
 
 var (
