@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -501,5 +503,23 @@ func TestAnEditNamingItsPostByVoiceIDRewritesThatPostsTSAndOneNamingNothingIsRef
 	}
 	if err := v.editAt(&voiceRequest{EditTS: "0000deadbeef"}); err == nil {
 		t.Fatal("editAt took an id the voice never sent")
+	}
+}
+
+func TestAnEditOfAPostLeftInHisDMGoesThereAndAFailedEditIsNoPostToFollow(t *testing.T) {
+	log := filepath.Join(t.TempDir(), voiceLogName)
+	v := &voiceSender{logTo: log}
+	at := time.Now().Add(-time.Hour)
+	v.record(voiceOutcome{ID: "533a726257d3", At: at, Lane: "cloud-runs-finish", ChannelID: "D0C4HQWPLCC", TS: "1794883504.800579", Permalink: "https://x.slack.com/archives/D0C4HQWPLCC/p1794883504800579"})
+	v.record(voiceOutcome{ID: "818e4e11cf19", At: at.Add(time.Minute), Lane: "cloud-runs-finish", ChannelID: "C0CHZBJ5N8N", TS: "1794883504.800579", Permalink: "https://x.slack.com/archives/C0CHZBJ5N8N/p1794883504800579", Error: "message_not_found"})
+	req := voiceRequest{Lane: "cloud-runs-finish", ChannelID: "C0CHZBJ5N8N", ThreadTS: "1794884326.247069", EditTS: "1794883504.800579"}
+	if err := v.editAt(&req); err != nil || req.ChannelID != "D0C4HQWPLCC" || req.ThreadTS != "" {
+		t.Fatalf("editAt = %v, %+v; want the edit in the DM the post went out in", err, req)
+	}
+	rec := httptest.NewRecorder()
+	v.servePosts(rec, httptest.NewRequest(http.MethodGet, voicePostsPath+"?since="+at.Add(-time.Minute).UTC().Format(time.RFC3339), http.NoBody))
+	var listed struct{ Posts []voiceOutcome }
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || len(listed.Posts) != 1 || listed.Posts[0].ChannelID != "D0C4HQWPLCC" {
+		t.Fatalf("posts = %s, %v; want only the post Slack holds", rec.Body, err)
 	}
 }
