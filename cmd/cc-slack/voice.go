@@ -48,7 +48,8 @@ const (
 	voiceIdle         = time.Minute
 	voiceLogName      = "voice.jsonl"
 	voiceMaxOptions   = 5
-	voiceOptionRunes  = 75
+	voiceOptionRunes  = 24
+	voiceOptionWords  = 4
 	voiceSectionRunes = 3000
 	voiceOptionAction = cardActionPrefix + ":voice:"
 	voiceHoldAt       = 0.7
@@ -194,7 +195,7 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := voiceOptionsCheck(req.Options); err != nil {
 		v.refused(req, err.Error())
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	why, attached := v.held(r.Context(), req)
@@ -674,9 +675,16 @@ func voiceOptionsCheck(options []string) error {
 	if len(options) > voiceMaxOptions {
 		return fmt.Errorf("voice takes at most %d options, not %d", voiceMaxOptions, len(options))
 	}
+	seen := map[string]bool{}
 	for _, option := range options {
-		if strings.TrimSpace(option) == "" || runes(option) > voiceOptionRunes {
-			return fmt.Errorf("voice option %q must be 1 to %d characters", option, voiceOptionRunes)
+		words := len(strings.Fields(option))
+		if words == 0 || words > voiceOptionWords || runes(option) > voiceOptionRunes {
+			return fmt.Errorf("refused, not posted: button %q is too long. Slack cuts a button at about 30 characters (his words: \"the buttons are all cut off I have no idea what they're saying\"), so a button is 1 to %d words of at most %d characters, such as \"Approve\", \"Approve + sidebar\", \"Make optional\" or \"Hold\", and the post lists each option in full under the same short name", option, voiceOptionWords, voiceOptionRunes)
+		}
+		if key := strings.ToLower(strings.TrimSpace(option)); seen[key] {
+			return fmt.Errorf("refused, not posted: two buttons read %q; each button must read differently at a glance", option)
+		} else {
+			seen[key] = true
 		}
 	}
 	return nil

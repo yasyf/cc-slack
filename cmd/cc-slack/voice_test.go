@@ -157,12 +157,12 @@ func TestVoiceQuestionCarriesAButtonPerOptionAndAnsweringLeavesOnlyHisPick(t *te
 }
 
 func TestVoiceOptionsAreOneToFiveShortLabels(t *testing.T) {
-	for _, options := range [][]string{{"a", "b", "c", "d", "e", "f"}, {" "}, {strings.Repeat("x", voiceOptionRunes+1)}} {
+	for _, options := range [][]string{{"a", "b", "c", "d", "e", "f"}, {" "}, {strings.Repeat("x", voiceOptionRunes+1)}, {"Approve as built: note required, chat's end only"}, {"one two three four five"}, {"Hold", "hold"}} {
 		if voiceOptionsCheck(options) == nil {
 			t.Errorf("voiceOptionsCheck(%q) = nil, want a refusal", options)
 		}
 	}
-	if err := voiceOptionsCheck([]string{"Hotfix", "Wait"}); err != nil {
+	if err := voiceOptionsCheck([]string{"Approve", "Approve + sidebar", "Make optional", "Hold"}); err != nil {
 		t.Errorf("voiceOptionsCheck = %v", err)
 	}
 }
