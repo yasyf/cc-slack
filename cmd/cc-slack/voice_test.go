@@ -536,3 +536,20 @@ func TestAnEditOfAPostsWordsKeepsTheStateLineSettleGaveIt(t *testing.T) {
 		t.Fatal("a post with no state line gave one")
 	}
 }
+
+func TestASecondTakeOfTheSameNewsInItsThreadEditsTheFirstByWordOverlapAlone(t *testing.T) {
+	first, last := "Fixing forward, per your 9:32 PM word. Staging's system and inbox SandSQL databases have no writer: the new writers landed on a different node from the old ones, and the step that moves the log volume across nodes leaves it unmounted where the server looks, so they crash on boot. It is not the aws CLI change (<https://github.com/Forge-AI/monorepo/pull/57403|#57403 New: the claim image carries the aws CLI from the release before the move>); it started when staging's main writer moved to its own big node. A worker is on the fix now, tested on the rehearsal fleet before it merges. Production SandSQL stays frozen (freeze until 9 AM tomorrow), so no production release carries SandSQL until the fix lands.", "Staging's system and inbox SandSQL databases have no writer since 9:23 PM: the new servers started on a different machine from the old ones and crash on boot because their log disk is not mounted where they look. It is not the aws CLI change (<https://github.com/Forge-AI/monorepo/pull/57403|#57403 New: the claim image carries the aws CLI from the release before the move>). The fix goes forward, no rollback, as you said. Production SandSQL stays frozen until 9 AM tomorrow, so no production release carries SandSQL until the fix lands. You get the fix's card within the hour."
+	if got := voiceOverlap(first, last); got < voiceRewriteAt {
+		t.Fatalf("overlap of releases' 9:35 PM takes = %.2f, want at least %.2f", got, voiceRewriteAt)
+	}
+	if got := voiceOverlap(first, "Release 18320 is live on production: every service converged."); got >= voiceRewriteAt {
+		t.Fatalf("overlap with other news = %.2f, want under %.2f", got, voiceRewriteAt)
+	}
+	log := filepath.Join(t.TempDir(), voiceLogName)
+	v := &voiceSender{logTo: log}
+	v.record(voiceOutcome{ID: "f50c89e43793", At: time.Now(), Lane: "releases", ChannelID: "C1", ThreadTS: "1794870764.063919", TS: "1794893711.376929", Permalink: "https://x.slack.com/archives/C1/p1794893711376929", After: first})
+	prior, ok := v.rewrite(voiceJob{req: voiceRequest{Lane: "releases", ChannelID: "C1", ThreadTS: "1794870764.063919"}}, last)
+	if !ok || prior.ts != "1794893711.376929" {
+		t.Fatalf("rewrite = %+v, %v; want the first take", prior, ok)
+	}
+}

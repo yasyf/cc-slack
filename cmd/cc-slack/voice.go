@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/slack-go/slack"
 	"github.com/yasyf/cc-interact/procs"
@@ -47,6 +48,9 @@ const (
 	voiceEditFor       = 24 * time.Hour
 	voiceRepeatAt      = 0.8
 	voiceRepeatFor     = time.Hour
+	voiceRewriteFor    = 3 * time.Minute
+	voiceRewriteAt     = 0.5
+	voiceRewriteWords  = 8
 	voiceMaxUnits      = 16
 	voiceBodyBytes     = 64 << 10
 	voiceIdle          = time.Minute
@@ -351,6 +355,9 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	}
 	if len(job.req.Options) > 0 {
 		return v.postQuestion(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
+	}
+	if prior, ok := v.rewrite(job, out.After); ok {
+		return v.editRepeat(postCtx, id, job, out, prior, postBegan, key)
 	}
 	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
 		return v.editRepeat(postCtx, id, job, out, last, postBegan, key)
@@ -677,6 +684,40 @@ func (o voiceOutcome) unsent() bool {
 
 func (o voiceOutcome) sent() bool {
 	return !o.DryRun && o.Permalink != "" && o.Error == "" && o.Dropped == "" && o.Lane != ""
+}
+
+// rewrite finds the lane's own post in the same thread within voiceRewriteFor whose words this one mostly shares, read from the log so a restart forgets none: a second take of the same news, as releases sent four rewordings of 'Fixing forward, per your 9:32 PM word' in 16 seconds at 9:35 PM, which edits the first in place by word overlap alone, with no model deciding and no wait on one.
+func (v *voiceSender) rewrite(job voiceJob, text string) (voiceLast, bool) {
+	for _, out := range slices.Backward(v.logged(time.Now().Add(-voiceRewriteFor))) {
+		if out.sent() && out.Lane == job.req.Lane && out.ChannelID == job.req.ChannelID && out.ThreadTS == job.req.ThreadTS && len(out.Options) == 0 && out.TS != "" && voiceOverlap(out.After, text) >= voiceRewriteAt {
+			return voiceLast{ts: out.TS, text: out.After, at: out.At}, true
+		}
+	}
+	return voiceLast{}, false
+}
+
+// voiceOverlap is the share of the shorter text's words of three letters or more that the other holds too, or none when the shorter has fewer than voiceRewriteWords, too short to tell a second take from a new line.
+func voiceOverlap(a, b string) float64 {
+	words := func(text string) map[string]bool {
+		found := map[string]bool{}
+		for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+			if len(word) >= 3 {
+				found[word] = true
+			}
+		}
+		return found
+	}
+	x, y := words(a), words(b)
+	shared := 0
+	for word := range x {
+		if y[word] {
+			shared++
+		}
+	}
+	if fewer := min(len(x), len(y)); fewer >= voiceRewriteWords {
+		return float64(shared) / float64(fewer)
+	}
+	return 0
 }
 
 type voiceLast struct {
