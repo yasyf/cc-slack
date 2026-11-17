@@ -44,6 +44,7 @@ const (
 	voicePostLimit     = 10 * time.Second
 	voiceCutAt         = 0.65
 	voiceOpenerCutAt   = 0.9
+	voiceEditFor       = 24 * time.Hour
 	voiceRepeatAt      = 0.8
 	voiceRepeatFor     = time.Hour
 	voiceMaxUnits      = 16
@@ -211,6 +212,10 @@ func (v *voiceSender) servePost(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ChannelID == "" || strings.TrimSpace(req.Text) == "" || req.Rules == "" {
 		http.Error(w, "voice needs channel_id, text and rules", http.StatusBadRequest)
+		return
+	}
+	if err := v.editAt(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := voiceOptionsCheck(req.Options); err != nil && req.DryRun {
@@ -1015,11 +1020,12 @@ func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, o
 		blocks = voiceCarded(voiceQuestionBlocks(out.After, job.req.Options), job.req.Card)
 	}
 	err := updateMessage(ctx, v.app.newAPI(id.Token), job.req.ChannelID, job.req.EditTS, out.After, blocks)
-	out.PostMS, out.TS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), job.req.EditTS, err == nil, id.permalink(job.req.ChannelID, job.req.EditTS, job.req.ThreadTS)
+	out.PostMS, out.Edited = time.Since(postBegan).Milliseconds(), err == nil
 	if err != nil {
 		out.Error = err.Error()
 		return out
 	}
+	out.TS, out.Permalink = job.req.EditTS, id.permalink(job.req.ChannelID, job.req.EditTS, job.req.ThreadTS)
 	v.posted(key, voiceLast{ts: job.req.EditTS, text: out.After, at: job.received})
 	return out
 }
@@ -1682,6 +1688,20 @@ func (v *voiceSender) retried(req *voiceRequest, why string) string {
 	}
 	v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
 	return ""
+}
+
+// editAt names the post an edit rewrites by its Slack ts: a lane that names its earlier post by the voice id its say returned, as new-tree-cutover did at 8:26 PM with 9fa27f1881f3, gets that post's ts from the log, and an edit naming neither is refused before it is queued, so no edit is logged against a ts Slack never gave.
+func (v *voiceSender) editAt(req *voiceRequest) error {
+	if req.EditTS == "" || slackTSPattern.MatchString(req.EditTS) {
+		return nil
+	}
+	for _, out := range slices.Backward(v.logged(time.Now().Add(-voiceEditFor))) {
+		if out.ID == req.EditTS && out.sent() && out.TS != "" {
+			req.EditTS = out.TS
+			return nil
+		}
+	}
+	return fmt.Errorf("edit_ts %q is no Slack ts and names no post the voice sent in the last %s: name the post by its ts or permalink", req.EditTS, voiceEditFor)
 }
 
 // corrected names the lane's latest post in the same thread within six hours, the one a correction sent twice edits in place: the second try's fix is known, so it is applied rather than posted beside the post it corrects.

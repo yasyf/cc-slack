@@ -490,3 +490,16 @@ func contextText(block slack.Block) string {
 	text, _ := contextBlock.ContextElements.Elements[0].(*slack.TextBlockObject)
 	return text.Text
 }
+
+func TestAnEditNamingItsPostByVoiceIDRewritesThatPostsTSAndOneNamingNothingIsRefused(t *testing.T) {
+	log := filepath.Join(t.TempDir(), voiceLogName)
+	v := &voiceSender{logTo: log}
+	v.record(voiceOutcome{ID: "9fa27f1881f3", At: time.Now(), Lane: "new-tree-cutover", ChannelID: "C0CHKURJ90X", TS: "1794889258.568449", Permalink: "https://x.slack.com/archives/C0CHKURJ90X/p1794889258568449"})
+	req := voiceRequest{EditTS: "9fa27f1881f3"}
+	if err := v.editAt(&req); err != nil || req.EditTS != "1794889258.568449" {
+		t.Fatalf("editAt = %v, %q; want the post's ts", err, req.EditTS)
+	}
+	if err := v.editAt(&voiceRequest{EditTS: "0000deadbeef"}); err == nil {
+		t.Fatal("editAt took an id the voice never sent")
+	}
+}
