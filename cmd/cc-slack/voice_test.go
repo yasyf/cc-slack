@@ -147,7 +147,7 @@ func TestVoiceQuestionCarriesAButtonPerOptionAndAnsweringLeavesOnlyHisPick(t *te
 	if !ok || len(actions.Elements.ElementSet) != 2 {
 		t.Fatalf("last block = %#v, want an action block with two buttons", blocks[len(blocks)-1])
 	}
-	first := actions.Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	first, _ := actions.Elements.ElementSet[0].(*slack.ButtonBlockElement)
 	if first.ActionID != voiceOptionAction+"0" || first.Value != "Hotfix" || first.Style != slack.StylePrimary {
 		t.Fatalf("first button = %+v", first)
 	}
@@ -203,7 +203,7 @@ func TestVoiceSettledReplacesTheStateLineAndDropsTheButtons(t *testing.T) {
 	question := voiceQuestionBlocks("*Approve #57894?*", []string{"Approve #57894", "Hold #57894"})
 	once := voiceSettled(question, "*Approve #57894?*", "✅ #57894 approved", false)
 	twice := voiceSettled(once, "*Approve #57894?*", "✅ #57894 merged 3:18 PM", false)
-	if len(twice) != 2 || twice[0].BlockType() != slack.MBTSection || twice[1].(*slack.ContextBlock).ContextElements.Elements[0].(*slack.TextBlockObject).Text != "✅ #57894 merged 3:18 PM" {
+	if len(twice) != 2 || twice[0].BlockType() != slack.MBTSection || contextText(twice[1]) != "✅ #57894 merged 3:18 PM" {
 		t.Fatalf("settled twice = %#v, want the section and one state line, no buttons", twice)
 	}
 	plain := voiceSettled([]slack.Block{slack.NewRichTextBlock("r")}, "#57894 needs your Approve.", "✅ #57894 merged 3:18 PM", false)
@@ -263,7 +263,7 @@ func TestVoiceALongQuestionKeepsItsFirstLineWhateverJevCuts(t *testing.T) {
 
 func TestVoiceNoRawAngleBracketReachesACard(t *testing.T) {
 	blocks := voiceQuestionBlocks(voiceFormat("Merge <https://github.com/acme/app/pull/7|#7 the fix> now? It was <<https://github.com/acme/app/pull/8|#8>> wrapped twice."), []string{"Merge", "Hold"})
-	text := blocks[0].(*slack.SectionBlock).Text.Text
+	text := sectionText(blocks[:1])
 	if strings.Contains(text, "<<") || strings.Contains(text, ">>") {
 		t.Fatalf("card text = %q, want no raw doubled brackets", text)
 	}
@@ -348,13 +348,13 @@ func TestVoiceACardsIdRidesItsButtonsNeverItsText(t *testing.T) {
 	if got := voiceCardOf(blocks); got != "75976b" {
 		t.Fatalf("voiceCardOf = %q, want 75976b", got)
 	}
-	if strings.Contains(blocks[0].(*slack.SectionBlock).Text.Text, "75976b") {
+	if strings.Contains(sectionText(blocks[:1]), "75976b") {
 		t.Fatal("the card id shows in the post's text")
 	}
 }
 
 func TestVoiceRefusesAPostThatOverwhelmsTheScreenByJudgementNotCount(t *testing.T) {
-	var lines []string
+	lines := make([]string, 0, 16)
 	for n := range 16 {
 		lines = append(lines, fmt.Sprintf("• <https://github.com/o/r/pull/%d|#%d fix the reader>", 57900+n, 57900+n))
 	}
@@ -483,4 +483,10 @@ func TestASecondCorrectionEditsTheLanesLatestPostInItsThread(t *testing.T) {
 	if ts := v.corrected(voiceRequest{Lane: "sandsql-engine", ChannelID: "C1", ThreadTS: "9.9"}); ts != "" {
 		t.Fatalf("corrected = %q, want none in a thread the lane never posted in", ts)
 	}
+}
+
+func contextText(block slack.Block) string {
+	context, _ := block.(*slack.ContextBlock)
+	text, _ := context.ContextElements.Elements[0].(*slack.TextBlockObject)
+	return text.Text
 }

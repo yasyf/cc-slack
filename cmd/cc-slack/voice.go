@@ -187,29 +187,23 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	switch {
-	case r.URL.Path == voicePostsPath && r.Method == http.MethodGet:
-		v.servePosts(w, r)
-		return
-	case r.URL.Path == voiceSettlePath && r.Method == http.MethodPost:
-		v.serveSettle(w, r)
-		return
-	case r.URL.Path == voiceReactPath && r.Method == http.MethodPost:
-		v.serveReact(w, r)
-		return
-	case r.URL.Path == voiceLinkPath && r.Method == http.MethodPost:
-		v.serveLink(w, r)
-		return
-	case r.URL.Path == voiceStatusPath && r.Method == http.MethodPost:
-		v.serveStatus(w, r)
-		return
-	case r.URL.Path == voiceRuledPath && r.Method == http.MethodPost:
-		v.serveRuled(w, r)
-		return
-	case r.URL.Path != voicePath || r.Method != http.MethodPost:
+	serve, ok := map[string]http.HandlerFunc{
+		http.MethodPost + " " + voicePath:       v.servePost,
+		http.MethodGet + " " + voicePostsPath:   v.servePosts,
+		http.MethodPost + " " + voiceSettlePath: v.serveSettle,
+		http.MethodPost + " " + voiceReactPath:  v.serveReact,
+		http.MethodPost + " " + voiceLinkPath:   v.serveLink,
+		http.MethodPost + " " + voiceStatusPath: v.serveStatus,
+		http.MethodPost + " " + voiceRuledPath:  v.serveRuled,
+	}[r.Method+" "+r.URL.Path]
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	serve(w, r)
+}
+
+func (v *voiceSender) servePost(w http.ResponseWriter, r *http.Request) {
 	var req voiceRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -229,15 +223,7 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	why, attached, warning, score := v.held(r.Context(), req)
-	if strings.HasPrefix(why, voiceCorrection) && !req.DryRun && v.warnedBefore(req.Lane, why) {
-		if ts := v.corrected(req); ts != "" {
-			req.EditTS, why = ts, ""
-		}
-	}
-	if why != "" && !req.DryRun && v.warnedBefore(req.Lane, why) {
-		v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
-		why = ""
-	}
+	why = v.retried(&req, why)
 	if why != "" && !req.DryRun {
 		v.refused(req, why)
 		http.Error(w, why, http.StatusUnprocessableEntity)
@@ -347,12 +333,11 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	if landed != nil {
 		out.After, out.Cut, out.Scores, out.Repeat = voiceApplied(units, *landed), landed.cut, landed.scores, landed.repeat
 	}
+	if job.req.DryRun && landed == nil {
+		e := <-edits
+		out.After, out.Cut, out.Scores, out.Repeat, out.Jev, out.JevMS = voiceApplied(units, e), e.cut, e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered"), time.Since(jevBegan).Milliseconds()
+	}
 	if job.req.DryRun {
-		if landed == nil {
-			e := <-edits
-			out.After, out.Cut, out.Scores, out.Repeat, out.Jev = voiceApplied(units, e), e.cut, e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
-			out.JevMS = time.Since(jevBegan).Milliseconds()
-		}
 		return out
 	}
 	postBegan := time.Now()
@@ -367,14 +352,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		return v.postQuestion(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
 	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
-		_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(postCtx, job.req.ChannelID, last.ts, textOption(out.After))
-		out.PostMS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS)
-		out.TS = last.ts
-		v.posted(key, voiceLast{ts: last.ts, text: out.After, at: job.received})
-		if err != nil {
-			out.Error = err.Error()
-		}
-		return out
+		return v.editRepeat(postCtx, id, job, out, last, postBegan, key)
 	}
 	res, err := v.app.send(postCtx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, nil, job.req.Files)
 	out.PostMS = time.Since(postBegan).Milliseconds()
@@ -386,6 +364,17 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
 	if landed == nil {
 		go v.late(context.WithoutCancel(ctx), id, res, units, out, edits, jevBegan)
+	}
+	return out
+}
+
+// editRepeat rewords the thread's last post in place when Jev reads the new one as its repeat, so he sees one post, not two.
+func (v *voiceSender) editRepeat(ctx context.Context, id identity, job voiceJob, out voiceOutcome, last voiceLast, postBegan time.Time, key string) voiceOutcome {
+	_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(ctx, job.req.ChannelID, last.ts, textOption(out.After))
+	out.PostMS, out.Edited, out.Permalink, out.TS = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS), last.ts
+	v.posted(key, voiceLast{ts: last.ts, text: out.After, at: job.received})
+	if err != nil {
+		out.Error = err.Error()
 	}
 	return out
 }
@@ -740,11 +729,11 @@ func voiceOptionsCheck(options []string) error {
 		if strings.TrimSpace(option) == "" {
 			return errors.New("refused, not posted: a button has no words")
 		}
-		if key := strings.ToLower(strings.TrimSpace(option)); seen[key] {
+		key := strings.ToLower(strings.TrimSpace(option))
+		if seen[key] {
 			return fmt.Errorf("refused, not posted: two buttons read %q; each button must read differently at a glance", option)
-		} else {
-			seen[key] = true
 		}
+		seen[key] = true
 	}
 	return nil
 }
@@ -925,7 +914,7 @@ func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float6
 	decision, err := v.decide(ctx, voiceState{Post: post, Order: slices.Sorted(maps.Keys(post))}, questions, spawnllm.DecideOpts{Timeout: budget})
 	<-checked
 	if ruled != nil {
-		return fmt.Sprintf("refused, not posted: his %s ruling already answers this question (\"%s\"), so asking it again re-asks what he decided. Act on the ruling and say what you did", ruled.At, ruled.Binds), nil, ""
+		return fmt.Sprintf("refused, not posted: his %s ruling already answers this question (%q), so asking it again re-asks what he decided. Act on the ruling and say what you did", ruled.At, ruled.Binds), nil, ""
 	}
 	if err != nil {
 		return "", nil, ""
@@ -935,10 +924,14 @@ func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float6
 			*score = min(*score, 1-binary.PYes)
 		}
 	}
-	yes := func(key string) bool {
+	return v.verdict(req, cards, numbers, func(key string) bool {
 		answer, ok := decision.Answers[key].(spawnllm.BinaryAnswer)
 		return ok && answer.PYes >= voiceHoldAt
-	}
+	})
+}
+
+// verdict turns Jev's yes answers into the post's refusal, the buttons it attaches and its warnings, the first refusal in order winning.
+func (v *voiceSender) verdict(req voiceRequest, cards []voiceOutcome, numbers []int, yes func(string) bool) (string, []string, string) {
 	var warnings []string
 	if yes("gap") {
 		warnings = append(warnings, voiceGap)
@@ -964,21 +957,19 @@ func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float6
 			}
 		}
 	}
-	switch {
-	case yes("typed") && len(attached) == 0:
+	if yes("typed") && len(attached) == 0 {
 		return voiceTypedChoice, nil, warning
-	case yes("miscount"):
+	}
+	if yes("miscount") {
 		return voiceMiscount, nil, warning
-	case yes("correction") && req.EditTS == "":
+	}
+	if yes("correction") && req.EditTS == "" {
 		return v.correction(req.Lane), nil, warning
-	case yes("plumbing"):
-		return voicePlumbing, nil, warning
-	case yes("labels"):
-		return voiceFragmentLabel, nil, warning
-	case yes("buttons"):
-		return voiceUnclearButton, nil, warning
-	case yes("overwhelming"):
-		return voiceOverwhelming, nil, warning
+	}
+	for _, check := range []struct{ key, why string }{{"plumbing", voicePlumbing}, {"labels", voiceFragmentLabel}, {"buttons", voiceUnclearButton}, {"overwhelming", voiceOverwhelming}} {
+		if yes(check.key) {
+			return check.why, nil, warning
+		}
 	}
 	return "", attached, warning
 }
@@ -1049,7 +1040,7 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	posts, unsent, taps, asks := []voiceOutcome{}, []voiceOutcome{}, map[string]string{}, map[string][]map[string]string{}
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
@@ -1293,7 +1284,7 @@ func (v *voiceSender) threadPosts(channelID, threadTS, lane, before string) []vo
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var found []voiceOutcome
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
@@ -1410,7 +1401,7 @@ func (v *voiceSender) recentPosts(since time.Time) []voiceOutcome {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var posts []voiceOutcome
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
@@ -1469,7 +1460,7 @@ func (v *voiceSender) logged(since time.Time) []voiceOutcome {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var rows []voiceOutcome
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
@@ -1582,22 +1573,21 @@ func (v *voiceSender) serveRuled(w http.ResponseWriter, r *http.Request) {
 	if len(options) == 0 {
 		options = voiceButtonsOf(m.Blocks.BlockSet)
 	}
-	line := ""
+	var ruling *voiceRuling
+	var pick, line string
 	if len(options) > 0 {
-		if ruling, pick := v.ruledBy(ctx, cmp.Or(s.Question, m.Text), options, s.Rulings, voiceJevLate); ruling != nil && pick != "" {
-			line = fmt.Sprintf("✅ settled by your %s rule: %s", ruling.At, pick)
-			if s.DryRun {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]string{"line": line, "verdict": "ok"})
-				return
-			}
-			if err := updateMessage(ctx, api, s.ChannelID, s.TS, m.Text, voiceSettled(m.Blocks.BlockSet, m.Text, line, false)); err != nil {
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
-			}
-			if err := voiceTapped(s.ChannelID, s.TS, pick); err != nil {
-				v.log.Printf("voice ruled %s: pick not logged: %v", s.TS, err)
-			}
+		ruling, pick = v.ruledBy(ctx, cmp.Or(s.Question, m.Text), options, s.Rulings, voiceJevLate)
+	}
+	if ruling != nil && pick != "" {
+		line = fmt.Sprintf("✅ settled by your %s rule: %s", ruling.At, pick)
+	}
+	if line != "" && !s.DryRun {
+		if err := updateMessage(ctx, api, s.ChannelID, s.TS, m.Text, voiceSettled(m.Blocks.BlockSet, m.Text, line, false)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := voiceTapped(s.ChannelID, s.TS, pick); err != nil {
+			v.log.Printf("voice ruled %s: pick not logged: %v", s.TS, err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1684,6 +1674,19 @@ const (
 	voiceCorrection = "refused, not posted: it corrects an earlier post as a new one. A correction rewords the post it corrects in place, with lane say --edit <its ts>, and says no sorry"
 	voicePlumbing   = "refused, not posted: it tells him about the drive's own machinery (builders, lanes, tools, passes, sessions). Say what happened to his work and when he hears next, never who in the drive is doing it"
 )
+
+// retried lets a lane's second try past a refusal it met within voiceWarnFor, his rule that tooling blocks at most once: a correction becomes an edit of the post it corrects, since that fix is known, and any other refusal posts with a warning logged.
+func (v *voiceSender) retried(req *voiceRequest, why string) string {
+	if why == "" || req.DryRun || !v.warnedBefore(req.Lane, why) {
+		return why
+	}
+	if ts := v.corrected(*req); strings.HasPrefix(why, voiceCorrection) && ts != "" {
+		req.EditTS = ts
+		return ""
+	}
+	v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
+	return ""
+}
 
 // corrected names the lane's latest post in the same thread within six hours, the one a correction sent twice edits in place: the second try's fix is known, so it is applied rather than posted beside the post it corrects.
 func (v *voiceSender) corrected(req voiceRequest) string {

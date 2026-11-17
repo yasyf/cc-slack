@@ -769,24 +769,21 @@ func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity
 	if g.root && isShortcutMessage(id, m) {
 		return p.shortcuts.fromDM(ctx, id, m)
 	}
-	if g.key.channelID == id.DMChannelID {
-		tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m)
-		if err != nil || tapped {
+	dm := g.key.channelID == id.DMChannelID
+	if dm {
+		if tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m); err != nil || tapped {
 			return err
 		}
-		if id.fromOperator(m) && routedSubtypes[m.SubType] {
-			p.laneHeard(ctx, id, g.key.channelID, g.key.threadTS, m.Timestamp, m.Text)
-		}
+	}
+	if id.fromOperator(m) && routedSubtypes[m.SubType] {
+		p.laneHeard(ctx, id, g.key.channelID, g.key.threadTS, m.Timestamp, m.Text)
+	}
+	if dm {
 		if err := p.recordOwnerMessage(ctx, db, id, g, m); err != nil {
 			p.log.Printf("route %s/%s with no delivery record: %v", g.key.channelID, m.Timestamp, err)
 		}
-	} else {
-		if id.fromOperator(m) && routedSubtypes[m.SubType] {
-			p.laneHeard(ctx, id, g.key.channelID, g.key.threadTS, m.Timestamp, m.Text)
-		}
-		if err := p.trackOwed(ctx, id, g.key.channelID, g.key.threadTS, m); err != nil {
-			return err
-		}
+	} else if err := p.trackOwed(ctx, id, g.key.channelID, g.key.threadTS, m); err != nil {
+		return err
 	}
 	if g.idle() {
 		return nil

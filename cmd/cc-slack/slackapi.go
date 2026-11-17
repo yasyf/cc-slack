@@ -596,7 +596,7 @@ func agentSessionStatus(ctx context.Context, api slackAPI, channelID, threadTS, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var answer struct {
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
