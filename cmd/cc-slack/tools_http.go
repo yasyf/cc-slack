@@ -349,7 +349,7 @@ func stageWithin(ctx context.Context, body json.RawMessage) (json.RawMessage, fu
 
 func voiceOr(voice, tools http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == voicePath && r.Method == http.MethodPost && r.Header.Get("Origin") == "" {
+		if (r.URL.Path == voicePath || strings.HasPrefix(r.URL.Path, voicePath+"/")) && r.Header.Get("Origin") == "" {
 			voice.ServeHTTP(w, r)
 			return
 		}

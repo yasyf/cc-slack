@@ -194,3 +194,16 @@ func TestVoiceAnAskForHisApproveGetsItsButtonsAndNeverNamesASettledPR(t *testing
 		t.Fatalf("held = %q, %q; want a refusal naming the merged PR", why, options)
 	}
 }
+
+func TestVoiceSettledReplacesTheStateLineAndDropsTheButtons(t *testing.T) {
+	question := voiceQuestionBlocks("*Approve #57894?*", []string{"Approve #57894", "Hold #57894"})
+	once := voiceSettled(question, "*Approve #57894?*", "✅ #57894 approved", false)
+	twice := voiceSettled(once, "*Approve #57894?*", "✅ #57894 merged 3:18 PM", false)
+	if len(twice) != 2 || twice[0].BlockType() != slack.MBTSection || twice[1].(*slack.ContextBlock).ContextElements.Elements[0].(*slack.TextBlockObject).Text != "✅ #57894 merged 3:18 PM" {
+		t.Fatalf("settled twice = %#v, want the section and one state line, no buttons", twice)
+	}
+	plain := voiceSettled([]slack.Block{slack.NewRichTextBlock("r")}, "#57894 needs your Approve.", "✅ #57894 merged 3:18 PM", false)
+	if len(plain) != 2 || plain[0].BlockType() != slack.MBTSection {
+		t.Fatalf("a plain post settled = %#v, want its text as a section and the state line", plain)
+	}
+}

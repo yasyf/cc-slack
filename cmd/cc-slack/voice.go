@@ -27,6 +27,9 @@ import (
 
 const (
 	voicePath         = "/voice"
+	voicePostsPath    = voicePath + "/posts"
+	voiceSettlePath   = voicePath + "/settle"
+	voiceStateBlock   = "voice-state"
 	voiceJevBudget    = 600 * time.Millisecond
 	voiceJevLate      = 5 * time.Second
 	voicePostLimit    = 10 * time.Second
@@ -69,6 +72,7 @@ type voiceRequest struct {
 	Asked     string    `json:"asked,omitempty"`
 	Options   []string  `json:"options,omitempty"`
 	PRs       []voicePR `json:"prs,omitempty"`
+	EditTS    string    `json:"edit_ts,omitempty"`
 	DryRun    bool      `json:"dry_run,omitempty"`
 }
 
@@ -90,6 +94,8 @@ type voiceOutcome struct {
 	Permalink string             `json:"permalink,omitempty"`
 	Error     string             `json:"error,omitempty"`
 	DryRun    bool               `json:"dry_run,omitempty"`
+	TS        string             `json:"ts,omitempty"`
+	PRs       []voicePR          `json:"prs,omitempty"`
 	Held      string             `json:"held,omitempty"`
 	Options   []string           `json:"options,omitempty"`
 	QueuedMS  int64              `json:"queued_ms"`
@@ -152,6 +158,17 @@ func newVoiceSender(a *app, decide voiceDecide) *voiceSender {
 func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, err := callerWindow(r); err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	switch {
+	case r.URL.Path == voicePostsPath && r.Method == http.MethodGet:
+		v.servePosts(w, r)
+		return
+	case r.URL.Path == voiceSettlePath && r.Method == http.MethodPost:
+		v.serveSettle(w, r)
+		return
+	case r.URL.Path != voicePath || r.Method != http.MethodPost:
+		http.NotFound(w, r)
 		return
 	}
 	var req voiceRequest
@@ -284,12 +301,17 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	postCtx, cancel := context.WithTimeout(ctx, voicePostLimit)
 	defer cancel()
 	id.Agent, id.Drive = "claude", job.req.Drive
+	out.PRs = job.req.PRs
+	if job.req.EditTS != "" {
+		return v.editPost(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
+	}
 	if len(job.req.Options) > 0 {
 		return v.postQuestion(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
 	if landed != nil && last.ts != "" && landed.repeat >= voiceRepeatAt {
 		_, _, _, err := v.app.newAPI(id.Token).UpdateMessageContext(postCtx, job.req.ChannelID, last.ts, textOption(out.After))
 		out.PostMS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), err == nil, id.permalink(job.req.ChannelID, last.ts, job.req.ThreadTS)
+		out.TS = last.ts
 		v.posted(key, voiceLast{ts: last.ts, text: out.After, at: job.received})
 		if err != nil {
 			out.Error = err.Error()
@@ -302,7 +324,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		out.Error = err.Error()
 		return out
 	}
-	out.Permalink = res.Permalink
+	out.Permalink, out.TS = res.Permalink, res.TS
 	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
 	if landed == nil {
 		go v.late(context.WithoutCancel(ctx), id, res, units, out, edits, jevBegan)
@@ -665,7 +687,7 @@ func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJo
 		out.Error = err.Error()
 		return out
 	}
-	out.Permalink = res.Permalink
+	out.Permalink, out.TS = res.Permalink, res.TS
 	v.posted(key, voiceLast{ts: res.TS, text: out.After, at: job.received})
 	return out
 }
@@ -715,6 +737,7 @@ type voicePR struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	State  string `json:"state,omitempty"`
+	Head   string `json:"head,omitempty"`
 }
 
 const voiceMaxApprovePRs = 2
@@ -792,4 +815,117 @@ func voiceApproveAsk(req voiceRequest) (string, []string) {
 // refused logs a post /voice turned away before it queued, with its lane and why, so a lane refused again and again shows in voice.jsonl.
 func (v *voiceSender) refused(req voiceRequest, why string) {
 	v.record(voiceOutcome{ID: voiceID(), At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "refused: " + why})
+}
+
+// editPost rewrites a lane's earlier post in place, its buttons redrawn when the edit carries options, so a post whose subject changed is corrected where he read it rather than retold.
+func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, out voiceOutcome, units []voiceUnit, landed *voiceEdits, edits chan voiceEdits, jevBegan, postBegan time.Time, key string) voiceOutcome {
+	if landed == nil {
+		e := <-edits
+		landed = &e
+		out.JevMS, out.Jev = time.Since(jevBegan).Milliseconds(), "late: "+cmp.Or(e.note, "answered")
+	}
+	out.After, out.Cut, out.Scores = voiceApplied(units, *landed), landed.cut, landed.scores
+	blocks := voiceSections(out.After)
+	if len(job.req.Options) > 0 {
+		blocks = voiceQuestionBlocks(out.After, job.req.Options)
+	}
+	err := updateMessage(ctx, v.app.newAPI(id.Token), job.req.ChannelID, job.req.EditTS, out.After, blocks)
+	out.PostMS, out.TS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), job.req.EditTS, err == nil, id.permalink(job.req.ChannelID, job.req.EditTS, job.req.ThreadTS)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	v.posted(key, voiceLast{ts: job.req.EditTS, text: out.After, at: job.received})
+	return out
+}
+
+// servePosts answers the lane posts the voice sent since a moment, each with the subjects it named, so the drive can change a post when what it says changes underneath it.
+func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
+	since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
+	if err != nil {
+		http.Error(w, "voice posts needs since as RFC 3339", http.StatusBadRequest)
+		return
+	}
+	f, err := os.Open(v.logTo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	var posts []voiceOutcome
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	for scan.Scan() {
+		var out voiceOutcome
+		if json.Unmarshal(scan.Bytes(), &out) != nil || out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
+			continue
+		}
+		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
+		posts = append(posts, out)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(posts)
+}
+
+func permalinkTS(link string) string {
+	ref, err := parsePermalink(link)
+	if err != nil {
+		return ""
+	}
+	return ref.ts
+}
+
+type voiceSettle struct {
+	ChannelID string `json:"channel_id"`
+	TS        string `json:"ts"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
+	Line      string `json:"line"`
+	Buttons   bool   `json:"keep_buttons,omitempty"`
+}
+
+// serveSettle marks a lane post with the state of what it named, such as "✅ #57894 merged 3:18 PM", in one line under it that replaces the last such line, its buttons dropped unless keep_buttons: the mechanical half of a post following its subjects.
+func (v *voiceSender) serveSettle(w http.ResponseWriter, r *http.Request) {
+	var s voiceSettle
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || s.ChannelID == "" || !slackTSPattern.MatchString(s.TS) || strings.TrimSpace(s.Line) == "" {
+		http.Error(w, "voice settle needs channel_id, ts and line", http.StatusBadRequest)
+		return
+	}
+	id, err := loadIdentity(r.Context(), v.app.poller.plane.DB())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !slices.Contains(id.operatorChannelIDs(), s.ChannelID) {
+		http.Error(w, s.ChannelID+" is not one of the operator's channels", http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), voicePostLimit)
+	defer cancel()
+	api := v.app.newAPI(id.Token)
+	m, err := messageAt(ctx, api, s.ChannelID, cmp.Or(s.ThreadTS, s.TS), s.TS)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	blocks := voiceSettled(m.Blocks.BlockSet, m.Text, s.Line, s.Buttons)
+	if err := updateMessage(ctx, api, s.ChannelID, s.TS, m.Text, blocks); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	v.record(voiceOutcome{ID: voiceID() + "-settled", At: time.Now(), ChannelID: s.ChannelID, ThreadTS: s.ThreadTS, TS: s.TS, Before: m.Text, Formatted: m.Text, After: s.Line, Edited: true, DryRun: true})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"permalink": id.permalink(s.ChannelID, s.TS, s.ThreadTS)})
+}
+
+func voiceSettled(blocks []slack.Block, text, line string, buttons bool) []slack.Block {
+	if !slices.ContainsFunc(blocks, func(b slack.Block) bool { return b.BlockType() != slack.MBTRichText }) {
+		blocks = voiceSections(text)
+	}
+	kept := slices.DeleteFunc(slices.Clone(blocks), func(b slack.Block) bool {
+		if c, ok := b.(*slack.ContextBlock); ok && c.BlockID == voiceStateBlock {
+			return true
+		}
+		return !buttons && b.BlockType() == slack.MBTAction
+	})
+	return append(kept, slack.NewContextBlock(voiceStateBlock, slack.NewTextBlockObject(slack.MarkdownType, line, false, false)))
 }
