@@ -461,3 +461,13 @@ func TestVoiceScoresAPostByItsWorstCheck(t *testing.T) {
 		t.Fatalf("held = %q, score %v; want no refusal and 0.6", why, score)
 	}
 }
+
+func TestVoiceLogsTheLanesOwnWordsBesideEachPost(t *testing.T) {
+	log := filepath.Join(t.TempDir(), voiceLogName)
+	v := &voiceSender{logTo: log}
+	v.record(voiceOutcome{ID: "a", Lane: "releases", Words: "{pr:57894} merged", Before: "<https://github.com/o/r/pull/57894|#57894> merged", Permalink: "https://x.slack.com/archives/C1/p1"})
+	rows, err := readVoiceLog(log, 1, false)
+	if err != nil || len(rows) != 1 || rows[0].Words != "{pr:57894} merged" {
+		t.Fatalf("rows = %+v, %v; want the lane's own words logged", rows, err)
+	}
+}

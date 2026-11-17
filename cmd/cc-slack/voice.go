@@ -81,6 +81,7 @@ type voiceRequest struct {
 	PRs       []voicePR           `json:"prs,omitempty"`
 	EditTS    string              `json:"edit_ts,omitempty"`
 	Files     []string            `json:"files,omitempty"`
+	Words     string              `json:"words,omitempty"`
 	Card      string              `json:"card,omitempty"`
 	Rulings   []voiceRuling       `json:"rulings,omitempty"`
 	About     []map[string]string `json:"about,omitempty"`
@@ -106,6 +107,7 @@ type voiceOutcome struct {
 	Error     string              `json:"error,omitempty"`
 	DryRun    bool                `json:"dry_run,omitempty"`
 	TS        string              `json:"ts,omitempty"`
+	Words     string              `json:"words,omitempty"`
 	Sent      bool                `json:"sent"`
 	Score     *float64            `json:"score,omitempty"`
 	Verdict   string              `json:"verdict,omitempty"`
@@ -295,7 +297,7 @@ func (v *voiceSender) drain(key string, q chan voiceJob) {
 
 func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) {
 	began := time.Now()
-	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds(), Score: &job.score}
+	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds(), Score: &job.score, Words: job.req.Words}
 	defer func() {
 		out.TotalMS = time.Since(job.received).Milliseconds()
 		if !job.req.DryRun {
@@ -1186,6 +1188,7 @@ func laneSupervisor(r *http.Request) bool {
 type voiceReact struct {
 	ChannelID string   `json:"channel_id"`
 	TS        string   `json:"ts"`
+	ThreadTS  string   `json:"thread_ts,omitempty"`
 	Add       string   `json:"add,omitempty"`
 	Remove    []string `json:"remove,omitempty"`
 }
@@ -1202,13 +1205,16 @@ func (v *voiceSender) serveReact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !slices.Contains(id.operatorChannelIDs(), s.ChannelID) {
-		http.Error(w, s.ChannelID+" is not one of the operator's channels", http.StatusForbidden)
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), voicePostLimit)
 	defer cancel()
 	api, ref := v.app.newAPI(id.Token), slack.NewRefToMessage(s.ChannelID, s.TS)
+	if !slices.Contains(id.operatorChannelIDs(), s.ChannelID) {
+		m, err := messageAt(ctx, api, s.ChannelID, cmp.Or(s.ThreadTS, s.TS), s.TS)
+		if err != nil || m.User != id.UserID {
+			http.Error(w, fmt.Sprintf("%s is not one of the operator's channels, and %s there is not a message of his the bot can read (%v)", s.ChannelID, s.TS, err), http.StatusForbidden)
+			return
+		}
+	}
 	for _, name := range s.Remove {
 		if err := api.RemoveReactionContext(ctx, name, ref); err != nil && errorCode(err) != "no_reaction" {
 			http.Error(w, err.Error(), http.StatusBadGateway)
