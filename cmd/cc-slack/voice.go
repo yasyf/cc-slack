@@ -904,7 +904,7 @@ func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float6
 		Yes:          "It overwhelms the screen",
 		No:           "He takes it in at a glance",
 	}, "plumbing": spawnllm.Binary{
-		Instructions: "Does `post` tell him about the drive's own machinery rather than his work: its builders, testers, lanes or meta lane, the card or landing tool, a landing pass, sessions old or new, the old drive, team-lead, or an internal host or tool name (such as agenthost) left unexplained, such as \"A builder is fixing it now\" or \"the landing tool hasn't cleared it\"?",
+		Instructions: "Does `post` tell him about the drive's own machinery rather than his work: its builders, testers, lanes or meta lane, the card or landing tool, a landing pass, sessions old or new, the old drive, team-lead, an internal host, tool, job or function name (such as agenthost or tiv_fix_tick) left unexplained, a raw commit id or hash (such as cb34512), or a PR named by a fragment (such as "the tracing PR") in place of what it does, such as \"A builder is fixing it now\" or \"the landing tool hasn't cleared it\"?",
 		Yes:          "It talks about the drive's plumbing",
 		No:           "It talks only about his work",
 	}, "gap": spawnllm.Binary{
