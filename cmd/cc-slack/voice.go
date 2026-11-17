@@ -34,7 +34,9 @@ const (
 	voiceReactPath     = voicePath + "/react"
 	voiceLinkPath      = voicePath + "/link"
 	voiceStatusPath    = voicePath + "/status"
+	voiceRuledPath     = voicePath + "/ruled"
 	voiceWarnFor       = 30 * time.Minute
+	voiceOpenCards     = 3
 	voiceBackfillEvery = 10 * time.Minute
 	voiceStateBlock    = "voice-state"
 	voiceJevBudget     = 600 * time.Millisecond
@@ -43,7 +45,7 @@ const (
 	voiceCutAt         = 0.65
 	voiceOpenerCutAt   = 0.9
 	voiceRepeatAt      = 0.8
-	voiceRepeatFor     = 10 * time.Minute
+	voiceRepeatFor     = time.Hour
 	voiceMaxUnits      = 16
 	voiceLabelWord     = 10
 	voiceOwnWords      = 10
@@ -51,8 +53,6 @@ const (
 	voiceIdle          = time.Minute
 	voiceLogName       = "voice.jsonl"
 	voiceMaxOptions    = 5
-	voiceOptionRunes   = 24
-	voiceOptionWords   = 4
 	voiceSectionRunes  = 3000
 	voiceOptionAction  = cardActionPrefix + ":voice:"
 	voiceHoldAt        = 0.7
@@ -83,6 +83,8 @@ type voiceRequest struct {
 	PRs       []voicePR           `json:"prs,omitempty"`
 	EditTS    string              `json:"edit_ts,omitempty"`
 	Files     []string            `json:"files,omitempty"`
+	Card      string              `json:"card,omitempty"`
+	Rulings   []voiceRuling       `json:"rulings,omitempty"`
 	About     []map[string]string `json:"about,omitempty"`
 	DryRun    bool                `json:"dry_run,omitempty"`
 }
@@ -106,10 +108,15 @@ type voiceOutcome struct {
 	Error     string              `json:"error,omitempty"`
 	DryRun    bool                `json:"dry_run,omitempty"`
 	TS        string              `json:"ts,omitempty"`
+	Sent      bool                `json:"sent"`
+	Verdict   string              `json:"verdict,omitempty"`
+	Reason    string              `json:"reason,omitempty"`
+	Warning   string              `json:"warning,omitempty"`
 	PRs       []voicePR           `json:"prs,omitempty"`
 	About     []map[string]string `json:"about,omitempty"`
 	Held      string              `json:"held,omitempty"`
 	Options   []string            `json:"options,omitempty"`
+	Question  bool                `json:"question,omitempty"`
 	QueuedMS  int64               `json:"queued_ms"`
 	FormatMS  int64               `json:"format_ms"`
 	JevMS     int64               `json:"jev_ms"`
@@ -143,13 +150,14 @@ type voiceSender struct {
 	logTo  string
 	log    *log.Logger
 
-	mu     sync.Mutex
-	queues map[string]chan voiceJob
-	last   map[string]voiceLast
-	rules  map[string]voiceRules
-	write  sync.Mutex
-	warned map[string]time.Time
-	looked map[string]bool
+	mu        sync.Mutex
+	queues    map[string]chan voiceJob
+	last      map[string]voiceLast
+	rules     map[string]voiceRules
+	write     sync.Mutex
+	warned    map[string]time.Time
+	questions map[string]bool
+	looked    map[string]bool
 }
 
 type voiceRules struct {
@@ -159,15 +167,16 @@ type voiceRules struct {
 
 func newVoiceSender(a *app, decide voiceDecide) *voiceSender {
 	return &voiceSender{
-		app:    a,
-		decide: decide,
-		logTo:  filepath.Join(appPaths().StateDir(), voiceLogName),
-		log:    log.New(os.Stderr, "["+binaryName+" voice] ", log.LstdFlags),
-		queues: map[string]chan voiceJob{},
-		last:   map[string]voiceLast{},
-		rules:  map[string]voiceRules{},
-		warned: map[string]time.Time{},
-		looked: map[string]bool{},
+		app:       a,
+		decide:    decide,
+		logTo:     filepath.Join(appPaths().StateDir(), voiceLogName),
+		log:       log.New(os.Stderr, "["+binaryName+" voice] ", log.LstdFlags),
+		queues:    map[string]chan voiceJob{},
+		last:      map[string]voiceLast{},
+		rules:     map[string]voiceRules{},
+		warned:    map[string]time.Time{},
+		questions: map[string]bool{},
+		looked:    map[string]bool{},
 	}
 }
 
@@ -192,6 +201,9 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == voiceStatusPath && r.Method == http.MethodPost:
 		v.serveStatus(w, r)
 		return
+	case r.URL.Path == voiceRuledPath && r.Method == http.MethodPost:
+		v.serveRuled(w, r)
+		return
 	case r.URL.Path != voicePath || r.Method != http.MethodPost:
 		http.NotFound(w, r)
 		return
@@ -205,12 +217,16 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "voice needs channel_id, text and rules", http.StatusBadRequest)
 		return
 	}
-	if err := voiceOptionsCheck(req.Options); err != nil {
+	if err := voiceOptionsCheck(req.Options); err != nil && req.DryRun {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(voiceOutcome{Lane: req.Lane, ChannelID: req.ChannelID, Before: req.Text, DryRun: true, Verdict: "refused", Reason: err.Error()})
+		return
+	} else if err != nil {
 		v.refused(req, err.Error())
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	why, attached := v.held(r.Context(), req)
+	why, attached, warning := v.held(r.Context(), req)
 	if why != "" && !req.DryRun && v.warnedBefore(req.Lane, why) {
 		v.record(voiceOutcome{ID: voiceID() + "-warned", At: time.Now(), Lane: req.Lane, ChannelID: req.ChannelID, ThreadTS: req.ThreadTS, Before: req.Text, Formatted: req.Text, Dropped: "warned, posted anyway: " + why, DryRun: true})
 		why = ""
@@ -227,13 +243,17 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if req.DryRun {
 		out := v.run(r.Context(), job)
-		out.Held, out.Options = why, req.Options
+		out.Held, out.Options, out.Warning = cmp.Or(why, warning), req.Options, warning
+		out.Verdict, out.Reason = "ok", cmp.Or(why, out.Dropped, out.Error)
+		if out.Reason != "" {
+			out.Verdict = "refused"
+		}
 		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
 	v.enqueue(job)
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": job.id, "attached": attached})
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": job.id, "attached": attached, "warning": warning})
 }
 
 func voiceID() string {
@@ -278,7 +298,9 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 	out = voiceOutcome{ID: job.id, At: job.received, Lane: job.req.Lane, ChannelID: job.req.ChannelID, ThreadTS: job.req.ThreadTS, Before: job.req.Text, DryRun: job.req.DryRun, QueuedMS: began.Sub(job.received).Milliseconds()}
 	defer func() {
 		out.TotalMS = time.Since(job.received).Milliseconds()
-		v.record(out)
+		if !job.req.DryRun {
+			v.record(out)
+		}
 	}()
 	id, err := loadIdentity(ctx, v.app.poller.plane.DB())
 	if err != nil {
@@ -402,6 +424,7 @@ func (v *voiceSender) rulesAt(path string) (string, error) {
 }
 
 func (v *voiceSender) record(out voiceOutcome) {
+	out.Sent = out.sent()
 	line, err := json.Marshal(out)
 	if err != nil {
 		v.log.Printf("voice %s: %v", out.ID, err)
@@ -623,13 +646,13 @@ func sectionFollows(rest []string) bool {
 	return false
 }
 
-func readVoiceLog(path string, last int) ([]voiceOutcome, error) {
+func readVoiceLog(path string, last int, all bool) ([]voiceOutcome, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: the daemon's own voice log
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	var all []voiceOutcome
+	var rows []voiceOutcome
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for scan.Scan() {
@@ -637,12 +660,24 @@ func readVoiceLog(path string, last int) ([]voiceOutcome, error) {
 		if err := json.Unmarshal(scan.Bytes(), &o); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		all = append(all, o)
+		if all || o.sent() {
+			rows = append(rows, o)
+		}
 	}
 	if err := scan.Err(); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	return all[max(0, len(all)-last):], nil
+	return rows[max(0, len(rows)-last):], nil
+}
+
+// sent is whether the row is a message Slack holds: a post or edit that landed, never a dry run, a replay, a refusal, a settle or tap row, or a send that failed.
+// unsent is a lane's post the voice took with a 202 that never reached Slack: its send failed or the sender dropped it after queuing, so the lane believes he read what he never saw.
+func (o voiceOutcome) unsent() bool {
+	return o.Lane != "" && !o.DryRun && o.Permalink == "" && (o.Error != "" || o.Dropped != "" && !strings.HasPrefix(o.Dropped, "refused: ") && !strings.HasPrefix(o.Dropped, "warned"))
+}
+
+func (o voiceOutcome) sent() bool {
+	return !o.DryRun && o.Permalink != "" && o.Error == "" && o.Dropped == "" && o.Lane != ""
 }
 
 type voiceLast struct {
@@ -693,9 +728,8 @@ func voiceOptionsCheck(options []string) error {
 	}
 	seen := map[string]bool{}
 	for _, option := range options {
-		words := len(strings.Fields(option))
-		if words == 0 || words > voiceOptionWords || runes(option) > voiceOptionRunes {
-			return fmt.Errorf("refused, not posted: button %q is too long. Slack cuts a button at about 30 characters (his words: \"the buttons are all cut off I have no idea what they're saying\"), so a button is 1 to %d words of at most %d characters, such as \"Approve\", \"Approve + sidebar\", \"Make optional\" or \"Hold\", and the post lists each option in full under the same short name", option, voiceOptionWords, voiceOptionRunes)
+		if strings.TrimSpace(option) == "" {
+			return errors.New("refused, not posted: a button has no words")
 		}
 		if key := strings.ToLower(strings.TrimSpace(option)); seen[key] {
 			return fmt.Errorf("refused, not posted: two buttons read %q; each button must read differently at a glance", option)
@@ -716,7 +750,7 @@ func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJo
 	}
 	kept := keptOpener(units, *landed)
 	out.After, out.Cut = voiceApplied(units, kept), kept.cut
-	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceQuestionBlocks(out.After, job.req.Options), job.req.Files)
+	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceCarded(voiceQuestionBlocks(out.After, job.req.Options), job.req.Card), job.req.Files)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
 		out.Error = err.Error()
@@ -767,6 +801,8 @@ func voiceAnswered(blocks []slack.Block, label string, at time.Time) []slack.Blo
 
 const voiceTypedChoice = "refused, not posted: this asks him to type a word to choose, and a question to him is always buttons. Post it again with each choice as an option (lane say \"<question>\" --options \"<recommended>\" --options \"<other>\")"
 
+const voiceGap = "warning, posted: it names work nobody is doing yet. A gap you name is yours: say who has it and when he hears, and record it with `lane done-check add \"<what done means>\"` (his words: \"how can you say this new version is working if its been 6 hours and those two still aren't assigned?\")"
+
 const voiceMiscount = "refused, not posted: it counts a set (such as \"all six\") but lists a different number of them. List every member of a set you count, or fix the number, then post it again"
 
 type voicePR struct {
@@ -780,12 +816,71 @@ type voicePR struct {
 const voiceMaxApprovePRs = 2
 
 // held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry; a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count; and a post asking his Approve or tap on a PR, which never goes out without the buttons it asks him to press and never about a PR already merged or closed. It answers why the post is held, or "", and the Approve and Hold buttons to attach to an ask for his Approve that carries none; a Jev that cannot answer within the budget lets the post through as written.
-func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string) {
-	questions := map[string]spawnllm.Question{"miscount": spawnllm.Binary{
+func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string, string) {
+	numbers := voicePRNumbers(req.PRs, req.Text)
+	if nestedLink.MatchString(req.Text) {
+		return voiceNestedLink, nil, ""
+	}
+	if len(req.Options) > 0 {
+		if why := v.sameCard(req, numbers); why != "" {
+			return why, nil, ""
+		}
+	}
+	questions := map[string]spawnllm.Question{"lead": spawnllm.Binary{
+		Instructions: "Is the first line of `post` a bare label or heading that tells him nothing by itself, such as \"Release 3 status.\" or \"Update:\", where the answer or the news should lead?",
+		Yes:          "It opens on a bare label",
+		No:           "It opens on the answer or the news",
+	}}
+	cards := v.openCards(req.Lane, req.EditTS)
+	post := map[string]string{"post": req.Text}
+	if labels := voiceLabels(req.Text); len(labels) > 0 {
+		post["labels"] = strings.Join(labels, "\n")
+		questions["labels"] = spawnllm.Binary{
+			Instructions: "Is any line of `labels`, each a PR's number and the words that name it in `post`, anything but a few plain words saying what that PR does: a cut piece of its body or of a sentence (\"#57192 Old tree only. Your words\", \"#57277 In go/sand/next\"), a lone verb or word that names nothing (\"#56958 get\", \"#56696 Port\"), run-together or mangled words (\"#55959 atablemovedeletesandcopies\"), or markup, a path or a command?",
+			Yes:          "A label is a body fragment or unreadable",
+			No:           "Every label is a few plain words naming what its PR does",
+		}
+	}
+	for n, card := range cards {
+		key := fmt.Sprintf("card%d", n)
+		post[key] = card.After
+		questions["answers_"+key] = spawnllm.Binary{
+			Instructions: "Does `post` give, as settled, the answer to the question his still-open card `" + key + "` asks him, deciding for him what the card leaves to his tap?",
+			Yes:          "It answers his open card for him",
+			No:           "It leaves the card's question to him, or is about something else",
+		}
+	}
+	if len(req.Options) > 0 {
+		post["buttons"] = strings.Join(req.Options, "\n")
+		questions["buttons"] = spawnllm.Binary{
+			Instructions: "Slack shows a button's label in about 30 characters and cuts the rest. Would any line of `buttons`, each one button's label under `post`, be cut off, or fail to say by itself what tapping it does, such as \"Shimmer only on a\" or \"Pick\"?",
+			Yes:          "A button is cut off or unclear",
+			No:           "Every button reads whole and says what it does",
+		}
+	}
+	for key, question := range map[string]spawnllm.Question{"correction": spawnllm.Binary{
+		Instructions: "Does `post` correct, take back or apologize for something an earlier post said, such as \"Correction: four are going in\", \"I was wrong at 3:23 PM to say …\" or \"sorry, …\"?",
+		Yes:          "It corrects an earlier post",
+		No:           "It corrects nothing",
+	}, "overwhelming": spawnllm.Binary{
+		Instructions: "His words: \"less overwhelming on the screen\". Is `post` more than he can take in at a glance on one screen, such as a long list of PRs or items he must read through one by one, where one line per stack or the one thing ready now would do?",
+		Yes:          "It overwhelms the screen",
+		No:           "He takes it in at a glance",
+	}, "plumbing": spawnllm.Binary{
+		Instructions: "Does `post` tell him about the drive's own machinery rather than his work: its builders, testers, lanes or meta lane, the card or landing tool, a landing pass, sessions old or new, the old drive, team-lead, or an internal host or tool name (such as agenthost) left unexplained, such as \"A builder is fixing it now\" or \"the landing tool hasn't cleared it\"?",
+		Yes:          "It talks about the drive's plumbing",
+		No:           "It talks only about his work",
+	}, "gap": spawnllm.Binary{
+		Instructions: "Does `post` name work that nobody is doing yet, such as \"no job carries these yet\", \"nothing picked them up\" or \"still unassigned\", without saying who now has it and when he hears?",
+		Yes:          "It announces a gap and leaves it unowned",
+		No:           "It names no gap, or says who has it and when he hears",
+	}, "miscount": spawnllm.Binary{
 		Instructions: "Does `post` give a number for a set of things (\"all six\", \"three PRs\", \"both\") and then list members of that set, where the number of members it lists differs from the number it gives?",
 		Yes:          "The count and the listed members disagree",
 		No:           "It counts nothing it lists, or the count matches the members it lists",
-	}}
+	}} {
+		questions[key] = question
+	}
 	if len(req.Options) == 0 {
 		questions["typed"] = spawnllm.Binary{
 			Instructions: "Does `post` ask him to type or reply a word or phrase to choose between options, such as \"say hotfix or wait\", \"reply merge\" or \"tell me A or B\", where a button per option would carry the choice?",
@@ -800,30 +895,72 @@ func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []str
 			No:           "It only tells him about the PRs and asks nothing of him on them",
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, voiceJevBudget)
+	budget := voiceJevBudget
+	if req.DryRun {
+		budget = voiceJevLate
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": req.Text}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: voiceJevBudget})
+	var ruled *voiceRuling
+	checked := make(chan struct{})
+	go func() {
+		defer close(checked)
+		ruled, _ = v.ruledBy(ctx, req.Text, req.Options, req.Rulings, budget)
+	}()
+	decision, err := v.decide(ctx, voiceState{Post: post, Order: slices.Sorted(maps.Keys(post))}, questions, spawnllm.DecideOpts{Timeout: budget})
+	<-checked
+	if ruled != nil {
+		return fmt.Sprintf("refused, not posted: his %s ruling already answers this question (\"%s\"), so asking it again re-asks what he decided. Act on the ruling and say what you did", ruled.At, ruled.Binds), nil, ""
+	}
 	if err != nil {
-		return "", nil
+		return "", nil, ""
 	}
 	yes := func(key string) bool {
 		answer, ok := decision.Answers[key].(spawnllm.BinaryAnswer)
 		return ok && answer.PYes >= voiceHoldAt
 	}
+	var warnings []string
+	if yes("gap") {
+		warnings = append(warnings, voiceGap)
+	}
+	for n, card := range cards {
+		if yes(fmt.Sprintf("answers_card%d", n)) {
+			warnings = append(warnings, fmt.Sprintf("warning, posted: it answers your still-open card %s for him. If he decided, his tap shows on the card; if a ruling of his decides it, retire the card with lane say --edit %s naming that ruling, and never leave a card open on a question you settled", card.Permalink, card.TS))
+		}
+	}
+	warning := strings.Join(warnings, "; ")
+	if yes("lead") {
+		return voiceBareLead, nil, warning
+	}
 	var attached []string
 	if yes("approve") {
 		var why string
 		if why, attached = voiceApproveAsk(req); why != "" {
-			return why, nil
+			return why, nil, warning
+		}
+		if len(attached) > 0 {
+			if why := v.sameCard(req, numbers); why != "" {
+				return why, nil, warning
+			}
 		}
 	}
 	switch {
 	case yes("typed") && len(attached) == 0:
-		return voiceTypedChoice, nil
+		return voiceTypedChoice, nil, warning
 	case yes("miscount"):
-		return voiceMiscount, nil
+		return voiceMiscount, nil, warning
+	case yes("correction") && req.EditTS == "":
+		return v.correction(req.Lane), nil, warning
+	case yes("plumbing"):
+		return voicePlumbing, nil, warning
+	case yes("labels"):
+		return voiceFragmentLabel, nil, warning
+	case yes("buttons"):
+		return voiceUnclearButton, nil, warning
+	case yes("overwhelming"):
+		return voiceOverwhelming, nil, warning
 	}
-	return "", attached
+	return "", attached, warning
 }
 
 func voiceApproveAsk(req voiceRequest) (string, []string) {
@@ -842,11 +979,12 @@ func voiceApproveAsk(req voiceRequest) (string, []string) {
 	if len(req.Options) > 0 {
 		return "", nil
 	}
-	if len(req.PRs) > voiceMaxApprovePRs {
-		return fmt.Sprintf("refused, not posted: it asks his Approve on %d PRs with no buttons. Post it with --options naming what each button does", len(req.PRs)), nil
+	open := slices.DeleteFunc(slices.Clone(req.PRs), func(pr voicePR) bool { return pr.Approved })
+	if len(open) > voiceMaxApprovePRs {
+		return fmt.Sprintf("refused, not posted: it asks his Approve on %d PRs with no buttons. Post it with --options naming what each button does", len(open)), nil
 	}
 	var options []string
-	for _, pr := range req.PRs {
+	for _, pr := range open {
 		options = append(options, fmt.Sprintf("Approve #%d", pr.Number), fmt.Sprintf("Hold #%d", pr.Number))
 	}
 	return "", options
@@ -867,7 +1005,7 @@ func (v *voiceSender) editPost(ctx context.Context, id identity, job voiceJob, o
 	out.After, out.Cut, out.Scores = voiceApplied(units, *landed), landed.cut, landed.scores
 	blocks := voiceSections(out.After)
 	if len(job.req.Options) > 0 {
-		blocks = voiceQuestionBlocks(out.After, job.req.Options)
+		blocks = voiceCarded(voiceQuestionBlocks(out.After, job.req.Options), job.req.Card)
 	}
 	err := updateMessage(ctx, v.app.newAPI(id.Token), job.req.ChannelID, job.req.EditTS, out.After, blocks)
 	out.PostMS, out.TS, out.Edited, out.Permalink = time.Since(postBegan).Milliseconds(), job.req.EditTS, err == nil, id.permalink(job.req.ChannelID, job.req.EditTS, job.req.ThreadTS)
@@ -892,7 +1030,7 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	posts, taps, asks := []voiceOutcome{}, map[string]string{}, map[string][]map[string]string{}
+	posts, unsent, taps, asks := []voiceOutcome{}, []voiceOutcome{}, map[string]string{}, map[string][]map[string]string{}
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
 	for scan.Scan() {
@@ -908,17 +1046,22 @@ func (v *voiceSender) servePosts(w http.ResponseWriter, r *http.Request) {
 			asks[out.TS] = append(asks[out.TS], out.About...)
 			continue
 		}
+		if out.unsent() && !out.At.Before(since) {
+			unsent = append(unsent, out)
+			continue
+		}
 		if out.DryRun || out.Permalink == "" || out.At.Before(since) || strings.HasSuffix(out.ID, "-late") {
 			continue
 		}
 		out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
+		out.Question = len(out.Options) > 0 || v.question(out.TS)
 		posts = append(posts, out)
 	}
 	for n := range posts {
 		posts[n].About = append(posts[n].About, asks[posts[n].TS]...)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"posts": posts, "taps": taps})
+	_ = json.NewEncoder(w).Encode(map[string]any{"posts": posts, "unsent": unsent, "taps": taps})
 }
 
 func permalinkTS(link string) string {
@@ -936,6 +1079,7 @@ type voiceSettle struct {
 	Line          string `json:"line"`
 	Buttons       bool   `json:"keep_buttons,omitempty"`
 	OnlyIfButtons bool   `json:"only_if_buttons,omitempty"`
+	DryRun        bool   `json:"dry_run,omitempty"`
 }
 
 // serveSettle marks a lane post with the state of what it named, such as "✅ #57894 merged 3:18 PM", in one line under it that replaces the last such line, its buttons dropped unless keep_buttons: the mechanical half of a post following its subjects.
@@ -968,6 +1112,11 @@ func (v *voiceSender) serveSettle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blocks := voiceSettled(m.Blocks.BlockSet, m.Text, s.Line, s.Buttons)
+	if s.DryRun {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"permalink": "", "verdict": "ok"})
+		return
+	}
 	if err := updateMessage(ctx, api, s.ChannelID, s.TS, m.Text, blocks); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -1159,7 +1308,7 @@ type voiceStatus struct {
 	Status    string `json:"status"`
 }
 
-// serveStatus sets the loader line under his thread, where a status update belongs rather than a whole message ("these kind of status iupdates should just be in the spinner/loader slack agent thing"); an empty status clears it. Slack draws the loader only in his DM's threads with the app.
+// serveStatus sets the working status under his thread, where a status update belongs rather than a whole message ("these kind of status iupdates should just be in the spinner/loader slack agent thing"); an empty status clears it. His DM takes the loader line with its words; a channel thread takes the agent session's processing status.
 func (v *voiceSender) serveStatus(w http.ResponseWriter, r *http.Request) {
 	var s voiceStatus
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || s.ChannelID == "" || !slackTSPattern.MatchString(s.ThreadTS) {
@@ -1177,8 +1326,17 @@ func (v *voiceSender) serveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), voicePostLimit)
 	defer cancel()
-	if failed := setWorkingLine(ctx, v.app.newAPI(id.Token), id, s.ChannelID, s.ThreadTS, s.Status, nil); failed != "" {
-		http.Error(w, "Slack drew no loader there: "+failed+"; it draws one only in his DM's threads", http.StatusUnprocessableEntity)
+	api := v.app.newAPI(id.Token)
+	if s.ChannelID == id.dm() {
+		if failed := setWorkingLine(ctx, api, id, s.ChannelID, s.ThreadTS, s.Status, nil); failed != "" {
+			http.Error(w, "Slack drew no loader: "+failed, http.StatusUnprocessableEntity)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := agentSessionStatus(ctx, api, s.ChannelID, s.ThreadTS, s.Status); err != nil {
+		http.Error(w, "Slack drew no working status: "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1215,6 +1373,9 @@ func (v *voiceSender) backfillOnce(ctx context.Context) {
 			if err != nil || !slices.ContainsFunc(m.Blocks.BlockSet, func(b slack.Block) bool { return b.BlockType() == slack.MBTAction }) {
 				continue
 			}
+			v.mu.Lock()
+			v.questions[post.TS] = true
+			v.mu.Unlock()
 		}
 		v.linkEarlier(ctx, voiceJob{req: voiceRequest{Lane: post.Lane, ChannelID: post.ChannelID, ThreadTS: post.ThreadTS}}, post.TS, post.After)
 	}
@@ -1245,4 +1406,270 @@ func keptOpener(units []voiceUnit, e voiceEdits) voiceEdits {
 	ids, _ := spokenUnits(units)
 	e.cut = slices.DeleteFunc(slices.Clone(e.cut), func(id string) bool { return len(ids) > 0 && id == ids[0] })
 	return e
+}
+
+const voiceBareLead = "refused, not posted: it opens on a bare label, such as \"Release 3 status.\". Lead with the answer or the news itself, such as \"Release 3's staging test hasn't run: …\""
+
+// openCards are the lane's questions of the last day he has not tapped, the one an edit rewrites aside, so a post that settles one for him is flagged.
+func (v *voiceSender) openCards(lane, editing string) []voiceOutcome {
+	if lane == "" {
+		return nil
+	}
+	tapped := map[string]bool{}
+	var cards []voiceOutcome
+	for _, out := range v.logged(time.Now().Add(-24 * time.Hour)) {
+		switch {
+		case strings.HasSuffix(out.ID, "-tapped"):
+			tapped[out.TS] = true
+		case !out.DryRun && out.Lane == lane && out.Permalink != "" && (len(out.Options) > 0 || v.question(cmp.Or(out.TS, permalinkTS(out.Permalink)))):
+			out.TS = cmp.Or(out.TS, permalinkTS(out.Permalink))
+			cards = append(cards, out)
+		}
+	}
+	cards = slices.DeleteFunc(cards, func(card voiceOutcome) bool { return tapped[card.TS] || card.TS == editing })
+	if len(cards) > voiceOpenCards {
+		cards = cards[len(cards)-voiceOpenCards:]
+	}
+	return cards
+}
+
+func (v *voiceSender) question(ts string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.questions[ts]
+}
+
+// logged is every row of the voice log since a moment, posts, taps and links alike.
+func (v *voiceSender) logged(since time.Time) []voiceOutcome {
+	f, err := os.Open(v.logTo)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var rows []voiceOutcome
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 0, 1<<20), 8<<20)
+	for scan.Scan() {
+		var out voiceOutcome
+		if json.Unmarshal(scan.Bytes(), &out) == nil && !out.At.Before(since) {
+			rows = append(rows, out)
+		}
+	}
+	return rows
+}
+
+const voiceCardBlock = "voice-options"
+
+// voiceCarded names the card a question belongs to in its buttons' block id, so a tap reaches the lane with the card's id while the id never shows in his post.
+func voiceCarded(blocks []slack.Block, card string) []slack.Block {
+	if card == "" {
+		return blocks
+	}
+	for _, b := range blocks {
+		if actions, ok := b.(*slack.ActionBlock); ok {
+			actions.BlockID = voiceCardBlock + ":" + card
+		}
+	}
+	return blocks
+}
+
+func voiceCardOf(blocks []slack.Block) string {
+	for _, b := range blocks {
+		if actions, ok := b.(*slack.ActionBlock); ok {
+			if card, found := strings.CutPrefix(actions.BlockID, voiceCardBlock+":"); found {
+				return card
+			}
+		}
+	}
+	return ""
+}
+
+type voiceRuling struct {
+	At    string `json:"at"`
+	Binds string `json:"binds"`
+}
+
+// ruledBy asks Jev which of his rulings, if any, already answers a question and which option it picks, so a card never re-asks what he decided ("never re-ask what he decided"). It answers the ruling and the option, or nothing.
+func (v *voiceSender) ruledBy(ctx context.Context, question string, options []string, rulings []voiceRuling, timeout time.Duration) (*voiceRuling, string) {
+	if len(rulings) == 0 || len(options) == 0 {
+		return nil, ""
+	}
+	which := []spawnllm.Option{{Value: "none", Description: "No ruling of his answers this question; it is still his to decide"}}
+	for n, r := range rulings {
+		which = append(which, spawnllm.Option{Value: fmt.Sprintf("r%d", n), Description: r.Binds})
+	}
+	picks := make([]spawnllm.Option, 0, len(options))
+	for _, option := range options {
+		picks = append(picks, spawnllm.Option{Value: option, Description: option})
+	}
+	questions := map[string]spawnllm.Question{
+		"ruling": spawnllm.Label{Instructions: "Which of his rulings, each listed as an option, already answers the question `post` asks him, so that asking it again re-asks what he decided? Pick none unless one plainly settles it.", Options: which},
+		"pick":   spawnllm.Label{Instructions: "If a ruling of his answers the question `post` asks, which of the post's choices does that ruling pick?", Options: picks},
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": question}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: timeout})
+	if err != nil {
+		return nil, ""
+	}
+	ruling, ok := decision.Answers["ruling"].(spawnllm.LabelAnswer)
+	if !ok || ruling.Choice == "none" || ruling.Probabilities[ruling.Choice] < voiceHoldAt {
+		return nil, ""
+	}
+	var n int
+	if _, err := fmt.Sscanf(ruling.Choice, "r%d", &n); err != nil || n >= len(rulings) {
+		return nil, ""
+	}
+	pick, _ := decision.Answers["pick"].(spawnllm.LabelAnswer)
+	return &rulings[n], pick.Choice
+}
+
+type voiceRuled struct {
+	ChannelID string        `json:"channel_id"`
+	TS        string        `json:"ts"`
+	ThreadTS  string        `json:"thread_ts,omitempty"`
+	Question  string        `json:"question"`
+	Options   []string      `json:"options"`
+	Rulings   []voiceRuling `json:"rulings"`
+	DryRun    bool          `json:"dry_run,omitempty"`
+}
+
+// serveRuled retires an open question one of his rulings already answers: Jev names the ruling and the option it picks, the card takes "✅ settled by your <ruling>: <pick>" with its buttons off, and the pick is logged as his answer so the posts linked to the card settle with it. The line it wrote, or none.
+func (v *voiceSender) serveRuled(w http.ResponseWriter, r *http.Request) {
+	var s voiceRuled
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, voiceBodyBytes)).Decode(&s); err != nil || !slackTSPattern.MatchString(s.TS) {
+		http.Error(w, "voice ruled needs ts, question, options and rulings", http.StatusBadRequest)
+		return
+	}
+	id, err := loadIdentity(r.Context(), v.app.poller.plane.DB())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	api := v.app.newAPI(id.Token)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*voiceJevLate)
+	defer cancel()
+	m, err := messageAt(ctx, api, s.ChannelID, cmp.Or(s.ThreadTS, s.TS), s.TS)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	options := s.Options
+	if len(options) == 0 {
+		options = voiceButtonsOf(m.Blocks.BlockSet)
+	}
+	line := ""
+	if len(options) > 0 {
+		if ruling, pick := v.ruledBy(ctx, cmp.Or(s.Question, m.Text), options, s.Rulings, voiceJevLate); ruling != nil && pick != "" {
+			line = fmt.Sprintf("✅ settled by your %s rule: %s", ruling.At, pick)
+			if s.DryRun {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"line": line, "verdict": "ok"})
+				return
+			}
+			if err := updateMessage(ctx, api, s.ChannelID, s.TS, m.Text, voiceSettled(m.Blocks.BlockSet, m.Text, line, false)); err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			if err := voiceTapped(s.ChannelID, s.TS, pick); err != nil {
+				v.log.Printf("voice ruled %s: pick not logged: %v", s.TS, err)
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"line": line, "verdict": "ok"})
+}
+
+func voiceButtonsOf(blocks []slack.Block) []string {
+	var labels []string
+	for _, b := range blocks {
+		if actions, ok := b.(*slack.ActionBlock); ok {
+			for _, e := range actions.Elements.ElementSet {
+				if button, ok := e.(*slack.ButtonBlockElement); ok && strings.HasPrefix(button.ActionID, voiceOptionAction) {
+					labels = append(labels, button.Value)
+				}
+			}
+		}
+	}
+	return labels
+}
+
+const (
+	voiceSameCardFor   = time.Hour
+	voiceOverwhelming  = "refused, not posted: it is more than he can take in on one screen (his words: \"less overwhelming on the screen\", \"I have not asked for 900 or 300 things theres a few lanes of well designed work\"). Ask about the one thing ready now, one line per stack, and say the rest when each is"
+	voiceUnclearButton = "refused, not posted: a button would not read whole or say by itself what tapping it does (his words: \"the buttons are all cut off I have no idea what they're saying\"). Write each option as a short label he reads at a glance, never a cut-off phrase"
+	voiceNestedLink    = "refused, not posted: it puts a link inside another link's label, which Slack draws as markup he can't read. Name each PR once, as #N plus at most four words of what it does"
+	voiceFragmentLabel = "refused, not posted: a PR label is a piece of its body or unreadable words. Name each PR as #N plus at most four plain words of what it does ({pr:N|the words}), then post it again"
+)
+
+var nestedLink = regexp.MustCompile(`<https?://[^<>|\s]+\|[^<>]*(?:<|\[[^\]]*\]\()|\[[^\]]*\]\(<`)
+
+func voicePRNumbers(prs []voicePR, text string) []int {
+	var numbers []int
+	for _, pr := range prs {
+		numbers = append(numbers, pr.Number)
+	}
+	for _, m := range voicePRLink.FindAllStringSubmatch(text, -1) {
+		if n, err := strconv.Atoi(m[2]); err == nil {
+			numbers = append(numbers, n)
+		}
+	}
+	for _, m := range barePRLink.FindAllStringSubmatch(text, -1) {
+		if n, err := strconv.Atoi(m[3]); err == nil {
+			numbers = append(numbers, n)
+		}
+	}
+	slices.Sort(numbers)
+	return slices.Compact(numbers)
+}
+
+func voiceLabels(text string) []string {
+	var labels []string
+	for _, m := range voicePRLink.FindAllStringSubmatch(text, -1) {
+		if label := strings.TrimSpace(m[3]); label != "" && label != "#"+m[2] {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
+// sameCard refuses a lane's second card within the hour on a PR its first card already asks about: the first card is edited, never asked again.
+func (v *voiceSender) sameCard(req voiceRequest, numbers []int) string {
+	if req.Lane == "" || len(numbers) == 0 {
+		return ""
+	}
+	for _, out := range slices.Backward(v.logged(time.Now().Add(-voiceSameCardFor))) {
+		ts := cmp.Or(out.TS, permalinkTS(out.Permalink))
+		if out.DryRun || out.Lane != req.Lane || out.Permalink == "" || len(out.Options) == 0 || ts == req.EditTS {
+			continue
+		}
+		var shared []string
+		for _, n := range voicePRNumbers(out.PRs, out.After) {
+			if _, ok := slices.BinarySearch(numbers, n); ok {
+				shared = append(shared, fmt.Sprintf("#%d", n))
+			}
+		}
+		if len(shared) > 0 {
+			return fmt.Sprintf("refused, not posted: your card %s already asks him about %s, posted %s ago. Edit that card with lane say --edit %s, never post a second one on the same PRs", out.Permalink, strings.Join(shared, ", "), time.Since(out.At).Round(time.Minute), ts)
+		}
+	}
+	return ""
+}
+
+const (
+	voiceCorrection = "refused, not posted: it corrects an earlier post as a new one. A correction rewords the post it corrects in place, with lane say --edit <its ts>, and says no sorry"
+	voicePlumbing   = "refused, not posted: it tells him about the drive's own machinery (builders, lanes, tools, passes, sessions). Say what happened to his work and when he hears next, never who in the drive is doing it"
+)
+
+func (v *voiceSender) correction(lane string) string {
+	var recent []string
+	for _, out := range slices.Backward(v.logged(time.Now().Add(-6 * time.Hour))) {
+		if out.Lane == lane && out.sent() && len(recent) < 3 {
+			recent = append(recent, fmt.Sprintf("%s (%s)", cmp.Or(out.TS, permalinkTS(out.Permalink)), out.At.Local().Format(time.Kitchen)))
+		}
+	}
+	if len(recent) == 0 {
+		return voiceCorrection
+	}
+	return voiceCorrection + ". Your latest posts: " + strings.Join(recent, ", ")
 }

@@ -360,11 +360,7 @@ func (p *poller) sweepOwnerMessage(ctx context.Context, db *sql.DB, api slackAPI
 	if !owed || age >= ownerMessageTTL {
 		return p.settleOwnerMessage(ctx, api, o, owed)
 	}
-	confirmed := o.confirmedAt != 0
 	queued := p.confirm(&o, now)
-	if !confirmed && o.confirmedAt != 0 {
-		p.working(ctx, api, o.channelID, o.ts)
-	}
 	if o.confirmedAt == 0 && age >= redeliverAfter && o.redelivered < maxRedeliveries && now.Sub(o.redeliveredAt) >= redeliverAfter {
 		if err := p.redeliver(ctx, db, api, id, watches, &o, queued, now); err != nil {
 			return err
@@ -424,7 +420,7 @@ func (p *poller) settleOwnerMessage(ctx context.Context, api slackAPI, o ownerMe
 	if owed {
 		p.log.Printf("owner message %s/%s: still unanswered after %s; no longer tracking it", o.channelID, o.ts, ownerMessageTTL)
 	} else {
-		p.working(ctx, api, o.channelID, o.ts)
+		p.handled(ctx, api, o)
 	}
 	return p.holds.settleOwnerMessage(ctx, o)
 }
@@ -568,12 +564,20 @@ WHERE e.subject_id <> ? AND e.type LIKE ? AND json_extract(e.payload, '$.ts') = 
 	return takers, rows.Err()
 }
 
-func (p *poller) working(ctx context.Context, api slackAPI, channelID, ts string) {
-	ref := slack.NewRefToMessage(channelID, ts)
-	if err := api.RemoveReactionContext(ctx, pickupReaction, ref); err != nil && errorCode(err) != "no_reaction" {
-		p.log.Printf("owner message %s/%s: take off %s: %v", channelID, ts, pickupReaction, err)
+func (p *poller) handled(ctx context.Context, api slackAPI, o ownerMessage) {
+	m, err := messageAt(ctx, api, o.channelID, cmp.Or(o.message.ThreadTimestamp, o.ts), o.ts)
+	if err != nil {
+		p.log.Printf("owner message %s/%s: read its reactions: %v", o.channelID, o.ts, err)
+		return
 	}
-	if err := api.AddReactionContext(ctx, workingReaction, ref); err != nil && errorCode(err) != "already_reacted" {
-		p.log.Printf("owner message %s/%s: show %s: %v", channelID, ts, workingReaction, err)
+	if slices.ContainsFunc(m.Reactions, func(r slack.ItemReaction) bool { return r.Name == workingReaction }) {
+		return
+	}
+	ref := slack.NewRefToMessage(o.channelID, o.ts)
+	if err := api.RemoveReactionContext(ctx, pickupReaction, ref); err != nil && errorCode(err) != "no_reaction" {
+		p.log.Printf("owner message %s/%s: take off %s: %v", o.channelID, o.ts, pickupReaction, err)
+	}
+	if err := api.AddReactionContext(ctx, doneReaction, ref); err != nil && errorCode(err) != "already_reacted" {
+		p.log.Printf("owner message %s/%s: show %s: %v", o.channelID, o.ts, doneReaction, err)
 	}
 }

@@ -20,7 +20,7 @@ import (
 func voiceCmd() *cobra.Command {
 	var req voiceRequest
 	var last int
-	var here bool
+	var here, all bool
 	c := &cobra.Command{
 		Use:   "voice [file|-]",
 		Short: "Show what the daemon's voice sender does to a post: the text as written and as it would send",
@@ -28,11 +28,13 @@ func voiceCmd() *cobra.Command {
 voice sender to format it and run it by Jev against the --rules page, without
 posting, and print the text before and after with each stage's milliseconds.
 With --last, print the before and after of the newest posts it sent, from
-voice.jsonl in the state directory, which also holds each post's timings.`,
+voice.jsonl in the state directory, which also holds each post's timings;
+--all adds the rows that were never posts: dry runs, refusals, failed sends,
+settle and tap rows.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if last > 0 {
-				outs, err := readVoiceLog(filepath.Join(appPaths().StateDir(), voiceLogName), last)
+				outs, err := readVoiceLog(filepath.Join(appPaths().StateDir(), voiceLogName), last, all)
 				if err != nil {
 					return err
 				}
@@ -65,6 +67,7 @@ voice.jsonl in the state directory, which also holds each post's timings.`,
 	c.Flags().StringVar(&req.Lane, "lane", "", "the lane posting")
 	c.Flags().BoolVar(&here, "here", false, "run the sender in this process, not the daemon, to try a rules page before it installs")
 	c.Flags().IntVar(&last, "last", 0, "print the newest N posts the sender handled")
+	c.Flags().BoolVar(&all, "all", false, "with --last, also print rows that were never posts: dry runs, refusals, failed sends, settle and tap rows")
 	return c
 }
 

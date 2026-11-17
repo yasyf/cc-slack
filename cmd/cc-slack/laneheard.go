@@ -70,7 +70,11 @@ func (p *poller) voiceAnswer(ctx context.Context, id identity, a cardActionPush)
 		return nil
 	}
 	question, _, _ := strings.Cut(strings.TrimSpace(m.Text), "\n")
-	p.laneHeard(ctx, id, a.Channel, thread, a.MessageTS, tapWords(askTap{Label: a.Value, Question: clipRunes(question, 200)}))
+	words := tapWords(askTap{Label: a.Value, Question: clipRunes(question, 200)})
+	if card := voiceCardOf(m.Blocks.BlockSet); card != "" {
+		words += " (card " + card + ")"
+	}
+	p.laneHeard(ctx, id, a.Channel, thread, a.MessageTS, words)
 	if err := voiceTapped(a.Channel, a.MessageTS, a.Value); err != nil {
 		p.log.Printf("voice option %s on %s: tap not logged: %v", a.ActionID, a.MessageTS, err)
 	}

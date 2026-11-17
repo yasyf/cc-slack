@@ -578,3 +578,34 @@ var fatalWatchCodes = map[string]bool{
 	"account_inactive":  true,
 	"token_revoked":     true,
 }
+
+// agentSessionStatus sets an agent session's status on a thread through agents.sessions.setStatus, the working status Slack draws under a channel thread as well as a DM's: processing while a status line is set, active to clear it. Slack names any refusal, such as a missing scope or an app not declared an agent.
+func agentSessionStatus(ctx context.Context, api slackAPI, channelID, threadTS, status string) error {
+	c, ok := api.(*apiClient)
+	if !ok {
+		return errors.New("agents.sessions.setStatus needs the Slack web client")
+	}
+	form := url.Values{"channel_id": {channelID}, "thread_ts": {threadTS}, "status": {cmp.Or(map[bool]string{true: "processing"}[status != ""], "active")}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"agents.sessions.setStatus", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var answer struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return fmt.Errorf("agents.sessions.setStatus: %w", err)
+	}
+	if !answer.OK {
+		return fmt.Errorf("agents.sessions.setStatus: %s", answer.Error)
+	}
+	return nil
+}
