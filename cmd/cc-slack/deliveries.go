@@ -366,7 +366,7 @@ func (p *poller) sweepOwnerMessage(ctx context.Context, db *sql.DB, api slackAPI
 			return err
 		}
 	}
-	if age >= inFlightAfter && o.reactedAt == 0 && o.confirmedAt == 0 {
+	if age >= inFlightAfter && o.reactedAt == 0 && o.confirmedAt == 0 && !id.Config.Transport.NoInFlightReaction {
 		p.markInFlight(ctx, api, &o, now)
 	}
 	return p.holds.updateOwnerMessage(ctx, o)

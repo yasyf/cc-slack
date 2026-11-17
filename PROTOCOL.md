@@ -117,7 +117,13 @@ later, skipping the message it already routed. A backend that never sends
 | `seq` | yes | The frame's sequence number |
 | `message` | no | The Slack message event whole, sent only to the connections of the user who wrote it |
 
-Fixtures: `message.json`, and `message_own.json` for a frame to the author's own connections.
+For an edit (`subtype` `message_changed`) the author is the edited message's
+`user`, and the frame adds `edited_ts`, the edited message's own timestamp. For a
+delete (`message_deleted`) the author is the deleted message's `user`, and the
+frame adds `deleted_ts`. Either goes whole to the author's own connections as
+`message`, and as coordinates to the rest and to the log.
+
+Fixtures: `message.json`, and `message_own.json` for a frame to the author's own connections; `message_changed_own.json` and `message_deleted_own.json`.
 
 #### `cc_slack_action`
 
@@ -148,6 +154,35 @@ message whose Other was tapped: the card, or a copy of it, which carries the
 card's Other unchanged and whose `message_ts` the daemon maps to its card. The
 daemon drops an empty written answer.
 Fixtures: `action.json`, `action_ask.json`, `action_wait.json`, `action_wrote.json`, `action_explain.json`.
+
+#### `cc_slack_tap`
+
+The engineer tapped a button whose `action_id` is not one of the daemon's
+(`cc-slack-card:`) nor a link button, such as a button another program posted
+through the daemon. The payload is `cc_slack_action`'s. The backend acks the
+tap, logs the frame, and pushes it to the tapper's connections. A button
+`<ns>:other:<id>` for any namespace opens the same Other modal as
+`cc-slack-card:other:<id>`, and its submission is pushed as `<ns>:wrote:<id>`;
+for a namespace other than `cc-slack-card` that frame is a `cc_slack_tap`.
+Fixtures: `tap.json`, `tap_wrote.json`.
+
+#### `cc_slack_reaction`
+
+The engineer added or removed a reaction on a message. The backend logs the
+frame and pushes it to the reacting user's connections.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `user` | yes | Who reacted |
+| `reaction` | yes | The emoji name, without colons |
+| `channel` | yes | The message's conversation |
+| `ts` | yes | The message's timestamp |
+| `item_user` | no | Who wrote the message |
+| `added` | yes | `true` for `reaction_added`, `false` for `reaction_removed` |
+| `event_ts` | yes | Slack's event timestamp |
+| `seq` | yes | The frame's sequence number |
+
+Fixture: `reaction.json`.
 
 #### `cc_slack_shortcut`
 

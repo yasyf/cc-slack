@@ -37,7 +37,7 @@ func (p *poller) laneHeard(ctx context.Context, id identity, channelID, threadTS
 			p.log.Printf("lane heard %s/%s: %v: %s", channelID, ts, err, strings.TrimSpace(string(out)))
 			return
 		}
-		if strings.HasPrefix(words, "tapped ") || !strings.Contains(string(out), " new") {
+		if id.Config.Transport.NoHeardReaction || strings.HasPrefix(words, "tapped ") || !strings.Contains(string(out), " new") {
 			return
 		}
 		if err := p.newAPI(id.Token).AddReactionContext(ctx, laneHeardReaction, slack.NewRefToMessage(channelID, ts)); err != nil && errorCode(err) != "already_reacted" {

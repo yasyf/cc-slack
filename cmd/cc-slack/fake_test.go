@@ -1046,7 +1046,7 @@ func newFixture(t *testing.T) *fixture {
 	f.slack.users["UOTHER"] = &slack.User{ID: "UOTHER", Profile: slack.UserProfile{DisplayName: "teammate"}}
 	f.cache = openTestCache(t)
 	f.cache.now = func() time.Time { return f.now }
-	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestHolds(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t))
+	f.app = newApp(func(string) slackAPI { return f.slack }, func(pid int) bool { return f.alive[pid] }, f.cache, openTestOwed(t), openTestHolds(t), openTestFeeds(t), openTestDMThreads(t), openTestReplay(t), openTestTransport(t))
 	f.app.cards.path = filepath.Join(t.TempDir(), "live-cards.db")
 	if err := f.app.cards.load(); err != nil {
 		t.Fatal(err)
@@ -1099,6 +1099,16 @@ func openTestOwed(t *testing.T) *owedReplies {
 	}
 	t.Cleanup(func() { _ = o.Close() })
 	return o
+}
+
+func openTestTransport(t *testing.T) *transport {
+	t.Helper()
+	tr, err := openTransport(context.Background(), filepath.Join(t.TempDir(), "transport.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	return tr
 }
 
 func openTestHolds(t *testing.T) *deliveryHolds {

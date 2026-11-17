@@ -26,17 +26,18 @@ const (
 )
 
 type config struct {
-	SSM         *ssmSource     `toml:"ssm" json:"-"`
-	Avatars     avatarConfig   `toml:"avatars" json:"avatars"`
-	Pictures    pictureConfig  `toml:"pictures" json:"pictures"`
-	DocCards    docCardsConfig `toml:"doc_cards" json:"doc_cards"`
-	Links       linksConfig    `toml:"links" json:"links"`
-	GitHub      *tokenSource   `toml:"github" json:"github,omitempty"`
-	Buildkite   *tokenSource   `toml:"buildkite" json:"buildkite,omitempty"`
-	PRLinks     prLinksConfig  `toml:"pr_links" json:"pr_links"`
-	Lanes       lanesConfig    `toml:"lanes" json:"lanes"`
-	OAuth       oauthConfig    `toml:"oauth" json:"oauth"`
-	Permissions permissions    `toml:"permissions" json:"-"`
+	SSM         *ssmSource      `toml:"ssm" json:"-"`
+	Avatars     avatarConfig    `toml:"avatars" json:"avatars"`
+	Pictures    pictureConfig   `toml:"pictures" json:"pictures"`
+	DocCards    docCardsConfig  `toml:"doc_cards" json:"doc_cards"`
+	Links       linksConfig     `toml:"links" json:"links"`
+	GitHub      *tokenSource    `toml:"github" json:"github,omitempty"`
+	Buildkite   *tokenSource    `toml:"buildkite" json:"buildkite,omitempty"`
+	PRLinks     prLinksConfig   `toml:"pr_links" json:"pr_links"`
+	Lanes       lanesConfig     `toml:"lanes" json:"lanes"`
+	Transport   transportConfig `toml:"transport" json:"transport"`
+	OAuth       oauthConfig     `toml:"oauth" json:"oauth"`
+	Permissions permissions     `toml:"permissions" json:"-"`
 }
 
 type oauthConfig struct {
