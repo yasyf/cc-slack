@@ -60,15 +60,16 @@ var (
 )
 
 type voiceRequest struct {
-	Lane      string   `json:"lane"`
-	Drive     string   `json:"drive,omitempty"`
-	ChannelID string   `json:"channel_id"`
-	ThreadTS  string   `json:"thread_ts,omitempty"`
-	Text      string   `json:"text"`
-	Rules     string   `json:"rules"`
-	Asked     string   `json:"asked,omitempty"`
-	Options   []string `json:"options,omitempty"`
-	DryRun    bool     `json:"dry_run,omitempty"`
+	Lane      string    `json:"lane"`
+	Drive     string    `json:"drive,omitempty"`
+	ChannelID string    `json:"channel_id"`
+	ThreadTS  string    `json:"thread_ts,omitempty"`
+	Text      string    `json:"text"`
+	Rules     string    `json:"rules"`
+	Asked     string    `json:"asked,omitempty"`
+	Options   []string  `json:"options,omitempty"`
+	PRs       []voicePR `json:"prs,omitempty"`
+	DryRun    bool      `json:"dry_run,omitempty"`
 }
 
 type voiceOutcome struct {
@@ -89,6 +90,8 @@ type voiceOutcome struct {
 	Permalink string             `json:"permalink,omitempty"`
 	Error     string             `json:"error,omitempty"`
 	DryRun    bool               `json:"dry_run,omitempty"`
+	Held      string             `json:"held,omitempty"`
+	Options   []string           `json:"options,omitempty"`
 	QueuedMS  int64              `json:"queued_ms"`
 	FormatMS  int64              `json:"format_ms"`
 	JevMS     int64              `json:"jev_ms"`
@@ -165,15 +168,21 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if why := v.held(r.Context(), req); why != "" {
+	why, attached := v.held(r.Context(), req)
+	if why != "" && !req.DryRun {
 		v.refused(req, why)
 		http.Error(w, why, http.StatusUnprocessableEntity)
 		return
 	}
+	if len(req.Options) == 0 {
+		req.Options = attached
+	}
 	job := voiceJob{req: req, id: voiceID(), received: time.Now()}
 	w.Header().Set("Content-Type", "application/json")
 	if req.DryRun {
-		_ = json.NewEncoder(w).Encode(v.run(r.Context(), job))
+		out := v.run(r.Context(), job)
+		out.Held, out.Options = why, req.Options
+		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
 	v.enqueue(job)
@@ -698,11 +707,16 @@ const voiceTypedChoice = "refused, not posted: this asks him to type a word to c
 
 const voiceMiscount = "refused, not posted: it counts a set (such as \"all six\") but lists a different number of them. List every member of a set you count, or fix the number, then post it again"
 
-// held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry, and a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count. It answers why the post is held, or "" to let it through; a Jev that cannot answer within the budget lets it through.
-func (v *voiceSender) held(ctx context.Context, req voiceRequest) string {
-	if req.DryRun {
-		return ""
-	}
+type voicePR struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	State  string `json:"state,omitempty"`
+}
+
+const voiceMaxApprovePRs = 2
+
+// held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry; a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count; and a post asking his Approve or tap on a PR, which never goes out without the buttons it asks him to press and never about a PR already merged or closed. It answers why the post is held, or "", and the Approve and Hold buttons to attach to an ask for his Approve that carries none; a Jev that cannot answer within the budget lets the post through as written.
+func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string) {
 	questions := map[string]spawnllm.Question{"miscount": spawnllm.Binary{
 		Instructions: "Does `post` give a number for a set of things (\"all six\", \"three PRs\", \"both\") and then list members of that set, where the number of members it lists differs from the number it gives?",
 		Yes:          "The count and the listed members disagree",
@@ -715,19 +729,60 @@ func (v *voiceSender) held(ctx context.Context, req voiceRequest) string {
 			No:           "It asks him nothing to pick, or asks an open question no fixed set of buttons could answer",
 		}
 	}
+	if len(req.PRs) > 0 {
+		questions["approve"] = spawnllm.Binary{
+			Instructions: "Does `post` ask him to approve, tap, merge or otherwise act on one of the PRs it links, such as \"needs your Approve\", \"on your tap\" or \"merges once you approve\"?",
+			Yes:          "It asks his Approve or tap on a PR",
+			No:           "It only tells him about the PRs and asks nothing of him on them",
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, voiceJevBudget)
 	defer cancel()
 	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": req.Text}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: voiceJevBudget})
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	if answer, ok := decision.Answers["typed"].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceHoldAt {
-		return voiceTypedChoice
+	yes := func(key string) bool {
+		answer, ok := decision.Answers[key].(spawnllm.BinaryAnswer)
+		return ok && answer.PYes >= voiceHoldAt
 	}
-	if answer, ok := decision.Answers["miscount"].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceHoldAt {
-		return voiceMiscount
+	var attached []string
+	if yes("approve") {
+		var why string
+		if why, attached = voiceApproveAsk(req); why != "" {
+			return why, nil
+		}
 	}
-	return ""
+	switch {
+	case yes("typed") && len(attached) == 0:
+		return voiceTypedChoice, nil
+	case yes("miscount"):
+		return voiceMiscount, nil
+	}
+	return "", attached
+}
+
+func voiceApproveAsk(req voiceRequest) (string, []string) {
+	var settled []string
+	for _, pr := range req.PRs {
+		if pr.State != "" && pr.State != "OPEN" {
+			settled = append(settled, fmt.Sprintf("#%d is %s", pr.Number, strings.ToLower(pr.State)))
+		}
+	}
+	if len(settled) > 0 {
+		return "refused, not posted: it asks his Approve or tap on a PR that is no longer open (" + strings.Join(settled, ", ") + "). Say what happened to it instead", nil
+	}
+	if len(req.Options) > 0 {
+		return "", nil
+	}
+	if len(req.PRs) > voiceMaxApprovePRs {
+		return fmt.Sprintf("refused, not posted: it asks his Approve on %d PRs with no buttons. Post it with --options naming what each button does", len(req.PRs)), nil
+	}
+	var options []string
+	for _, pr := range req.PRs {
+		options = append(options, fmt.Sprintf("Approve #%d", pr.Number), fmt.Sprintf("Hold #%d", pr.Number))
+	}
+	return "", options
 }
 
 // refused logs a post /voice turned away before it queued, with its lane and why, so a lane refused again and again shows in voice.jsonl.

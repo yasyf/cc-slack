@@ -176,8 +176,21 @@ func TestVoiceHoldsATypedChoiceOrAMiscountAndLetsItThroughWhenJevCannotAnswer(t 
 		{stubDecide{err: errors.New("timeout")}, nil, ""},
 	} {
 		v := &voiceSender{decide: tt.stub.decide}
-		if got := v.held(context.Background(), voiceRequest{Text: "All six are green: #1, #2.", Options: tt.options}); got != tt.want {
+		if got, _ := v.held(context.Background(), voiceRequest{Text: "All six are green: #1, #2.", Options: tt.options}); got != tt.want {
 			t.Errorf("held with %+v = %q, want %q", tt.stub, got, tt.want)
 		}
+	}
+}
+
+func TestVoiceAnAskForHisApproveGetsItsButtonsAndNeverNamesASettledPR(t *testing.T) {
+	asks := stubDecide{answers: map[string]spawnllm.Answer{"approve": spawnllm.BinaryAnswer{PYes: 0.95}, "typed": spawnllm.BinaryAnswer{PYes: 0.9}}}
+	v := &voiceSender{decide: asks.decide}
+	why, options := v.held(context.Background(), voiceRequest{Text: "#57894 is green and needs your Approve to merge.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
+	if why != "" || strings.Join(options, "|") != "Approve #57894|Hold #57894" {
+		t.Fatalf("held = %q, %q; want the Approve and Hold buttons attached", why, options)
+	}
+	why, options = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "MERGED"}}})
+	if !strings.Contains(why, "#57894 is merged") || options != nil {
+		t.Fatalf("held = %q, %q; want a refusal naming the merged PR", why, options)
 	}
 }
