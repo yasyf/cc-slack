@@ -34,6 +34,8 @@ const (
 	slackCode        = "```.*?```|`[^`\n]+`"
 )
 
+var fencedTableLangs = []string{"", "text", "txt", "console", "output"}
+
 var (
 	mdBold          = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 	mdLink          = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\s]+)\)`)
@@ -134,7 +136,8 @@ func bodyPieces(body string) []bodyPiece {
 }
 
 func fencedPieces(open string, lines []string, closing string) []bodyPiece {
-	if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(open), "```")) == "chart" {
+	lang := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(open), "```"))
+	if lang == "chart" {
 		source := strings.Join(lines, "\n")
 		chart, err := chartBlock(source)
 		return []bodyPiece{{text: open + "\n" + strings.Trim(source, "\n") + "\n" + closing, chart: chart, chartErr: err}}
@@ -144,6 +147,10 @@ func fencedPieces(open string, lines []string, closing string) []bodyPiece {
 		if kept := strings.Trim(strings.Join(lines, "\n"), "\n"); strings.TrimSpace(kept) != "" {
 			pieces = append(pieces, bodyPiece{text: open + "\n" + slackEscaped(kept) + "\n" + closing})
 		}
+	}
+	if !slices.Contains(fencedTableLangs, lang) {
+		code(lines)
+		return pieces
 	}
 	from := 0
 	for at := 0; at < len(lines); {

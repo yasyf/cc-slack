@@ -1410,3 +1410,11 @@ func TestAPRsPicturesEachDrawFullWidthAndTheCardsOtherPicturesAsAGallery(t *test
 		t.Fatalf("gallery shows %v, want the card's own F3 and F4", gallery)
 	}
 }
+
+func TestAGoFenceWithAlignedStructFieldsStaysOneCodeBlock(t *testing.T) {
+	body := "```go\ns.postAsPipeline(path, struct {\n\tEmail       string   `json:\"email\"`\n\tRole        string   `json:\"role\"`\n\tPermissions []string `json:\"permissions,omitempty\"`\n}{in.Email, in.Role, in.Permissions}, &reply)\n```"
+	pieces := bodyPieces(body)
+	if len(pieces) != 1 || pieces[0].table != nil || !strings.Contains(pieces[0].text, "Permissions []string") {
+		t.Fatalf("pieces = %+v, want the go fence as one code block", pieces)
+	}
+}

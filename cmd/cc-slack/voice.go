@@ -354,7 +354,7 @@ func (v *voiceSender) run(ctx context.Context, job voiceJob) (out voiceOutcome) 
 		return v.editPost(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
 	}
 	if len(job.req.Options) > 0 {
-		return v.postQuestion(postCtx, id, job, out, units, landed, edits, jevBegan, postBegan, key)
+		return v.postQuestion(postCtx, id, job, out, units, postBegan, key)
 	}
 	if prior, ok := v.rewrite(job, out.After); ok {
 		return v.editRepeat(postCtx, id, job, out, prior, postBegan, key)
@@ -780,16 +780,9 @@ func voiceOptionsCheck(options []string) error {
 	return nil
 }
 
-// postQuestion posts a lane's question with a button per option, waiting on Jev's edits rather than editing late, since a late text edit would drop the buttons, and never cutting its first line, the question a tap names and a card's tap is matched by.
-func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJob, out voiceOutcome, units []voiceUnit, landed *voiceEdits, edits chan voiceEdits, jevBegan, postBegan time.Time, key string) voiceOutcome {
-	if landed == nil {
-		e := <-edits
-		landed = &e
-		out.Scores, out.Repeat, out.Jev = e.scores, e.repeat, "late: "+cmp.Or(e.note, "answered")
-		out.JevMS = time.Since(jevBegan).Milliseconds()
-	}
-	kept := keptOpener(units, *landed)
-	out.After, out.Cut = voiceApplied(units, kept), kept.cut
+// postQuestion posts a lane's question with a button per option whole, with no cut and no wait on Jev's edits: each line of a question is what its buttons answer, so a cut line leaves a button acting on what he cannot read (defect 0c2b: a card went out with 11 of its 24 stack lines under "Approve all 30").
+func (v *voiceSender) postQuestion(ctx context.Context, id identity, job voiceJob, out voiceOutcome, units []voiceUnit, postBegan time.Time, key string) voiceOutcome {
+	out.After = voiceApplied(units, voiceEdits{})
 	res, err := v.app.send(ctx, v.app.poller.plane.DB(), id, job.req.ChannelID, job.req.ThreadTS, out.After, voiceCarded(voiceQuestionBlocks(out.After, job.req.Options), job.req.Card), job.req.Files)
 	out.PostMS = time.Since(postBegan).Milliseconds()
 	if err != nil {
