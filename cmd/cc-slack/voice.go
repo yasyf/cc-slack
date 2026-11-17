@@ -907,11 +907,12 @@ func permalinkTS(link string) string {
 }
 
 type voiceSettle struct {
-	ChannelID string `json:"channel_id"`
-	TS        string `json:"ts"`
-	ThreadTS  string `json:"thread_ts,omitempty"`
-	Line      string `json:"line"`
-	Buttons   bool   `json:"keep_buttons,omitempty"`
+	ChannelID     string `json:"channel_id"`
+	TS            string `json:"ts"`
+	ThreadTS      string `json:"thread_ts,omitempty"`
+	Line          string `json:"line"`
+	Buttons       bool   `json:"keep_buttons,omitempty"`
+	OnlyIfButtons bool   `json:"only_if_buttons,omitempty"`
 }
 
 // serveSettle marks a lane post with the state of what it named, such as "✅ #57894 merged 3:18 PM", in one line under it that replaces the last such line, its buttons dropped unless keep_buttons: the mechanical half of a post following its subjects.
@@ -936,6 +937,11 @@ func (v *voiceSender) serveSettle(w http.ResponseWriter, r *http.Request) {
 	m, err := messageAt(ctx, api, s.ChannelID, cmp.Or(s.ThreadTS, s.TS), s.TS)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if s.OnlyIfButtons && !slices.ContainsFunc(m.Blocks.BlockSet, func(b slack.Block) bool { return b.BlockType() == slack.MBTAction }) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"permalink": ""})
 		return
 	}
 	blocks := voiceSettled(m.Blocks.BlockSet, m.Text, s.Line, s.Buttons)
