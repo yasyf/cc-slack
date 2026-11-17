@@ -26,25 +26,25 @@ import (
 )
 
 const (
-	voicePath          = "/voice"
-	voiceJevBudget     = 600 * time.Millisecond
-	voiceJevLate       = 5 * time.Second
-	voicePostLimit     = 10 * time.Second
-	voiceCutAt         = 0.65
-	voiceOpenerCutAt   = 0.9
-	voiceRepeatAt      = 0.8
-	voiceRepeatFor     = 10 * time.Minute
-	voiceMaxUnits      = 16
-	voiceLabelWord     = 10
-	voiceOwnWords      = 10
-	voiceBodyBytes     = 64 << 10
-	voiceIdle          = time.Minute
-	voiceLogName       = "voice.jsonl"
-	voiceMaxOptions    = 5
-	voiceOptionRunes   = 75
-	voiceSectionRunes  = 3000
-	voiceOptionAction  = cardActionPrefix + ":voice:"
-	voiceTypedChoiceAt = 0.7
+	voicePath         = "/voice"
+	voiceJevBudget    = 600 * time.Millisecond
+	voiceJevLate      = 5 * time.Second
+	voicePostLimit    = 10 * time.Second
+	voiceCutAt        = 0.65
+	voiceOpenerCutAt  = 0.9
+	voiceRepeatAt     = 0.8
+	voiceRepeatFor    = 10 * time.Minute
+	voiceMaxUnits     = 16
+	voiceLabelWord    = 10
+	voiceOwnWords     = 10
+	voiceBodyBytes    = 64 << 10
+	voiceIdle         = time.Minute
+	voiceLogName      = "voice.jsonl"
+	voiceMaxOptions   = 5
+	voiceOptionRunes  = 75
+	voiceSectionRunes = 3000
+	voiceOptionAction = cardActionPrefix + ":voice:"
+	voiceHoldAt       = 0.7
 )
 
 var (
@@ -165,9 +165,9 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(req.Options) == 0 && !req.DryRun && v.typedChoice(r.Context(), req.Text) {
-		v.refused(req, voiceTypedChoice)
-		http.Error(w, voiceTypedChoice, http.StatusUnprocessableEntity)
+	if why := v.held(r.Context(), req); why != "" {
+		v.refused(req, why)
+		http.Error(w, why, http.StatusUnprocessableEntity)
 		return
 	}
 	job := voiceJob{req: req, id: voiceID(), received: time.Now()}
@@ -696,21 +696,38 @@ func voiceAnswered(blocks []slack.Block, label string, at time.Time) []slack.Blo
 
 const voiceTypedChoice = "refused, not posted: this asks him to type a word to choose, and a question to him is always buttons. Post it again with each choice as an option (lane say \"<question>\" --options \"<recommended>\" --options \"<other>\")"
 
-// typedChoice is Jev's read of whether a post asks him to type a word a button could carry, such as "say hotfix or wait"; a Jev that cannot answer within the budget lets the post through.
-func (v *voiceSender) typedChoice(ctx context.Context, text string) bool {
+const voiceMiscount = "refused, not posted: it counts a set (such as \"all six\") but lists a different number of them. List every member of a set you count, or fix the number, then post it again"
+
+// held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry, and a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count. It answers why the post is held, or "" to let it through; a Jev that cannot answer within the budget lets it through.
+func (v *voiceSender) held(ctx context.Context, req voiceRequest) string {
+	if req.DryRun {
+		return ""
+	}
+	questions := map[string]spawnllm.Question{"miscount": spawnllm.Binary{
+		Instructions: "Does `post` give a number for a set of things (\"all six\", \"three PRs\", \"both\") and then list members of that set, where the number of members it lists differs from the number it gives?",
+		Yes:          "The count and the listed members disagree",
+		No:           "It counts nothing it lists, or the count matches the members it lists",
+	}}
+	if len(req.Options) == 0 {
+		questions["typed"] = spawnllm.Binary{
+			Instructions: "Does `post` ask him to type or reply a word or phrase to choose between options, such as \"say hotfix or wait\", \"reply merge\" or \"tell me A or B\", where a button per option would carry the choice?",
+			Yes:          "It asks him to type his pick",
+			No:           "It asks him nothing to pick, or asks an open question no fixed set of buttons could answer",
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, voiceJevBudget)
 	defer cancel()
-	questions := map[string]spawnllm.Question{"typed": spawnllm.Binary{
-		Instructions: "Does `post` ask him to type or reply a word or phrase to choose between options, such as \"say hotfix or wait\", \"reply merge\" or \"tell me A or B\", where a button per option would carry the choice?",
-		Yes:          "It asks him to type his pick",
-		No:           "It asks him nothing to pick, or asks an open question no fixed set of buttons could answer",
-	}}
-	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": text}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: voiceJevBudget})
+	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": req.Text}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: voiceJevBudget})
 	if err != nil {
-		return false
+		return ""
 	}
-	answer, ok := decision.Answers["typed"].(spawnllm.BinaryAnswer)
-	return ok && answer.PYes >= voiceTypedChoiceAt
+	if answer, ok := decision.Answers["typed"].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceHoldAt {
+		return voiceTypedChoice
+	}
+	if answer, ok := decision.Answers["miscount"].(spawnllm.BinaryAnswer); ok && answer.PYes >= voiceHoldAt {
+		return voiceMiscount
+	}
+	return ""
 }
 
 // refused logs a post /voice turned away before it queued, with its lane and why, so a lane refused again and again shows in voice.jsonl.

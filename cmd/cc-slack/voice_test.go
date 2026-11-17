@@ -164,18 +164,20 @@ func TestVoiceOptionsAreOneToFiveShortLabels(t *testing.T) {
 	}
 }
 
-func TestVoiceRefusesATypedChoiceAndLetsItThroughWhenJevCannotAnswer(t *testing.T) {
+func TestVoiceHoldsATypedChoiceOrAMiscountAndLetsItThroughWhenJevCannotAnswer(t *testing.T) {
 	for _, tt := range []struct {
-		stub stubDecide
-		want bool
+		stub    stubDecide
+		options []string
+		want    string
 	}{
-		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.95}}}, true},
-		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.2}}}, false},
-		{stubDecide{err: errors.New("timeout")}, false},
+		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.95}}}, nil, voiceTypedChoice},
+		{stubDecide{answers: map[string]spawnllm.Answer{"miscount": spawnllm.BinaryAnswer{PYes: 0.9}}}, []string{"Merge", "Hold"}, voiceMiscount},
+		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.2}, "miscount": spawnllm.BinaryAnswer{PYes: 0.1}}}, nil, ""},
+		{stubDecide{err: errors.New("timeout")}, nil, ""},
 	} {
 		v := &voiceSender{decide: tt.stub.decide}
-		if got := v.typedChoice(context.Background(), "Say hotfix or wait."); got != tt.want {
-			t.Errorf("typedChoice with %+v = %v, want %v", tt.stub, got, tt.want)
+		if got := v.held(context.Background(), voiceRequest{Text: "All six are green: #1, #2.", Options: tt.options}); got != tt.want {
+			t.Errorf("held with %+v = %q, want %q", tt.stub, got, tt.want)
 		}
 	}
 }
