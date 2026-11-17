@@ -163,3 +163,19 @@ func TestVoiceOptionsAreOneToFiveShortLabels(t *testing.T) {
 		t.Errorf("voiceOptionsCheck = %v", err)
 	}
 }
+
+func TestVoiceRefusesATypedChoiceAndLetsItThroughWhenJevCannotAnswer(t *testing.T) {
+	for _, tt := range []struct {
+		stub stubDecide
+		want bool
+	}{
+		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.95}}}, true},
+		{stubDecide{answers: map[string]spawnllm.Answer{"typed": spawnllm.BinaryAnswer{PYes: 0.2}}}, false},
+		{stubDecide{err: errors.New("timeout")}, false},
+	} {
+		v := &voiceSender{decide: tt.stub.decide}
+		if got := v.typedChoice(context.Background(), "Say hotfix or wait."); got != tt.want {
+			t.Errorf("typedChoice with %+v = %v, want %v", tt.stub, got, tt.want)
+		}
+	}
+}

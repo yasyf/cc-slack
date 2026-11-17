@@ -26,24 +26,25 @@ import (
 )
 
 const (
-	voicePath         = "/voice"
-	voiceJevBudget    = 600 * time.Millisecond
-	voiceJevLate      = 5 * time.Second
-	voicePostLimit    = 10 * time.Second
-	voiceCutAt        = 0.65
-	voiceOpenerCutAt  = 0.9
-	voiceRepeatAt     = 0.8
-	voiceRepeatFor    = 10 * time.Minute
-	voiceMaxUnits     = 16
-	voiceLabelWord    = 10
-	voiceOwnWords     = 10
-	voiceBodyBytes    = 64 << 10
-	voiceIdle         = time.Minute
-	voiceLogName      = "voice.jsonl"
-	voiceMaxOptions   = 5
-	voiceOptionRunes  = 75
-	voiceSectionRunes = 3000
-	voiceOptionAction = cardActionPrefix + ":voice:"
+	voicePath          = "/voice"
+	voiceJevBudget     = 600 * time.Millisecond
+	voiceJevLate       = 5 * time.Second
+	voicePostLimit     = 10 * time.Second
+	voiceCutAt         = 0.65
+	voiceOpenerCutAt   = 0.9
+	voiceRepeatAt      = 0.8
+	voiceRepeatFor     = 10 * time.Minute
+	voiceMaxUnits      = 16
+	voiceLabelWord     = 10
+	voiceOwnWords      = 10
+	voiceBodyBytes     = 64 << 10
+	voiceIdle          = time.Minute
+	voiceLogName       = "voice.jsonl"
+	voiceMaxOptions    = 5
+	voiceOptionRunes   = 75
+	voiceSectionRunes  = 3000
+	voiceOptionAction  = cardActionPrefix + ":voice:"
+	voiceTypedChoiceAt = 0.7
 )
 
 var (
@@ -161,6 +162,10 @@ func (v *voiceSender) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := voiceOptionsCheck(req.Options); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.Options) == 0 && !req.DryRun && v.typedChoice(r.Context(), req.Text) {
+		http.Error(w, voiceTypedChoice, http.StatusUnprocessableEntity)
 		return
 	}
 	job := voiceJob{req: req, id: voiceID(), received: time.Now()}
@@ -685,4 +690,23 @@ func voiceSections(text string) []slack.Block {
 func voiceAnswered(blocks []slack.Block, label string, at time.Time) []slack.Block {
 	kept := slices.DeleteFunc(slices.Clone(blocks), func(b slack.Block) bool { return b.BlockType() == slack.MBTAction })
 	return append(kept, slack.NewContextBlock("voice-answered", slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("✅ *%s* · %s", mrkdwnEscapes.Replace(label), at.In(pacific).Format("3:04 PM")), false, false)))
+}
+
+const voiceTypedChoice = "refused, not posted: this asks him to type a word to choose, and a question to him is always buttons. Post it again with each choice as an option (lane say \"<question>\" --options \"<recommended>\" --options \"<other>\")"
+
+// typedChoice is Jev's read of whether a post asks him to type a word a button could carry, such as "say hotfix or wait"; a Jev that cannot answer within the budget lets the post through.
+func (v *voiceSender) typedChoice(ctx context.Context, text string) bool {
+	ctx, cancel := context.WithTimeout(ctx, voiceJevBudget)
+	defer cancel()
+	questions := map[string]spawnllm.Question{"typed": spawnllm.Binary{
+		Instructions: "Does `post` ask him to type or reply a word or phrase to choose between options, such as \"say hotfix or wait\", \"reply merge\" or \"tell me A or B\", where a button per option would carry the choice?",
+		Yes:          "It asks him to type his pick",
+		No:           "It asks him nothing to pick, or asks an open question no fixed set of buttons could answer",
+	}}
+	decision, err := v.decide(ctx, voiceState{Post: map[string]string{"post": text}, Order: []string{"post"}}, questions, spawnllm.DecideOpts{Timeout: voiceJevBudget})
+	if err != nil {
+		return false
+	}
+	answer, ok := decision.Answers["typed"].(spawnllm.BinaryAnswer)
+	return ok && answer.PYes >= voiceTypedChoiceAt
 }
