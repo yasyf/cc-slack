@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,7 @@ type transportEvent struct {
 	Channel  string `json:"channel"`
 	TS       string `json:"ts"`
 	ThreadTS string `json:"thread_ts,omitempty"`
+	Link     string `json:"link"`
 	Text     string `json:"text,omitempty"`
 	Previous string `json:"previous,omitempty"`
 	Reaction string `json:"reaction,omitempty"`
@@ -228,23 +230,28 @@ func (t *transport) pushed(ctx context.Context, id identity, push socketPush) (s
 		if err := json.Unmarshal(push.EventPayload, &r); err != nil {
 			return "", err
 		}
-		return r.Seq, t.keep(ctx, id, reactionEvent(r))
+		return r.Seq, t.keep(ctx, id, reactionEvent(id, r))
 	}
 	var a cardActionPush
 	if err := json.Unmarshal(push.EventPayload, &a); err != nil {
 		return "", err
 	}
-	return a.Seq, t.keep(ctx, id, tapEvent(a))
+	return a.Seq, t.keep(ctx, id, tapEvent(id, a))
 }
 
-func heardEvent(channelID, threadTS string, m slack.Message) transportEvent {
+func (e transportEvent) linked(id identity) transportEvent {
+	e.Link = id.permalink(e.Channel, e.TS, e.ThreadTS)
+	return e
+}
+
+func heardEvent(id identity, channelID, threadTS string, m slack.Message) transportEvent {
 	return transportEvent{
 		ID: "message:" + channelID + "/" + m.Timestamp, Kind: "message", User: m.User,
 		Channel: channelID, TS: m.Timestamp, ThreadTS: threadOf(threadTS, m.Timestamp), Text: m.Text,
-	}
+	}.linked(id)
 }
 
-func nudgeEvent(n messageNudge) (transportEvent, bool) {
+func nudgeEvent(id identity, n messageNudge) (transportEvent, bool) {
 	if n.Message == nil {
 		return transportEvent{}, false
 	}
@@ -261,7 +268,7 @@ func nudgeEvent(n messageNudge) (transportEvent, bool) {
 		if was != nil {
 			e.Previous = was.Text
 		}
-		return e, true
+		return e.linked(id), true
 	case deletedSubtype:
 		was := n.Message.PreviousMessage
 		if was == nil {
@@ -271,25 +278,25 @@ func nudgeEvent(n messageNudge) (transportEvent, bool) {
 		return transportEvent{
 			ID: "delete:" + n.Channel + "/" + ts, Kind: "delete", User: was.User,
 			Channel: n.Channel, TS: ts, ThreadTS: threadOf(was.ThreadTimestamp, ts), Previous: was.Text,
-		}, true
+		}.linked(id), true
 	}
 	return transportEvent{}, false
 }
 
-func reactionEvent(r reactionPush) transportEvent {
+func reactionEvent(id identity, r reactionPush) transportEvent {
 	sign := map[bool]string{true: "+", false: "-"}[r.Added]
 	return transportEvent{
 		ID: "reaction:" + r.Channel + "/" + r.TS + "/" + r.Reaction + "/" + sign + "/" + r.EventTS, Kind: "reaction",
 		User: r.User, Channel: r.Channel, TS: r.TS, Reaction: r.Reaction, Added: r.Added,
-	}
+	}.linked(id)
 }
 
-func tapEvent(a cardActionPush) transportEvent {
+func tapEvent(id identity, a cardActionPush) transportEvent {
 	return transportEvent{
 		ID: "tap:" + a.Channel + "/" + a.ActionTS + "/" + a.ActionID, Kind: "tap", User: a.User,
 		Channel: a.Channel, TS: a.MessageTS, ThreadTS: threadOf(a.ThreadTS, a.MessageTS),
 		ActionID: a.ActionID, Value: a.Value, ActionTS: a.ActionTS,
-	}
+	}.linked(id)
 }
 
 func threadOf(threadTS, ts string) string {
@@ -301,6 +308,7 @@ func threadOf(threadTS, ts string) string {
 
 type transportRequest struct {
 	Op       string            `json:"op"`
+	URL      string            `json:"url"`
 	Channel  string            `json:"channel"`
 	ThreadTS string            `json:"thread_ts"`
 	TS       string            `json:"ts"`
@@ -396,6 +404,13 @@ func (a *app) transportConn(ctx context.Context, conn net.Conn) {
 }
 
 func (a *app) transportOp(ctx context.Context, id identity, req transportRequest) (transportReply, error) {
+	if req.URL != "" {
+		ref, err := parsePermalink(req.URL)
+		if err != nil {
+			return transportReply{}, err
+		}
+		req.Channel, req.TS, req.ThreadTS = ref.channelID, cmp.Or(req.TS, ref.ts), cmp.Or(req.ThreadTS, ref.threadTS)
+	}
 	api := a.newAPI(id.Token)
 	channelID, err := conversationID(ctx, api, id, req.Channel)
 	if err != nil {
@@ -412,7 +427,7 @@ func (a *app) transportOp(ctx context.Context, id identity, req transportRequest
 		if req.TS == "" {
 			return transportReply{}, errors.New("edit needs ts")
 		}
-		text, blocks, err := transportMessage(req)
+		text, blocks, err := transportMessage(ctx, id, req)
 		if err != nil {
 			return transportReply{}, err
 		}
@@ -420,16 +435,25 @@ func (a *app) transportOp(ctx context.Context, id identity, req transportRequest
 			return target, err
 		}
 		return target, changeMessage(ctx, api, channelID, req.TS, text, blocks, slack.MsgOptionDisableLinkUnfurl())
+	case "delete":
+		if req.TS == "" {
+			return transportReply{}, errors.New("delete needs ts")
+		}
+		if req.DryRun {
+			return target, nil
+		}
+		_, _, err := api.DeleteMessageContext(ctx, channelID, req.TS)
+		return target, err
 	case "status":
 		return target, transportStatus(ctx, api, id, channelID, req)
 	case "react":
 		return target, transportReact(ctx, api, channelID, req)
 	}
-	return transportReply{}, fmt.Errorf("transport has no op %q: subscribe, send, reply, edit, status or react", req.Op)
+	return transportReply{}, fmt.Errorf("transport has no op %q: subscribe, send, reply, edit, delete, status or react", req.Op)
 }
 
 func (a *app) transportPost(ctx context.Context, api slackAPI, id identity, channelID string, req transportRequest, target transportReply) (transportReply, error) {
-	text, blocks, err := transportMessage(req)
+	text, blocks, err := transportMessage(ctx, id, req)
 	if err != nil {
 		return transportReply{}, err
 	}
@@ -506,16 +530,46 @@ func transportReact(ctx context.Context, api slackAPI, channelID string, req tra
 	return nil
 }
 
-func transportMessage(req transportRequest) (string, []slack.Block, error) {
+func transportMessage(ctx context.Context, id identity, req transportRequest) (string, []slack.Block, error) {
 	if strings.TrimSpace(req.Text) == "" {
 		return "", nil, errors.New("text is required: Slack shows it in notifications and wherever blocks cannot render")
 	}
-	blocks, err := parseBlocks(req.Blocks)
+	raw := req.Blocks
+	if !req.DryRun {
+		var err error
+		if raw, err = uploadedPictures(ctx, id, raw); err != nil {
+			return "", nil, err
+		}
+	}
+	blocks, err := parseBlocks(raw)
 	if err != nil {
 		return "", nil, err
 	}
 	text, blocks := fitText(req.Text, fitHeaders(blocks))
 	return text, blocks, checkBlocks(blocks)
+}
+
+func uploadedPictures(ctx context.Context, id identity, raw []json.RawMessage) ([]json.RawMessage, error) {
+	out := slices.Clone(raw)
+	for i, block := range raw {
+		var image map[string]any
+		if err := json.Unmarshal(block, &image); err != nil {
+			return nil, err
+		}
+		path, _ := image["image_url"].(string)
+		if image["type"] != "image" || !filepath.IsAbs(path) {
+			continue
+		}
+		uploaded, err := uploadPictures(ctx, id, []string{path})
+		if err != nil {
+			return nil, err
+		}
+		image["image_url"] = id.Config.Pictures.link(uploaded[0].Key)
+		if out[i], err = json.Marshal(image); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func transportShown(target transportReply, text string, blocks []slack.Block) (transportReply, error) {

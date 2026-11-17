@@ -152,7 +152,7 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 			if err := json.Unmarshal(push.EventPayload, &n); err != nil {
 				return fmt.Errorf("decode nudge %q: %w", clip(string(frame)), err)
 			}
-			if e, ok := nudgeEvent(n); ok {
+			if e, ok := nudgeEvent(id, n); ok {
 				if err := p.transport.keep(ctx, id, e); err != nil {
 					return err
 				}
@@ -180,7 +180,7 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 			if err := json.Unmarshal(push.EventPayload, &action); err != nil {
 				return fmt.Errorf("decode card action %q: %w", clip(string(frame)), err)
 			}
-			if err := p.transport.keep(ctx, id, tapEvent(action)); err != nil {
+			if err := p.transport.keep(ctx, id, tapEvent(id, action)); err != nil {
 				return err
 			}
 			card := action.Channel + "/" + action.MessageTS

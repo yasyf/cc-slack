@@ -777,7 +777,7 @@ func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity
 		}
 	}
 	if id.fromOperator(m) && routedSubtypes[m.SubType] {
-		if err := p.transport.keep(ctx, id, heardEvent(g.key.channelID, g.key.threadTS, m)); err != nil {
+		if err := p.transport.keep(ctx, id, heardEvent(id, g.key.channelID, g.key.threadTS, m)); err != nil {
 			return err
 		}
 		p.laneHeard(ctx, id, g.key.channelID, g.key.threadTS, m.Timestamp, m.Text)

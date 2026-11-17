@@ -117,6 +117,7 @@ func TestTransportHandsEveryTapEditDeleteAndReactionOfHisToTheSubscriberUntilAck
 	for i, w := range want {
 		var got transportEvent
 		first.read(t, &got)
+		w.Link = f.id.permalink(w.Channel, w.TS, w.ThreadTS)
 		if got != w {
 			t.Fatalf("event %d = %+v, want %+v", i, got, w)
 		}
@@ -147,7 +148,7 @@ func TestTransportHandsEveryTapEditDeleteAndReactionOfHisToTheSubscriberUntilAck
 func TestTransportKeepsNothingFromAnotherUserOrWithTheSubscriberSwitchOff(t *testing.T) {
 	t.Parallel()
 	on := transportFixture(t, true)
-	if err := on.app.transport.keep(on.ctx, on.id, reactionEvent(reactionPush{User: "UOTHER", Reaction: "eyes", Channel: "C1", TS: "1.0", Added: true})); err != nil {
+	if err := on.app.transport.keep(on.ctx, on.id, reactionEvent(on.id, reactionPush{User: "UOTHER", Reaction: "eyes", Channel: "C1", TS: "1.0", Added: true})); err != nil {
 		t.Fatal(err)
 	}
 	off := transportFixture(t, false)
@@ -211,7 +212,7 @@ func nudgedEvent(t *testing.T, name string) transportEvent {
 	if err := json.Unmarshal(push.EventPayload, &n); err != nil {
 		t.Fatal(err)
 	}
-	e, ok := nudgeEvent(n)
+	e, ok := nudgeEvent(identity{TeamURL: "https://acme.slack.com/"}, n)
 	if !ok {
 		t.Fatalf("%s made no event", name)
 	}
@@ -221,16 +222,17 @@ func nudgedEvent(t *testing.T, name string) transportEvent {
 func TestTransportEventsEncodeAsTheSubscriberReadsThem(t *testing.T) {
 	t.Parallel()
 	const user, dm, channel = "U0123ABCDE", "D0123ABCDE", "C0123ABCDE"
+	id := identity{TeamURL: "https://acme.slack.com/"}
 	events := []transportEvent{
-		heardEvent(dm, "1800000000.000100", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000000.000200", Text: "ship it"}}),
-		heardEvent(dm, "", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000001.000100", SubType: "file_share"}}),
-		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000100", ActionID: "ccu:answer:dec-7:1", Value: "Merge", ActionTS: "1800000002.123456"}),
-		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000300", ActionID: "ccu:undo:dec-7", ActionTS: "1800000002.200000"}),
-		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ActionID: "ccu:wrote:dec-7", Value: `{"id":"dec-7","label":"Merge after the freeze"}`, ActionTS: "1800000002.300000"}),
+		heardEvent(id, dm, "1800000000.000100", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000000.000200", Text: "ship it"}}),
+		heardEvent(id, dm, "", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000001.000100", SubType: "file_share"}}),
+		tapEvent(id, cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000100", ActionID: "ccu:dec-7:1", Value: "Merge", ActionTS: "1800000002.123456"}),
+		tapEvent(id, cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000300", ActionID: "ccu:dec-7:undo", ActionTS: "1800000002.200000"}),
+		tapEvent(id, cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ActionID: "ccu:wrote:dec-7", Value: `{"id":"dec-7","label":"Merge after the freeze"}`, ActionTS: "1800000002.300000"}),
 		nudgedEvent(t, "message_changed_own.json"),
 		nudgedEvent(t, "message_deleted_own.json"),
-		reactionEvent(reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", Added: true, EventTS: "1800000003.000100"}),
-		reactionEvent(reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", EventTS: "1800000003.000200"}),
+		reactionEvent(id, reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", Added: true, EventTS: "1800000003.000100"}),
+		reactionEvent(id, reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", EventTS: "1800000003.000200"}),
 	}
 	want, err := os.ReadFile(filepath.Join("testdata", "transport", "events.ndjson"))
 	if err != nil {
@@ -246,5 +248,27 @@ func TestTransportEventsEncodeAsTheSubscriberReadsThem(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("the subscriber's fixture is\n%s\nthe daemon writes\n%s", want, got)
+	}
+}
+
+func TestTransportAddressesAMessageByItsPermalinkAndKeepsALocalPictureInADryRun(t *testing.T) {
+	t.Parallel()
+	f := transportFixture(t, true)
+	url := f.id.permalink("C0LANE", "1800000000.000300", "1800000000.000100")
+	for _, req := range []transportRequest{{Op: "react", URL: url, Reaction: "eyes"}, {Op: "delete", URL: url}} {
+		var got transportReply
+		dialTransport(t, f, req).read(t, &got)
+		if !got.OK || got.Channel != "C0LANE" || got.TS != "1800000000.000300" || got.ThreadTS != "1800000000.000100" {
+			t.Fatalf("%s by url answered %+v", req.Op, got)
+		}
+	}
+	if len(f.slack.reactions) != 1 || len(f.slack.deletes) != 1 {
+		t.Fatalf("%d reactions and %d deletes, want one each", len(f.slack.reactions), len(f.slack.deletes))
+	}
+	picture := json.RawMessage(`{"type":"image","image_url":"/pictures/5f2c.png","alt_text":"Where a claim goes"}`)
+	var got transportReply
+	dialTransport(t, f, transportRequest{Op: "reply", URL: url, Text: "How a claim flows.", Blocks: []json.RawMessage{picture}, DryRun: true}).read(t, &got)
+	if !got.OK || !strings.Contains(string(got.Blocks), `"image_url":"/pictures/5f2c.png"`) || got.ThreadTS != "1800000000.000100" {
+		t.Fatalf("a dry run with a local picture answered %+v", got)
 	}
 }
