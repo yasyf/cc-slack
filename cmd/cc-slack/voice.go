@@ -812,9 +812,7 @@ type voicePR struct {
 	Approved bool   `json:"approved,omitempty"`
 }
 
-const voiceMaxApprovePRs = 2
-
-// held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry; a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count; and a post asking his Approve or tap on a PR, which never goes out without the buttons it asks him to press and never about a PR already merged or closed. It answers why the post is held, or "", and the Approve and Hold buttons to attach to an ask for his Approve that carries none; a Jev that cannot answer within the budget lets the post through as written.
+// held is Jev's one read before a post queues of what his rules refuse outright: a post with no options asking him to type his pick, which a button would carry; a post whose count of a set disagrees with the members it lists, by his rule to list every member of a set you count; and a post asking his Approve or tap on a PR already merged, closed or approved. It answers why the post is held, or "", and buttons to attach, which an ask for his Approve never gets, since its stack's PR-group card carries them; a Jev that cannot answer within the budget lets the post through as written.
 func (v *voiceSender) held(ctx context.Context, req voiceRequest) (string, []string, string, float64) {
 	score := 1.0
 	why, attached, warning := v.judge(ctx, req, &score)
@@ -925,14 +923,14 @@ func (v *voiceSender) judge(ctx context.Context, req voiceRequest, score *float6
 			*score = min(*score, 1-binary.PYes)
 		}
 	}
-	return v.verdict(req, cards, numbers, func(key string) bool {
+	return v.verdict(req, cards, func(key string) bool {
 		answer, ok := decision.Answers[key].(spawnllm.BinaryAnswer)
 		return ok && answer.PYes >= voiceHoldAt
 	})
 }
 
 // verdict turns Jev's yes answers into the post's refusal, the buttons it attaches and its warnings, the first refusal in order winning.
-func (v *voiceSender) verdict(req voiceRequest, cards []voiceOutcome, numbers []int, yes func(string) bool) (string, []string, string) {
+func (v *voiceSender) verdict(req voiceRequest, cards []voiceOutcome, yes func(string) bool) (string, []string, string) {
 	var warnings []string
 	if yes("gap") {
 		warnings = append(warnings, voiceGap)
@@ -946,19 +944,12 @@ func (v *voiceSender) verdict(req voiceRequest, cards []voiceOutcome, numbers []
 	if yes("lead") {
 		return voiceBareLead, nil, warning
 	}
-	var attached []string
 	if yes("approve") {
-		var why string
-		if why, attached = voiceApproveAsk(req); why != "" {
+		if why := voiceApproveAsk(req); why != "" {
 			return why, nil, warning
 		}
-		if len(attached) > 0 {
-			if why := v.sameCard(req, numbers); why != "" {
-				return why, nil, warning
-			}
-		}
 	}
-	if yes("typed") && len(attached) == 0 {
+	if yes("typed") && !yes("approve") {
 		return voiceTypedChoice, nil, warning
 	}
 	if yes("miscount") {
@@ -972,10 +963,11 @@ func (v *voiceSender) verdict(req voiceRequest, cards []voiceOutcome, numbers []
 			return check.why, nil, warning
 		}
 	}
-	return "", attached, warning
+	return "", nil, warning
 }
 
-func voiceApproveAsk(req voiceRequest) (string, []string) {
+// voiceApproveAsk refuses an ask of his Approve on a PR no longer open or one he already approved, and attaches no buttons: the stack's PR-group Approve card, which the supervisor draws, is the one place he taps Approve, by his order "rewrite all the cards" after the 5:59 PM "Merging needs you here" post kept old Merge and Wait buttons.
+func voiceApproveAsk(req voiceRequest) string {
 	var settled []string
 	for _, pr := range req.PRs {
 		if pr.State != "" && pr.State != "OPEN" {
@@ -983,23 +975,12 @@ func voiceApproveAsk(req voiceRequest) (string, []string) {
 		}
 	}
 	if len(settled) > 0 {
-		return "refused, not posted: it asks his Approve or tap on a PR that is no longer open (" + strings.Join(settled, ", ") + "). Say what happened to it instead", nil
+		return "refused, not posted: it asks his Approve or tap on a PR that is no longer open (" + strings.Join(settled, ", ") + "). Say what happened to it instead"
 	}
 	if !slices.ContainsFunc(req.PRs, func(pr voicePR) bool { return !pr.Approved }) {
-		return fmt.Sprintf("refused, not posted: he already approved %s at its head, so it is decided (\"if I approve something its approved\"). Land it, and ask him nothing about it", voicePRNames(req.PRs)), nil
+		return fmt.Sprintf("refused, not posted: he already approved %s at its head, so it is decided (\"if I approve something its approved\"). Land it, and ask him nothing about it", voicePRNames(req.PRs))
 	}
-	if len(req.Options) > 0 {
-		return "", nil
-	}
-	open := slices.DeleteFunc(slices.Clone(req.PRs), func(pr voicePR) bool { return pr.Approved })
-	if len(open) > voiceMaxApprovePRs {
-		return fmt.Sprintf("refused, not posted: it asks his Approve on %d PRs with no buttons. Post it with --options naming what each button does", len(open)), nil
-	}
-	var options []string
-	for _, pr := range open {
-		options = append(options, fmt.Sprintf("Approve #%d", pr.Number), fmt.Sprintf("Hold #%d", pr.Number))
-	}
-	return "", options
+	return ""
 }
 
 // refused logs a post /voice turned away before it queued, with its lane and why, so a lane refused again and again shows in voice.jsonl.

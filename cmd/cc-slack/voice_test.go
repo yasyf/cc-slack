@@ -188,12 +188,12 @@ func TestVoiceHoldsATypedChoiceOrAMiscountAndLetsItThroughWhenJevCannotAnswer(t 
 	}
 }
 
-func TestVoiceAnAskForHisApproveGetsItsButtonsAndNeverNamesASettledPR(t *testing.T) {
+func TestVoiceAnAskForHisApproveGetsNoButtonsOfItsOwnAndNeverNamesASettledPR(t *testing.T) {
 	asks := stubDecide{answers: map[string]spawnllm.Answer{"approve": spawnllm.BinaryAnswer{PYes: 0.95}, "typed": spawnllm.BinaryAnswer{PYes: 0.9}}}
 	v := &voiceSender{decide: asks.decide}
 	why, options, _, _ := v.held(context.Background(), voiceRequest{Text: "#57894 is green and needs your Approve to merge.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
-	if why != "" || strings.Join(options, "|") != "Approve #57894|Hold #57894" {
-		t.Fatalf("held = %q, %q; want the Approve and Hold buttons attached", why, options)
+	if why != "" || options != nil {
+		t.Fatalf("held = %q, %q; want it posted with no buttons, its PR-group card asking", why, options)
 	}
 	why, options, _, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "MERGED"}}})
 	if !strings.Contains(why, "#57894 is merged") || options != nil {
@@ -313,10 +313,12 @@ func TestVoiceRefusesAButtonSlackWouldCutOrThatSaysNothing(t *testing.T) {
 	}
 }
 
-func TestVoiceAttachesButtonsOnlyForPRsHeHasNotApproved(t *testing.T) {
-	why, options := voiceApproveAsk(voiceRequest{PRs: []voicePR{{Number: 57891, State: "OPEN"}, {Number: 57630, State: "OPEN", Approved: true}}})
-	if why != "" || strings.Join(options, "|") != "Approve #57891|Hold #57891" {
-		t.Fatalf("voiceApproveAsk = %q, %q; want buttons for #57891 alone", why, options)
+func TestVoiceAttachesNoApproveButtonsAndRefusesAnAskOfOneHeApproved(t *testing.T) {
+	if why := voiceApproveAsk(voiceRequest{PRs: []voicePR{{Number: 57891, State: "OPEN"}, {Number: 57630, State: "OPEN", Approved: true}}}); why != "" {
+		t.Fatalf("voiceApproveAsk = %q; want it let through", why)
+	}
+	if why := voiceApproveAsk(voiceRequest{PRs: []voicePR{{Number: 57630, State: "OPEN", Approved: true}}}); !strings.Contains(why, "already approved") {
+		t.Fatalf("voiceApproveAsk = %q; want the approved refusal", why)
 	}
 }
 
