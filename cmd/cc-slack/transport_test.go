@@ -2,12 +2,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/slack-go/slack"
 )
 
 func transportFixture(t *testing.T, subscriber bool) *fixture {
@@ -193,5 +198,53 @@ func TestTransportSendPostsUnderItsSenderLabelOncePerKey(t *testing.T) {
 	}
 	if p := f.slack.posts[0]; p.username != req.Sender || !strings.Contains(p.blocks, "lane:answer:dec-7:1") {
 		t.Fatalf("posted as %q with blocks %s", p.username, p.blocks)
+	}
+}
+
+func nudgedEvent(t *testing.T, name string) transportEvent {
+	t.Helper()
+	var push socketPush
+	var n messageNudge
+	if err := json.Unmarshal(protocolFixture(t, name), &push); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(push.EventPayload, &n); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := nudgeEvent(n)
+	if !ok {
+		t.Fatalf("%s made no event", name)
+	}
+	return e
+}
+
+func TestTransportEventsEncodeAsTheSubscriberReadsThem(t *testing.T) {
+	t.Parallel()
+	const user, dm, channel = "U0123ABCDE", "D0123ABCDE", "C0123ABCDE"
+	events := []transportEvent{
+		heardEvent(dm, "1800000000.000100", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000000.000200", Text: "ship it"}}),
+		heardEvent(dm, "", slack.Message{Msg: slack.Msg{User: user, Timestamp: "1800000001.000100", SubType: "file_share"}}),
+		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000100", ActionID: "ccu:answer:dec-7:1", Value: "Merge", ActionTS: "1800000002.123456"}),
+		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ThreadTS: "1800000000.000300", ActionID: "ccu:undo:dec-7", ActionTS: "1800000002.200000"}),
+		tapEvent(cardActionPush{User: user, Channel: channel, MessageTS: "1800000000.000300", ActionID: "ccu:wrote:dec-7", Value: `{"id":"dec-7","label":"Merge after the freeze"}`, ActionTS: "1800000002.300000"}),
+		nudgedEvent(t, "message_changed_own.json"),
+		nudgedEvent(t, "message_deleted_own.json"),
+		reactionEvent(reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", Added: true, EventTS: "1800000003.000100"}),
+		reactionEvent(reactionPush{User: user, Reaction: "thumbsup", Channel: channel, TS: "1800000000.000200", EventTS: "1800000003.000200"}),
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "transport", "events.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, e := range events {
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(append(got, line...), '\n')
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("the subscriber's fixture is\n%s\nthe daemon writes\n%s", want, got)
 	}
 }
