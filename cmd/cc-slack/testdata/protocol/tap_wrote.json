@@ -1,0 +1,1 @@
+{"event_type":"cc_slack_tap","event_payload":{"user":"U0123ABCDE","channel":"C0123ABCDE","message_ts":"1800000000.000300","thread_ts":"1800000000.000100","action_id":"lane:wrote:dec-7","value":"{\"id\":\"dec-7\",\"label\":\"Merge after the freeze\",\"q\":\"Merge #41 now?\",\"o\":[\"Hold\",\"Merge\"]}","action_ts":"1800000002.123000","seq":"001800000002000-b1c2d4"}}

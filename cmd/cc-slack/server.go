@@ -36,6 +36,7 @@ type app struct {
 	cards     *liveCards
 	shortcuts *shortcutHandler
 	socket    *socketClient
+	transport *transport
 	cardWork  sync.WaitGroup
 	captHook  commandRunner
 	claudeCwd func(ctx context.Context, pid int) (string, error)
@@ -53,7 +54,7 @@ type app struct {
 
 func jitter() float64 { return rand.Float64()*2 - 1 } //nolint:gosec // G404: schedule jitter, not a secret
 
-func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, holds *deliveryHolds, feeds *feedStore, threads *dmThreads, replay *replayCursor) *app {
+func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache *readCache, owed *owedReplies, holds *deliveryHolds, feeds *feedStore, threads *dmThreads, replay *replayCursor, tr *transport) *app {
 	newAPI = cache.expiring(newAPI)
 	avatars := newAvatarStore(&http.Client{Timeout: 30 * time.Second})
 	shortcuts := &shortcutHandler{
@@ -95,6 +96,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		feeds:     feeds,
 		threads:   threads,
 		replay:    replay,
+		transport: tr,
 		shortcuts: shortcuts,
 		cards:     cards,
 		taps:      tapQueue{last: map[string]chan struct{}{}},
@@ -119,6 +121,7 @@ func newApp(newAPI func(token string) slackAPI, alive func(pid int) bool, cache 
 		poller:    p,
 		cards:     cards,
 		shortcuts: shortcuts,
+		transport: tr,
 		socket: &socketClient{
 			onFrame:    socketFrames(shortcuts, p, replay),
 			pingEvery:  socketPingEvery,
@@ -191,6 +194,7 @@ func (a *app) buildServer() (*daemon.Server, error) {
 			s.Background(a.socket.run)
 			s.Background(a.cards.run)
 			s.Background(a.poller.taps.settle)
+			s.Background(a.serveTransport)
 			s.Background(func(ctx context.Context) {
 				voice := newVoiceSender(a, spawnllm.Decide)
 				go voice.backfill(ctx)
@@ -244,7 +248,12 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, holds, feeds, threads, replay)
+	tr, err := openTransport(ctx, transportPath())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tr.Close() }()
+	a := newApp(cachedSlackAPI(), procs.LiveClaude, cache, owed, holds, feeds, threads, replay, tr)
 	defer func() { _ = a.cards.close() }()
 	s, err := a.buildServer()
 	if err != nil {

@@ -53,6 +53,7 @@ type poller struct {
 	decide        func(ctx context.Context, state any, questions map[string]spawnllm.Question, opts spawnllm.DecideOpts) (spawnllm.Decision, error)
 	keepUser      func(ctx context.Context, id identity) time.Time
 	plane         plane
+	transport     *transport
 	newAPI        func(token string) slackAPI
 	alive         func(pid int) bool
 	now           func() time.Time
@@ -772,6 +773,11 @@ func (p *poller) take(ctx context.Context, db *sql.DB, api slackAPI, id identity
 	dm := g.key.channelID == id.DMChannelID
 	if dm {
 		if tapped, err := p.dmMessage(ctx, api, id, g.key.threadTS, m); err != nil || tapped {
+			return err
+		}
+	}
+	if routedSubtypes[m.SubType] && m.User != "" && m.BotID == "" {
+		if err := p.transport.keep(ctx, id, heardEvent(id, g.key.channelID, g.key.threadTS, m)); err != nil {
 			return err
 		}
 	}

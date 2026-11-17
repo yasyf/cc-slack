@@ -152,6 +152,11 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 			if err := json.Unmarshal(push.EventPayload, &n); err != nil {
 				return fmt.Errorf("decode nudge %q: %w", clip(string(frame)), err)
 			}
+			if e, ok := nudgeEvent(id, n); ok {
+				if err := p.transport.keep(ctx, id, e); err != nil {
+					return err
+				}
+			}
 			p.cache.nudged(ctx, n)
 			p.nudged(n)
 			r.nudged(n.Seq)
@@ -163,10 +168,20 @@ func socketFrames(h *shortcutHandler, p *poller, r *replayCursor) func(ctx conte
 				return fmt.Errorf("decode shortcut %q: %w", clip(string(frame)), err)
 			}
 			return h.accept(ctx, id, payload, sourceSocket)
+		case tapEventType, reactionEventType:
+			seq, err := p.transport.pushed(ctx, id, push)
+			if err != nil {
+				return fmt.Errorf("%s %q: %w", push.EventType, clip(string(frame)), err)
+			}
+			r.nudged(seq)
+			return nil
 		case cardActionEventType:
 			var action cardActionPush
 			if err := json.Unmarshal(push.EventPayload, &action); err != nil {
 				return fmt.Errorf("decode card action %q: %w", clip(string(frame)), err)
+			}
+			if err := p.transport.keep(ctx, id, tapEvent(id, action)); err != nil {
+				return err
 			}
 			card := action.Channel + "/" + action.MessageTS
 			press := card + "/" + action.ActionID + "/" + action.Value
