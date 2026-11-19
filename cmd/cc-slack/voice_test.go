@@ -223,8 +223,8 @@ func TestVoiceRefusesAnAskToApproveWhatHeAlreadyApproved(t *testing.T) {
 		t.Fatalf("held = %q, %q; want a refusal saying he already approved them", why, options)
 	}
 	why, options, _, _ = v.held(context.Background(), voiceRequest{Text: "#57894 needs your Approve.", PRs: []voicePR{{Repo: "Forge-AI/monorepo", Number: 57894, State: "OPEN"}}})
-	if why != "" || len(options) != 2 {
-		t.Fatalf("held = %q, %q; want a PR with no Approve to post with its buttons", why, options)
+	if why != "" || options != nil {
+		t.Fatalf("held = %q, %q; want an ask of a PR with no Approve to post as words, since its PR-group card carries the buttons", why, options)
 	}
 }
 
