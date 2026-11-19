@@ -24,7 +24,7 @@ The tool names below have the full prefix
 | Revoke a captain-hook ticket | `slack_revoke(ticket_id)` |
 | Add a reaction | `slack_react(channel_id, ts, name)` |
 | Remove the bot's reaction | `slack_unreact(channel_id, ts, name)` |
-| Replace the text of the bot's own post; a card is redrawn through `slack_dm_status` with its card, since an edit with no `blocks` would leave it plain text and is refused | `slack_edit(channel_id, ts, text, thread_ts?, blocks?)` |
+| Replace the text of the bot's own post, and with `files` its files; a card is redrawn through `slack_dm_status` with its card, since an edit with no `blocks` would leave it plain text and is refused | `slack_edit(channel_id, ts, text, thread_ts?, files?, blocks?)` |
 | Delete the bot's own post | `slack_delete(channel_id, ts, thread_ts?)` |
 | Delete or rewrite a reviewed batch of the bot's own posts in the user's DM, archiving each first | CLI only: `cc-slack apply --plan <file> [--dry-run]`, below |
 | Close a waiting card, or a reply card's options, the user answered somewhere else, such as in a thread reply you relay | `slack_card_answer(url, label, via, waits?, other?, settled?)`; the permalink `url` finds the card, whichever session posted it. A reply card's options wait on nothing, so any answer settles it in place and no session is told. `label` is one of its options, or with `other` the user's own words, and `via` is the permalink of where they answered, which the card links. The card collapses to its title and the answer, the asking session gets the answer's `slack.action` as from a tap, the board card resolves, and every post the card supersedes shows the outcome. When the asking session has ended, the card still shows the answer and no session is told. `settled` closes a question that what happened answered, such as the pull request landing, with no `slack.action`. A card answered before, by a tap, its Other field or another surface, keeps that answer: the call returns `answered: false`, `already_answered: true` and that answer as `label`, and the card already shows it, so it needs no second close. Needs no ticket |
@@ -140,7 +140,8 @@ thread, or, for an edit, is refused. The drive's `say` syntax, such as
 only `say` turns it into a link: post through `say`, or write `<url|words>`.
 
 `files` attaches files by absolute path, up to 1 GB each; the CLI verbs
-`send`, `reply`, and `dm-status` take a repeatable `--file <path>`. When
+`send`, `reply`, `dm-status`, and `edit` take a repeatable `--file <path>`;
+an edit's files replace the ones the message carried. When
 every file is a PNG, JPEG, GIF, or WebP image, the images appear under the text in
 the same `<display name> (<agent>)` message, a moment after it posts, and the
 files are shared into its thread so everyone in the conversation can open them.

@@ -1145,6 +1145,19 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		return fail(err.Error())
 	}
 	return a.changeOwnMessage(hc, b, approveEdit, actionEdit, func(ctx context.Context, api slackAPI, id identity, channelID, thread string) error {
+		var fileIDs []string
+		if len(b.Files) > 0 {
+			files, err := uploadFiles(ctx, api, b.Files)
+			if err != nil {
+				return err
+			}
+			if err := api.ShareFilesContext(ctx, fileShare{files: files}); err != nil {
+				return err
+			}
+			for _, file := range files {
+				fileIDs = append(fileIDs, file.ID)
+			}
+		}
 		texts, _ := a.linkPRs(ctx, id, hc.Env.Scope, withoutHidden(b.Text))
 		key := cmp.Or(thread, b.TS)
 		a.cards.mu.Lock()
@@ -1155,17 +1168,18 @@ func (a *app) handleEdit(hc daemon.HandlerCtx) daemon.Reply {
 		}
 		linked := linkedRefs(texts[0], blocks)
 		text, blocks := eachText(texts[0], blocks, draw.marked)
-		if len(blocks) == 0 {
+		if len(blocks) == 0 && len(fileIDs) == 0 {
 			var pages [][]slack.Block
 			text, pages = textPages(text, cardMaxBlocks)
 			blocks = slices.Concat(pages...)
 		}
 		text, blocks = eachText(text, blocks, func(t string) string { return threadParentAsWords(t, channelID, thread) })
+		withFiles := slack.MsgOptionFileIDs(fileIDs)
 		err := a.cards.editByHand(channelID, b.TS, func() error {
 			if draw.inline {
-				return changeMessage(ctx, api, channelID, b.TS, text, blocks, draw.options(nil)...)
+				return changeMessage(ctx, api, channelID, b.TS, text, blocks, append(draw.options(nil), withFiles)...)
 			}
-			return updateMessage(ctx, api, channelID, b.TS, text, blocks)
+			return updateMessage(ctx, api, channelID, b.TS, text, blocks, withFiles)
 		})
 		if err != nil {
 			return err

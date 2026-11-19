@@ -262,7 +262,11 @@ func hostedCaller(s *daemon.Server, win window) caller {
 				return daemon.Reply{}, err
 			}
 			defer cleanup()
-			if body, _, err = keyedBodies(staged, time.Now()); err != nil {
+			body = staged
+		}
+		if slices.Contains(threadPostOps, op) {
+			var err error
+			if body, _, err = keyedBodies(body, time.Now()); err != nil {
 				return daemon.Reply{}, err
 			}
 		}

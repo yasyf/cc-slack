@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	attachmentWrites = []daemon.Op{opSend, opReply, opDMStatus}
+	attachmentWrites = []daemon.Op{opSend, opReply, opDMStatus, opEdit}
 )
 
 var (
@@ -41,7 +41,11 @@ func invoke(ctx context.Context, d cmd.Deps, session, scope string, op daemon.Op
 			return daemon.Reply{}, err
 		}
 		defer cleanup()
-		if body, again, err = keyedBodies(staged, time.Now()); err != nil {
+		body, again = staged, staged
+	}
+	if slices.Contains(threadPostOps, op) {
+		var err error
+		if body, again, err = keyedBodies(body, time.Now()); err != nil {
 			return daemon.Reply{}, err
 		}
 		resend = cut
@@ -114,7 +118,7 @@ var (
 	agentProp     = map[string]any{"type": "string", "description": "agent name after yours; defaults to agent"}
 	noWatchProp   = map[string]any{"type": "boolean", "description": "skip the thread watch"}
 	rawProp       = map[string]any{"type": "boolean"}
-	filesProp     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "absolute paths to attach"}
+	filesProp     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "absolute paths"}
 	blocksProp    = map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "description": "Block Kit blocks; text stays the fallback"}
 	cardProp      = map[string]any{
 		"type":        "object",
@@ -241,7 +245,7 @@ var (
 		},
 		{
 			name:        "slack_stream",
-			description: "Show work steps with spinners in a thread: the first call posts and returns ts; later calls pass ts and changed tasks; stop ends it.",
+			description: "Show work steps with spinners in a thread: the first call returns ts; later calls pass it and changed tasks; stop ends it.",
 			op:          opStream, failure: actionWrite,
 			properties: map[string]any{
 				"channel_id": channelProp,
@@ -266,13 +270,14 @@ var (
 		},
 		{
 			name:        "slack_edit",
-			description: "Replace the text of the bot's message; a thread reply needs thread_ts or its permalink.",
+			description: "Edit the bot's message; a thread reply needs thread_ts.",
 			op:          opEdit, failure: actionEdit,
 			properties: map[string]any{
 				"channel_id": channelProp,
 				"thread_ts":  threadProp,
 				"ts":         map[string]any{"type": "string"},
 				"text":       textProp,
+				"files":      filesProp,
 				"blocks":     blocksProp,
 				"url":        urlProp,
 			},
@@ -280,7 +285,7 @@ var (
 		},
 		{
 			name:        "slack_delete",
-			description: "Delete the bot's message; a thread reply needs thread_ts or its permalink.",
+			description: "Delete the bot's message; a thread reply needs thread_ts.",
 			op:          opDelete, failure: actionDelete,
 			properties: map[string]any{
 				"channel_id": channelProp,

@@ -1730,6 +1730,22 @@ func TestEditReplacesTheTextOfABotPost(t *testing.T) {
 	}
 }
 
+func TestEditWithFilesUploadsThemToNoChannelAndPutsThemOnTheMessage(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+
+	video := writeFile(t, "demo.mp4", "the new take")
+	l.post(opEdit, map[string]any{"channel_id": testChannel, "ts": "1800000000.000100", "text": "The new demo", "files": []string{video}})
+	done := l.slack.completed()
+	if len(done) != 1 || len(done[0]) != 1 || len(l.slack.sent()) != 0 {
+		t.Fatalf("completed %+v and posted %+v, want one upload completed in no channel and nothing posted", done, l.slack.sent())
+	}
+	want := string(mustJSON([]string{done[0][0].ID}))
+	if edits := l.slack.edited(); len(edits) != 1 || edits[0].ts != "1800000000.000100" || edits[0].text != "The new demo" || edits[0].fileIDs != want {
+		t.Fatalf("edits = %+v, want one chat.update of the message with its new text and file_ids %s", edits, want)
+	}
+}
+
 func TestSendAndEditOfTextPastTheTextLimitStayOneMessage(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)

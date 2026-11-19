@@ -185,7 +185,10 @@ func (c *apiClient) ShareFilesContext(ctx context.Context, share fileShare) erro
 	if err != nil {
 		return err
 	}
-	form := url.Values{"files": {string(files)}, "channel_id": {share.channelID}, "username": {share.username}, "icon_url": {share.iconURL}}
+	form := url.Values{"files": {string(files)}, "username": {share.username}, "icon_url": {share.iconURL}}
+	if share.channelID != "" {
+		form.Set("channel_id", share.channelID)
+	}
 	if share.threadTS != "" {
 		form.Set("thread_ts", share.threadTS)
 	}
