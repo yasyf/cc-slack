@@ -58,6 +58,7 @@ type fakeEdit struct {
 	attachments string
 	unfurlLinks string
 	parse       string
+	fileIDs     string
 }
 
 type fakeSlack struct {
@@ -500,7 +501,7 @@ func (f *fakeSlack) UpdateMessageContext(_ context.Context, channelID, timestamp
 	if err := f.checkPicturesShared(channelID, values); err != nil {
 		return "", "", "", err
 	}
-	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments"), unfurlLinks: values.Get("unfurl_links"), parse: values.Get("parse")})
+	f.edits = append(f.edits, fakeEdit{channelID: channelID, ts: timestamp, text: values.Get("text"), blocks: values.Get("blocks"), metadata: values.Get("metadata"), attachments: values.Get("attachments"), unfurlLinks: values.Get("unfurl_links"), parse: values.Get("parse"), fileIDs: values.Get("file_ids")})
 	var blocks slack.Blocks
 	if values.Get("blocks") != "" {
 		if err := json.Unmarshal([]byte(values.Get("blocks")), &blocks); err != nil {
@@ -687,6 +688,10 @@ func (f *fakeSlack) ShareFilesContext(_ context.Context, share fileShare) error 
 	if err := f.call("files.completeUploadExternal"); err != nil {
 		return err
 	}
+	f.complete = append(f.complete, share.files)
+	if share.channelID == "" {
+		return nil
+	}
 	f.clock++
 	ts := fmt.Sprintf("%d.000000", f.clock)
 	p := fakePost{channelID: share.channelID, threadTS: share.threadTS, text: share.text, username: share.username, iconURL: share.iconURL, ts: ts}
@@ -697,7 +702,6 @@ func (f *fakeSlack) ShareFilesContext(_ context.Context, share fileShare) error 
 	f.channels[share.channelID] = append(f.channels[share.channelID], slack.Message{Msg: slack.Msg{
 		Timestamp: ts, ThreadTimestamp: p.threadTS, User: f.auth.UserID, BotID: f.auth.BotID, Username: p.username, Text: p.text,
 	}})
-	f.complete = append(f.complete, share.files)
 	for _, file := range share.files {
 		f.shared[file.ID] = slack.Share{Public: map[string][]slack.ShareFileInfo{share.channelID: {{Ts: ts, ThreadTs: share.threadTS}}}}
 	}

@@ -525,16 +525,18 @@ func revokeCmd(d cmd.Deps) *cobra.Command {
 func editCmd(d cmd.Deps) *cobra.Command {
 	var f messageFlags
 	var text, textFile, blocks string
+	var files []string
 	var spend ticketSpend
 	c := &cobra.Command{
 		Use:   "edit",
-		Short: "Replace the text of a message the bot posted",
+		Short: "Replace the text, and with --file the files, of a message the bot posted",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			body := f.body()
 			if err := putText(body, f.cwd, text, textFile); err != nil {
 				return err
 			}
+			body["files"] = absPaths(cwdOr(f.cwd), files)
 			if err := putBlocks(body, f.cwd, blocks); err != nil {
 				return err
 			}
@@ -546,6 +548,7 @@ func editCmd(d cmd.Deps) *cobra.Command {
 	c.Flags().StringVar(&f.ts, "ts", "", "ts of the message to edit")
 	bindText(c, &text, &textFile, "new message text")
 	bindTicket(c, &spend)
+	bindFiles(c, &files)
 	bindBlocks(c, &blocks)
 	return c
 }

@@ -34,7 +34,7 @@ func tapCallContext(ctx context.Context, op daemon.Op, body json.RawMessage) (co
 	var call struct {
 		TapPRs []string `json:"tap_prs"`
 	}
-	if _, bounded := ctx.Deadline(); bounded || !slices.Contains(attachmentWrites, op) || json.Unmarshal(body, &call) != nil || len(call.TapPRs) == 0 {
+	if _, bounded := ctx.Deadline(); bounded || !slices.Contains(threadPostOps, op) || json.Unmarshal(body, &call) != nil || len(call.TapPRs) == 0 {
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, tapCardPatience+tapPostPatience)
