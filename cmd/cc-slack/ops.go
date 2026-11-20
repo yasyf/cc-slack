@@ -1636,6 +1636,10 @@ func messageFiles(ctx context.Context, api slackAPI, m slack.Message) ([]message
 		}
 		seen[image.SlackFile.ID] = true
 		f, _, _, err := api.GetFileInfoContext(ctx, image.SlackFile.ID, 0, 0)
+		if errors.As(err, new(slack.SlackErrorResponse)) {
+			out = append(out, messageFile{ID: image.SlackFile.ID, Name: image.AltText, PathError: fallback(actionFile, err)})
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

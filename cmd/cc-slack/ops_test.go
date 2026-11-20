@@ -865,6 +865,30 @@ func TestABotPostsSharedImageBlockReadsAsItsFile(t *testing.T) {
 	}
 }
 
+func TestAReplyPermalinkReadsItsThreadPastAnImageBlockSlackWillNotDescribe(t *testing.T) {
+	l := startDaemon(t)
+	loggedIn(t, l)
+	l.slack.fail("files.info", slack.SlackErrorResponse{Err: "file_not_found"})
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{Timestamp: "1795138997.417309", BotID: "BPLATY", Text: "release hushed-lafont"}})
+	l.slack.add(testChannel, slack.Message{Msg: slack.Msg{
+		Timestamp: "1795140665.064649", ThreadTimestamp: "1795138997.417309", BotID: "BPLATY",
+		Blocks: slack.Blocks{BlockSet: []slack.Block{&slack.ImageBlock{Type: slack.MBTImage, AltText: "plan.png", SlackFile: &slack.SlackFileObject{ID: "F2"}}}},
+	}})
+
+	var res threadResult
+	url := "https://acme.slack.com/archives/" + testChannel + "/p1795140665064649?thread_ts=1795138997.417309&cid=" + testChannel
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": url}).Body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.ThreadTS != "1795138997.417309" || len(res.Messages) != 2 {
+		t.Fatalf("thread = %+v, want the parent and its reply", res)
+	}
+	file := res.Messages[1].Files[0]
+	if file.ID != "F2" || file.Path != "" || !strings.Contains(file.PathError, "file_not_found") {
+		t.Fatalf("file = %+v, want the image block's file with Slack's refusal", file)
+	}
+}
+
 func TestChannelsReportsAChannelSharedWithAnotherWorkspace(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
