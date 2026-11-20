@@ -876,8 +876,8 @@ func TestAReplyPermalinkReadsItsThreadPastAnImageBlockSlackWillNotDescribe(t *te
 	}})
 
 	var res threadResult
-	url := "https://acme.slack.com/archives/" + testChannel + "/p1795140665064649?thread_ts=1795138997.417309&cid=" + testChannel
-	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": url}).Body, &res); err != nil {
+	replyPermalink := "https://acme.slack.com/archives/" + testChannel + "/p1795140665064649?thread_ts=1795138997.417309&cid=" + testChannel
+	if err := json.Unmarshal(l.do(opThread, map[string]string{"url": replyPermalink}).Body, &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.ThreadTS != "1795138997.417309" || len(res.Messages) != 2 {
