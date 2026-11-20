@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tap on a question card whose card command is no longer installed goes to the session that posted the card and to its cc-present board, as a login without that program would send it. Before, the daemon kept running the program it resolved at `login`, read the missing file as a failed record, and drew "recording since" and ran it again every 2 minutes for good. On Nov 20 the long-running plugin and its `~/.local/bin/drive` launcher left this Mac at 4:42 AM, and from then on every choice tap in your DM, a permission card's Yes included, stayed recording, 39 of them by 3:15 PM, while an Approve on a PR card still went through. A tap owed from before, on its next retry, now reaches the session that posted the card the same way; before, a retry the card command disowned went to the session holding your DM as if the card's own session had ended, and never reached the board. A `reload` that drops `card_command` while taps are owed now hands them on the same way, where before each retry would have crashed the daemon.
 - A withdrawn PR card, and one edited by hand with `edit --blocks`, stays as last drawn when `redraw-pr-cards --stored` or a redraw of a standing PR's rows runs. Both used to draw the card again from the rows cc-slack stored for it, so a row taken off by hand, such as #54428's on the run-page card, could come back.
 
 ### Changed

@@ -458,15 +458,31 @@ func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 				p.applyPRTap(ctx, id, owed.card, owed.tap)
 				return
 			}
-			if q := owed.tap.Question; p.applyQuestionTap(ctx, id, owed.card, owed.tap) == tapUnrecorded {
-				tapped := cardActionPush{Channel: owed.card.channel, ThreadTS: owed.card.thread, MessageTS: owed.card.ts, ActionTS: q.ActionTS}
-				if err := p.handOver(ctx, id, tapped, askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Waits: true}, owed.tap.Line); err != nil {
-					p.log.Printf("waiting card %s: %q is with no session: %v", q.Waits, q.Label, err)
-				}
+			if p.applyQuestionTap(ctx, id, owed.card, owed.tap) == tapUnrecorded {
+				p.deliverUnrecorded(ctx, id, owed.card, *owed.tap.Question)
 			}
 		})
 	}
 	return next
+}
+
+func (p *poller) deliverUnrecorded(ctx context.Context, id identity, card cardRef, q questionAnswer) {
+	_, m, _ := p.cards.waitingAt(card.channel, card.thread, card.ts)
+	tapped := cardActionPush{Channel: card.channel, ThreadTS: card.thread, MessageTS: card.ts, ActionTS: q.ActionTS}
+	k := askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Question: m.Card.Title, Options: m.Card.answers(), Waits: true}
+	permalink := id.permalink(card.channel, card.ts, card.thread)
+	w := waitsAnswer{
+		card: card, tap: k, other: q.Other, at: slackTime(q.ActionTS), actionTS: q.ActionTS,
+		source: cardSource(id, tapHow(k), slackTime(card.ts).In(pacific).Format(cardTimeLayout), permalink), where: "Slack card " + permalink,
+		dedup: tapKey(tapped), press: cardPress{q.ActionTS, q.Source},
+	}
+	_, err := p.takeWaits(ctx, id, w)
+	if errors.Is(err, errNoStatusSession) {
+		err = p.handOn(ctx, id, tapped, k, w.at)
+	}
+	if err != nil {
+		p.log.Printf("waiting card %s: %q is with no session: %v", q.Waits, q.Label, err)
+	}
 }
 
 func (p *poller) recordQuestionTap(ctx context.Context, id identity, card cardRef, k askTap, undone bool, press cardPress) (tapRecord, error) {
@@ -491,6 +507,9 @@ func newQuestionAnswer(id identity, card cardRef, k askTap, undone bool, press c
 func (p *poller) runQuestionTap(ctx context.Context, id identity, answer questionAnswer) (tapRecord, error) {
 	inTurn(ctx)
 	out, err := runCardCommand(ctx, id.Config.PRLinks.CardCommand, map[string]any{"answer": answer})
+	if errors.Is(err, errCardCommandMissing) {
+		return tapUnrecorded, err
+	}
 	if errors.Is(err, errCardCommandUnfinished) {
 		return tapRecording, err
 	}

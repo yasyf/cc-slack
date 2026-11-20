@@ -292,7 +292,10 @@ holds, Other included, goes to the program as
 and then to that session, and its Undo goes the same way with `undone` true, so
 the program records the answer: when it exits 0 the session's `slack.action`
 carries `recorded: true` and no `capture`, and its directive says to post no
-record of it; a program that exits non-zero leaves it with the session alone. A card `live-cards.json`
+record of it. A program that exits non-zero or does not finish keeps the card
+recording and runs again every 2 minutes. A reply of `{"ok": false}`, or a program
+no longer installed, as when its tool was removed after `login`, leaves the tap with
+that session, on a first tap and on a retry alike. A card `live-cards.json`
 no longer holds is tapped the same way: the button names its `waits` id and question, and the card is
 redrawn from the message Slack holds. A tap no session takes and no program records is kept in `dm-owed`
 for the next session to hold the DM, and the card says so. When the program exits 0, the

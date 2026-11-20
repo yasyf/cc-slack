@@ -533,6 +533,90 @@ func TestAnOwedQuestionTapTheCardCommandDisownsOnItsRetryIsOwedNoMore(t *testing
 	})
 }
 
+func removableCardCommand(t *testing.T) string {
+	t.Helper()
+	program := filepath.Join(t.TempDir(), "removed-card-command")
+	script := "#!/bin/sh\nin=$(cat)\ncase \"$in\" in\n*'\"answer\"'*) exec sleep 5 ;;\n*'\"numbers\"'*) echo '{\"prs\":[]}' ;;\n*) echo '{\"cards\":[]}' ;;\nesac\n"
+	if err := os.WriteFile(program, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return program
+}
+
+func heardFromItsOwnSession(t *testing.T, l *liveDaemon, calls string, c postedCard) {
+	t.Helper()
+	var heard string
+	within(t, 10*time.Second, "his tap delivered to the session that asked", func() bool {
+		heard += l.inject(agent.TopLevel)
+		return strings.Contains(heard, `answered the waiting ask "step-3:merge" with "Merge"`)
+	})
+	if !strings.Contains(heard, "hand it to that lane now") || strings.Contains(heard, "has ended") {
+		t.Fatalf("session heard %q, want his pick handed to the session that asked, with its capture to record", heard)
+	}
+	within(t, 5*time.Second, "the card showing his answer and owing nothing", func() bool {
+		ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge")
+		edits := editsOf(l.slack.edited(), c.ts)
+		return done && ans.Owed == nil && len(edits) > 0 && strings.Contains(edits[len(edits)-1], "✓ *Merge* · answered")
+	})
+	within(t, 5*time.Second, "his pick sent to the board", func() bool {
+		got := presentCalls(t, calls)
+		return strings.Contains(got, "slack-sync answered") && strings.Contains(got, `"label":"Merge"`)
+	})
+}
+
+func TestAQuestionTapWhoseCardCommandWasUninstalledReachesItsSessionAndBoard(t *testing.T) {
+	calls := fakePresent(t)
+	program := removableCardCommand(t)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{program}})
+	c := postWaiting(t, l, mergeCard())
+	if err := os.Remove(program); err != nil {
+		t.Fatal(err)
+	}
+
+	l.tap(c.id, mergeTap(c, 2))
+
+	heardFromItsOwnSession(t, l, calls, c)
+}
+
+func TestAnOwedQuestionTapReachesItsSessionAndBoardOnceItsCardCommandIsUninstalled(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	calls := fakePresent(t)
+	program := removableCardCommand(t)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{program}})
+	c := postWaiting(t, l, mergeCard())
+
+	l.tap(c.id, mergeTap(c, 2))
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Owed == nil {
+		t.Fatalf("answer = %+v, %v, want Merge owed to the card command that did not finish", ans, done)
+	}
+	if err := os.Remove(program); err != nil {
+		t.Fatal(err)
+	}
+
+	heardFromItsOwnSession(t, l, calls, c)
+}
+
+func TestAnOwedQuestionTapReachesItsSessionAndBoardOnceAReloadDropsTheCardCommand(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	calls := fakePresent(t)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": []string{removableCardCommand(t)}})
+	c := postWaiting(t, l, mergeCard())
+
+	l.tap(c.id, mergeTap(c, 2))
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Owed == nil {
+		t.Fatalf("answer = %+v, %v, want Merge owed to the card command that did not finish", ans, done)
+	}
+	if reply := l.do(opReload, map[string]any{"config": map[string]any{"github": map[string]string{"token": "ghp-test"}}}); !reply.OK {
+		t.Fatalf("reload = %s, want the config without a card command taken", reply.Body)
+	}
+
+	heardFromItsOwnSession(t, l, calls, c)
+}
+
 func TestAnAnswerNoSessionHoldsGoesToTheSessionHoldingTheDMAndOwesNothingTheCardRecorded(t *testing.T) {
 	l := startDaemon(t)
 	loggedIn(t, l)
