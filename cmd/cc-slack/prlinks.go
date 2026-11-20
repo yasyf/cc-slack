@@ -40,7 +40,10 @@ func tapCallContext(ctx context.Context, op daemon.Op, body json.RawMessage) (co
 	return context.WithTimeout(ctx, tapCardPatience+tapPostPatience)
 }
 
-var errCardCommandUnfinished = errors.New("the card command did not finish")
+var (
+	errCardCommandUnfinished = errors.New("the card command did not finish")
+	errCardCommandMissing    = errors.New("the card command is not installed")
+)
 
 var (
 	prUnscanned   = regexp.MustCompile("(?s)" + slackCode + "|<[^<>\n]*>|\\[[^\\]\n]+\\]\\(https?://[^)\\s]+\\)|https?://[^\\s<>]+")
@@ -1076,6 +1079,9 @@ func runCardCommand(ctx context.Context, command []string, ask any) ([]byte, err
 }
 
 func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, string, error) {
+	if len(command) == 0 {
+		return nil, "", errCardCommandMissing
+	}
 	began := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, prCardPatience)
 	defer cancel()
@@ -1092,6 +1098,9 @@ func cardCommandOutput(ctx context.Context, command []string, ask any) ([]byte, 
 	}
 	if _, ok := errors.AsType[*exec.ExitError](err); ok {
 		return nil, "", cardCommandError{command[0], err, string(bytes.TrimSpace(said.Bytes()))}
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return nil, "", fmt.Errorf("%s: %w: %w", command[0], errCardCommandMissing, err)
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", command[0], err)
