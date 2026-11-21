@@ -458,15 +458,15 @@ func (p *poller) retryTaps(ctx context.Context, id identity) time.Time {
 				p.applyPRTap(ctx, id, owed.card, owed.tap)
 				return
 			}
-			if p.applyQuestionTap(ctx, id, owed.card, owed.tap) == tapUnrecorded {
-				p.deliverUnrecorded(ctx, id, owed.card, *owed.tap.Question)
+			if rec := p.applyQuestionTap(ctx, id, owed.card, owed.tap); rec == tapUnrecorded || rec == tapRecorded {
+				p.tellOwed(ctx, id, owed.card, *owed.tap.Question, rec)
 			}
 		})
 	}
 	return next
 }
 
-func (p *poller) deliverUnrecorded(ctx context.Context, id identity, card cardRef, q questionAnswer) {
+func (p *poller) tellOwed(ctx context.Context, id identity, card cardRef, q questionAnswer, rec tapRecord) {
 	_, m, _ := p.cards.waitingAt(card.channel, card.thread, card.ts)
 	tapped := cardActionPush{Channel: card.channel, ThreadTS: card.thread, MessageTS: card.ts, ActionTS: q.ActionTS}
 	k := askTap{ID: q.Waits, Label: q.Label, Other: q.Other, Question: m.Card.Title, Options: m.Card.answers(), Waits: true}
@@ -476,7 +476,7 @@ func (p *poller) deliverUnrecorded(ctx context.Context, id identity, card cardRe
 		source: cardSource(id, tapHow(k), slackTime(card.ts).In(pacific).Format(cardTimeLayout), permalink), where: "Slack card " + permalink,
 		dedup: tapKey(tapped), press: cardPress{q.ActionTS, q.Source},
 	}
-	_, err := p.takeWaits(ctx, id, w)
+	err := p.tellWaits(ctx, id, w, rec, w.answeredLine(p.now()))
 	if errors.Is(err, errNoStatusSession) {
 		err = p.handOn(ctx, id, tapped, k, w.at)
 	}
@@ -1183,24 +1183,31 @@ func (p *poller) takeWaits(ctx context.Context, id identity, w waitsAnswer) (car
 	if rec == tapRecording || rec == tapRefused {
 		return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
 	}
+	if err := p.tellWaits(ctx, id, w, rec, answered); err != nil {
+		return cardAnswerResult{}, err
+	}
+	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+}
+
+func (p *poller) tellWaits(ctx context.Context, id identity, w waitsAnswer, rec tapRecord, answered string) error {
 	db := p.plane.DB()
 	watches, err := p.waitsWatches(ctx, db, id, w, rec)
 	if err != nil {
-		return cardAnswerResult{}, err
+		return err
 	}
 	if rec == tapUnrecorded {
 		p.drawAnswered(ctx, id, w, answered)
 	}
 	permalink := id.permalink(w.card.channel, w.card.ts, w.card.thread)
 	if err := p.deliverWaits(ctx, db, id, w, watches, permalink, rec == tapRecorded); err != nil {
-		return cardAnswerResult{}, err
+		return err
 	}
 	p.cards.answerDelivered(w.card.channel, w.card.thread, w.tap.ID)
 	if w.via == "" {
 		p.forwardAnswer(ctx, db, watches, boardAnswer{Waits: w.tap.ID, Label: w.tap.Label, Other: w.other, At: w.at, Permalink: permalink})
 	}
 	p.answerSuperseded(ctx, id, w)
-	return cardAnswerResult{Answered: true, Label: w.tap.Label, Other: w.other, At: w.at}, nil
+	return nil
 }
 
 func (p *poller) withdrawWaits(ctx context.Context, id identity, w waitsAnswer) (cardAnswerResult, error) {

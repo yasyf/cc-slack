@@ -511,6 +511,37 @@ func TestAQuestionTapTheCardCommandDidNotFinishShowsRecordingUntilItsRetryRecord
 	})
 }
 
+func TestAnOwedQuestionTapItsRetryRecordsReachesItsSessionAndBoard(t *testing.T) {
+	prev := prCardPatience
+	prCardPatience = 500 * time.Millisecond
+	t.Cleanup(func() { prCardPatience = prev })
+	calls := fakePresent(t)
+	cmd := stallingCardCommand(t)
+	l, _ := prLinksDaemon(t, map[string]any{"card_command": cmd.argv})
+	c := postWaiting(t, l, mergeCard())
+
+	l.tap(c.id, mergeTap(c, 2))
+	if ans, done := l.app.cards.answer(c.id.DMChannelID, c.thread, "step-3:merge"); !done || ans.Owed == nil {
+		t.Fatalf("answer = %+v, %v, want Merge owed to the card command that did not finish", ans, done)
+	}
+
+	var heard string
+	within(t, 10*time.Second, "the recorded retry told to the session that asked", func() bool {
+		heard += l.inject(agent.TopLevel)
+		return strings.Contains(heard, `answered the waiting ask "step-3:merge" with "Merge"`)
+	})
+	if !strings.Contains(heard, "Your card command already posted this answer") || strings.Contains(heard, "has ended") {
+		t.Fatalf("session heard %q, want his pick named as the card command's record, from the card's own session", heard)
+	}
+	within(t, 5*time.Second, "his recorded pick sent to the board", func() bool {
+		got := presentCalls(t, calls)
+		return strings.Contains(got, "slack-sync answered") && strings.Contains(got, `"label":"Merge"`)
+	})
+	if got := answersOf(cmd.requests(t)); len(got) != 1 {
+		t.Fatalf("card command recorded %v, want his tap recorded once", got)
+	}
+}
+
 func TestAnOwedQuestionTapTheCardCommandDisownsOnItsRetryIsOwedNoMore(t *testing.T) {
 	prev := prCardPatience
 	prCardPatience = 500 * time.Millisecond
