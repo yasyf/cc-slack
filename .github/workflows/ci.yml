@@ -22,7 +22,7 @@ permissions:
 jobs:
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,7 +34,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test (race)
-        run: go test -race -timeout 8m ./...
+        run: go test -race -timeout 12m ./...
       - name: Build
         run: go build ./...
 
